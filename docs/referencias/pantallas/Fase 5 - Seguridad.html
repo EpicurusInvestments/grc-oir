@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GRC-OIR — Fase 5: Seguridad y Auditoría</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f3ef;--surface:#fff;--surface2:#f0efe9;--surface3:#e6e5de;
+  --border:#e0dfd8;--border-med:#c8c7bf;--border-strong:#b0afa8;
+  --text:#181816;--text2:#5c5c58;--text3:#9c9c96;
+  --purple:#534AB7;--purple-bg:#EEEDFE;--purple-text:#3C3489;
+  --teal:#0F6E56;--teal-bg:#E1F5EE;--teal-text:#085041;
+  --blue:#185FA5;--blue-bg:#E6F1FB;--blue-text:#0C447C;
+  --amber:#BA7517;--amber-bg:#FAEEDA;--amber-text:#633806;
+  --red:#A82828;--red-bg:#FCEBEB;--red-text:#791F1F;--red-border:#F1A8A8;
+  --green-bg:#EAF3DE;--green-text:#27500A;
+  --gray-bg:#F1EFE8;--gray-text:#444441;
+  --r:8px;--rl:12px;
+  --font:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  --mono:'IBM Plex Mono','SF Mono','Consolas',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+ 
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100}
+.logo{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--purple)}
+.fase-tag{font-size:11px;font-family:var(--mono);background:var(--red-bg);color:var(--red-text);padding:3px 10px;border-radius:20px;font-weight:500}
+.header-spacer{flex:1}
+.user-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--red-bg);color:var(--red-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+ 
+.app-body{flex:1;display:flex;min-height:0;overflow:hidden}
+ 
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:14px 0}
+.side-section{margin-bottom:18px}
+.side-title{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:0 18px;margin-bottom:6px}
+.side-item{display:flex;align-items:center;gap:9px;padding:7px 18px;font-size:13px;color:var(--text2);cursor:pointer;border-left:2px solid transparent;transition:all .12s;user-select:none}
+.side-item:hover{color:var(--text);background:var(--surface2)}
+.side-item.active{color:var(--red);background:var(--red-bg);border-left-color:var(--red);font-weight:500}
+.side-icon{width:14px;height:14px;flex-shrink:0;opacity:.8}
+.side-count{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:8px}
+.side-item.active .side-count{background:#fff;color:var(--red-text)}
+ 
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+ 
+.cat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.cat-title{font-size:18px;font-weight:600}
+.cat-sub{font-size:12px;color:var(--text3);margin-top:3px;max-width:820px}
+ 
+.toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.search{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 12px;font-size:13px;font-family:var(--font);color:var(--text);width:240px;outline:none;transition:border-color .15s}
+.search:focus{border-color:var(--red)}
+.sel-f{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 10px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;cursor:pointer}
+.sel-f:focus{border-color:var(--red)}
+.fp{height:28px;padding:0 13px;border-radius:20px;border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
+.fp:hover{color:var(--text);border-color:var(--border-strong)}
+.fp.active{background:var(--red-bg);border-color:var(--red-border);color:var(--red-text);font-weight:500}
+.tb-spacer{flex:1}
+.tb-count{font-size:12px;color:var(--text3);font-family:var(--mono)}
+ 
+.split{display:flex;flex:1;overflow:hidden;min-height:0}
+.list-pane{flex:1;overflow:auto;background:var(--surface)}
+.detail-pane{width:480px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+ 
+.dashboard{flex:1;overflow:auto;padding:18px 22px;background:var(--bg)}
+ 
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{padding:9px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0;white-space:nowrap;z-index:1}
+tbody td{padding:11px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr{cursor:pointer;transition:background .1s}
+tbody tr:hover td{background:var(--surface2)}
+tbody tr.sel td{background:var(--red-bg)}
+.td-main{font-weight:500;color:var(--text)}
+.td-2{color:var(--text2)}
+.td-mono{font-family:var(--mono);font-size:12px;color:var(--text2)}
+.td-right{text-align:right}
+.td-center{text-align:center}
+ 
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.b-purple{background:var(--purple-bg);color:var(--purple-text)}
+.b-teal{background:var(--teal-bg);color:var(--teal-text)}
+.b-blue{background:var(--blue-bg);color:var(--blue-text)}
+.b-amber{background:var(--amber-bg);color:var(--amber-text)}
+.b-red{background:var(--red-bg);color:var(--red-text)}
+.b-green{background:var(--green-bg);color:var(--green-text)}
+.b-gray{background:var(--gray-bg);color:var(--gray-text)}
+ 
+/* Avatares de usuarios */
+.user-mini{display:inline-flex;align-items:center;gap:7px;font-size:12px}
+.user-mini-avatar{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+.av-direccion{background:var(--purple-bg);color:var(--purple-text)}
+.av-ventas{background:var(--teal-bg);color:var(--teal-text)}
+.av-facturacion{background:var(--blue-bg);color:var(--blue-text)}
+.av-cxc{background:var(--amber-bg);color:var(--amber-text)}
+.av-cxp{background:#FFEFD9;color:#6E4001}
+.av-tesoreria{background:var(--green-bg);color:var(--green-text)}
+.av-nominas{background:#E8E0F5;color:#5A2891}
+.av-admin{background:var(--red-bg);color:var(--red-text)}
+ 
+/* Diff visual del cambio */
+.change-diff{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px}
+.change-old{color:var(--red-text);text-decoration:line-through;background:#FDEEEE;padding:1px 6px;border-radius:4px}
+.change-arrow{color:var(--text3)}
+.change-new{color:var(--green-text);background:#EEF6E0;padding:1px 6px;border-radius:4px;font-weight:600}
+ 
+.d-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);font-size:13px;padding:32px;text-align:center}
+.d-icon{width:40px;height:40px;border-radius:50%;border:1px solid var(--border-med);display:flex;align-items:center;justify-content:center;color:var(--text3)}
+.dh{padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dh-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.dh-name{font-size:16px;font-weight:600;color:var(--text)}
+.dh-sub{font-size:12px;color:var(--text2);margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.db{flex:1;overflow-y:auto;padding:14px 18px}
+ 
+.sec{font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin:16px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.sec:first-child{margin-top:0}
+ 
+.fl{font-size:11px;color:var(--text3);margin-bottom:3px}
+.fv{font-size:13px;color:var(--text);margin-bottom:11px;min-height:18px}
+.fv.mono{font-family:var(--mono);font-size:12px}
+.fv.muted{color:var(--text2)}
+ 
+.df{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;background:var(--surface)}
+ 
+.btn{height:34px;padding:0 14px;border-radius:var(--r);border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:13px;color:var(--text);cursor:pointer;transition:all .12s;white-space:nowrap;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--surface2)}
+.btn-sm{height:28px;padding:0 11px;font-size:12px}
+.btn-red{background:var(--red);border-color:var(--red);color:#fff}
+.btn-red:hover{background:#871d1d;color:#fff}
+.btn-dark{background:var(--text);border-color:var(--text);color:#fff}
+.btn-dark:hover{background:#2c2c2a;color:#fff}
+ 
+/* KPI tipo dashboard */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;position:relative}
+.kpi.alert{border-left:3px solid var(--red)}
+.kpi-lbl{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:5px}
+.kpi-val{font-size:22px;font-weight:600;font-family:var(--mono);color:var(--text);line-height:1.1}
+.kpi-val.alert{color:var(--red-text)}
+.kpi-sub{font-size:11px;color:var(--text3);margin-top:5px}
+ 
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px}
+.card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.card-title-sub{font-size:11px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0}
+ 
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ 
+/* Banner de info */
+.info-banner{background:var(--red-bg);border:1px solid var(--red-border);border-radius:var(--rl);padding:13px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:11px;font-size:12px;color:var(--red-text);line-height:1.5}
+.info-banner svg{flex-shrink:0;margin-top:2px}
+.info-banner strong{font-weight:600}
+ 
+/* Timeline activity */
+.activity-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start}
+.activity-item:last-child{border-bottom:none}
+.activity-time{color:var(--text3);font-family:var(--mono);font-size:10px;width:90px;flex-shrink:0;padding-top:2px}
+.activity-body{flex:1}
+ 
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
+</style>
+</head>
+<body>
+ 
+<header class="app-header">
+  <div class="logo">GRC<span>·</span>OIR</div>
+  <div class="fase-tag">FASE 5 · SEGURIDAD Y AUDITORÍA</div>
+  <div class="header-spacer"></div>
+  <div class="user-chip">
+    <div class="user-avatar">DM</div>
+    <span>Dirección · daniel.mora</span>
+  </div>
+</header>
+ 
+<div class="app-body">
+ 
+  <aside class="sidebar">
+    <div class="side-section">
+      <div class="side-title">Auditoría</div>
+      <div class="side-item active" data-view="log_cambios" onclick="show('log_cambios')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 6h6M5 9h6M5 12h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Log de cambios <span class="side-count" id="cnt-log">0</span>
+      </div>
+      <div class="side-item" data-view="resumen" onclick="show('resumen')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M2 14V2M14 14H2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 11v-3M8 11v-5M11 11v-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Resumen de actividad
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Permisos</div>
+      <div class="side-item" data-view="permisos" onclick="show('permisos')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="7" rx="1.4" stroke="currentColor" stroke-width="1.4"/><path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" stroke-width="1.4"/></svg>
+        Permisos por campo <span class="side-count" id="cnt-perm">0</span>
+      </div>
+      <div class="side-item" data-view="usuarios" onclick="show('usuarios')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M3 14a5 5 0 0110 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Usuarios y áreas <span class="side-count" id="cnt-usr">0</span>
+      </div>
+    </div>
+  </aside>
+ 
+  <main class="main" id="main"></main>
+</div>
+ 
+<script>
+/* ════════════════════════════════════════════════
+   DATOS
+════════════════════════════════════════════════ */
+const usuarios = [
+  {id:'u1',nombre_usuario:'Daniel Mora',email:'d.mora@grcoir.com',area:'direccion',roles_adicionales:'admin_parametros',activo:true,ultimo_acceso:'2025-06-25 09:14'},
+  {id:'u2',nombre_usuario:'María González',email:'m.gonzalez@grcoir.com',area:'direccion',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-24 17:22'},
+  {id:'u3',nombre_usuario:'Víctor García',email:'v.garcia@grcoir.com',area:'ventas',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-25 10:05'},
+  {id:'u4',nombre_usuario:'Sara Peña',email:'s.pena@grcoir.com',area:'cxc',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-25 08:30'},
+  {id:'u5',nombre_usuario:'María Ramos',email:'m.ramos@grcoir.com',area:'facturacion',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-25 09:42'},
+  {id:'u6',nombre_usuario:'Carlos Tesoro',email:'c.tesoro@grcoir.com',area:'tesoreria',roles_adicionales:'auditor',activo:true,ultimo_acceso:'2025-06-24 16:18'},
+  {id:'u7',nombre_usuario:'Patricia Nominas',email:'p.nominas@grcoir.com',area:'nominas',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-23 11:45'},
+  {id:'u8',nombre_usuario:'Roberto López',email:'r.lopez@grcoir.com',area:'ventas',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-25 10:50'},
+  {id:'u9',nombre_usuario:'Andrés Castillo',email:'a.castillo@grcoir.com',area:'cxp',roles_adicionales:'',activo:true,ultimo_acceso:'2025-06-24 14:12'},
+  {id:'u10',nombre_usuario:'Laura Vega',email:'l.vega@grcoir.com',area:'admin',roles_adicionales:'admin_parametros,auditor',activo:true,ultimo_acceso:'2025-06-25 11:00'},
+  {id:'u11',nombre_usuario:'Hugo Sánchez',email:'h.sanchez@grcoir.com',area:'ventas',roles_adicionales:'',activo:false,ultimo_acceso:'2025-03-10 09:00'},
+];
+ 
+const data = {
+  log_cambios: [
+    // Últimos cambios primero
+    {id:'lg1',entidad:'Agencia',entidad_id:'ag1',entidad_label:'Mindshare México',campo_modificado:'porcentaje_comision_agencia_default',campo_label:'% comisión default',valor_anterior:'12.00',valor_nuevo:'15.00',usuario_id:'u2',fecha_cambio:'2025-06-23 14:42',motivo_cambio:'Acuerdo anual revisado con Mindshare. Aprobado por dirección comercial.',ip_origen:'10.0.0.18'},
+    {id:'lg2',entidad:'Vendedor',entidad_id:'ve2',entidad_label:'Roberto López',campo_modificado:'porcentaje_comision_default',campo_label:'% comisión vendedor',valor_anterior:'3.50',valor_nuevo:'4.00',usuario_id:'u1',fecha_cambio:'2025-06-20 11:15',motivo_cambio:'Aumento de comisión por desempeño excepcional en Q2 2025.',ip_origen:'10.0.0.5'},
+    {id:'lg3',entidad:'Anunciante',entidad_id:'an2',entidad_label:'Grupo Bimbo',campo_modificado:'dias_credito_default',campo_label:'Días de crédito',valor_anterior:'30',valor_nuevo:'60',usuario_id:'u3',fecha_cambio:'2025-06-18 09:30',motivo_cambio:'Negociación con cliente. Ajuste anual conforme a nuevo contrato CT-2025-001.',ip_origen:'10.0.0.42'},
+    {id:'lg4',entidad:'Anunciante',entidad_id:'an3',entidad_label:'OXXO',campo_modificado:'dias_credito_default',campo_label:'Días de crédito',valor_anterior:'30',valor_nuevo:'45',usuario_id:'u3',fecha_cambio:'2025-06-15 16:08',motivo_cambio:'Solicitado por cliente en revisión trimestral.',ip_origen:'10.0.0.42'},
+    {id:'lg5',entidad:'TarifaPlaza',entidad_id:'ta3',entidad_label:'Monterrey FM 30s',campo_modificado:'tarifa_bruta',campo_label:'Tarifa bruta',valor_anterior:'8000.00',valor_nuevo:'8500.00',usuario_id:'u1',fecha_cambio:'2025-06-10 10:22',motivo_cambio:'Actualización de tarifas Q3 2025 según pricing nuevo.',ip_origen:'10.0.0.5'},
+    {id:'lg6',entidad:'Contrato',entidad_id:'co3',entidad_label:'CT-2025-003 (OXXO)',campo_modificado:'porcentaje_comision_contrato',campo_label:'% comisión contrato',valor_anterior:'15.00',valor_nuevo:'12.50',usuario_id:'u2',fecha_cambio:'2025-06-05 13:50',motivo_cambio:'Comisión preferencial por volumen anual OXXO.',ip_origen:'10.0.0.18'},
+    {id:'lg7',entidad:'Vendedor',entidad_id:'ve3',entidad_label:'Patricia Méndez',campo_modificado:'porcentaje_comision_default',campo_label:'% comisión vendedor',valor_anterior:'4.00',valor_nuevo:'4.50',usuario_id:'u1',fecha_cambio:'2025-05-28 15:20',motivo_cambio:'Promoción a ejecutiva senior.',ip_origen:'10.0.0.5'},
+    {id:'lg8',entidad:'Agencia',entidad_id:'ag3',entidad_label:'Initiative',campo_modificado:'porcentaje_comision_agencia_default',campo_label:'% comisión default',valor_anterior:'15.00',valor_nuevo:'12.50',usuario_id:'u2',fecha_cambio:'2025-05-22 09:45',motivo_cambio:'Renegociación contrato 2025 - comisión reducida acordada.',ip_origen:'10.0.0.18'},
+    {id:'lg9',entidad:'Anunciante',entidad_id:'an4',entidad_label:'Soriana',campo_modificado:'dias_credito_default',campo_label:'Días de crédito',valor_anterior:'60',valor_nuevo:'45',usuario_id:'u4',fecha_cambio:'2025-05-15 11:30',motivo_cambio:'Política nueva 2025: clientes en sector retail a 45 días.',ip_origen:'10.0.0.27'},
+    {id:'lg10',entidad:'CobranzaFactura',entidad_id:'cb3',entidad_label:'Factura A-001198',campo_modificado:'dias_credito',campo_label:'Días de crédito',valor_anterior:'30',valor_nuevo:'45',usuario_id:'u4',fecha_cambio:'2025-04-22 14:00',motivo_cambio:'Cliente reportó retraso por proceso interno. Extensión autorizada.',ip_origen:'10.0.0.27'},
+    {id:'lg11',entidad:'Vendedor',entidad_id:'ve4',entidad_label:'Eduardo Castro',campo_modificado:'porcentaje_comision_default',campo_label:'% comisión vendedor',valor_anterior:'3.00',valor_nuevo:'3.50',usuario_id:'u1',fecha_cambio:'2025-04-08 10:10',motivo_cambio:'Ajuste anual de comisiones.',ip_origen:'10.0.0.5'},
+    {id:'lg12',entidad:'Agencia',entidad_id:'ag2',entidad_label:'OMD México',campo_modificado:'porcentaje_comision_agencia_default',campo_label:'% comisión default',valor_anterior:'14.00',valor_nuevo:'15.00',usuario_id:'u2',fecha_cambio:'2025-03-30 16:30',motivo_cambio:'Acuerdo anual con OMD elevado a 15%.',ip_origen:'10.0.0.18'},
+    {id:'lg13',entidad:'TarifaPlaza',entidad_id:'ta1',entidad_label:'CDMX FM 30s',campo_modificado:'tarifa_bruta',campo_label:'Tarifa bruta',valor_anterior:'8500.00',valor_nuevo:'9000.00',usuario_id:'u1',fecha_cambio:'2025-03-15 12:00',motivo_cambio:'Actualización de tarifas Q2 2025.',ip_origen:'10.0.0.5'},
+    {id:'lg14',entidad:'Anunciante',entidad_id:'an1',entidad_label:'Televisa Publicidad',campo_modificado:'dias_credito_default',campo_label:'Días de crédito',valor_anterior:'45',valor_nuevo:'30',usuario_id:'u3',fecha_cambio:'2025-03-05 09:15',motivo_cambio:'Reducción de días por historial de pagos retrasados.',ip_origen:'10.0.0.42'},
+    {id:'lg15',entidad:'Agencia',entidad_id:'ag1',entidad_label:'Mindshare México',campo_modificado:'porcentaje_comision_agencia_default',campo_label:'% comisión default',valor_anterior:'10.00',valor_nuevo:'12.00',usuario_id:'u2',fecha_cambio:'2025-02-10 11:45',motivo_cambio:'Primera revisión anual 2025.',ip_origen:'10.0.0.18'},
+  ],
+ 
+  permisos_campo: [
+    {id:'pm1',entidad:'Agencia',campo:'porcentaje_comision_agencia_default',campo_label:'% comisión agencia (default)',areas_autorizadas:'direccion,admin',roles_adicionales_autorizados:'admin_parametros',requiere_audit_log:true,descripcion_permiso:'Parámetro comercial crítico. Solo dirección o admin pueden modificar, cada cambio queda registrado.',activo:true},
+    {id:'pm2',entidad:'Vendedor',campo:'porcentaje_comision_default',campo_label:'% comisión vendedor',areas_autorizadas:'direccion,admin',roles_adicionales_autorizados:'admin_parametros',requiere_audit_log:true,descripcion_permiso:'Define el % de comisión de los vendedores. Sensible salarialmente.',activo:true},
+    {id:'pm3',entidad:'TarifaPlaza',campo:'tarifa_bruta',campo_label:'Tarifa bruta de plaza',areas_autorizadas:'direccion,admin',roles_adicionales_autorizados:'',requiere_audit_log:true,descripcion_permiso:'Tarifa base usada como referencia comercial. Afecta cálculos de margen.',activo:true},
+    {id:'pm4',entidad:'Contrato',campo:'porcentaje_comision_contrato',campo_label:'% comisión específica del contrato',areas_autorizadas:'direccion,admin',roles_adicionales_autorizados:'',requiere_audit_log:true,descripcion_permiso:'Sobreescribe el % de comisión de la agencia para un contrato específico.',activo:true},
+    {id:'pm5',entidad:'Anunciante',campo:'dias_credito_default',campo_label:'Días de crédito (default)',areas_autorizadas:'ventas,cxc,direccion',roles_adicionales_autorizados:'',requiere_audit_log:false,descripcion_permiso:'Valor sugerido para nuevas cobranzas. Ventas y CxC pueden ajustar.',activo:true},
+    {id:'pm6',entidad:'CobranzaFactura',campo:'dias_credito',campo_label:'Días de crédito (cobranza)',areas_autorizadas:'ventas,cxc',roles_adicionales_autorizados:'',requiere_audit_log:false,descripcion_permiso:'Días aplicados a la cobranza específica. Pueden diferir del default del anunciante.',activo:true},
+    {id:'pm7',entidad:'OrdenEstacion',campo:'precio_spot',campo_label:'Precio por spot (orden interna)',areas_autorizadas:'ventas,direccion',roles_adicionales_autorizados:'',requiere_audit_log:false,descripcion_permiso:'Precio acordado con emisora. Núcleo del margen comercial.',activo:true},
+  ],
+};
+ 
+/* ════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════ */
+function findById(arr,id){return arr.find(x=>x.id===id)}
+function userInitials(name){
+  const parts = name.split(' ');
+  return (parts[0][0] + (parts[1]?parts[1][0]:'')).toUpperCase();
+}
+function userAvClass(area){ return 'av-'+area; }
+function areaLabel(area){
+  return {direccion:'Dirección',ventas:'Ventas',facturacion:'Facturación',cxc:'CxC',cxp:'CxP',tesoreria:'Tesorería',nominas:'Nóminas',admin:'Admin'}[area]||area;
+}
+function userBadge(u, full=true){
+  if (!u) return '<span style="color:var(--text3)">Usuario desconocido</span>';
+  return `<span class="user-mini">
+    <span class="user-mini-avatar ${userAvClass(u.area)}">${userInitials(u.nombre_usuario)}</span>
+    ${full?`<span><span style="font-weight:500">${u.nombre_usuario}</span> <span style="color:var(--text3);font-size:11px">· ${areaLabel(u.area)}</span></span>`:`<span>${u.nombre_usuario}</span>`}
+  </span>`;
+}
+ 
+let state = {view:'log_cambios', selected:null, filter:'all', search:'', usuarioFilter:'all', entidadFilter:'all'};
+ 
+function show(view){
+  state.view = view; state.selected = null; state.filter = 'all'; state.search=''; state.usuarioFilter='all'; state.entidadFilter='all';
+  document.querySelectorAll('.side-item').forEach(el=>el.classList.toggle('active', el.dataset.view===view));
+  render();
+}
+ 
+function updateCounts(){
+  document.getElementById('cnt-log').textContent = data.log_cambios.length;
+  document.getElementById('cnt-perm').textContent = data.permisos_campo.length;
+  document.getElementById('cnt-usr').textContent = usuarios.filter(u=>u.activo).length;
+}
+ 
+function render(){
+  const main = document.getElementById('main');
+  const r = renderers[state.view];
+  main.innerHTML = r ? r() : '<div style="padding:40px;color:var(--text3)">Vista no implementada.</div>';
+  updateCounts();
+}
+ 
+function emptyDetail(msg){
+  return `<div class="d-empty"><div class="d-icon">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.2"/></svg>
+  </div>${msg}</div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: LOG DE CAMBIOS
+════════════════════════════════════════════════ */
+const renderers = {};
+ 
+renderers.log_cambios = () => {
+  let items = data.log_cambios.filter(l=>{
+    if (state.usuarioFilter && state.usuarioFilter!=='all' && l.usuario_id!==state.usuarioFilter) return false;
+    if (state.entidadFilter && state.entidadFilter!=='all' && l.entidad!==state.entidadFilter) return false;
+    if (state.filter==='ultimo_mes'){
+      const d = new Date(l.fecha_cambio); const ago = new Date(); ago.setDate(ago.getDate()-30);
+      if (d < ago) return false;
+    }
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return l.entidad_label.toLowerCase().includes(q) || l.campo_label.toLowerCase().includes(q) || (l.motivo_cambio||'').toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.log_cambios, state.selected) : null;
+ 
+  const entidadesUnicas = [...new Set(data.log_cambios.map(l=>l.entidad))];
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Log de cambios a parámetros</div>
+      <div class="cat-sub">Registro inmutable de modificaciones a campos sensibles del sistema. Cada cambio guarda usuario, fecha exacta, valor anterior, valor nuevo, motivo e IP origen.</div>
+    </div>
+    <button class="btn btn-sm">⬇ Exportar log</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar entidad, campo, motivo…" value="${state.search}" oninput="state.search=this.value;render()">
+    <select class="sel-f" onchange="state.usuarioFilter=this.value;render()">
+      <option value="all">Todos los usuarios</option>
+      ${usuarios.map(u=>`<option value="${u.id}" ${state.usuarioFilter===u.id?'selected':''}>${u.nombre_usuario}</option>`).join('')}
+    </select>
+    <select class="sel-f" onchange="state.entidadFilter=this.value;render()">
+      <option value="all">Todas las entidades</option>
+      ${entidadesUnicas.map(e=>`<option value="${e}" ${state.entidadFilter===e?'selected':''}>${e}</option>`).join('')}
+    </select>
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todo el historial</button>
+    <button class="fp ${state.filter==='ultimo_mes'?'active':''}" onclick="state.filter='ultimo_mes';render()">Último mes</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.log_cambios.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:11%">Fecha y hora</th>
+          <th style="width:18%">Usuario</th>
+          <th style="width:13%">Entidad</th>
+          <th style="width:18%">Registro</th>
+          <th style="width:14%">Campo</th>
+          <th style="width:18%">Cambio</th>
+          <th style="width:8%" class="td-center">Log</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(l=>{
+            const u = findById(usuarios, l.usuario_id);
+            return `<tr class="${state.selected===l.id?'sel':''}" onclick="state.selected='${l.id}';render()">
+              <td class="td-mono" style="font-size:11px">${l.fecha_cambio.substring(0,10)}<br><span style="color:var(--text3)">${l.fecha_cambio.substring(11)}</span></td>
+              <td>${userBadge(u)}</td>
+              <td><span class="badge b-gray">${l.entidad}</span></td>
+              <td class="td-main">${l.entidad_label}</td>
+              <td class="td-2" style="font-size:12px">${l.campo_label}</td>
+              <td><span class="change-diff"><span class="change-old">${l.valor_anterior}</span><span class="change-arrow">→</span><span class="change-new">${l.valor_nuevo}</span></span></td>
+              <td class="td-center"><span style="color:var(--red-text)" title="Audit log activo">🔒</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderLogDetail(sel) : emptyDetail('Selecciona un cambio para ver el detalle completo')}</div>
+  </div>`;
+};
+ 
+function renderLogDetail(l){
+  const u = findById(usuarios, l.usuario_id);
+  return `
+    <div class="dh">
+      <div class="dh-name">${l.entidad_label}</div>
+      <div class="dh-sub">
+        <span class="badge b-gray">${l.entidad}</span>
+        <span class="badge b-red">🔒 Audit log</span>
+      </div>
+    </div>
+    <div class="db">
+      <div class="info-banner">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="6" width="8" height="6" rx="1.2" stroke="currentColor" stroke-width="1.4"/><path d="M5 6V4a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.4"/></svg>
+        <div><strong>Parámetro sensible</strong> — Este campo está protegido y todos los cambios quedan registrados de forma inmutable.</div>
+      </div>
+ 
+      <div class="sec">El cambio</div>
+      <div class="fl">Campo modificado</div>
+      <div class="fv" style="font-weight:500">${l.campo_label}</div>
+      <div class="fl">Nombre técnico</div>
+      <div class="fv mono" style="font-size:11px">${l.campo_modificado}</div>
+ 
+      <div style="background:var(--surface2);border-radius:var(--rl);padding:14px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--red-text);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:5px">Valor anterior</div>
+            <div style="font-family:var(--mono);font-size:17px;font-weight:600;color:var(--red-text);text-decoration:line-through">${l.valor_anterior}</div>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="color:var(--text3)"><path d="M6 10h10M12 5l5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--green-text);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:5px">Valor nuevo</div>
+            <div style="font-family:var(--mono);font-size:17px;font-weight:600;color:var(--green-text)">${l.valor_nuevo}</div>
+          </div>
+        </div>
+      </div>
+ 
+      <div class="sec">Quién y cuándo</div>
+      <div class="fl">Usuario</div>
+      <div style="margin-bottom:11px">${u?userBadge(u):'—'}</div>
+      <div class="fl">Correo</div>
+      <div class="fv mono" style="font-size:11px">${u?u.email:'—'}</div>
+      <div class="fl">Fecha y hora exacta</div>
+      <div class="fv mono">${l.fecha_cambio}</div>
+      <div class="fl">IP origen</div>
+      <div class="fv mono">${l.ip_origen}</div>
+ 
+      <div class="sec">Motivo del cambio</div>
+      <div class="fv muted" style="background:var(--surface2);padding:11px 13px;border-radius:var(--r);font-style:italic;line-height:1.5">${l.motivo_cambio}</div>
+ 
+      <div class="sec">Identificación del registro</div>
+      <div class="fl">Tipo de entidad</div>
+      <div class="fv">${l.entidad}</div>
+      <div class="fl">ID del registro</div>
+      <div class="fv mono" style="font-size:11px">${l.entidad_id}</div>
+      <div class="fl">Nombre</div>
+      <div class="fv">${l.entidad_label}</div>
+    </div>
+    <div class="df">
+      <button class="btn btn-sm">Ver registro original →</button>
+    </div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: PERMISOS POR CAMPO
+════════════════════════════════════════════════ */
+renderers.permisos = () => {
+  let items = data.permisos_campo.filter(p=>{
+    if (state.filter==='audit_log' && !p.requiere_audit_log) return false;
+    if (state.filter==='sin_audit_log' && p.requiere_audit_log) return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return p.entidad.toLowerCase().includes(q) || p.campo_label.toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.permisos_campo, state.selected) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Permisos por campo</div>
+      <div class="cat-sub">Configuración de qué áreas/roles pueden modificar cada campo protegido. Permite implementar permisos a nivel de campo más allá del acceso general por área.</div>
+    </div>
+    <button class="btn btn-red btn-sm" onclick="alert('Form para definir nuevo permiso')">+ Nuevo permiso</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar entidad o campo…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='audit_log'?'active':''}" onclick="state.filter='audit_log';render()">Con audit log</button>
+    <button class="fp ${state.filter==='sin_audit_log'?'active':''}" onclick="state.filter='sin_audit_log';render()">Sin audit log</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.permisos_campo.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:14%">Entidad</th>
+          <th style="width:24%">Campo</th>
+          <th style="width:22%">Áreas autorizadas</th>
+          <th style="width:18%">Roles adicionales</th>
+          <th style="width:10%" class="td-center">Audit log</th>
+          <th style="width:12%" class="td-center">Estatus</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(p=>{
+            const areas = p.areas_autorizadas.split(',').map(a=>a.trim());
+            const roles = p.roles_adicionales_autorizados ? p.roles_adicionales_autorizados.split(',').map(r=>r.trim()) : [];
+            return `<tr class="${state.selected===p.id?'sel':''}" onclick="state.selected='${p.id}';render()">
+              <td><span class="badge b-gray">${p.entidad}</span></td>
+              <td class="td-main">${p.campo_label}<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px">${p.campo}</div></td>
+              <td><div style="display:flex;gap:3px;flex-wrap:wrap">${areas.map(a=>`<span class="badge ${userAvClass(a).replace('av-','b-').replace('b-direccion','b-purple').replace('b-cxc','b-amber').replace('b-cxp','b-amber').replace('b-admin','b-red').replace('b-ventas','b-teal').replace('b-facturacion','b-blue')}" style="font-size:10px">${areaLabel(a)}</span>`).join('')}</div></td>
+              <td>${roles.length>0?roles.map(r=>`<span class="badge b-red" style="font-size:10px">${r}</span>`).join(' '):'<span style="color:var(--text3);font-size:11px">—</span>'}</td>
+              <td class="td-center">${p.requiere_audit_log?'<span style="color:var(--red-text);font-weight:600">🔒 Sí</span>':'<span style="color:var(--text3)">No</span>'}</td>
+              <td class="td-center"><span class="badge ${p.activo?'b-green':'b-gray'}">${p.activo?'Activo':'Inactivo'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderPermisoDetail(sel) : emptyDetail('Selecciona un permiso para ver el detalle')}</div>
+  </div>`;
+};
+ 
+function renderPermisoDetail(p){
+  const areas = p.areas_autorizadas.split(',').map(a=>a.trim());
+  const roles = p.roles_adicionales_autorizados ? p.roles_adicionales_autorizados.split(',').map(r=>r.trim()) : [];
+  // Cuántos cambios ha habido en este campo
+  const cambios = data.log_cambios.filter(l => l.entidad===p.entidad && l.campo_modificado===p.campo);
+ 
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${p.campo_label}</div>
+          <div class="dh-sub">
+            <span class="badge b-gray">${p.entidad}</span>
+            ${p.requiere_audit_log?'<span class="badge b-red">🔒 Audit log</span>':''}
+            <span class="badge ${p.activo?'b-green':'b-gray'}">${p.activo?'Activo':'Inactivo'}</span>
+          </div>
+        </div>
+        <button class="btn btn-sm">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="info-banner">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M7 4v3M7 9h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <div>${p.descripcion_permiso}</div>
+      </div>
+ 
+      <div class="sec">Campo protegido</div>
+      <div class="fl">Entidad</div>
+      <div class="fv">${p.entidad}</div>
+      <div class="fl">Campo (técnico)</div>
+      <div class="fv mono" style="font-size:11px">${p.campo}</div>
+      <div class="fl">Campo (etiqueta)</div>
+      <div class="fv" style="font-weight:500">${p.campo_label}</div>
+ 
+      <div class="sec">Quién puede modificar</div>
+      <div class="fl">Áreas autorizadas</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">${areas.map(a=>`<span class="badge ${userAvClass(a).replace('av-','b-').replace('b-direccion','b-purple').replace('b-cxc','b-amber').replace('b-cxp','b-amber').replace('b-admin','b-red').replace('b-ventas','b-teal').replace('b-facturacion','b-blue')}">${areaLabel(a)}</span>`).join('')}</div>
+ 
+      <div class="fl">Roles adicionales</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">${roles.length>0?roles.map(r=>`<span class="badge b-red">${r}</span>`).join(''):'<span style="color:var(--text3);font-size:12px">Sin roles adicionales</span>'}</div>
+ 
+      <div class="sec">Auditoría</div>
+      <div style="background:${p.requiere_audit_log?'var(--red-bg)':'var(--surface2)'};border-radius:var(--r);padding:11px 13px;margin-bottom:11px">
+        <div style="font-size:12px;font-weight:600;color:${p.requiere_audit_log?'var(--red-text)':'var(--text2)'};margin-bottom:4px">${p.requiere_audit_log?'🔒 Cambios registrados en log':'⚪ Cambios no requieren log'}</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.4">${p.requiere_audit_log?'Cada modificación queda registrada con usuario, fecha, valor anterior, valor nuevo y motivo. El usuario debe capturar el motivo al modificar.':'Los cambios a este campo no generan registros automáticos en el log de auditoría.'}</div>
+      </div>
+ 
+      <div class="sec">Historial de cambios (${cambios.length})</div>
+      ${cambios.length>0 ? cambios.slice(0,5).map(l=>{
+        const u = findById(usuarios, l.usuario_id);
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:11px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span>${userBadge(u, false)}</span>
+            <span style="color:var(--text3);font-family:var(--mono)">${l.fecha_cambio.substring(0,10)}</span>
+          </div>
+          <div><span class="change-diff"><span class="change-old" style="font-size:11px">${l.valor_anterior}</span><span class="change-arrow">→</span><span class="change-new" style="font-size:11px">${l.valor_nuevo}</span></span></div>
+          <div style="color:var(--text3);font-size:10px;margin-top:3px">${l.entidad_label}</div>
+        </div>`;
+      }).join('') + (cambios.length>5?`<div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0">+${cambios.length-5} cambios más</div>`:''):'<div style="font-size:12px;color:var(--text3);padding:6px 0">Sin cambios registrados.</div>'}
+    </div>
+    <div class="df">
+      <button class="btn btn-sm">${p.activo?'Desactivar':'Activar'}</button>
+      <button class="btn btn-red btn-sm">Editar permiso</button>
+    </div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: USUARIOS Y ÁREAS
+════════════════════════════════════════════════ */
+renderers.usuarios = () => {
+  let items = usuarios.filter(u=>{
+    if (state.filter==='activos' && !u.activo) return false;
+    if (state.filter==='inactivos' && u.activo) return false;
+    if (state.filter==='con_roles' && !u.roles_adicionales) return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return u.nombre_usuario.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(usuarios, state.selected) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Usuarios y áreas</div>
+      <div class="cat-sub">Usuarios internos del sistema. Cada uno pertenece a un área principal y puede tener roles adicionales que otorgan permisos sobre campos sensibles.</div>
+    </div>
+    <button class="btn btn-red btn-sm">+ Nuevo usuario</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar nombre o correo…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='activos'?'active':''}" onclick="state.filter='activos';render()">Activos</button>
+    <button class="fp ${state.filter==='inactivos'?'active':''}" onclick="state.filter='inactivos';render()">Inactivos</button>
+    <button class="fp ${state.filter==='con_roles'?'active':''}" onclick="state.filter='con_roles';render()">Con roles especiales</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${usuarios.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:25%">Usuario</th>
+          <th style="width:22%">Correo</th>
+          <th style="width:14%">Área principal</th>
+          <th style="width:21%">Roles adicionales</th>
+          <th style="width:11%">Último acceso</th>
+          <th style="width:7%" class="td-center">Estatus</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(u=>{
+            const roles = u.roles_adicionales ? u.roles_adicionales.split(',').map(r=>r.trim()) : [];
+            return `<tr class="${state.selected===u.id?'sel':''}" onclick="state.selected='${u.id}';render()">
+              <td>${userBadge(u, false)}</td>
+              <td class="td-mono" style="font-size:11px">${u.email}</td>
+              <td><span class="badge ${userAvClass(u.area).replace('av-','b-').replace('b-direccion','b-purple').replace('b-cxc','b-amber').replace('b-cxp','b-amber').replace('b-admin','b-red').replace('b-ventas','b-teal').replace('b-facturacion','b-blue')}">${areaLabel(u.area)}</span></td>
+              <td>${roles.length>0?roles.map(r=>`<span class="badge b-red" style="font-size:10px">${r}</span>`).join(' '):'<span style="color:var(--text3);font-size:11px">—</span>'}</td>
+              <td class="td-mono" style="font-size:11px">${u.ultimo_acceso}</td>
+              <td class="td-center"><span class="badge ${u.activo?'b-green':'b-gray'}">${u.activo?'Activo':'Inactivo'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderUsuarioDetail(sel) : emptyDetail('Selecciona un usuario para ver detalle y actividad')}</div>
+  </div>`;
+};
+ 
+function renderUsuarioDetail(u){
+  const roles = u.roles_adicionales ? u.roles_adicionales.split(',').map(r=>r.trim()) : [];
+  const cambiosHechos = data.log_cambios.filter(l => l.usuario_id === u.id);
+  const ultimosCambios = cambiosHechos.slice(0,5);
+ 
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div style="display:flex;align-items:center;gap:11px;margin-bottom:5px">
+            <div class="user-mini-avatar ${userAvClass(u.area)}" style="width:40px;height:40px;font-size:14px">${userInitials(u.nombre_usuario)}</div>
+            <div>
+              <div class="dh-name">${u.nombre_usuario}</div>
+              <div class="dh-sub" style="margin-top:2px">
+                <span class="badge ${userAvClass(u.area).replace('av-','b-').replace('b-direccion','b-purple').replace('b-cxc','b-amber').replace('b-cxp','b-amber').replace('b-admin','b-red').replace('b-ventas','b-teal').replace('b-facturacion','b-blue')}">${areaLabel(u.area)}</span>
+                <span class="badge ${u.activo?'b-green':'b-gray'}">${u.activo?'Activo':'Inactivo'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-sm">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl">Correo corporativo</div>
+      <div class="fv mono">${u.email}</div>
+      <div class="fl">Área principal</div>
+      <div class="fv">${areaLabel(u.area)}</div>
+ 
+      <div class="sec">Permisos especiales</div>
+      ${roles.length>0?`
+        <div class="info-banner">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="6" width="8" height="6" rx="1.2" stroke="currentColor" stroke-width="1.4"/><path d="M5 6V4a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.4"/></svg>
+          <div><strong>Usuario con roles elevados</strong> — Puede modificar campos protegidos del sistema. Cada cambio queda registrado en el log de auditoría.</div>
+        </div>
+        <div class="fl">Roles asignados</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">${roles.map(r=>`<span class="badge b-red">${r}</span>`).join('')}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:-7px;margin-bottom:11px">
+          ${roles.includes('admin_parametros')?'• admin_parametros: puede modificar todos los parámetros sensibles.<br>':''}
+          ${roles.includes('auditor')?'• auditor: acceso de solo lectura al log de auditoría y permisos.<br>':''}
+        </div>
+      `:`<div style="font-size:13px;color:var(--text3);padding:8px 0">Sin roles adicionales. Solo permisos estándar del área <strong>${areaLabel(u.area)}</strong>.</div>`}
+ 
+      <div class="sec">Actividad de auditoría (${cambiosHechos.length} cambios)</div>
+      ${ultimosCambios.length>0 ? ultimosCambios.map(l=>`
+        <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:11px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-weight:500">${l.entidad_label}</span>
+            <span style="color:var(--text3);font-family:var(--mono)">${l.fecha_cambio.substring(0,10)}</span>
+          </div>
+          <div style="color:var(--text3);font-size:10px;margin-bottom:3px">${l.campo_label}</div>
+          <span class="change-diff"><span class="change-old" style="font-size:11px">${l.valor_anterior}</span><span class="change-arrow">→</span><span class="change-new" style="font-size:11px">${l.valor_nuevo}</span></span>
+        </div>
+      `).join('') + (cambiosHechos.length>5?`<div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0;cursor:pointer" onclick="state.usuarioFilter='${u.id}';show('log_cambios')">Ver todos los ${cambiosHechos.length} cambios →</div>`:''):'<div style="font-size:12px;color:var(--text3);padding:6px 0">Sin actividad de auditoría.</div>'}
+ 
+      <div class="sec">Sesión</div>
+      <div class="fl">Último acceso</div>
+      <div class="fv mono">${u.ultimo_acceso}</div>
+    </div>
+    <div class="df">
+      <button class="btn btn-sm">${u.activo?'Desactivar':'Activar'} usuario</button>
+      <button class="btn btn-red btn-sm">Editar permisos</button>
+    </div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: RESUMEN DE ACTIVIDAD
+════════════════════════════════════════════════ */
+renderers.resumen = () => {
+  const totalCambios = data.log_cambios.length;
+  const usuariosActivos = [...new Set(data.log_cambios.map(l=>l.usuario_id))].length;
+  const camposProtegidos = data.permisos_campo.filter(p=>p.requiere_audit_log).length;
+ 
+  // Cambios último mes (junio)
+  const cambiosUltimoMes = data.log_cambios.filter(l=>l.fecha_cambio.substring(0,7)==='2025-06').length;
+ 
+  // Top usuarios
+  const cambiosPorUsuario = {};
+  data.log_cambios.forEach(l=>{
+    cambiosPorUsuario[l.usuario_id] = (cambiosPorUsuario[l.usuario_id]||0)+1;
+  });
+  const topUsuarios = Object.entries(cambiosPorUsuario).map(([uid,count])=>({usuario:findById(usuarios,uid),count})).sort((a,b)=>b.count-a.count).slice(0,5);
+ 
+  // Cambios por entidad
+  const cambiosPorEntidad = {};
+  data.log_cambios.forEach(l=>{
+    cambiosPorEntidad[l.entidad] = (cambiosPorEntidad[l.entidad]||0)+1;
+  });
+  const topEntidades = Object.entries(cambiosPorEntidad).map(([ent,count])=>({entidad:ent,count})).sort((a,b)=>b.count-a.count);
+ 
+  // Cambios por campo
+  const cambiosPorCampo = {};
+  data.log_cambios.forEach(l=>{
+    const key = l.entidad+'.'+l.campo_modificado;
+    cambiosPorCampo[key] = (cambiosPorCampo[key]||0)+1;
+  });
+  const topCampos = Object.entries(cambiosPorCampo).map(([k,count])=>{const [ent,campo]=k.split('.');return {entidad:ent,campo,count}}).sort((a,b)=>b.count-a.count).slice(0,5);
+ 
+  const maxU = Math.max(...topUsuarios.map(t=>t.count));
+  const maxE = Math.max(...topEntidades.map(t=>t.count));
+  const maxC = Math.max(...topCampos.map(t=>t.count));
+ 
+  // Actividad reciente (últimos 5)
+  const ultimosCambios = data.log_cambios.slice(0,5);
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Resumen de actividad de auditoría</div>
+      <div class="cat-sub">Vista general de quién modifica qué, con qué frecuencia y dónde. Detecta patrones de actividad para revisión proactiva.</div>
+    </div>
+    <button class="btn btn-sm">⬇ Exportar resumen</button>
+  </div>
+ 
+  <div class="dashboard">
+    <div class="kpi-grid">
+      <div class="kpi alert">
+        <div class="kpi-lbl">Total cambios registrados</div>
+        <div class="kpi-val alert">${totalCambios}</div>
+        <div class="kpi-sub">en el historial completo</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Cambios último mes</div>
+        <div class="kpi-val">${cambiosUltimoMes}</div>
+        <div class="kpi-sub">junio 2025</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Usuarios con actividad</div>
+        <div class="kpi-val">${usuariosActivos}</div>
+        <div class="kpi-sub">de ${usuarios.filter(u=>u.activo).length} activos</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Campos protegidos</div>
+        <div class="kpi-val">${camposProtegidos}</div>
+        <div class="kpi-sub">con audit log activo</div>
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Top usuarios con más cambios<span class="card-title-sub">historial completo</span></div>
+        ${topUsuarios.map(t=>`
+          <div style="display:grid;grid-template-columns:180px 1fr 40px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <div>${userBadge(t.usuario, true)}</div>
+            <div style="height:16px;background:var(--surface2);border-radius:3px;overflow:hidden"><div style="height:100%;width:${(t.count/maxU)*100}%;background:var(--red);border-radius:3px"></div></div>
+            <div style="text-align:right;font-family:var(--mono);font-weight:600">${t.count}</div>
+          </div>
+        `).join('')}
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Cambios por entidad<span class="card-title-sub">qué se modifica</span></div>
+        ${topEntidades.map(t=>`
+          <div style="display:grid;grid-template-columns:140px 1fr 40px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <div><span class="badge b-gray">${t.entidad}</span></div>
+            <div style="height:16px;background:var(--surface2);border-radius:3px;overflow:hidden"><div style="height:100%;width:${(t.count/maxE)*100}%;background:var(--amber);border-radius:3px"></div></div>
+            <div style="text-align:right;font-family:var(--mono);font-weight:600">${t.count}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Campos más modificados<span class="card-title-sub">top 5</span></div>
+        ${topCampos.map(t=>`
+          <div style="display:grid;grid-template-columns:1fr 60px 40px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <div>
+              <div style="font-weight:500">${t.entidad}.${t.campo}</div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px">${t.campo}</div>
+            </div>
+            <div style="height:12px;background:var(--surface2);border-radius:3px;overflow:hidden"><div style="height:100%;width:${(t.count/maxC)*100}%;background:var(--purple);border-radius:3px"></div></div>
+            <div style="text-align:right;font-family:var(--mono);font-weight:600">${t.count}</div>
+          </div>
+        `).join('')}
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Actividad reciente<span class="card-title-sub">últimos 5 cambios</span></div>
+        ${ultimosCambios.map(l=>{
+          const u = findById(usuarios, l.usuario_id);
+          return `<div class="activity-item">
+            <div class="activity-time">${l.fecha_cambio.substring(5,10)}<br>${l.fecha_cambio.substring(11)}</div>
+            <div class="activity-body">
+              <div style="margin-bottom:3px">${userBadge(u, false)} <span style="color:var(--text3)">modificó</span> <strong>${l.campo_label}</strong> en ${l.entidad_label}</div>
+              <span class="change-diff"><span class="change-old" style="font-size:11px">${l.valor_anterior}</span><span class="change-arrow">→</span><span class="change-new" style="font-size:11px">${l.valor_nuevo}</span></span>
+            </div>
+          </div>`;
+        }).join('')}
+        <div style="text-align:center;padding-top:10px"><a onclick="show('log_cambios')" style="font-size:12px;color:var(--red);cursor:pointer;font-weight:500">Ver historial completo →</a></div>
+      </div>
+    </div>
+  </div>`;
+};
+ 
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+render();
+</script>
+</body>
+</html>

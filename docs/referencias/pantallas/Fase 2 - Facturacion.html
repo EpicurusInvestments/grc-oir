@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GRC-OIR — Fase 2: Facturación</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f3ef;--surface:#fff;--surface2:#f0efe9;--surface3:#e6e5de;
+  --border:#e0dfd8;--border-med:#c8c7bf;--border-strong:#b0afa8;
+  --text:#181816;--text2:#5c5c58;--text3:#9c9c96;
+  --purple:#534AB7;--purple-bg:#EEEDFE;--purple-text:#3C3489;--purple-border:#AFA9EC;
+  --teal:#0F6E56;--teal-bg:#E1F5EE;--teal-text:#085041;--teal-border:#5DCAA5;
+  --blue:#185FA5;--blue-bg:#E6F1FB;--blue-text:#0C447C;--blue-border:#85B7EB;
+  --amber-bg:#FAEEDA;--amber-text:#633806;--amber-border:#FAC775;
+  --red-bg:#FCEBEB;--red-text:#791F1F;
+  --green-bg:#EAF3DE;--green-text:#27500A;
+  --gray-bg:#F1EFE8;--gray-text:#444441;
+  --r:8px;--rl:12px;
+  --font:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  --mono:'IBM Plex Mono','SF Mono','Consolas',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+ 
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100}
+.logo{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--purple)}
+.fase-tag{font-size:11px;font-family:var(--mono);background:var(--blue-bg);color:var(--blue-text);padding:3px 10px;border-radius:20px;font-weight:500}
+.header-spacer{flex:1}
+.user-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--blue-bg);color:var(--blue-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+ 
+.app-body{flex:1;display:flex;min-height:0;overflow:hidden}
+ 
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:14px 0}
+.side-section{margin-bottom:18px}
+.side-title{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:0 18px;margin-bottom:6px}
+.side-item{display:flex;align-items:center;gap:9px;padding:7px 18px;font-size:13px;color:var(--text2);cursor:pointer;border-left:2px solid transparent;transition:all .12s;user-select:none}
+.side-item:hover{color:var(--text);background:var(--surface2)}
+.side-item.active{color:var(--blue);background:var(--blue-bg);border-left-color:var(--blue);font-weight:500}
+.side-icon{width:14px;height:14px;flex-shrink:0;opacity:.8}
+.side-count{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:8px}
+.side-item.active .side-count{background:#fff;color:var(--blue-text)}
+.side-count.urgent{background:var(--red-bg);color:var(--red-text)}
+ 
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+ 
+.cat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.cat-title{font-size:18px;font-weight:600}
+.cat-sub{font-size:12px;color:var(--text3);margin-top:3px;max-width:820px}
+ 
+.toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.search{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 12px;font-size:13px;font-family:var(--font);color:var(--text);width:240px;outline:none;transition:border-color .15s}
+.search:focus{border-color:var(--blue)}
+.search::placeholder{color:var(--text3)}
+.sel-f{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 10px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;cursor:pointer}
+.sel-f:focus{border-color:var(--blue)}
+.fp{height:28px;padding:0 13px;border-radius:20px;border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
+.fp:hover{color:var(--text);border-color:var(--border-strong)}
+.fp.active{background:var(--blue-bg);border-color:var(--blue-border);color:var(--blue-text);font-weight:500}
+.tb-spacer{flex:1}
+.tb-count{font-size:12px;color:var(--text3);font-family:var(--mono)}
+ 
+.split{display:flex;flex:1;overflow:hidden;min-height:0}
+.list-pane{flex:1;overflow:auto;background:var(--surface)}
+.detail-pane{width:480px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+ 
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{padding:9px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0;white-space:nowrap;z-index:1}
+tbody td{padding:11px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr{cursor:pointer;transition:background .1s}
+tbody tr:hover td{background:var(--surface2)}
+tbody tr.sel td{background:var(--blue-bg)}
+.td-main{font-weight:500;color:var(--text)}
+.td-2{color:var(--text2)}
+.td-mono{font-family:var(--mono);font-size:12px;color:var(--text2)}
+.td-right{text-align:right}
+.td-center{text-align:center}
+ 
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.b-purple{background:var(--purple-bg);color:var(--purple-text)}
+.b-teal{background:var(--teal-bg);color:var(--teal-text)}
+.b-blue{background:var(--blue-bg);color:var(--blue-text)}
+.b-amber{background:var(--amber-bg);color:var(--amber-text)}
+.b-red{background:var(--red-bg);color:var(--red-text)}
+.b-green{background:var(--green-bg);color:var(--green-text)}
+.b-gray{background:var(--gray-bg);color:var(--gray-text)}
+.b-dark{background:var(--text);color:#fff}
+ 
+/* Estatus de facturación */
+.st-preparada{background:#FAEEDA;color:#633806}
+.st-enviada_a_timbrado{background:#EEEDFE;color:#3C3489}
+.st-timbrada{background:#E6F1FB;color:#0C447C}
+.st-entregada{background:#E1F5EE;color:#085041}
+.st-cobrada{background:#181816;color:#fff}
+.st-cancelada{background:#F1EFE8;color:#9c9c96}
+.st-recibida{background:#FAEEDA;color:#633806}
+.st-en_revision{background:#EEEDFE;color:#3C3489}
+.st-autorizada{background:#E6F1FB;color:#0C447C}
+.st-pagada{background:#E1F5EE;color:#085041}
+ 
+.d-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);font-size:13px;padding:32px;text-align:center}
+.d-icon{width:40px;height:40px;border-radius:50%;border:1px solid var(--border-med);display:flex;align-items:center;justify-content:center;color:var(--text3)}
+.dh{padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dh-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.dh-name{font-size:16px;font-weight:600;color:var(--text)}
+.dh-sub{font-size:12px;color:var(--text2);margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.db{flex:1;overflow-y:auto;padding:14px 18px}
+ 
+.sec{font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin:16px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:6px}
+.sec:first-child{margin-top:0}
+.sec-action{font-size:11px;color:var(--blue);cursor:pointer;font-weight:500;text-transform:none;letter-spacing:0}
+.sec-action:hover{text-decoration:underline}
+ 
+.fl{font-size:11px;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:5px}
+.fl-required::after{content:'*';color:var(--red-text);margin-left:2px}
+.fl-tag{font-size:9px;font-weight:600;padding:1px 5px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em}
+.fl-tag.cat{background:var(--purple-bg);color:var(--purple-text)}
+.fl-tag.her{background:var(--amber-bg);color:var(--amber-text)}
+.fl-tag.calc{background:var(--blue-bg);color:var(--blue-text)}
+.fl-tag.der{background:#F1EFE8;color:#5F5E5A}
+.fl-tag.timbrado{background:var(--purple-bg);color:var(--purple-text)}
+.fv{font-size:13px;color:var(--text);margin-bottom:11px;min-height:18px}
+.fv.mono{font-family:var(--mono);font-size:12px}
+.fv.muted{color:var(--text2)}
+.fv.link{color:var(--blue);cursor:pointer}
+.fv.link:hover{text-decoration:underline}
+.fv.big{font-size:18px;font-weight:600}
+.fi{width:100%;height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 11px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;transition:border-color .15s}
+.fi:focus{border-color:var(--blue);background:var(--surface)}
+.fi:read-only{background:var(--surface3);color:var(--text2);cursor:not-allowed}
+.fsel{width:100%;height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 9px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;cursor:pointer}
+.fsel:focus{border-color:var(--blue);background:var(--surface)}
+.ftxt{width:100%;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:8px 11px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;resize:vertical;min-height:60px}
+.ftxt:focus{border-color:var(--blue);background:var(--surface)}
+.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.r3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+ 
+.df{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;background:var(--surface)}
+ 
+.btn{height:34px;padding:0 14px;border-radius:var(--r);border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:13px;color:var(--text);cursor:pointer;transition:all .12s;white-space:nowrap;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--surface2)}
+.btn:active{transform:scale(.98)}
+.btn-sm{height:28px;padding:0 11px;font-size:12px}
+.btn-xs{height:24px;padding:0 10px;font-size:11px}
+.btn-blue{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-blue:hover{background:#134a82;color:#fff}
+.btn-teal{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn-teal:hover{background:#0d5e49;color:#fff}
+.btn-purple{background:var(--purple);border-color:var(--purple);color:#fff}
+.btn-purple:hover{background:#4840a0;color:#fff}
+.btn-amber{background:#BA7517;border-color:#BA7517;color:#fff}
+.btn-amber:hover{background:#a06412;color:#fff}
+.btn-dark{background:var(--text);border-color:var(--text);color:#fff}
+.btn-dark:hover{background:#2c2c2a;color:#fff}
+ 
+/* Timeline de facturación */
+.timeline{display:flex;align-items:center;margin:8px 0 14px;padding:8px 0}
+.tl-step{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;font-size:10px}
+.tl-step:not(:last-child)::after{content:'';position:absolute;top:11px;left:50%;width:100%;height:1.5px;background:var(--border-med);z-index:0}
+.tl-step.done:not(:last-child)::after{background:var(--blue)}
+.tl-dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--border-med);background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;z-index:1;color:var(--text3)}
+.tl-step.done .tl-dot{background:var(--blue);border-color:var(--blue);color:#fff}
+.tl-step.current .tl-dot{background:var(--purple);border-color:var(--purple);color:#fff;box-shadow:0 0 0 3px var(--purple-bg)}
+.tl-lbl{margin-top:5px;color:var(--text3);text-align:center;font-size:9px;line-height:1.2;max-width:65px}
+.tl-step.done .tl-lbl{color:var(--blue-text)}
+.tl-step.current .tl-lbl{color:var(--purple-text);font-weight:600}
+ 
+/* Metric cards */
+.mc-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px}
+.mc{background:var(--surface2);border-radius:var(--r);padding:10px 12px}
+.mc-lbl{font-size:10px;color:var(--text3);margin-bottom:3px;letter-spacing:.03em;text-transform:uppercase;font-weight:600}
+.mc-val{font-size:17px;font-weight:600;font-family:var(--mono);color:var(--text)}
+.mc-sub{font-size:11px;color:var(--text3);margin-top:1px}
+ 
+/* Heredado */
+.heredado-block{background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:var(--r);padding:11px 13px;margin-bottom:14px;font-size:12px}
+.heredado-title{font-size:10px;font-weight:600;color:var(--amber-text);letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px;display:flex;align-items:center;gap:5px}
+.heredado-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px 14px}
+.heredado-row{display:flex;flex-direction:column}
+.heredado-lbl{font-size:10px;color:var(--amber-text);opacity:.8}
+.heredado-val{font-size:12px;color:var(--text)}
+ 
+/* Timbrado banner */
+.timbrado-banner{background:var(--purple-bg);border:1px solid var(--purple-border);border-radius:var(--rl);padding:14px 16px;margin-bottom:14px}
+.tb-title{font-size:11px;font-weight:600;color:var(--purple-text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px;display:flex;align-items:center;gap:6px}
+.tb-msg{font-size:12px;color:var(--text2);line-height:1.5}
+ 
+/* OE allocation row */
+.alloc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--r);margin-bottom:5px;font-size:12px}
+.alloc-row .lbl{flex:1}
+.alloc-row .input{width:120px}
+ 
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
+</style>
+</head>
+<body>
+ 
+<header class="app-header">
+  <div class="logo">GRC<span>·</span>OIR</div>
+  <div class="fase-tag">FASE 2 · FACTURACIÓN</div>
+  <div class="header-spacer"></div>
+  <div class="user-chip">
+    <div class="user-avatar">MR</div>
+    <span>Facturación · maria.ramos</span>
+  </div>
+</header>
+ 
+<div class="app-body">
+ 
+  <aside class="sidebar">
+    <div class="side-section">
+      <div class="side-title">Facturación al cliente</div>
+      <div class="side-item active" data-view="factura_cliente" onclick="show('factura_cliente')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M10 2v3h3" stroke="currentColor" stroke-width="1.4"/><path d="M6 9h4M6 11h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Facturas al cliente <span class="side-count" id="cnt-fc">0</span>
+      </div>
+      <div class="side-item" data-view="ordenes_para_facturar" onclick="show('ordenes_para_facturar')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M4 8l3 3 5-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Listas para facturar <span class="side-count urgent" id="cnt-lf">0</span>
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Facturas recibidas</div>
+      <div class="side-item" data-view="factura_afiliado" onclick="show('factura_afiliado')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M2 12V4l4 4 4-4 4 4v4M2 14h12" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        De afiliados <span class="side-count" id="cnt-fa">0</span>
+      </div>
+      <div class="side-item" data-view="factura_agencia" onclick="show('factura_agencia')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7h6M5 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        De agencias <span class="side-count" id="cnt-fg">0</span>
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Costos</div>
+      <div class="side-item" data-view="costo_adicional" onclick="show('costo_adicional')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v6M6 7h3.5a1.5 1.5 0 010 3H6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Costos adicionales <span class="side-count" id="cnt-co">0</span>
+      </div>
+    </div>
+  </aside>
+ 
+  <main class="main" id="main"></main>
+</div>
+ 
+<script>
+/* ════════════════════════════════════════════════
+   DATOS DE REFERENCIA (catálogos + Fase 1 entities)
+════════════════════════════════════════════════ */
+const cat = {
+  agencia: [
+    {id:'ag1',nombre_agencia:'Mindshare México',rfc_agencia:'MME050610EF7',porcentaje_comision_agencia_default:15},
+    {id:'ag2',nombre_agencia:'OMD México',rfc_agencia:'OMD120815GH9',porcentaje_comision_agencia_default:15},
+    {id:'ag3',nombre_agencia:'Initiative',rfc_agencia:'INI081205AB7',porcentaje_comision_agencia_default:12.5},
+  ],
+  anunciante: [
+    {id:'an1',agencia_id:'ag1',nombre_comercial:'Televisa Publicidad',nombre_fiscal:'Televisa Publicidad SA de CV',rfc_anunciante:'TPU900101XX1',localizacion:'CDMX, Av. Vasco de Quiroga 2000',dias_credito_default:30},
+    {id:'an2',agencia_id:'ag2',nombre_comercial:'Grupo Bimbo',nombre_fiscal:'Bimbo SA de CV',rfc_anunciante:'GBI971120AB3',localizacion:'CDMX, Prol. Paseo Reforma 1000',dias_credito_default:60},
+    {id:'an3',agencia_id:'ag1',nombre_comercial:'OXXO',nombre_fiscal:'Cadena Comercial OXXO SA de CV',rfc_anunciante:'OCO030401CD5',localizacion:'Monterrey, NL · Av. Lázaro Cárdenas 2225',dias_credito_default:45},
+    {id:'an4',agencia_id:'ag2',nombre_comercial:'Soriana',nombre_fiscal:'Organización Soriana SAB de CV',rfc_anunciante:'SOR930201IJ2',localizacion:'Monterrey, NL · A. de Rodas 3102',dias_credito_default:45},
+    {id:'an5',agencia_id:null,nombre_comercial:'Modelo',nombre_fiscal:'Cervecería Modelo SA de CV',rfc_anunciante:'CMO920510KL3',localizacion:'CDMX, Javier Barros Sierra 555',dias_credito_default:30},
+  ],
+  vendedor: [
+    {id:'ve1',nombre_vendedor:'Carmen Aristegui'},
+    {id:'ve2',nombre_vendedor:'Roberto López'},
+    {id:'ve3',nombre_vendedor:'Patricia Méndez'},
+    {id:'ve4',nombre_vendedor:'Eduardo Castro'},
+  ],
+  empresa_facturadora: [
+    {id:'ef1',nombre_empresa:'OIR Comercial',rfc_empresa:'OCO900101AB1',direccion_empresa:'CDMX, Insurgentes Sur 1900'},
+    {id:'ef2',nombre_empresa:'GRC Servicios',rfc_empresa:'GRC050610CD3',direccion_empresa:'CDMX, Reforma 222'},
+  ],
+  afiliado: [
+    {id:'af1',nombre_afiliado:'Multimedios Estrellas de Oro',razon_social_afiliado:'Multimedios Estrellas de Oro SA de CV',rfc_afiliado:'MEO850101OP2'},
+    {id:'af2',nombre_afiliado:'OIR Bajío',razon_social_afiliado:'OIR Bajío SA de CV',rfc_afiliado:'OIR920301AB1'},
+    {id:'af3',nombre_afiliado:'Grupo Radio Centro',razon_social_afiliado:'Grupo Radio Centro SAB de CV',rfc_afiliado:'GRC640515CD3'},
+  ],
+  estacion: [
+    {id:'es1',afiliado_id:'af1',nombre_estacion:'XHMT-FM',frecuencia:'90.1 FM'},
+    {id:'es2',afiliado_id:'af1',nombre_estacion:'XHMA-AM',frecuencia:'1080 AM'},
+    {id:'es3',afiliado_id:'af1',nombre_estacion:'XHREY-FM',frecuencia:'100.3 FM'},
+    {id:'es4',afiliado_id:'af2',nombre_estacion:'XHLE-FM',frecuencia:'97.7 FM'},
+    {id:'es6',afiliado_id:'af3',nombre_estacion:'XEQR-AM',frecuencia:'1030 AM'},
+    {id:'es7',afiliado_id:'af3',nombre_estacion:'XHRC-FM',frecuencia:'100.9 FM'},
+  ],
+  categoria: [
+    {id:'cat2',nombre_categoria:'Alimentos y bebidas'},
+    {id:'cat3',nombre_categoria:'Retail'},
+    {id:'cat4',nombre_categoria:'Telecomunicaciones'},
+  ],
+  metodo_pago: [
+    {id:'mp1',clave_metodo:'03',descripcion_metodo:'Transferencia electrónica'},
+    {id:'mp2',clave_metodo:'02',descripcion_metodo:'Cheque nominativo'},
+    {id:'mp3',clave_metodo:'04',descripcion_metodo:'Tarjeta de crédito'},
+    {id:'mp4',clave_metodo:'99',descripcion_metodo:'Por definir'},
+  ],
+  cuenta_contable: [
+    {id:'cc1',codigo_cuenta:'4100-001',nombre_cuenta:'Ingresos por publicidad radiofónica',tipo_cuenta:'ingreso'},
+    {id:'cc2',codigo_cuenta:'4100-002',nombre_cuenta:'Ingresos por publicidad TV',tipo_cuenta:'ingreso'},
+    {id:'cc3',codigo_cuenta:'4100-003',nombre_cuenta:'Ingresos por menciones',tipo_cuenta:'ingreso'},
+    {id:'cc4',codigo_cuenta:'5100-001',nombre_cuenta:'Costo de transmisión - Afiliados',tipo_cuenta:'costo'},
+  ],
+  layout_factura: [
+    {id:'lf1',nombre_layout:'Estándar OIR',descripcion_layout:'Layout estándar de facturación'},
+    {id:'lf2',nombre_layout:'Premium / Corporativo',descripcion_layout:'Para clientes corporativos con desglose detallado'},
+    {id:'lf3',nombre_layout:'Resumido',descripcion_layout:'Layout resumido para campañas cortas'},
+  ],
+  contrato: [
+    {id:'co1',anunciante_id:'an2',numero_contrato:'CT-2025-001',nombre_contrato:'Anual 2025 - Grupo Bimbo'},
+    {id:'co2',anunciante_id:'an1',numero_contrato:'CT-2025-002',nombre_contrato:'Campaña Verano 2025'},
+    {id:'co3',anunciante_id:'an3',numero_contrato:'CT-2025-003',nombre_contrato:'Anual OXXO 2025'},
+  ],
+};
+ 
+// Órdenes del cliente (Fase 1) — solo las que importan para facturación
+const ordenes_cliente = [
+  {id:'oc1',folio_orden:'OC-2025-0041',numero_orden_cliente:'PO-BIMBO-0419',fecha_venta:'2025-04-15',empresa_facturadora_id:'ef1',vendedor_principal_id:'ve2',anunciante_id:'an2',agencia_id:'ag2',contrato_id:'co1',producto:'Pan Bimbo Integral 680g',categoria_id:'cat2',fecha_inicio_campania:'2025-05-01',fecha_fin_campania:'2025-05-31',total_spots:120,precio_unitario:8500,duracion_spot:'30s',facturacion_directa_cliente:false,direccion_facturacion:'CDMX, Reforma 1000',estatus_orden:'facturada'},
+  {id:'oc2',folio_orden:'OC-2025-0042',numero_orden_cliente:'OXXO-MAY-001',fecha_venta:'2025-04-22',empresa_facturadora_id:'ef1',vendedor_principal_id:'ve3',anunciante_id:'an3',agencia_id:'ag1',contrato_id:'co3',producto:'OXXO Tiendas - Promo mensual',categoria_id:'cat3',fecha_inicio_campania:'2025-05-15',fecha_fin_campania:'2025-06-15',total_spots:80,precio_unitario:7800,duracion_spot:'30s',facturacion_directa_cliente:false,direccion_facturacion:'Monterrey, NL · Av. Lázaro Cárdenas 2225',estatus_orden:'orden_cerrada'},
+  {id:'oc3',folio_orden:'OC-2025-0043',numero_orden_cliente:'TVPUB-CV-2025',fecha_venta:'2025-05-05',empresa_facturadora_id:'ef1',vendedor_principal_id:'ve2',anunciante_id:'an1',agencia_id:'ag1',contrato_id:'co2',producto:'Televisa Deportes - Final Liga MX',categoria_id:'cat4',fecha_inicio_campania:'2025-05-20',fecha_fin_campania:'2025-06-10',total_spots:150,precio_unitario:9500,duracion_spot:'30s',facturacion_directa_cliente:false,direccion_facturacion:'CDMX, Vasco de Quiroga 2000',estatus_orden:'orden_cerrada'},
+  {id:'oc7',folio_orden:'OC-2025-0039',numero_orden_cliente:'BIM-Q1-2025',fecha_venta:'2025-02-10',empresa_facturadora_id:'ef1',vendedor_principal_id:'ve2',anunciante_id:'an2',agencia_id:'ag2',contrato_id:'co1',producto:'Bimbo Cero Cero',categoria_id:'cat2',fecha_inicio_campania:'2025-03-01',fecha_fin_campania:'2025-03-31',total_spots:100,precio_unitario:8200,duracion_spot:'30s',facturacion_directa_cliente:false,direccion_facturacion:'CDMX, Reforma 1000',estatus_orden:'cobrada'},
+];
+ 
+const ordenes_estacion = [
+  {id:'oe1',folio_orden_estacion:'OE-2025-0041A',orden_id:'oc1',estacion_id:'es1',spots_asignados:48,precio_spot:8500,importe_emisora:285600},
+  {id:'oe2',folio_orden_estacion:'OE-2025-0041B',orden_id:'oc1',estacion_id:'es2',spots_asignados:40,precio_spot:6000,importe_emisora:168000},
+  {id:'oe3',folio_orden_estacion:'OE-2025-0041C',orden_id:'oc1',estacion_id:'es4',spots_asignados:28,precio_spot:6500,importe_emisora:127400},
+  {id:'oe4',folio_orden_estacion:'OE-2025-0042A',orden_id:'oc2',estacion_id:'es1',spots_asignados:40,precio_spot:7800,importe_emisora:234000},
+  {id:'oe5',folio_orden_estacion:'OE-2025-0042B',orden_id:'oc2',estacion_id:'es6',spots_asignados:40,precio_spot:7500,importe_emisora:225000},
+  {id:'oe6',folio_orden_estacion:'OE-2025-0043A',orden_id:'oc3',estacion_id:'es6',spots_asignados:55,precio_spot:9500,importe_emisora:365750},
+  {id:'oe7',folio_orden_estacion:'OE-2025-0043B',orden_id:'oc3',estacion_id:'es7',spots_asignados:48,precio_spot:9500,importe_emisora:319200},
+];
+ 
+/* ════════════════════════════════════════════════
+   DATOS FASE 2
+════════════════════════════════════════════════ */
+const data = {
+  factura_cliente: [
+    {
+      id:'fc1', numero_factura:'A-001245', numero_pedido:'PO-BIMBO-0419', referencia_adicional:'Campaña relanzamiento Bimbo Mayo 25',
+      orden_id:'oc1', factura_relacionada_id:null,
+      empresa_facturadora_id:'ef1',
+      anunciante_id:'an2', agencia_id:'ag2',
+      razon_social_facturacion:'Bimbo SA de CV', rfc_facturacion:'GBI971120AB3',
+      direccion_facturacion:'CDMX, Reforma 1000',
+      descripcion_factura:'Servicios de transmisión publicitaria — Campaña Pan Bimbo Integral 680g del 01 al 31 de mayo 2025. 120 spots de 30s en estaciones radiofónicas según orden PO-BIMBO-0419.',
+      observaciones_factura:'Pago a 60 días neto.',
+      fecha_inicio_transmision:'2025-05-01', fecha_fin_transmision:'2025-05-31',
+      fecha_factura:'2025-06-05', fecha_entrega_factura:'2025-06-07',
+      subtotal_factura:1020000, iva_factura:163200, total_factura:1183200,
+      cuenta_contable_id:'cc1', metodo_pago_id:'mp1', layout_factura_id:'lf2',
+      info_cuenta_pago:'BBVA · CLABE 012180001234567890 · OIR Comercial SA',
+      estado_facturacion:'entregada',
+      folio_fiscal_sat:'A1B2C3D4-E5F6-7890-ABCD-EF1234567890', fecha_timbrado:'2025-06-05',
+      xml_path:'/facturas/2025/A-001245.xml', pdf_path:'/facturas/2025/A-001245.pdf',
+      created_by:'mr', created_at:'2025-06-04'
+    },
+    {
+      id:'fc2', numero_factura:'A-001220', numero_pedido:'BIM-Q1-2025', referencia_adicional:'Bimbo Cero Cero Q1',
+      orden_id:'oc7', factura_relacionada_id:null,
+      empresa_facturadora_id:'ef1', anunciante_id:'an2', agencia_id:'ag2',
+      razon_social_facturacion:'Bimbo SA de CV', rfc_facturacion:'GBI971120AB3',
+      direccion_facturacion:'CDMX, Reforma 1000',
+      descripcion_factura:'Servicios de transmisión publicitaria — Bimbo Cero Cero del 01 al 31 de marzo 2025.',
+      observaciones_factura:'',
+      fecha_inicio_transmision:'2025-03-01', fecha_fin_transmision:'2025-03-31',
+      fecha_factura:'2025-04-05', fecha_entrega_factura:'2025-04-07',
+      subtotal_factura:820000, iva_factura:131200, total_factura:951200,
+      cuenta_contable_id:'cc1', metodo_pago_id:'mp1', layout_factura_id:'lf2',
+      info_cuenta_pago:'BBVA · CLABE 012180001234567890 · OIR Comercial SA',
+      estado_facturacion:'cobrada',
+      folio_fiscal_sat:'F1G2H3I4-J5K6-7890-ABCD-EF1234567890', fecha_timbrado:'2025-04-05',
+      xml_path:'/facturas/2025/A-001220.xml', pdf_path:'/facturas/2025/A-001220.pdf',
+      created_by:'mr', created_at:'2025-04-04'
+    },
+  ],
+ 
+  factura_afiliado: [
+    {
+      id:'fa1', afiliado_id:'af1', factura_emisora:'MM-2025-5621',
+      razon_social_afiliada:'Multimedios Estrellas de Oro SA de CV',
+      fecha_factura_afiliado:'2025-06-08',
+      monto_factura_afiliado:453600, iva_factura_afiliado:72576, total_factura_afiliado:526176,
+      archivo_nombre:'fact_multimedios_mayo.pdf', archivo_path:'/recibidas/af/MM-2025-5621.pdf',
+      estatus_factura_afiliado:'autorizada',
+      created_by:'cxp1', created_at:'2025-06-10',
+      // Asignaciones a OE
+      asignaciones:[
+        {orden_estacion_id:'oe1', monto_asignado:285600, notas:'Spots XHMT-FM'},
+        {orden_estacion_id:'oe2', monto_asignado:168000, notas:'Spots XHMA-AM'},
+      ]
+    },
+    {
+      id:'fa2', afiliado_id:'af2', factura_emisora:'BAJ-1844',
+      razon_social_afiliada:'OIR Bajío SA de CV',
+      fecha_factura_afiliado:'2025-06-09',
+      monto_factura_afiliado:127400, iva_factura_afiliado:20384, total_factura_afiliado:147784,
+      archivo_nombre:'fact_bajio_mayo.pdf', archivo_path:'/recibidas/af/BAJ-1844.pdf',
+      estatus_factura_afiliado:'en_revision',
+      created_by:'cxp1', created_at:'2025-06-11',
+      asignaciones:[{orden_estacion_id:'oe3', monto_asignado:127400, notas:'Spots XHLE-FM'}]
+    },
+    {
+      id:'fa3', afiliado_id:'af3', factura_emisora:'GRC-9201',
+      razon_social_afiliada:'Grupo Radio Centro SAB de CV',
+      fecha_factura_afiliado:'2025-06-12',
+      monto_factura_afiliado:225000, iva_factura_afiliado:36000, total_factura_afiliado:261000,
+      archivo_nombre:'fact_radiocentro_mayo.pdf', archivo_path:'/recibidas/af/GRC-9201.pdf',
+      estatus_factura_afiliado:'recibida',
+      created_by:'cxp1', created_at:'2025-06-13',
+      asignaciones:[]
+    },
+  ],
+ 
+  factura_agencia: [
+    {
+      id:'fg1', agencia_id:'ag2', orden_id:'oc1',
+      folio_factura_agencia:'OMD-2025-0287',
+      fecha_factura_agencia:'2025-06-08',
+      monto_factura_agencia:177480, iva_factura_agencia:28397, total_factura_agencia:205877,
+      porcentaje_comision_agencia:15, comision_agencia:177480,
+      archivo_nombre:'omd_comision_bimbo_may.pdf',
+      estatus_factura_agencia:'autorizada',
+      created_by:'cxp1', created_at:'2025-06-10'
+    },
+    {
+      id:'fg2', agencia_id:'ag1', orden_id:'oc7',
+      folio_factura_agencia:'MS-2025-0144',
+      fecha_factura_agencia:'2025-04-08',
+      monto_factura_agencia:142680, iva_factura_agencia:22829, total_factura_agencia:165509,
+      porcentaje_comision_agencia:15, comision_agencia:142680,
+      archivo_nombre:'mindshare_comision_q1.pdf',
+      estatus_factura_agencia:'pagada',
+      created_by:'cxp1', created_at:'2025-04-11'
+    },
+  ],
+ 
+  costo_adicional: [
+    {id:'ca1', tipo_costo:'nomina', orden_id:null, descripcion_costo:'Nómina mensual operación - Mayo 2025', periodo_contable:'2025-05', monto_costo:842500, archivo_nombre:'NOI_mayo_2025.xlsx', created_by:'nom1', created_at:'2025-06-02'},
+    {id:'ca2', tipo_costo:'nomina', orden_id:null, descripcion_costo:'Nómina mensual operación - Abril 2025', periodo_contable:'2025-04', monto_costo:838200, archivo_nombre:'NOI_abril_2025.xlsx', created_by:'nom1', created_at:'2025-05-02'},
+    {id:'ca3', tipo_costo:'overhead', orden_id:null, descripcion_costo:'Renta oficinas mayo', periodo_contable:'2025-05', monto_costo:185000, archivo_nombre:'', created_by:'cxp1', created_at:'2025-05-05'},
+    {id:'ca4', tipo_costo:'overhead', orden_id:null, descripcion_costo:'Servicios (luz, agua, internet) mayo', periodo_contable:'2025-05', monto_costo:42300, archivo_nombre:'', created_by:'cxp1', created_at:'2025-05-30'},
+    {id:'ca5', tipo_costo:'overhead', orden_id:'oc3', descripcion_costo:'Producción spot Liga MX', periodo_contable:'2025-05', monto_costo:78000, archivo_nombre:'factura_produccion.pdf', created_by:'cxp1', created_at:'2025-05-20'},
+  ],
+};
+ 
+/* ════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════ */
+function fmt(n){return '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:0,maximumFractionDigits:0})}
+function fmtFull(n){return '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtPct(n){return Number(n||0).toFixed(n%1===0?0:2)+'%'}
+function findById(arr,id){return arr.find(x=>x.id===id)}
+function findRef(catName,id){return cat[catName] ? findById(cat[catName],id) : null}
+ 
+const STATUS_FC_FLOW = ['preparada','enviada_a_timbrado','timbrada','entregada','cobrada'];
+const STATUS_FC_LBL = {preparada:'Preparada',enviada_a_timbrado:'Enviada a timbrado',timbrada:'Timbrada',entregada:'Entregada',cobrada:'Cobrada',cancelada:'Cancelada'};
+ 
+let state = {view:'factura_cliente', selected:null, filter:'all', search:''};
+ 
+function show(view, filter){
+  state.view = view; state.selected = null; state.filter = filter||'all'; state.search='';
+  document.querySelectorAll('.side-item').forEach(el=>el.classList.toggle('active', el.dataset.view===view));
+  render();
+}
+ 
+function updateCounts(){
+  document.getElementById('cnt-fc').textContent = data.factura_cliente.length;
+  document.getElementById('cnt-fa').textContent = data.factura_afiliado.length;
+  document.getElementById('cnt-fg').textContent = data.factura_agencia.length;
+  document.getElementById('cnt-co').textContent = data.costo_adicional.length;
+  // Órdenes listas para facturar = OC en estado orden_cerrada sin factura
+  const listas = ordenes_cliente.filter(o => o.estatus_orden==='orden_cerrada' && !data.factura_cliente.find(f=>f.orden_id===o.id)).length;
+  document.getElementById('cnt-lf').textContent = listas;
+}
+ 
+function render(){
+  const main = document.getElementById('main');
+  const r = renderers[state.view];
+  main.innerHTML = r ? r() : '<div style="padding:40px;color:var(--text3)">Vista no implementada.</div>';
+  updateCounts();
+}
+ 
+function emptyDetail(msg){
+  return `<div class="d-empty"><div class="d-icon">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.2"/></svg>
+  </div>${msg}</div>`;
+}
+ 
+function timelineFC(current){
+  if (current==='cancelada') return `<div style="background:var(--gray-bg);color:var(--gray-text);padding:8px 12px;border-radius:var(--r);text-align:center;font-size:12px;margin:8px 0 14px;font-weight:500">Factura cancelada</div>`;
+  const idx = STATUS_FC_FLOW.indexOf(current);
+  const labels = {preparada:'Prep.',enviada_a_timbrado:'Enviada',timbrada:'Timbrada',entregada:'Entregada',cobrada:'Cobrada'};
+  return `<div class="timeline">${STATUS_FC_FLOW.map((s,i)=>{
+    const cls = i<idx?'done':i===idx?'current':'';
+    return `<div class="tl-step ${cls}"><div class="tl-dot">${i<idx?'✓':i+1}</div><div class="tl-lbl">${labels[s]}</div></div>`;
+  }).join('')}</div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: FACTURAS AL CLIENTE
+════════════════════════════════════════════════ */
+const renderers = {};
+ 
+renderers.factura_cliente = () => {
+  let items = data.factura_cliente.filter(f=>{
+    if (state.filter==='preparadas' && f.estado_facturacion!=='preparada') return false;
+    if (state.filter==='timbradas' && !['timbrada','entregada'].includes(f.estado_facturacion)) return false;
+    if (state.filter==='cobradas' && f.estado_facturacion!=='cobrada') return false;
+    if (state.filter==='pendientes_timbrar' && !['preparada','enviada_a_timbrado'].includes(f.estado_facturacion)) return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return f.numero_factura.toLowerCase().includes(q) || (f.numero_pedido||'').toLowerCase().includes(q) || (f.razon_social_facturacion||'').toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.factura_cliente, state.selected) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Facturas al cliente</div>
+      <div class="cat-sub">El sistema <strong>prepara</strong> toda la información necesaria para enviar al sistema externo de timbrado. NO timbra internamente. Al recibir respuesta del timbrado, se registran folio fiscal, XML y PDF.</div>
+    </div>
+    <button class="btn btn-blue" onclick="show('ordenes_para_facturar')">+ Generar factura desde orden cerrada</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar número, pedido, razón social…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todas</button>
+    <button class="fp ${state.filter==='pendientes_timbrar'?'active':''}" onclick="state.filter='pendientes_timbrar';render()">Pendientes timbrar</button>
+    <button class="fp ${state.filter==='timbradas'?'active':''}" onclick="state.filter='timbradas';render()">Timbradas</button>
+    <button class="fp ${state.filter==='cobradas'?'active':''}" onclick="state.filter='cobradas';render()">Cobradas</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.factura_cliente.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:11%">No. factura</th>
+          <th style="width:11%">Pedido</th>
+          <th style="width:18%">Razón social receptor</th>
+          <th style="width:12%">Empresa emisora</th>
+          <th style="width:11%">Fecha</th>
+          <th style="width:11%" class="td-right">Total</th>
+          <th style="width:14%">Folio fiscal</th>
+          <th style="width:12%" class="td-center">Estado</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(f=>{
+            const ef = findRef('empresa_facturadora', f.empresa_facturadora_id);
+            return `<tr class="${state.selected===f.id?'sel':''}" onclick="state.selected='${f.id}';render()">
+              <td class="td-mono" style="font-weight:600">${f.numero_factura}</td>
+              <td class="td-mono" style="font-size:11px">${f.numero_pedido||'—'}</td>
+              <td class="td-2">${f.razon_social_facturacion}</td>
+              <td class="td-2" style="font-size:12px">${ef?ef.nombre_empresa:'—'}</td>
+              <td class="td-mono" style="font-size:11px">${f.fecha_factura}</td>
+              <td class="td-right td-mono" style="font-weight:500">${fmt(f.total_factura)}</td>
+              <td class="td-mono" style="font-size:10px;color:var(--text3)">${f.folio_fiscal_sat?f.folio_fiscal_sat.substring(0,13)+'…':'<span style="color:var(--amber-text)">— sin timbrar —</span>'}</td>
+              <td class="td-center"><span class="badge st-${f.estado_facturacion}">${STATUS_FC_LBL[f.estado_facturacion]}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderFCDetail(sel) : emptyDetail('Selecciona una factura para ver el detalle o generar el envío a timbrado')}</div>
+  </div>`;
+};
+ 
+function renderFCDetail(f){
+  const oc = findById(ordenes_cliente, f.orden_id);
+  const an = findRef('anunciante', f.anunciante_id);
+  const ag = f.agencia_id ? findRef('agencia', f.agencia_id) : null;
+  const ef = findRef('empresa_facturadora', f.empresa_facturadora_id);
+  const cc = findRef('cuenta_contable', f.cuenta_contable_id);
+  const mp = findRef('metodo_pago', f.metodo_pago_id);
+  const lf = findRef('layout_factura', f.layout_factura_id);
+ 
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${f.numero_factura}</div>
+          <div class="dh-sub">
+            <span class="badge st-${f.estado_facturacion}">${STATUS_FC_LBL[f.estado_facturacion]}</span>
+            <span class="badge b-blue">${an?an.nombre_comercial:'—'}</span>
+            <span class="td-mono" style="font-size:11px;color:var(--text3)">${oc?oc.folio_orden:''}</span>
+          </div>
+        </div>
+        <button class="btn btn-sm" onclick="editFC('${f.id}')">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      ${timelineFC(f.estado_facturacion)}
+ 
+      <div class="mc-row">
+        <div class="mc"><div class="mc-lbl">Subtotal</div><div class="mc-val">${fmt(f.subtotal_factura)}</div></div>
+        <div class="mc"><div class="mc-lbl">IVA</div><div class="mc-val">${fmt(f.iva_factura)}</div></div>
+        <div class="mc"><div class="mc-lbl">Total</div><div class="mc-val" style="color:var(--blue-text)">${fmt(f.total_factura)}</div></div>
+      </div>
+ 
+      <div class="sec">Identificación</div>
+      <div class="r2">
+        <div><div class="fl">No. factura</div><div class="fv mono">${f.numero_factura}</div></div>
+        <div><div class="fl">No. pedido</div><div class="fv mono">${f.numero_pedido||'—'}</div></div>
+      </div>
+      <div class="fl">Referencia adicional</div>
+      <div class="fv">${f.referencia_adicional||'—'}</div>
+      ${f.factura_relacionada_id?'<div class="fl">Factura relacionada</div><div class="fv mono link">'+(findById(data.factura_cliente,f.factura_relacionada_id)?.numero_factura||'—')+'</div>':''}
+ 
+      <div class="sec">Emisor <span class="fl-tag her">Heredado de OC</span></div>
+      <div class="fv">${ef?ef.nombre_empresa:'—'}</div>
+      <div class="fv mono muted" style="font-size:11px">${ef?ef.rfc_empresa+' · '+ef.direccion_empresa:''}</div>
+ 
+      <div class="sec">Receptor</div>
+      <div class="fl">Anunciante (cliente comercial)</div>
+      <div class="fv">${an?an.nombre_comercial:'—'}</div>
+      ${ag?`<div class="fl">Agencia</div><div class="fv">${ag.nombre_agencia}</div>`:''}
+      <div class="fl">Razón social facturación <span class="fl-tag her">Editable</span></div>
+      <div class="fv">${f.razon_social_facturacion}</div>
+      <div class="r2">
+        <div><div class="fl">RFC</div><div class="fv mono">${f.rfc_facturacion}</div></div>
+        <div><div class="fl">Dirección</div><div class="fv" style="font-size:12px">${f.direccion_facturacion||'—'}</div></div>
+      </div>
+ 
+      <div class="sec">Concepto</div>
+      <div class="fl">Descripción</div>
+      <div class="fv muted" style="font-size:12px;line-height:1.5">${f.descripcion_factura}</div>
+      ${f.observaciones_factura?'<div class="fl">Observaciones</div><div class="fv muted">'+f.observaciones_factura+'</div>':''}
+ 
+      <div class="sec">Período de transmisión <span class="fl-tag her">Heredado</span></div>
+      <div class="r2">
+        <div><div class="fl">Inicio</div><div class="fv mono">${f.fecha_inicio_transmision}</div></div>
+        <div><div class="fl">Fin</div><div class="fv mono">${f.fecha_fin_transmision}</div></div>
+      </div>
+ 
+      <div class="sec">Configuración contable</div>
+      <div class="fl">Cuenta contable</div>
+      <div class="fv">${cc?cc.codigo_cuenta+' · '+cc.nombre_cuenta:'—'}</div>
+      <div class="r2">
+        <div><div class="fl">Método de pago</div><div class="fv">${mp?mp.clave_metodo+' · '+mp.descripcion_metodo:'—'}</div></div>
+        <div><div class="fl">Layout</div><div class="fv">${lf?lf.nombre_layout:'—'}</div></div>
+      </div>
+      <div class="fl">Información cuenta de pago</div>
+      <div class="fv muted" style="font-size:12px">${f.info_cuenta_pago||'—'}</div>
+ 
+      <div class="sec">Fechas</div>
+      <div class="r2">
+        <div><div class="fl">Fecha factura</div><div class="fv mono">${f.fecha_factura}</div></div>
+        <div><div class="fl">Fecha entrega</div><div class="fv mono">${f.fecha_entrega_factura||'<span style="color:var(--text3)">Pendiente</span>'}</div></div>
+      </div>
+ 
+      ${['timbrada','entregada','cobrada'].includes(f.estado_facturacion) ? `
+        <div class="sec">Datos del timbrado <span class="fl-tag timbrado">Recibido del SAT externo</span></div>
+        <div class="fl">Folio fiscal SAT (UUID)</div>
+        <div class="fv mono" style="font-size:11px;background:var(--purple-bg);padding:6px 8px;border-radius:6px;display:inline-block">${f.folio_fiscal_sat}</div>
+        <div class="r2" style="margin-top:11px">
+          <div><div class="fl">Fecha timbrado</div><div class="fv mono">${f.fecha_timbrado}</div></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:11px">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r);font-size:11px;flex:1">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 1h6l3 3v9H3V1z" stroke="currentColor" stroke-width="1.1"/></svg>
+            ${f.xml_path?f.xml_path.split('/').pop():'XML'}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r);font-size:11px;flex:1">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 1h6l3 3v9H3V1z" stroke="currentColor" stroke-width="1.1"/></svg>
+            ${f.pdf_path?f.pdf_path.split('/').pop():'PDF'}
+          </div>
+        </div>
+      ` : ''}
+ 
+      ${f.estado_facturacion==='preparada' ? `
+        <div class="timbrado-banner">
+          <div class="tb-title">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Lista para enviar a timbrado
+          </div>
+          <div class="tb-msg">Todos los datos están capturados. Envía esta información al sistema externo de timbrado. Una vez timbrada, regresa para registrar el folio fiscal, XML y PDF recibidos.</div>
+        </div>
+      ` : ''}
+      ${f.estado_facturacion==='enviada_a_timbrado' ? `
+        <div class="timbrado-banner" style="background:var(--amber-bg);border-color:var(--amber-border)">
+          <div class="tb-title" style="color:var(--amber-text)">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M6 3v3l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Esperando respuesta del timbrado
+          </div>
+          <div class="tb-msg">Cuando recibas la respuesta del sistema externo, captura el folio fiscal, XML y PDF.</div>
+        </div>
+      ` : ''}
+    </div>
+    <div class="df">
+      ${f.estado_facturacion==='preparada' ? `<button class="btn btn-purple btn-sm" onclick="marcarEnviada('${f.id}')">Marcar enviada a timbrado →</button>` : ''}
+      ${f.estado_facturacion==='enviada_a_timbrado' ? `<button class="btn btn-blue btn-sm" onclick="registrarTimbrado('${f.id}')">Registrar respuesta del timbrado →</button>` : ''}
+      ${f.estado_facturacion==='timbrada' ? `<button class="btn btn-teal btn-sm" onclick="marcarEntregada('${f.id}')">Marcar entregada →</button>` : ''}
+      ${f.estado_facturacion==='entregada' ? `<button class="btn btn-dark btn-sm" disabled style="opacity:.7">Pasa a CxC (Fase 3)</button>` : ''}
+    </div>`;
+}
+ 
+function marcarEnviada(id){
+  const f = findById(data.factura_cliente, id);
+  if (confirm('¿Marcar como enviada a timbrado? Esto indica que ya la enviaste al sistema externo.')){
+    f.estado_facturacion = 'enviada_a_timbrado';
+    render();
+  }
+}
+ 
+function registrarTimbrado(id){
+  const f = findById(data.factura_cliente, id);
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="cat-header">
+      <div>
+        <div class="cat-title">Registrar respuesta del timbrado</div>
+        <div class="cat-sub">Factura <strong>${f.numero_factura}</strong>. Captura los datos que recibiste del sistema externo de timbrado.</div>
+      </div>
+      <button class="btn btn-sm" onclick="state.selected='${id}';show('factura_cliente');setTimeout(()=>{state.selected='${id}';render()},10)">← Cancelar</button>
+    </div>
+    <div style="flex:1;overflow:auto;background:var(--surface);padding:20px 24px">
+      <div style="max-width:760px;margin:0 auto">
+        <div class="timbrado-banner">
+          <div class="tb-title">📋 Datos recibidos del sistema externo de timbrado</div>
+          <div class="tb-msg">Captura el folio fiscal (UUID del SAT), la fecha de timbrado, y carga los archivos XML y PDF que regresa el timbrador.</div>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div class="fl fl-required">Folio fiscal SAT (UUID)</div>
+          <input type="text" class="fi" id="tb-folio" placeholder="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" style="font-family:var(--mono);font-size:12px">
+          <div class="r2">
+            <div>
+              <div class="fl fl-required">Fecha de timbrado</div>
+              <input type="date" class="fi" id="tb-fecha" value="${new Date().toISOString().substring(0,10)}">
+            </div>
+            <div>
+              <div class="fl">Serie / certificado (opcional)</div>
+              <input type="text" class="fi" id="tb-serie" placeholder="Serie de timbrado">
+            </div>
+          </div>
+          <div class="r2">
+            <div>
+              <div class="fl fl-required">Archivo XML</div>
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px dashed var(--border-med);border-radius:var(--r);cursor:pointer;color:var(--text2);font-size:12px;height:34px">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v6M4 5l3-3 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                Cargar XML del CFDI
+              </div>
+            </div>
+            <div>
+              <div class="fl fl-required">Archivo PDF</div>
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px dashed var(--border-med);border-radius:var(--r);cursor:pointer;color:var(--text2);font-size:12px;height:34px">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v6M4 5l3-3 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                Cargar PDF de la factura
+              </div>
+            </div>
+          </div>
+        </div>
+ 
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" onclick="state.selected='${id}';show('factura_cliente');setTimeout(()=>{state.selected='${id}';render()},10)">Cancelar</button>
+          <button class="btn btn-blue" onclick="guardarTimbrado('${id}')">Registrar timbrado</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+ 
+function guardarTimbrado(id){
+  const f = findById(data.factura_cliente, id);
+  const folio = document.getElementById('tb-folio').value;
+  if (!folio) { alert('Captura el folio fiscal.'); return; }
+  f.folio_fiscal_sat = folio;
+  f.fecha_timbrado = document.getElementById('tb-fecha').value;
+  f.xml_path = '/facturas/'+f.numero_factura+'.xml';
+  f.pdf_path = '/facturas/'+f.numero_factura+'.pdf';
+  f.estado_facturacion = 'timbrada';
+  state.selected = id;
+  show('factura_cliente');
+  state.selected = id;
+  render();
+}
+ 
+function marcarEntregada(id){
+  const f = findById(data.factura_cliente, id);
+  f.estado_facturacion = 'entregada';
+  f.fecha_entrega_factura = new Date().toISOString().substring(0,10);
+  render();
+}
+ 
+function editFC(id){ alert('Formulario de edición con todos los campos.'); }
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: ÓRDENES PARA FACTURAR
+════════════════════════════════════════════════ */
+renderers.ordenes_para_facturar = () => {
+  const items = ordenes_cliente.filter(o => o.estatus_orden==='orden_cerrada' && !data.factura_cliente.find(f=>f.orden_id===o.id));
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Órdenes listas para facturar</div>
+      <div class="cat-sub">Órdenes en estado <strong>orden_cerrada</strong> que aún no tienen factura generada. Selecciona una para empezar a preparar la factura.</div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} órdenes listas para facturar</span>
+  </div>
+  <div style="flex:1;overflow:auto;background:var(--surface);padding:20px 24px">
+    ${items.length===0 ? `
+      <div style="text-align:center;padding:60px 20px;color:var(--text3)">
+        <div style="font-size:14px;margin-bottom:8px">✓ No hay órdenes pendientes de facturar</div>
+        <div style="font-size:12px">Todas las órdenes cerradas ya tienen factura generada.</div>
+      </div>
+    ` : `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px;max-width:1400px;margin:0 auto">
+        ${items.map(o=>{
+          const an = findRef('anunciante', o.anunciante_id);
+          const ag = o.agencia_id ? findRef('agencia', o.agencia_id) : null;
+          const ve = findRef('vendedor', o.vendedor_principal_id);
+          const subtotal = o.total_spots * o.precio_unitario;
+          const total = subtotal * 1.16;
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px;transition:all .15s;cursor:pointer" onmouseover="this.style.borderColor='var(--blue-border)';this.style.boxShadow='0 2px 8px rgba(24,95,165,.1)'" onmouseout="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <span class="td-mono" style="font-weight:600">${o.folio_orden}</span>
+              <span class="badge st-orden_cerrada">Orden cerrada</span>
+            </div>
+            <div style="font-size:14px;font-weight:600;margin-bottom:3px">${an?an.nombre_comercial:'—'}</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:11px">${ag?ag.nombre_agencia:'Trato directo'} · ${ve?ve.nombre_vendedor:''}</div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:11px">${o.producto}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;margin-bottom:13px">
+              <div><span style="color:var(--text3)">Campaña:</span><br><span class="td-mono">${o.fecha_inicio_campania.substring(5)} → ${o.fecha_fin_campania.substring(5)}</span></div>
+              <div><span style="color:var(--text3)">Pedido:</span><br><span class="td-mono">${o.numero_orden_cliente}</span></div>
+            </div>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between">
+              <div>
+                <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Total c/IVA</div>
+                <div style="font-family:var(--mono);font-size:18px;font-weight:600;color:var(--blue-text)">${fmt(total)}</div>
+              </div>
+              <button class="btn btn-blue btn-sm" onclick="generarFacturaDesdeOC('${o.id}')">Generar factura →</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+  </div>`;
+};
+ 
+function generarFacturaDesdeOC(ocId){
+  const oc = findById(ordenes_cliente, ocId);
+  const an = findRef('anunciante', oc.anunciante_id);
+  const ag = oc.agencia_id ? findRef('agencia', oc.agencia_id) : null;
+  const ef = findRef('empresa_facturadora', oc.empresa_facturadora_id);
+  const ve = findRef('vendedor', oc.vendedor_principal_id);
+ 
+  // Receptor: depende de facturacion_directa_cliente
+  const receptor = oc.facturacion_directa_cliente || !ag ? {
+    razon_social: an.nombre_fiscal, rfc: an.rfc_anunciante, direccion: oc.direccion_facturacion || an.localizacion
+  } : {
+    razon_social: ag.nombre_agencia, rfc: ag.rfc_agencia, direccion: ''
+  };
+ 
+  const subtotal = oc.total_spots * oc.precio_unitario;
+  const iva = subtotal * 0.16;
+  const total = subtotal + iva;
+  const descDefault = `Servicios de transmisión publicitaria — ${oc.producto || 'Campaña'} del ${oc.fecha_inicio_campania} al ${oc.fecha_fin_campania}. ${oc.total_spots} spots de ${oc.duracion_spot} según orden ${oc.numero_orden_cliente}.`;
+ 
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="cat-header">
+      <div>
+        <div class="cat-title">Generar factura</div>
+        <div class="cat-sub">Desde orden <strong>${oc.folio_orden}</strong> (${an?an.nombre_comercial:''}). Los datos heredables aparecen pre-cargados; ajusta lo que necesites.</div>
+      </div>
+      <button class="btn btn-sm" onclick="show('ordenes_para_facturar')">← Cancelar</button>
+    </div>
+    <div style="flex:1;overflow:auto;background:var(--surface);padding:20px 24px">
+      <div style="max-width:900px;margin:0 auto">
+ 
+        <div class="heredado-block">
+          <div class="heredado-title"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 5l3 3 4-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Datos heredados de la orden</div>
+          <div class="heredado-grid">
+            <div class="heredado-row"><span class="heredado-lbl">Orden origen</span><span class="heredado-val mono">${oc.folio_orden}</span></div>
+            <div class="heredado-row"><span class="heredado-lbl">Pedido</span><span class="heredado-val mono">${oc.numero_orden_cliente}</span></div>
+            <div class="heredado-row"><span class="heredado-lbl">Empresa emisora</span><span class="heredado-val">${ef?ef.nombre_empresa:'—'}</span></div>
+            <div class="heredado-row"><span class="heredado-lbl">Vendedor</span><span class="heredado-val">${ve?ve.nombre_vendedor:'—'}</span></div>
+            <div class="heredado-row"><span class="heredado-lbl">Período transmisión</span><span class="heredado-val mono">${oc.fecha_inicio_campania} → ${oc.fecha_fin_campania}</span></div>
+            <div class="heredado-row"><span class="heredado-lbl">Subtotal</span><span class="heredado-val mono">${fmt(subtotal)}</span></div>
+          </div>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">📄 Identificación de la factura</div>
+          <div class="r2">
+            <div>
+              <div class="fl fl-required">Número de factura</div>
+              <input type="text" class="fi" id="nf-num" placeholder="Ej. A-001246">
+            </div>
+            <div>
+              <div class="fl">Número de pedido</div>
+              <input type="text" class="fi" id="nf-ped" value="${oc.numero_orden_cliente}">
+            </div>
+          </div>
+          <div class="fl">Referencia adicional</div>
+          <input type="text" class="fi" id="nf-ref" placeholder="Referencia para reconciliación con cliente">
+          <div class="fl">Factura relacionada (si aplica)</div>
+          <select class="fsel" id="nf-rel">
+            <option value="">— Ninguna —</option>
+            ${data.factura_cliente.map(f=>`<option value="${f.id}">${f.numero_factura} · ${f.razon_social_facturacion}</option>`).join('')}
+          </select>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">👤 Receptor de la factura</div>
+          ${ag?`<div style="background:var(--purple-bg);padding:8px 11px;border-radius:var(--r);font-size:11px;color:var(--purple-text);margin-bottom:11px">${oc.facturacion_directa_cliente?'🏢 Facturación directa al cliente — la factura va a '+an.nombre_comercial+' aunque hay agencia.':'🤝 Vía agencia — la factura va a la agencia '+ag.nombre_agencia+'.'}</div>`:''}
+          <div class="fl fl-required">Razón social</div>
+          <input type="text" class="fi" id="nf-rs" value="${receptor.razon_social}">
+          <div class="r2">
+            <div><div class="fl fl-required">RFC</div><input type="text" class="fi" id="nf-rfc" value="${receptor.rfc}" maxlength="13"></div>
+            <div></div>
+          </div>
+          <div class="fl">Dirección</div>
+          <textarea class="ftxt" id="nf-dir" style="min-height:50px">${receptor.direccion}</textarea>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">📝 Concepto y observaciones</div>
+          <div class="fl fl-required">Descripción del servicio (aparece en el cuerpo de la factura)</div>
+          <textarea class="ftxt" id="nf-desc" style="min-height:80px">${descDefault}</textarea>
+          <div class="fl">Observaciones adicionales</div>
+          <textarea class="ftxt" id="nf-obs" placeholder="Notas que aparecen en la factura..."></textarea>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">💰 Montos</div>
+          <div class="r3">
+            <div><div class="fl">Subtotal <span class="fl-tag her">Heredado</span></div><input type="number" class="fi" id="nf-sub" value="${subtotal}" step="0.01"></div>
+            <div><div class="fl">IVA <span class="fl-tag calc">Calc 16%</span></div><div class="fv mono big" id="nf-iva-v">${fmt(iva)}</div></div>
+            <div><div class="fl">Total <span class="fl-tag calc">Calc</span></div><div class="fv mono big" id="nf-tot-v" style="color:var(--blue-text)">${fmt(total)}</div></div>
+          </div>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">⚙️ Configuración contable</div>
+          <div class="fl fl-required">Cuenta contable</div>
+          <select class="fsel" id="nf-cc">
+            ${cat.cuenta_contable.filter(c=>c.tipo_cuenta==='ingreso').map(c=>`<option value="${c.id}">${c.codigo_cuenta} · ${c.nombre_cuenta}</option>`).join('')}
+          </select>
+          <div class="r2">
+            <div>
+              <div class="fl fl-required">Método de pago</div>
+              <select class="fsel" id="nf-mp">
+                ${cat.metodo_pago.map(m=>`<option value="${m.id}">${m.clave_metodo} · ${m.descripcion_metodo}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <div class="fl fl-required">Layout de factura</div>
+              <select class="fsel" id="nf-lf">
+                ${cat.layout_factura.map(l=>`<option value="${l.id}">${l.nombre_layout}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="fl">Información cuenta de pago (aparece en factura)</div>
+          <textarea class="ftxt" id="nf-cuenta" style="min-height:50px" placeholder="Ej. BBVA · CLABE 012180001234567890 · Titular...">BBVA · CLABE 012180001234567890 · ${ef?ef.nombre_empresa:'OIR Comercial SA'}</textarea>
+        </div>
+ 
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:14px">📅 Fechas</div>
+          <div class="r2">
+            <div><div class="fl fl-required">Fecha de la factura</div><input type="date" class="fi" id="nf-fec" value="${new Date().toISOString().substring(0,10)}"></div>
+            <div><div class="fl">Fecha de entrega (opcional, se puede actualizar después)</div><input type="date" class="fi" id="nf-fe"></div>
+          </div>
+        </div>
+ 
+        <div style="display:flex;gap:8px;justify-content:flex-end;padding-bottom:30px">
+          <button class="btn" onclick="show('ordenes_para_facturar')">Cancelar</button>
+          <button class="btn btn-blue" onclick="guardarFactura('${ocId}')">Crear factura (preparada)</button>
+        </div>
+      </div>
+    </div>`;
+}
+ 
+function guardarFactura(ocId){
+  const oc = findById(ordenes_cliente, ocId);
+  const num = document.getElementById('nf-num').value;
+  if (!num) { alert('Captura el número de factura.'); return; }
+  const sub = parseFloat(document.getElementById('nf-sub').value) || 0;
+  const newF = {
+    id: 'fc'+(data.factura_cliente.length+100),
+    numero_factura: num,
+    numero_pedido: document.getElementById('nf-ped').value,
+    referencia_adicional: document.getElementById('nf-ref').value,
+    orden_id: ocId,
+    factura_relacionada_id: document.getElementById('nf-rel').value || null,
+    empresa_facturadora_id: oc.empresa_facturadora_id,
+    anunciante_id: oc.anunciante_id,
+    agencia_id: oc.agencia_id,
+    razon_social_facturacion: document.getElementById('nf-rs').value,
+    rfc_facturacion: document.getElementById('nf-rfc').value,
+    direccion_facturacion: document.getElementById('nf-dir').value,
+    descripcion_factura: document.getElementById('nf-desc').value,
+    observaciones_factura: document.getElementById('nf-obs').value,
+    fecha_inicio_transmision: oc.fecha_inicio_campania,
+    fecha_fin_transmision: oc.fecha_fin_campania,
+    fecha_factura: document.getElementById('nf-fec').value,
+    fecha_entrega_factura: document.getElementById('nf-fe').value || null,
+    subtotal_factura: sub,
+    iva_factura: sub * 0.16,
+    total_factura: sub * 1.16,
+    cuenta_contable_id: document.getElementById('nf-cc').value,
+    metodo_pago_id: document.getElementById('nf-mp').value,
+    layout_factura_id: document.getElementById('nf-lf').value,
+    info_cuenta_pago: document.getElementById('nf-cuenta').value,
+    estado_facturacion: 'preparada',
+    folio_fiscal_sat: null, fecha_timbrado: null, xml_path: null, pdf_path: null,
+    created_by: 'mr', created_at: new Date().toISOString().substring(0,10)
+  };
+  data.factura_cliente.push(newF);
+  state.selected = newF.id;
+  show('factura_cliente');
+  state.selected = newF.id;
+  render();
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: FACTURAS DE AFILIADOS
+════════════════════════════════════════════════ */
+renderers.factura_afiliado = () => {
+  let items = data.factura_afiliado.filter(f=>{
+    if (state.filter && state.filter!=='all' && f.estatus_factura_afiliado!==state.filter) return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return f.factura_emisora.toLowerCase().includes(q) || (f.razon_social_afiliada||'').toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.factura_afiliado, state.selected) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Facturas de afiliados (emisoras)</div>
+      <div class="cat-sub">Facturas recibidas de los afiliados por los servicios de transmisión. CxP las captura y asigna a las órdenes estación cerradas para calcular el costo real por orden.</div>
+    </div>
+    <button class="btn btn-blue" onclick="newFA()">+ Capturar factura</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar folio, afiliado…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todas</button>
+    <button class="fp ${state.filter==='recibida'?'active':''}" onclick="state.filter='recibida';render()">Recibidas</button>
+    <button class="fp ${state.filter==='en_revision'?'active':''}" onclick="state.filter='en_revision';render()">En revisión</button>
+    <button class="fp ${state.filter==='autorizada'?'active':''}" onclick="state.filter='autorizada';render()">Autorizadas</button>
+    <button class="fp ${state.filter==='pagada'?'active':''}" onclick="state.filter='pagada';render()">Pagadas</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.factura_afiliado.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:14%">Folio emisora</th>
+          <th style="width:24%">Afiliado</th>
+          <th style="width:11%">Fecha</th>
+          <th style="width:13%" class="td-right">Subtotal</th>
+          <th style="width:13%" class="td-right">Total</th>
+          <th style="width:10%" class="td-center">OE asig.</th>
+          <th style="width:15%" class="td-center">Estado</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(f=>{
+            const af = findRef('afiliado', f.afiliado_id);
+            return `<tr class="${state.selected===f.id?'sel':''}" onclick="state.selected='${f.id}';render()">
+              <td class="td-mono" style="font-weight:600">${f.factura_emisora}</td>
+              <td class="td-main">${af?af.nombre_afiliado:'—'}</td>
+              <td class="td-mono" style="font-size:11px">${f.fecha_factura_afiliado}</td>
+              <td class="td-right td-mono">${fmt(f.monto_factura_afiliado)}</td>
+              <td class="td-right td-mono" style="font-weight:500">${fmt(f.total_factura_afiliado)}</td>
+              <td class="td-center td-2">${f.asignaciones.length}</td>
+              <td class="td-center"><span class="badge st-${f.estatus_factura_afiliado}">${f.estatus_factura_afiliado.replace('_',' ')}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderFADetail(sel) : emptyDetail('Selecciona una factura de afiliado')}</div>
+  </div>`;
+};
+ 
+function renderFADetail(f){
+  const af = findRef('afiliado', f.afiliado_id);
+  const asignado = f.asignaciones.reduce((s,a)=>s+a.monto_asignado,0);
+  const sinAsignar = f.monto_factura_afiliado - asignado;
+ 
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${f.factura_emisora}</div>
+          <div class="dh-sub"><span class="badge st-${f.estatus_factura_afiliado}">${f.estatus_factura_afiliado.replace('_',' ')}</span><span class="badge b-teal">${af?af.nombre_afiliado:''}</span></div>
+        </div>
+        <button class="btn btn-sm" onclick="editFA('${f.id}')">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="mc-row">
+        <div class="mc"><div class="mc-lbl">Subtotal</div><div class="mc-val">${fmt(f.monto_factura_afiliado)}</div></div>
+        <div class="mc"><div class="mc-lbl">IVA</div><div class="mc-val">${fmt(f.iva_factura_afiliado)}</div></div>
+        <div class="mc"><div class="mc-lbl">Total</div><div class="mc-val" style="color:var(--blue-text)">${fmt(f.total_factura_afiliado)}</div></div>
+      </div>
+ 
+      <div class="sec">Datos generales</div>
+      <div class="fl">Razón social emisora</div>
+      <div class="fv">${f.razon_social_afiliada}</div>
+      <div class="r2">
+        <div><div class="fl">Folio</div><div class="fv mono">${f.factura_emisora}</div></div>
+        <div><div class="fl">Fecha</div><div class="fv mono">${f.fecha_factura_afiliado}</div></div>
+      </div>
+      <div class="fl">Archivo</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);font-size:12px;margin-bottom:11px">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="12" rx="1.2" stroke="currentColor" stroke-width="1.1"/></svg>
+        ${f.archivo_nombre}
+      </div>
+ 
+      <div class="sec">Asignación a órdenes estación
+        <span class="sec-action" onclick="addAsignacion('${f.id}')">+ Asignar OE</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:11px">
+        <div style="flex:1;background:var(--surface2);border-radius:var(--r);padding:8px 11px">
+          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Asignado</div>
+          <div style="font-family:var(--mono);font-size:14px;font-weight:600">${fmt(asignado)}</div>
+        </div>
+        <div style="flex:1;background:${sinAsignar===0?'var(--green-bg)':'var(--red-bg)'};border-radius:var(--r);padding:8px 11px">
+          <div style="font-size:10px;color:${sinAsignar===0?'var(--green-text)':'var(--red-text)'};text-transform:uppercase;letter-spacing:.05em">Sin asignar</div>
+          <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${sinAsignar===0?'var(--green-text)':'var(--red-text)'}">${fmt(sinAsignar)}</div>
+        </div>
+      </div>
+      ${f.asignaciones.length>0 ? f.asignaciones.map(a=>{
+        const oe = findById(ordenes_estacion, a.orden_estacion_id);
+        const oc = oe ? findById(ordenes_cliente, oe.orden_id) : null;
+        const est = oe ? findRef('estacion', oe.estacion_id) : null;
+        return `<div style="border:1px solid var(--border);border-radius:var(--r);padding:9px 11px;margin-bottom:5px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+            <span class="td-mono" style="font-size:12px;font-weight:600">${oe?oe.folio_orden_estacion:'—'}</span>
+            <span style="font-family:var(--mono);font-size:13px;font-weight:600">${fmt(a.monto_asignado)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">${oc?oc.folio_orden:''} · ${est?est.nombre_estacion:''} ${a.notas?'· '+a.notas:''}</div>
+        </div>`;
+      }).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Sin asignaciones. Asigna esta factura a las órdenes estación correspondientes.</div>'}
+    </div>
+    <div class="df">
+      ${f.estatus_factura_afiliado==='recibida' ? `<button class="btn btn-amber btn-sm" onclick="setStatusFA('${f.id}','en_revision')">→ En revisión</button>` : ''}
+      ${f.estatus_factura_afiliado==='en_revision' ? `<button class="btn btn-blue btn-sm" onclick="setStatusFA('${f.id}','autorizada')">Autorizar →</button>` : ''}
+      ${f.estatus_factura_afiliado==='autorizada' ? `<button class="btn btn-dark btn-sm" disabled style="opacity:.7">Pasa a CxP (Fase 3)</button>` : ''}
+    </div>`;
+}
+ 
+function setStatusFA(id, status){
+  const f = findById(data.factura_afiliado, id);
+  f.estatus_factura_afiliado = status;
+  render();
+}
+ 
+function newFA(){ alert('Formulario de captura nueva factura de afiliado (similar al de FacturaCliente).'); }
+function editFA(id){ alert('Edición de factura de afiliado.'); }
+function addAsignacion(id){ alert('Modal para asignar OE a esta factura con monto a aplicar.'); }
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: FACTURAS DE AGENCIAS
+════════════════════════════════════════════════ */
+renderers.factura_agencia = () => {
+  let items = data.factura_agencia.filter(f=>{
+    if (state.filter && state.filter!=='all' && f.estatus_factura_agencia!==state.filter) return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      const ag = findRef('agencia', f.agencia_id);
+      return f.folio_factura_agencia.toLowerCase().includes(q) || (ag?.nombre_agencia||'').toLowerCase().includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.factura_agencia, state.selected) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Facturas de agencias</div>
+      <div class="cat-sub">Facturas recibidas de las agencias por su comisión. Se asocian a la orden del cliente origen y al monto del % de comisión acordado.</div>
+    </div>
+    <button class="btn btn-blue" onclick="newFG()">+ Capturar factura</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar folio, agencia…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todas</button>
+    <button class="fp ${state.filter==='recibida'?'active':''}" onclick="state.filter='recibida';render()">Recibidas</button>
+    <button class="fp ${state.filter==='en_revision'?'active':''}" onclick="state.filter='en_revision';render()">En revisión</button>
+    <button class="fp ${state.filter==='autorizada'?'active':''}" onclick="state.filter='autorizada';render()">Autorizadas</button>
+    <button class="fp ${state.filter==='pagada'?'active':''}" onclick="state.filter='pagada';render()">Pagadas</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.factura_agencia.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:14%">Folio</th>
+          <th style="width:22%">Agencia</th>
+          <th style="width:14%">Orden cliente</th>
+          <th style="width:11%">Fecha</th>
+          <th style="width:11%" class="td-center">% Com.</th>
+          <th style="width:13%" class="td-right">Total</th>
+          <th style="width:15%" class="td-center">Estado</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(f=>{
+            const ag = findRef('agencia', f.agencia_id);
+            const oc = findById(ordenes_cliente, f.orden_id);
+            return `<tr class="${state.selected===f.id?'sel':''}" onclick="state.selected='${f.id}';render()">
+              <td class="td-mono" style="font-weight:600">${f.folio_factura_agencia}</td>
+              <td class="td-main">${ag?ag.nombre_agencia:'—'}</td>
+              <td class="td-mono" style="font-size:11px">${oc?oc.folio_orden:'—'}</td>
+              <td class="td-mono" style="font-size:11px">${f.fecha_factura_agencia}</td>
+              <td class="td-center td-mono">${fmtPct(f.porcentaje_comision_agencia)}</td>
+              <td class="td-right td-mono" style="font-weight:500">${fmt(f.total_factura_agencia)}</td>
+              <td class="td-center"><span class="badge st-${f.estatus_factura_agencia}">${f.estatus_factura_agencia.replace('_',' ')}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderFGDetail(sel) : emptyDetail('Selecciona una factura de agencia')}</div>
+  </div>`;
+};
+ 
+function renderFGDetail(f){
+  const ag = findRef('agencia', f.agencia_id);
+  const oc = findById(ordenes_cliente, f.orden_id);
+  const an = oc ? findRef('anunciante', oc.anunciante_id) : null;
+  const ventaOC = oc ? oc.total_spots * oc.precio_unitario * 1.16 : 0;
+ 
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${f.folio_factura_agencia}</div>
+          <div class="dh-sub"><span class="badge st-${f.estatus_factura_agencia}">${f.estatus_factura_agencia.replace('_',' ')}</span><span class="badge b-purple">${ag?ag.nombre_agencia:''}</span></div>
+        </div>
+        <button class="btn btn-sm">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="mc-row">
+        <div class="mc"><div class="mc-lbl">Subtotal</div><div class="mc-val">${fmt(f.monto_factura_agencia)}</div></div>
+        <div class="mc"><div class="mc-lbl">IVA</div><div class="mc-val">${fmt(f.iva_factura_agencia)}</div></div>
+        <div class="mc"><div class="mc-lbl">Total</div><div class="mc-val" style="color:var(--purple-text)">${fmt(f.total_factura_agencia)}</div></div>
+      </div>
+ 
+      <div class="sec">Orden relacionada</div>
+      ${oc ? `<div style="border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;font-size:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span class="td-mono" style="font-weight:600">${oc.folio_orden}</span>
+          <span class="td-mono">${fmt(ventaOC)}</span>
+        </div>
+        <div style="color:var(--text2);font-size:11px">${an?an.nombre_comercial:''} · ${oc.producto}</div>
+      </div>`:'<div style="font-size:13px;color:var(--text3)">Sin orden asociada</div>'}
+ 
+      <div class="sec">Cálculo de comisión</div>
+      <div class="fl">% Comisión aplicada</div>
+      <div class="fv mono big">${fmtPct(f.porcentaje_comision_agencia)}</div>
+      <div class="fl">Monto comisión <span class="fl-tag calc">Calc</span></div>
+      <div class="fv mono big" style="color:var(--purple-text)">${fmt(f.comision_agencia)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:-7px;margin-bottom:11px">Sobre venta total c/IVA de la orden (${fmt(ventaOC)})</div>
+ 
+      <div class="sec">Archivo</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);font-size:12px">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="12" rx="1.2" stroke="currentColor" stroke-width="1.1"/></svg>
+        ${f.archivo_nombre}
+      </div>
+    </div>
+    <div class="df">
+      ${f.estatus_factura_agencia==='recibida' ? `<button class="btn btn-amber btn-sm" onclick="setStatusFG('${f.id}','en_revision')">→ En revisión</button>` : ''}
+      ${f.estatus_factura_agencia==='en_revision' ? `<button class="btn btn-blue btn-sm" onclick="setStatusFG('${f.id}','autorizada')">Autorizar →</button>` : ''}
+      ${f.estatus_factura_agencia==='autorizada' ? `<button class="btn btn-dark btn-sm" disabled style="opacity:.7">Pasa a CxP</button>` : ''}
+    </div>`;
+}
+ 
+function setStatusFG(id, status){
+  const f = findById(data.factura_agencia, id);
+  f.estatus_factura_agencia = status;
+  render();
+}
+ 
+function newFG(){ alert('Formulario de captura nueva factura de agencia.'); }
+ 
+/* ════════════════════════════════════════════════
+   RENDERER: COSTOS ADICIONALES
+════════════════════════════════════════════════ */
+renderers.costo_adicional = () => {
+  let items = data.costo_adicional.filter(c=>{
+    if (state.filter==='nomina' && c.tipo_costo!=='nomina') return false;
+    if (state.filter==='overhead' && c.tipo_costo!=='overhead') return false;
+    if (state.search){
+      const q = state.search.toLowerCase();
+      return c.descripcion_costo.toLowerCase().includes(q) || c.periodo_contable.includes(q);
+    }
+    return true;
+  });
+  const sel = state.selected ? findById(data.costo_adicional, state.selected) : null;
+ 
+  const totalNomina = data.costo_adicional.filter(c=>c.tipo_costo==='nomina').reduce((s,c)=>s+c.monto_costo,0);
+  const totalOverhead = data.costo_adicional.filter(c=>c.tipo_costo==='overhead').reduce((s,c)=>s+c.monto_costo,0);
+  const totalGeneral = totalNomina + totalOverhead;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Costos adicionales</div>
+      <div class="cat-sub">Nóminas (formato NOI) y overhead (libre). Alimentan el Estado de Resultados de Fase 4. Pueden ser generales del período o asociados a una orden específica.</div>
+    </div>
+    <button class="btn btn-blue" onclick="newCA()">+ Capturar costo</button>
+  </div>
+  <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;display:flex;gap:10px">
+    <div class="mc" style="flex:1"><div class="mc-lbl">Total nóminas</div><div class="mc-val">${fmt(totalNomina)}</div><div class="mc-sub">${data.costo_adicional.filter(c=>c.tipo_costo==='nomina').length} registros</div></div>
+    <div class="mc" style="flex:1"><div class="mc-lbl">Total overhead</div><div class="mc-val">${fmt(totalOverhead)}</div><div class="mc-sub">${data.costo_adicional.filter(c=>c.tipo_costo==='overhead').length} registros</div></div>
+    <div class="mc" style="flex:1"><div class="mc-lbl">Total general</div><div class="mc-val" style="color:var(--blue-text)">${fmt(totalGeneral)}</div></div>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar descripción o período…" value="${state.search}" oninput="state.search=this.value;render()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='nomina'?'active':''}" onclick="state.filter='nomina';render()">Nóminas</button>
+    <button class="fp ${state.filter==='overhead'?'active':''}" onclick="state.filter='overhead';render()">Overhead</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.costo_adicional.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:11%">Tipo</th>
+          <th style="width:11%">Período</th>
+          <th style="width:34%">Descripción</th>
+          <th style="width:14%">Orden asociada</th>
+          <th style="width:14%" class="td-right">Monto</th>
+          <th style="width:16%">Archivo</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(c=>{
+            const oc = c.orden_id ? findById(ordenes_cliente, c.orden_id) : null;
+            const tipoCls = c.tipo_costo==='nomina'?'b-purple':'b-amber';
+            return `<tr class="${state.selected===c.id?'sel':''}" onclick="state.selected='${c.id}';render()">
+              <td><span class="badge ${tipoCls}">${c.tipo_costo==='nomina'?'Nómina':'Overhead'}</span></td>
+              <td class="td-mono">${c.periodo_contable}</td>
+              <td class="td-main">${c.descripcion_costo}</td>
+              <td class="td-mono" style="font-size:11px">${oc?oc.folio_orden:'<span style="color:var(--text3)">General</span>'}</td>
+              <td class="td-right td-mono" style="font-weight:500">${fmt(c.monto_costo)}</td>
+              <td class="td-2" style="font-size:11px">${c.archivo_nombre||'<span style="color:var(--text3)">—</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? `
+      <div class="dh">
+        <div class="dh-row">
+          <div>
+            <div class="dh-name">${sel.descripcion_costo}</div>
+            <div class="dh-sub"><span class="badge ${sel.tipo_costo==='nomina'?'b-purple':'b-amber'}">${sel.tipo_costo==='nomina'?'Nómina':'Overhead'}</span><span class="td-mono" style="font-size:11px;color:var(--text3)">${sel.periodo_contable}</span></div>
+          </div>
+          <button class="btn btn-sm">Editar</button>
+        </div>
+      </div>
+      <div class="db">
+        <div class="sec">Datos</div>
+        <div class="fl">Tipo</div><div class="fv">${sel.tipo_costo==='nomina'?'Nómina (formato NOI)':'Overhead (libre)'}</div>
+        <div class="fl">Período contable</div><div class="fv mono">${sel.periodo_contable}</div>
+        <div class="fl">Orden asociada</div><div class="fv">${sel.orden_id ? (findById(ordenes_cliente,sel.orden_id)?.folio_orden||'—') : '<span class="muted">General del período</span>'}</div>
+        <div class="sec">Monto</div>
+        <div class="fv mono big" style="color:var(--blue-text)">${fmtFull(sel.monto_costo)}</div>
+        ${sel.archivo_nombre?`<div class="sec">Archivo de respaldo</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);font-size:12px">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="12" rx="1.2" stroke="currentColor" stroke-width="1.1"/></svg>
+          ${sel.archivo_nombre}
+        </div>`:''}
+      </div>
+    ` : emptyDetail('Selecciona un costo')}</div>
+  </div>`;
+};
+ 
+function newCA(){ alert('Formulario de captura de costo adicional: tipo (nómina/overhead), período, descripción, monto, archivo opcional.'); }
+ 
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+render();
+</script>
+</body>
+</html>

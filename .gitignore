@@ -1,0 +1,37 @@
+# .gitignore — Sistema GRC-OIR
+# Lo más importante: el .env con credenciales reales NUNCA se sube al repositorio.
+
+# Variables de entorno / secretos
+.env
+.env.*
+!.env.example
+
+# Python / backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# Docker
+*.pid
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs y temporales
+*.log
+tmp/

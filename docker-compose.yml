@@ -1,0 +1,63 @@
+# docker-compose.yml — Entorno local del Sistema GRC-OIR
+#
+# ¿Qué hace este archivo?
+# Levanta el backend (FastAPI) y el frontend (React) en contenedores en tu máquina,
+# con "hot-reload": editas el código en tu editor y el contenedor recarga solo.
+# La base de datos NO corre aquí: usamos la instancia de AWS RDS SQL Server,
+# cuyo endpoint y credenciales se leen del archivo .env (copia .env.example -> .env).
+#
+# Comandos básicos:
+#   docker compose up --build      -> construir y levantar todo
+#   docker compose logs -f backend -> ver logs del backend
+#   docker compose exec backend bash -> abrir terminal dentro del backend
+#   docker compose down            -> apagar todo
+
+services:
+  backend:
+    build: ./backend
+    container_name: grcoir-backend
+    # env_file: carga las variables de .env (endpoint RDS, usuario, contraseña, etc.)
+    # Así las credenciales NUNCA quedan escritas en este archivo versionado.
+    env_file: .env
+    ports:
+      - "8000:8000"   # API disponible en http://localhost:8000 (docs en /docs)
+    volumes:
+      # Montamos el código local dentro del contenedor para hot-reload:
+      - ./backend:/app
+    # --reload reinicia el servidor al detectar cambios (solo para desarrollo)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build: ./frontend
+    container_name: grcoir-frontend
+    env_file: .env
+    ports:
+      - "5173:5173"   # [[POR LLENAR: puerto según Vite (5173) o Next.js (3000)]]
+    volumes:
+      - ./frontend:/app
+      # node_modules vive DENTRO del contenedor (volumen anónimo) para no chocar
+      # con instalaciones locales de la máquina de cada desarrollador:
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # OPCIONAL: SQL Server local para trabajar SIN conexión a AWS RDS
+  # (por ejemplo, para pruebas destructivas o desarrollo sin internet).
+  # Para usarlo: descomenta este bloque y apunta DB_HOST=mssql en tu .env.
+  # Nota: la imagen oficial de SQL Server requiere aceptar la licencia (ACCEPT_EULA).
+  # ---------------------------------------------------------------------------
+  # mssql:
+  #   image: mcr.microsoft.com/mssql/server:2022-latest
+  #   container_name: grcoir-mssql
+  #   environment:
+  #     ACCEPT_EULA: "Y"
+  #     MSSQL_SA_PASSWORD: "${DB_PASSWORD}"   # misma variable del .env
+  #   ports:
+  #     - "1433:1433"
+  #   volumes:
+  #     - mssql-data:/var/opt/mssql
+
+# volumes:
+#   mssql-data:

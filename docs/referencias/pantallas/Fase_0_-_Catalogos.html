@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GRC-OIR — Fase 0: Catálogos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f3ef;--surface:#fff;--surface2:#f0efe9;--surface3:#e6e5de;
+  --border:#e0dfd8;--border-med:#c8c7bf;--border-strong:#b0afa8;
+  --text:#181816;--text2:#5c5c58;--text3:#9c9c96;
+  --purple:#534AB7;--purple-bg:#EEEDFE;--purple-text:#3C3489;--purple-border:#AFA9EC;
+  --teal:#0F6E56;--teal-bg:#E1F5EE;--teal-text:#085041;--teal-border:#5DCAA5;
+  --blue-bg:#E6F1FB;--blue-text:#0C447C;--blue-border:#85B7EB;
+  --amber-bg:#FAEEDA;--amber-text:#633806;--amber-border:#FAC775;
+  --red-bg:#FCEBEB;--red-text:#791F1F;
+  --green-bg:#EAF3DE;--green-text:#27500A;
+  --gray-bg:#F1EFE8;--gray-text:#444441;
+  --r:8px;--rl:12px;
+  --font:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  --mono:'IBM Plex Mono','SF Mono','Consolas',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+ 
+/* ── Header ── */
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100}
+.logo{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--purple)}
+.fase-tag{font-size:11px;font-family:var(--mono);background:var(--purple-bg);color:var(--purple-text);padding:3px 10px;border-radius:20px;font-weight:500}
+.header-spacer{flex:1}
+.user-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--purple-bg);color:var(--purple-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+ 
+/* ── Layout ── */
+.app-body{flex:1;display:flex;min-height:0;overflow:hidden}
+ 
+/* ── Sidebar ── */
+.sidebar{width:230px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:14px 0}
+.side-section{margin-bottom:18px}
+.side-title{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:0 18px;margin-bottom:6px}
+.side-item{display:flex;align-items:center;gap:9px;padding:7px 18px;font-size:13px;color:var(--text2);cursor:pointer;border-left:2px solid transparent;transition:all .12s;user-select:none}
+.side-item:hover{color:var(--text);background:var(--surface2)}
+.side-item.active{color:var(--purple);background:var(--purple-bg);border-left-color:var(--purple);font-weight:500}
+.side-icon{width:14px;height:14px;flex-shrink:0;opacity:.8}
+.side-count{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text3);background:var(--surface2);padding:1px 6px;border-radius:8px}
+.side-item.active .side-count{background:#fff;color:var(--purple-text)}
+ 
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+ 
+/* Header del catálogo */
+.cat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.cat-title{font-size:18px;font-weight:600}
+.cat-sub{font-size:12px;color:var(--text3);margin-top:3px;max-width:680px}
+ 
+/* Toolbar */
+.toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.search{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 12px;font-size:13px;font-family:var(--font);color:var(--text);width:240px;outline:none;transition:border-color .15s}
+.search:focus{border-color:var(--purple)}
+.search::placeholder{color:var(--text3)}
+.sel-f{height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 10px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;cursor:pointer}
+.sel-f:focus{border-color:var(--purple)}
+.fp{height:28px;padding:0 13px;border-radius:20px;border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
+.fp:hover{color:var(--text);border-color:var(--border-strong)}
+.fp.active{background:var(--purple-bg);border-color:var(--purple-border);color:var(--purple-text);font-weight:500}
+.tb-spacer{flex:1}
+.tb-count{font-size:12px;color:var(--text3);font-family:var(--mono)}
+ 
+/* Split */
+.split{display:flex;flex:1;overflow:hidden;min-height:0}
+.list-pane{flex:1;overflow:auto;background:var(--surface)}
+.detail-pane{width:420px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+ 
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{padding:9px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0;white-space:nowrap;z-index:1}
+tbody td{padding:11px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr{cursor:pointer;transition:background .1s}
+tbody tr:hover td{background:var(--surface2)}
+tbody tr.sel td{background:var(--purple-bg)}
+tbody tr.sel-teal td{background:var(--teal-bg)}
+tbody tr.sel-amber td{background:var(--amber-bg)}
+.td-main{font-weight:500;color:var(--text)}
+.td-2{color:var(--text2)}
+.td-mono{font-family:var(--mono);font-size:12px;color:var(--text2)}
+.td-right{text-align:right}
+.td-center{text-align:center}
+ 
+/* Badges */
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.b-purple{background:var(--purple-bg);color:var(--purple-text)}
+.b-teal{background:var(--teal-bg);color:var(--teal-text)}
+.b-blue{background:var(--blue-bg);color:var(--blue-text)}
+.b-amber{background:var(--amber-bg);color:var(--amber-text)}
+.b-red{background:var(--red-bg);color:var(--red-text)}
+.b-green{background:var(--green-bg);color:var(--green-text)}
+.b-gray{background:var(--gray-bg);color:var(--gray-text)}
+ 
+/* Detail panel */
+.d-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);font-size:13px;padding:32px;text-align:center}
+.d-icon{width:40px;height:40px;border-radius:50%;border:1px solid var(--border-med);display:flex;align-items:center;justify-content:center;color:var(--text3)}
+.dh{padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dh-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.dh-name{font-size:16px;font-weight:600;color:var(--text)}
+.dh-sub{font-size:12px;color:var(--text2);margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.db{flex:1;overflow-y:auto;padding:14px 18px}
+ 
+/* Sections inside detail */
+.sec{font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin:16px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.sec:first-child{margin-top:0}
+ 
+/* Form fields */
+.fl{font-size:11px;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:5px}
+.fl-required::after{content:'*';color:var(--red-text);margin-left:2px}
+.fl-tag{font-size:9px;font-weight:600;padding:1px 5px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em}
+.fl-tag.cat{background:var(--purple-bg);color:var(--purple-text)}
+.fl-tag.her{background:var(--amber-bg);color:var(--amber-text)}
+.fl-tag.audit{background:var(--red-bg);color:var(--red-text)}
+.fl-tag.calc{background:var(--blue-bg);color:var(--blue-text)}
+.fv{font-size:13px;color:var(--text);margin-bottom:11px;min-height:18px}
+.fv.mono{font-family:var(--mono);font-size:12px}
+.fv.muted{color:var(--text2)}
+.fv.link{color:#185FA5}
+.fi{width:100%;height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 11px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;transition:border-color .15s}
+.fi:focus{border-color:var(--purple);background:var(--surface)}
+.fi:read-only{background:var(--surface3);color:var(--text2);cursor:not-allowed}
+.fsel{width:100%;height:34px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:0 9px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;cursor:pointer}
+.fsel:focus{border-color:var(--purple);background:var(--surface)}
+.ftxt{width:100%;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface2);padding:8px 11px;font-size:13px;font-family:var(--font);color:var(--text);outline:none;margin-bottom:10px;resize:vertical;min-height:60px}
+.ftxt:focus{border-color:var(--purple);background:var(--surface)}
+.fchk-row{display:flex;align-items:flex-start;gap:9px;margin-bottom:10px;padding:9px 12px;background:var(--surface2);border-radius:var(--r);border:1px solid var(--border);cursor:pointer;user-select:none;transition:background .12s}
+.fchk-row:hover{background:var(--surface3)}
+.fchk{margin-top:1px;flex-shrink:0;accent-color:var(--purple)}
+.fchk-body{flex:1}
+.fchk-lbl{font-size:13px;color:var(--text);font-weight:500}
+.fchk-desc{font-size:11px;color:var(--text3);margin-top:2px}
+.r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.r3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+ 
+/* Audit notice */
+.audit-notice{background:var(--red-bg);border:1px solid #F5C2C2;border-radius:var(--r);padding:8px 11px;margin-bottom:10px;font-size:12px;color:var(--red-text);display:flex;gap:8px;align-items:flex-start}
+.audit-notice strong{font-weight:600}
+ 
+/* Inherited notice */
+.inherit-notice{background:var(--amber-bg);border-radius:6px;padding:5px 9px;font-size:11px;color:var(--amber-text);margin-top:-7px;margin-bottom:8px;display:flex;align-items:center;gap:5px}
+ 
+/* Footer of detail */
+.df{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;background:var(--surface)}
+ 
+/* Buttons */
+.btn{height:34px;padding:0 14px;border-radius:var(--r);border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:13px;color:var(--text);cursor:pointer;transition:all .12s;white-space:nowrap;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--surface2)}
+.btn:active{transform:scale(.98)}
+.btn-sm{height:28px;padding:0 11px;font-size:12px}
+.btn-xs{height:24px;padding:0 10px;font-size:11px}
+.btn-purple{background:var(--purple);border-color:var(--purple);color:#fff}
+.btn-purple:hover{background:#4840a0;border-color:#4840a0;color:#fff}
+.btn-teal{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn-teal:hover{background:#0d5e49;color:#fff}
+.btn-danger{background:var(--red-bg);border-color:#F5C2C2;color:var(--red-text)}
+.btn-danger:hover{background:#F8DEDE}
+ 
+/* Related items inside detail */
+.rel-item{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:var(--r);border:1px solid var(--border);margin-bottom:6px;font-size:13px;transition:all .12s;cursor:pointer}
+.rel-item:hover{border-color:var(--border-med);background:var(--surface2)}
+.rel-name{font-weight:500;color:var(--text)}
+.rel-sub{font-size:12px;color:var(--text2);margin-top:2px}
+ 
+/* Inline form (e.g. agregar estación dentro de afiliado) */
+.inline-form{background:var(--surface2);border-radius:var(--rl);border:1px solid var(--border-med);padding:13px;margin-bottom:8px}
+.if-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+ 
+/* History panel for audit log */
+.history-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.history-item:last-child{border-bottom:none}
+.history-when{color:var(--text3);font-family:var(--mono);font-size:10px;width:80px;flex-shrink:0}
+.history-body{flex:1}
+.history-user{font-weight:500;color:var(--text)}
+.history-change{color:var(--text2);margin-top:2px}
+.history-change .old{color:var(--red-text);text-decoration:line-through}
+.history-change .new{color:var(--green-text);font-weight:500}
+ 
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
+</style>
+</head>
+<body>
+ 
+<header class="app-header">
+  <div class="logo">GRC<span>·</span>OIR</div>
+  <div class="fase-tag">FASE 0 · CATÁLOGOS</div>
+  <div class="header-spacer"></div>
+  <div class="user-chip">
+    <div class="user-avatar">VG</div>
+    <span>Ventas · victor.garcia</span>
+  </div>
+</header>
+ 
+<div class="app-body">
+ 
+  <aside class="sidebar">
+    <div class="side-section">
+      <div class="side-title">Comerciales</div>
+      <div class="side-item active" data-cat="anunciante" onclick="show('anunciante')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M3 13c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="2.5" stroke="currentColor" stroke-width="1.4"/></svg>
+        Anunciantes <span class="side-count" id="cnt-anunciante">0</span>
+      </div>
+      <div class="side-item" data-cat="agencia" onclick="show('agencia')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7h6M5 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Agencias <span class="side-count" id="cnt-agencia">0</span>
+      </div>
+      <div class="side-item" data-cat="contrato" onclick="show('contrato')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4"/><path d="M10 2v3h3M5 9h6M5 11h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Contratos <span class="side-count" id="cnt-contrato">0</span>
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Operación</div>
+      <div class="side-item" data-cat="afiliado" onclick="show('afiliado')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1v3M8 12v3M1 8h3M12 8h3M3.5 3.5l2 2M10.5 10.5l2 2M3.5 12.5l2-2M10.5 5.5l2-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.4"/></svg>
+        Afiliados y estaciones <span class="side-count" id="cnt-afiliado">0</span>
+      </div>
+      <div class="side-item" data-cat="plaza" onclick="show('plaza')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M8 14s5-4.5 5-9a5 5 0 10-10 0c0 4.5 5 9 5 9z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="5" r="1.7" stroke="currentColor" stroke-width="1.4"/></svg>
+        Plazas <span class="side-count" id="cnt-plaza">0</span>
+      </div>
+      <div class="side-item" data-cat="tarifa" onclick="show('tarifa')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v8H2z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 8h.5M11 8h-.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Tarifas por plaza <span class="side-count" id="cnt-tarifa">0</span>
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Soporte</div>
+      <div class="side-item" data-cat="vendedor" onclick="show('vendedor')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M3 14a5 5 0 0110 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Vendedores <span class="side-count" id="cnt-vendedor">0</span>
+      </div>
+      <div class="side-item" data-cat="categoria" onclick="show('categoria')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/></svg>
+        Categorías <span class="side-count" id="cnt-categoria">0</span>
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Configuración</div>
+      <div class="side-item" data-cat="constantes" onclick="show('constantes')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Constantes del sistema <span class="side-count" id="cnt-constantes">0</span>
+      </div>
+    </div>
+  </aside>
+ 
+  <main class="main" id="main"></main>
+</div>
+ 
+<script>
+/* ════════════════════════════════════════════════
+   DATA — Información de prueba de cada catálogo
+════════════════════════════════════════════════ */
+ 
+const data = {
+  agencia: [
+    {id:'ag1',nombre_agencia:'Mindshare México',rfc_agencia:'MME050610EF7',contacto_nombre:'Laura Torres',contacto_email:'l.torres@mindshare.com',contacto_telefono:'55 9876 5432',porcentaje_comision_agencia_default:15,activo:true,created_at:'2024-08-12'},
+    {id:'ag2',nombre_agencia:'OMD México',rfc_agencia:'OMD120815GH9',contacto_nombre:'Pedro Leal',contacto_email:'p.leal@omd.com.mx',contacto_telefono:'55 3456 7890',porcentaje_comision_agencia_default:15,activo:true,created_at:'2024-09-03'},
+    {id:'ag3',nombre_agencia:'Initiative',rfc_agencia:'INI081205AB7',contacto_nombre:'Marcela Vázquez',contacto_email:'m.vazquez@initiative.com',contacto_telefono:'55 5566 7788',porcentaje_comision_agencia_default:12.5,activo:true,created_at:'2025-01-15'},
+  ],
+  anunciante: [
+    {id:'an1',agencia_id:'ag1',nombre_comercial:'Televisa Publicidad',nombre_fiscal:'Televisa Publicidad SA de CV',rfc_anunciante:'TPU900101XX1',localizacion:'CDMX, Av. Vasco de Quiroga 2000',referencia_anunciante:'TVPUB-001',contacto_nombre:'Ana Gutiérrez',contacto_email:'a.gutierrez@televisa.com',contacto_telefono:'55 1234 5678',dias_credito_default:30,activo:true,created_at:'2024-05-20'},
+    {id:'an2',agencia_id:'ag2',nombre_comercial:'Grupo Bimbo',nombre_fiscal:'Bimbo SA de CV',rfc_anunciante:'GBI971120AB3',localizacion:'CDMX, Prolongación Paseo de la Reforma 1000',referencia_anunciante:'BIMBO-MX',contacto_nombre:'Carlos Méndez',contacto_email:'c.mendez@bimbo.com.mx',contacto_telefono:'55 8765 4321',dias_credito_default:60,activo:true,created_at:'2024-06-15'},
+    {id:'an3',agencia_id:'ag1',nombre_comercial:'OXXO',nombre_fiscal:'Cadena Comercial OXXO SA de CV',rfc_anunciante:'OCO030401CD5',localizacion:'Monterrey, NL · Av. Lázaro Cárdenas 2225',referencia_anunciante:'OXXO-COM',contacto_nombre:'Sofía Ramírez',contacto_email:'s.ramirez@oxxo.com',contacto_telefono:'81 2222 3333',dias_credito_default:45,activo:true,created_at:'2024-07-01'},
+    {id:'an4',agencia_id:'ag2',nombre_comercial:'Soriana',nombre_fiscal:'Organización Soriana SAB de CV',rfc_anunciante:'SOR930201IJ2',localizacion:'Monterrey, NL · Alejandro de Rodas 3102',referencia_anunciante:'SORI-MX',contacto_nombre:'Miguel Ángel Flores',contacto_email:'m.flores@soriana.com',contacto_telefono:'81 4444 5555',dias_credito_default:45,activo:true,created_at:'2024-08-20'},
+    {id:'an5',agencia_id:null,nombre_comercial:'Modelo',nombre_fiscal:'Cervecería Modelo SA de CV',rfc_anunciante:'CMO920510KL3',localizacion:'CDMX, Javier Barros Sierra 555',referencia_anunciante:'MOD-DIR',contacto_nombre:'Valentina Cruz',contacto_email:'v.cruz@modelo.com',contacto_telefono:'55 6677 8899',dias_credito_default:30,activo:false,created_at:'2024-03-10'},
+  ],
+  marca: [
+    {id:'mc1',anunciante_id:'an2',nombre_marca:'Pan Bimbo',activo:true},
+    {id:'mc2',anunciante_id:'an2',nombre_marca:'Marinela',activo:true},
+    {id:'mc3',anunciante_id:'an2',nombre_marca:'Barcel',activo:true},
+    {id:'mc4',anunciante_id:'an3',nombre_marca:'OXXO Tiendas',activo:true},
+    {id:'mc5',anunciante_id:'an5',nombre_marca:'Corona',activo:true},
+    {id:'mc6',anunciante_id:'an5',nombre_marca:'Modelo Especial',activo:true},
+    {id:'mc7',anunciante_id:'an1',nombre_marca:'Televisa Deportes',activo:true},
+  ],
+  contrato: [
+    {id:'co1',anunciante_id:'an2',numero_contrato:'CT-2025-001',nombre_contrato:'Anual 2025 - Grupo Bimbo',fecha_inicio_contrato:'2025-01-01',fecha_fin_contrato:'2025-12-31',monto_contrato:18500000,porcentaje_comision_contrato:15,condiciones_comerciales:'Pago a 60 días. Descuento por volumen del 5% sobre ventas mayores a $1M.',estado_contrato:'vigente',activo:true,observaciones_contrato:'Renovación de contrato 2024.'},
+    {id:'co2',anunciante_id:'an1',numero_contrato:'CT-2025-002',nombre_contrato:'Campaña Verano 2025',fecha_inicio_contrato:'2025-04-01',fecha_fin_contrato:'2025-08-31',monto_contrato:4500000,porcentaje_comision_contrato:15,condiciones_comerciales:'',estado_contrato:'vigente',activo:true,observaciones_contrato:''},
+    {id:'co3',anunciante_id:'an3',numero_contrato:'CT-2025-003',nombre_contrato:'Anual OXXO 2025',fecha_inicio_contrato:'2025-01-01',fecha_fin_contrato:'2025-12-31',monto_contrato:8200000,porcentaje_comision_contrato:12.5,condiciones_comerciales:'Facturación mensual. Comisión preferencial.',estado_contrato:'vigente',activo:true,observaciones_contrato:''},
+    {id:'co4',anunciante_id:'an4',numero_contrato:'CT-2024-045',nombre_contrato:'Anual Soriana 2024',fecha_inicio_contrato:'2024-01-01',fecha_fin_contrato:'2024-12-31',monto_contrato:6100000,porcentaje_comision_contrato:15,condiciones_comerciales:'',estado_contrato:'finalizado',activo:false,observaciones_contrato:'Contrato cerrado. Renovado en CT-2025-005.'},
+  ],
+  plaza: [
+    {id:'pl1',nombre_plaza:'CDMX',estado:'Ciudad de México',activo:true},
+    {id:'pl2',nombre_plaza:'Monterrey',estado:'Nuevo León',activo:true},
+    {id:'pl3',nombre_plaza:'Guadalajara',estado:'Jalisco',activo:true},
+    {id:'pl4',nombre_plaza:'León',estado:'Guanajuato',activo:true},
+    {id:'pl5',nombre_plaza:'Puebla',estado:'Puebla',activo:true},
+    {id:'pl6',nombre_plaza:'Tijuana',estado:'Baja California',activo:true},
+  ],
+  afiliado: [
+    {id:'af1',nombre_afiliado:'Multimedios Estrellas de Oro',razon_social_afiliado:'Multimedios Estrellas de Oro SA de CV',rfc_afiliado:'MEO850101OP2',plaza_id:'pl2',contacto_nombre:'Ricardo Salinas',contacto_email:'r.salinas@multimedios.com',contacto_telefono:'81 8000 1234',activo:true,created_at:'2024-04-15'},
+    {id:'af2',nombre_afiliado:'OIR Bajío',razon_social_afiliado:'OIR Bajío SA de CV',rfc_afiliado:'OIR920301AB1',plaza_id:'pl4',contacto_nombre:'Fernanda Ortiz',contacto_email:'f.ortiz@oirbajio.com',contacto_telefono:'477 123 4567',activo:true,created_at:'2024-05-22'},
+    {id:'af3',nombre_afiliado:'Grupo Radio Centro',razon_social_afiliado:'Grupo Radio Centro SAB de CV',rfc_afiliado:'GRC640515CD3',plaza_id:'pl1',contacto_nombre:'Arturo Velasco',contacto_email:'a.velasco@radiocentro.com.mx',contacto_telefono:'55 5512 3456',activo:true,created_at:'2024-03-01'},
+    {id:'af4',nombre_afiliado:'Radio Fórmula GDL',razon_social_afiliado:'Radio Fórmula Guadalajara SA',rfc_afiliado:'RFG780810EF4',plaza_id:'pl3',contacto_nombre:'Claudia Pérez',contacto_email:'c.perez@radioformula.com.mx',contacto_telefono:'33 3615 4321',activo:false,created_at:'2023-11-08'},
+  ],
+  estacion: [
+    {id:'es1',afiliado_id:'af1',plaza_id:'pl2',nombre_estacion:'XHMT-FM',frecuencia:'90.1 FM',tipo_senal:'fm',venta_directa_carmen_aristegui_cdmx:false,activo:true},
+    {id:'es2',afiliado_id:'af1',plaza_id:'pl2',nombre_estacion:'XHMA-AM',frecuencia:'1080 AM',tipo_senal:'am',venta_directa_carmen_aristegui_cdmx:false,activo:true},
+    {id:'es3',afiliado_id:'af1',plaza_id:'pl2',nombre_estacion:'XHREY-FM',frecuencia:'100.3 FM',tipo_senal:'fm',venta_directa_carmen_aristegui_cdmx:false,activo:true},
+    {id:'es4',afiliado_id:'af2',plaza_id:'pl4',nombre_estacion:'XHLE-FM',frecuencia:'97.7 FM',tipo_senal:'fm',venta_directa_carmen_aristegui_cdmx:false,activo:true},
+    {id:'es5',afiliado_id:'af2',plaza_id:'pl4',nombre_estacion:'XHLE-TV',frecuencia:'Canal 4',tipo_senal:'tv',venta_directa_carmen_aristegui_cdmx:false,activo:true},
+    {id:'es6',afiliado_id:'af3',plaza_id:'pl1',nombre_estacion:'XEQR-AM',frecuencia:'1030 AM',tipo_senal:'am',venta_directa_carmen_aristegui_cdmx:true,activo:true},
+    {id:'es7',afiliado_id:'af3',plaza_id:'pl1',nombre_estacion:'XHRC-FM',frecuencia:'100.9 FM',tipo_senal:'fm',venta_directa_carmen_aristegui_cdmx:true,activo:true},
+    {id:'es8',afiliado_id:'af4',plaza_id:'pl3',nombre_estacion:'XEGG-AM',frecuencia:'1140 AM',tipo_senal:'am',venta_directa_carmen_aristegui_cdmx:false,activo:false},
+  ],
+  tarifa: [
+    {id:'ta1',plaza_id:'pl1',tipo_senal:'fm',duracion_spot:'30s',tarifa_bruta:9000,descuento_pct:10,vigencia_desde:'2025-01-01',vigencia_hasta:'2025-12-31',notas:'Tarifa general FM CDMX',activo:true},
+    {id:'ta2',plaza_id:'pl1',tipo_senal:'am',duracion_spot:'60s',tarifa_bruta:5500,descuento_pct:5,vigencia_desde:'2025-01-01',vigencia_hasta:'2025-12-31',notas:'',activo:true},
+    {id:'ta3',plaza_id:'pl2',tipo_senal:'fm',duracion_spot:'30s',tarifa_bruta:8500,descuento_pct:10,vigencia_desde:'2025-01-01',vigencia_hasta:'2025-12-31',notas:'',activo:true},
+    {id:'ta4',plaza_id:'pl2',tipo_senal:'am',duracion_spot:'30s',tarifa_bruta:4800,descuento_pct:0,vigencia_desde:'2025-01-01',vigencia_hasta:'2025-12-31',notas:'',activo:true},
+    {id:'ta5',plaza_id:'pl4',tipo_senal:'fm',duracion_spot:'20s',tarifa_bruta:4500,descuento_pct:15,vigencia_desde:'2024-01-01',vigencia_hasta:'2024-12-31',notas:'Tarifa expirada',activo:false},
+    {id:'ta6',plaza_id:'pl3',tipo_senal:'fm',duracion_spot:'30s',tarifa_bruta:6200,descuento_pct:5,vigencia_desde:'2025-03-01',vigencia_hasta:'2025-09-30',notas:'Temporada',activo:true},
+  ],
+  vendedor: [
+    {id:'ve1',nombre_vendedor:'Carmen Aristegui',email_vendedor:'c.aristegui@grcoir.com',porcentaje_comision_default:5,activo:true},
+    {id:'ve2',nombre_vendedor:'Roberto López',email_vendedor:'r.lopez@grcoir.com',porcentaje_comision_default:4,activo:true},
+    {id:'ve3',nombre_vendedor:'Patricia Méndez',email_vendedor:'p.mendez@grcoir.com',porcentaje_comision_default:4.5,activo:true},
+    {id:'ve4',nombre_vendedor:'Eduardo Castro',email_vendedor:'e.castro@grcoir.com',porcentaje_comision_default:3.5,activo:true},
+  ],
+  categoria: [
+    {id:'cat1',nombre_categoria:'Automotriz',descripcion_categoria:'Marcas y agencias del sector automotriz',activo:true},
+    {id:'cat2',nombre_categoria:'Alimentos y bebidas',descripcion_categoria:'Alimentos, bebidas y consumo masivo',activo:true},
+    {id:'cat3',nombre_categoria:'Retail',descripcion_categoria:'Cadenas comerciales y tiendas',activo:true},
+    {id:'cat4',nombre_categoria:'Telecomunicaciones',descripcion_categoria:'Telefonía, internet, servicios digitales',activo:true},
+    {id:'cat5',nombre_categoria:'Farmacéutica',descripcion_categoria:'Industria farmacéutica y salud',activo:true},
+    {id:'cat6',nombre_categoria:'Financiero',descripcion_categoria:'Banca, seguros, inversiones',activo:true},
+    {id:'cat7',nombre_categoria:'Gobierno',descripcion_categoria:'Sector público y gubernamental',activo:true},
+  ],
+ 
+  // Audit log de ejemplo
+  log_cambios: [
+    {entidad:'Agencia',entidad_id:'ag1',campo_modificado:'porcentaje_comision_agencia_default',valor_anterior:'12.00',valor_nuevo:'15.00',usuario:'maria.gonzalez (Dirección)',fecha_cambio:'2025-03-15 11:42',motivo_cambio:'Acuerdo anual revisado con Mindshare'},
+    {entidad:'Agencia',entidad_id:'ag3',campo_modificado:'porcentaje_comision_agencia_default',valor_anterior:'15.00',valor_nuevo:'12.50',usuario:'maria.gonzalez (Dirección)',fecha_cambio:'2025-01-15 09:20',motivo_cambio:'Renegociación contrato 2025'},
+  ],
+ 
+  // ─────────────────────────────────────────────────────────────
+  // Constantes del sistema — agrupadas por catálogo SAT/timbrador
+  // Solo lectura en este prototipo (admin del sistema lo edita).
+  // ─────────────────────────────────────────────────────────────
+  constantes: [
+    // TipoComprobante (CFDI 4.0 — campo 'Tipo' del archivo plano)
+    {id:'c1',grupo:'TipoComprobante',clave:'I',descripcion:'Ingreso · facturas, notas de cargo',activo:true,updated_at:'2024-12-01'},
+    {id:'c2',grupo:'TipoComprobante',clave:'E',descripcion:'Egreso · notas de crédito',activo:true,updated_at:'2024-12-01'},
+    {id:'c3',grupo:'TipoComprobante',clave:'P',descripcion:'Pago · complementos de pago',activo:true,updated_at:'2024-12-01'},
+    {id:'c4',grupo:'TipoComprobante',clave:'33',descripcion:'Factura tradicional (legacy del timbrador externo)',valor:'33',activo:true,updated_at:'2024-12-01'},
+ 
+    // Serie del CFDI
+    {id:'c10',grupo:'Serie',clave:'D',descripcion:'Serie D — Radio Publicidad XHMéxico (División OIR)',valor:'D',activo:true,updated_at:'2024-12-01'},
+    {id:'c11',grupo:'Serie',clave:'A',descripcion:'Serie A — Grupo Radio Centro Servicios',valor:'A',activo:true,updated_at:'2024-12-01'},
+ 
+    // RegimenFiscal
+    {id:'c20',grupo:'RegimenFiscal',clave:'601',descripcion:'General de Ley Personas Morales',activo:true,updated_at:'2024-12-01'},
+    {id:'c21',grupo:'RegimenFiscal',clave:'603',descripcion:'Personas Morales con Fines no Lucrativos',activo:true,updated_at:'2024-12-01'},
+    {id:'c22',grupo:'RegimenFiscal',clave:'612',descripcion:'Personas Físicas con Actividades Empresariales y Profesionales',activo:true,updated_at:'2024-12-01'},
+    {id:'c23',grupo:'RegimenFiscal',clave:'626',descripcion:'Régimen Simplificado de Confianza',activo:true,updated_at:'2024-12-01'},
+ 
+    // ClaveProdServ (catálogo SAT — los usados típicamente por radio)
+    {id:'c30',grupo:'ClaveProdServ',clave:'82101501',descripcion:'Servicios de publicidad por radio',activo:true,updated_at:'2024-12-01'},
+    {id:'c31',grupo:'ClaveProdServ',clave:'82101601',descripcion:'Spots o servicios de transmisión publicitaria',activo:true,updated_at:'2024-12-01'},
+    {id:'c32',grupo:'ClaveProdServ',clave:'82101599',descripcion:'Otros servicios de publicidad',activo:true,updated_at:'2024-12-01'},
+    {id:'c33',grupo:'ClaveProdServ',clave:'80141600',descripcion:'Servicios de mercadeo / patrocinios',activo:true,updated_at:'2024-12-01'},
+ 
+    // ClaveUnidad
+    {id:'c40',grupo:'ClaveUnidad',clave:'E48',descripcion:'Unidad de servicio',activo:true,updated_at:'2024-12-01'},
+    {id:'c41',grupo:'ClaveUnidad',clave:'ACT',descripcion:'Actividad',activo:true,updated_at:'2024-12-01'},
+    {id:'c42',grupo:'ClaveUnidad',clave:'H87',descripcion:'Pieza',activo:true,updated_at:'2024-12-01'},
+ 
+    // UsoCFDI
+    {id:'c50',grupo:'UsoCFDI',clave:'G01',descripcion:'Adquisición de mercancías',activo:true,updated_at:'2024-12-01'},
+    {id:'c51',grupo:'UsoCFDI',clave:'G03',descripcion:'Gastos en general',activo:true,updated_at:'2024-12-01'},
+    {id:'c52',grupo:'UsoCFDI',clave:'P01',descripcion:'Por definir',activo:true,updated_at:'2024-12-01'},
+    {id:'c53',grupo:'UsoCFDI',clave:'S01',descripcion:'Sin efectos fiscales',activo:true,updated_at:'2024-12-01'},
+    {id:'c54',grupo:'UsoCFDI',clave:'CP01',descripcion:'Pagos',activo:true,updated_at:'2024-12-01'},
+ 
+    // FormaPago
+    {id:'c60',grupo:'FormaPago',clave:'01',descripcion:'Efectivo',activo:true,updated_at:'2024-12-01'},
+    {id:'c61',grupo:'FormaPago',clave:'02',descripcion:'Cheque nominativo',activo:true,updated_at:'2024-12-01'},
+    {id:'c62',grupo:'FormaPago',clave:'03',descripcion:'Transferencia electrónica de fondos',activo:true,updated_at:'2024-12-01'},
+    {id:'c63',grupo:'FormaPago',clave:'04',descripcion:'Tarjeta de crédito',activo:true,updated_at:'2024-12-01'},
+    {id:'c64',grupo:'FormaPago',clave:'28',descripcion:'Tarjeta de débito',activo:true,updated_at:'2024-12-01'},
+    {id:'c65',grupo:'FormaPago',clave:'99',descripcion:'Por definir',activo:true,updated_at:'2024-12-01'},
+ 
+    // MetodoPago
+    {id:'c70',grupo:'MetodoPago',clave:'PUE',descripcion:'Pago en una sola exhibición',activo:true,updated_at:'2024-12-01'},
+    {id:'c71',grupo:'MetodoPago',clave:'PPD',descripcion:'Pago en parcialidades o diferido',activo:true,updated_at:'2024-12-01'},
+ 
+    // MonedaSAT
+    {id:'c80',grupo:'MonedaSAT',clave:'MXN',descripcion:'Peso mexicano',activo:true,updated_at:'2024-12-01'},
+    {id:'c81',grupo:'MonedaSAT',clave:'USD',descripcion:'Dólar estadounidense',activo:true,updated_at:'2024-12-01'},
+    {id:'c82',grupo:'MonedaSAT',clave:'EUR',descripcion:'Euro',activo:true,updated_at:'2024-12-01'},
+  ]
+};
+ 
+/* ════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════ */
+ 
+function fmt(n){return '$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:0,maximumFractionDigits:0})}
+function fmtFull(n){return '$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtPct(n){return Number(n).toFixed(n%1===0?0:2)+'%'}
+function findById(arr,id){return arr.find(x=>x.id===id)}
+ 
+let state = { cat:'anunciante', selected:null, editing:false, creating:false, filter:'all', search:'' };
+ 
+function show(cat){
+  state.cat = cat; state.selected = null; state.editing = false; state.creating = false; state.filter = 'all'; state.search = '';
+  document.querySelectorAll('.side-item').forEach(el=>el.classList.toggle('active',el.dataset.cat===cat));
+  render();
+}
+ 
+function render(){
+  const main = document.getElementById('main');
+  const r = renderers[state.cat];
+  if (!r) { main.innerHTML='<div style="padding:40px;color:var(--text3)">Catálogo no implementado.</div>'; return; }
+  main.innerHTML = r();
+  updateCounts();
+}
+ 
+function updateCounts(){
+  ['anunciante','agencia','contrato','afiliado','plaza','tarifa','vendedor','categoria','constantes'].forEach(k=>{
+    const el = document.getElementById('cnt-'+k);
+    if (el) el.textContent = (data[k]||[]).length;
+  });
+}
+ 
+function emptyDetail(msg){
+  return `<div class="d-empty"><div class="d-icon">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.2"/><path d="M9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+  </div>${msg}</div>`;
+}
+ 
+/* ════════════════════════════════════════════════
+   RENDERERS — uno por catálogo
+════════════════════════════════════════════════ */
+ 
+const renderers = {};
+ 
+/* ─────────────────────────────────────────────
+   ANUNCIANTES
+───────────────────────────────────────────── */
+renderers.anunciante = () => {
+  const items = data.anunciante.filter(a => {
+    if (state.filter==='activo' && !a.activo) return false;
+    if (state.filter==='inactivo' && a.activo) return false;
+    if (state.filter==='directo' && a.agencia_id) return false;
+    if (state.filter==='via_agencia' && !a.agencia_id) return false;
+    if (state.search) { const q = state.search.toLowerCase(); return a.nombre_comercial.toLowerCase().includes(q) || a.nombre_fiscal.toLowerCase().includes(q) || a.rfc_anunciante.toLowerCase().includes(q) || (a.referencia_anunciante||'').toLowerCase().includes(q); }
+    return true;
+  });
+ 
+  const sel = state.selected ? findById(data.anunciante, state.selected) : null;
+  const marcas = sel ? data.marca.filter(m=>m.anunciante_id===sel.id) : [];
+  const contratos = sel ? data.contrato.filter(c=>c.anunciante_id===sel.id) : [];
+  const agencia = sel && sel.agencia_id ? findById(data.agencia, sel.agencia_id) : null;
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Anunciantes</div>
+      <div class="cat-sub">Catálogo de clientes comerciales. En el sistema se registran como "Anunciantes". Cada anunciante puede tener marcas, contratos y representación por una agencia.</div>
+    </div>
+    <button class="btn btn-purple" onclick="newAnunciante()">+ Nuevo anunciante</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar nombre, RFC, referencia…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin:0 4px 0 6px">Estatus</span>
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='activo'?'active':''}" onclick="state.filter='activo';render()">Activos</button>
+    <button class="fp ${state.filter==='inactivo'?'active':''}" onclick="state.filter='inactivo';render()">Inactivos</button>
+    <span style="width:1px;height:18px;background:var(--border);margin:0 4px"></span>
+    <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin:0 4px">Modalidad</span>
+    <button class="fp ${state.filter==='via_agencia'?'active':''}" onclick="state.filter='via_agencia';render()">Vía agencia</button>
+    <button class="fp ${state.filter==='directo'?'active':''}" onclick="state.filter='directo';render()">Sin agencia</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.anunciante.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:28%">Nombre comercial</th>
+          <th style="width:24%">Razón social</th>
+          <th style="width:13%">RFC</th>
+          <th style="width:18%">Agencia</th>
+          <th style="width:9%" class="td-center">Crédito</th>
+          <th style="width:8%" class="td-center">Estatus</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(a=>{
+            const ag = a.agencia_id ? findById(data.agencia, a.agencia_id) : null;
+            return `<tr class="${state.selected===a.id?'sel':''}" onclick="selectAnunciante('${a.id}')">
+              <td class="td-main">${a.nombre_comercial}</td>
+              <td class="td-2">${a.nombre_fiscal}</td>
+              <td class="td-mono">${a.rfc_anunciante}</td>
+              <td class="td-2">${ag?ag.nombre_agencia:'<span style="color:var(--text3)">— Sin agencia —</span>'}</td>
+              <td class="td-center td-mono">${a.dias_credito_default||'—'} d</td>
+              <td class="td-center"><span class="badge ${a.activo?'b-green':'b-gray'}">${a.activo?'Activo':'Inactivo'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderAnuncianteDetail(sel, agencia, marcas, contratos) : emptyDetail('Selecciona un anunciante para ver sus marcas, contratos y datos comerciales')}</div>
+  </div>`;
+};
+ 
+function renderAnuncianteDetail(a, ag, marcas, contratos){
+  return `
+  <div class="dh">
+    <div class="dh-row">
+      <div>
+        <div class="dh-name">${a.nombre_comercial}</div>
+        <div class="dh-sub">
+          <span class="badge ${a.activo?'b-green':'b-gray'}">${a.activo?'Activo':'Inactivo'}</span>
+          ${ag ? `<span class="badge b-teal">Vía ${ag.nombre_agencia}</span>` : '<span class="badge b-purple">Sin agencia</span>'}
+        </div>
+      </div>
+      <button class="btn btn-sm" onclick="editAnunciante('${a.id}')">Editar</button>
+    </div>
+  </div>
+  <div class="db">
+    <div class="sec">Identificación fiscal</div>
+    <div class="fl">Nombre fiscal / Razón social</div>
+    <div class="fv">${a.nombre_fiscal}</div>
+    <div class="fl">RFC</div>
+    <div class="fv mono">${a.rfc_anunciante}</div>
+    <div class="fl">Localización</div>
+    <div class="fv">${a.localizacion||'<span class="muted">Sin dato</span>'}</div>
+    <div class="fl">Referencia interna</div>
+    <div class="fv mono">${a.referencia_anunciante||'—'}</div>
+ 
+    <div class="sec">Contacto comercial</div>
+    <div class="fl">Nombre</div><div class="fv">${a.contacto_nombre||'—'}</div>
+    <div class="fl">Correo</div><div class="fv link">${a.contacto_email||'—'}</div>
+    <div class="fl">Teléfono</div><div class="fv">${a.contacto_telefono||'—'}</div>
+ 
+    <div class="sec">Condiciones default</div>
+    <div class="fl">Días de crédito (default) <span class="fl-tag audit">Editable Ventas/CxC</span></div>
+    <div class="fv mono">${a.dias_credito_default||'—'} días</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:-7px;margin-bottom:11px">Valor sugerido al crear cobranzas. Puede sobreescribirse por factura.</div>
+ 
+    <div class="sec">Marcas (${marcas.length}) <button class="btn btn-xs" onclick="addMarca('${a.id}')">+ Agregar</button></div>
+    ${marcas.length ? marcas.map(m=>`
+      <div class="rel-item">
+        <div>
+          <div class="rel-name">${m.nombre_marca}</div>
+          <div class="rel-sub">Marca asociada</div>
+        </div>
+        <span class="badge ${m.activo?'b-green':'b-gray'}">${m.activo?'Activa':'Inactiva'}</span>
+      </div>
+    `).join('') : '<div style="font-size:13px;color:var(--text3);padding:6px 0">Sin marcas registradas.</div>'}
+ 
+    <div class="sec">Contratos (${contratos.length}) <button class="btn btn-xs" onclick="show('contrato')">Ver todos ↗</button></div>
+    ${contratos.length ? contratos.map(c=>{
+      const cl = c.estado_contrato==='vigente'?'b-green':c.estado_contrato==='finalizado'?'b-gray':c.estado_contrato==='suspendido'?'b-amber':'b-red';
+      return `<div class="rel-item" onclick="show('contrato');state.selected='${c.id}';setTimeout(render,10)">
+        <div>
+          <div class="rel-name">${c.nombre_contrato}</div>
+          <div class="rel-sub">${c.numero_contrato} · ${c.fecha_inicio_contrato} a ${c.fecha_fin_contrato} · ${fmt(c.monto_contrato)}</div>
+        </div>
+        <span class="badge ${cl}">${c.estado_contrato}</span>
+      </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--text3);padding:6px 0">Sin contratos registrados.</div>'}
+  </div>
+  <div class="df">
+    <button class="btn btn-sm" onclick="toggleAnuncianteActivo('${a.id}')">${a.activo?'Desactivar':'Activar'}</button>
+    <button class="btn btn-purple btn-sm" onclick="editAnunciante('${a.id}')">Editar anunciante</button>
+  </div>`;
+}
+ 
+function selectAnunciante(id){ state.selected=id; document.getElementById('detail-pane').innerHTML = (()=>{ const a=findById(data.anunciante,id); const ag=a.agencia_id?findById(data.agencia,a.agencia_id):null; const m=data.marca.filter(x=>x.anunciante_id===a.id); const c=data.contrato.filter(x=>x.anunciante_id===a.id); return renderAnuncianteDetail(a,ag,m,c); })(); document.querySelectorAll('.list-pane tbody tr').forEach(tr=>tr.classList.remove('sel')); event && event.currentTarget && event.currentTarget.classList && event.currentTarget.classList.add('sel'); }
+ 
+function editAnunciante(id){
+  const a = findById(data.anunciante, id);
+  document.getElementById('detail-pane').innerHTML = `
+    <div class="dh"><div class="dh-name">Editando: ${a.nombre_comercial}</div></div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl fl-required">Nombre comercial</div>
+      <input class="fi" id="ed-nc" value="${a.nombre_comercial}">
+      <div class="fl fl-required">Nombre fiscal / Razón social</div>
+      <input class="fi" id="ed-nf" value="${a.nombre_fiscal}">
+      <div class="r2">
+        <div><div class="fl fl-required">RFC</div><input class="fi" id="ed-rfc" value="${a.rfc_anunciante}" maxlength="13"></div>
+        <div><div class="fl">Referencia interna</div><input class="fi" id="ed-ref" value="${a.referencia_anunciante||''}"></div>
+      </div>
+      <div class="fl">Localización <span class="fl-tag cat">Catálogo libre</span></div>
+      <input class="fi" id="ed-loc" value="${a.localizacion||''}" placeholder="Ciudad, estado o dirección">
+ 
+      <div class="sec">Relación comercial</div>
+      <div class="fl">Agencia que lo representa</div>
+      <select class="fsel" id="ed-ag">
+        <option value="">— Sin agencia —</option>
+        ${data.agencia.map(g=>`<option value="${g.id}" ${g.id===a.agencia_id?'selected':''}>${g.nombre_agencia}</option>`).join('')}
+      </select>
+ 
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre contacto</div><input class="fi" id="ed-cn" value="${a.contacto_nombre||''}">
+      <div class="fl">Correo</div><input class="fi" id="ed-ce" value="${a.contacto_email||''}">
+      <div class="fl">Teléfono</div><input class="fi" id="ed-ct" value="${a.contacto_telefono||''}">
+ 
+      <div class="sec">Condiciones</div>
+      <div class="fl">Días de crédito (default) <span class="fl-tag audit">Permiso Ventas/CxC</span></div>
+      <input class="fi" id="ed-dc" type="number" value="${a.dias_credito_default||''}" min="0" max="180">
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="selectAnunciante('${id}')">Cancelar</button>
+      <button class="btn btn-purple btn-sm" onclick="saveAnunciante('${id}')">Guardar cambios</button>
+    </div>`;
+}
+ 
+function saveAnunciante(id){
+  const a = findById(data.anunciante, id);
+  a.nombre_comercial = document.getElementById('ed-nc').value || a.nombre_comercial;
+  a.nombre_fiscal = document.getElementById('ed-nf').value || a.nombre_fiscal;
+  a.rfc_anunciante = document.getElementById('ed-rfc').value || a.rfc_anunciante;
+  a.referencia_anunciante = document.getElementById('ed-ref').value;
+  a.localizacion = document.getElementById('ed-loc').value;
+  a.agencia_id = document.getElementById('ed-ag').value || null;
+  a.contacto_nombre = document.getElementById('ed-cn').value;
+  a.contacto_email = document.getElementById('ed-ce').value;
+  a.contacto_telefono = document.getElementById('ed-ct').value;
+  a.dias_credito_default = parseInt(document.getElementById('ed-dc').value) || null;
+  render();
+}
+ 
+function newAnunciante(){
+  state.selected = null;
+  document.getElementById('detail-pane').innerHTML = `
+    <div class="dh"><div class="dh-name">Nuevo anunciante</div><div class="dh-sub">Captura los datos básicos. Las marcas y contratos se agregan después.</div></div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl fl-required">Nombre comercial</div><input class="fi" id="nu-nc" placeholder="Ej. Coca-Cola">
+      <div class="fl fl-required">Nombre fiscal</div><input class="fi" id="nu-nf" placeholder="Razón social completa">
+      <div class="r2">
+        <div><div class="fl fl-required">RFC</div><input class="fi" id="nu-rfc" maxlength="13" placeholder="13 caracteres"></div>
+        <div><div class="fl">Referencia interna</div><input class="fi" id="nu-ref" placeholder="Código o alias"></div>
+      </div>
+      <div class="fl">Localización</div><input class="fi" id="nu-loc" placeholder="Ciudad / domicilio fiscal">
+      <div class="sec">Relación</div>
+      <div class="fl">Agencia</div>
+      <select class="fsel" id="nu-ag"><option value="">— Sin agencia —</option>${data.agencia.map(g=>`<option value="${g.id}">${g.nombre_agencia}</option>`).join('')}</select>
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre</div><input class="fi" id="nu-cn" placeholder="Nombre del contacto">
+      <div class="fl">Correo</div><input class="fi" id="nu-ce" placeholder="correo@empresa.com">
+      <div class="fl">Teléfono</div><input class="fi" id="nu-ct" placeholder="55 0000 0000">
+      <div class="sec">Condiciones</div>
+      <div class="fl">Días de crédito default</div><input class="fi" id="nu-dc" type="number" placeholder="30" min="0" max="180">
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="render()">Cancelar</button>
+      <button class="btn btn-purple btn-sm" onclick="saveNewAnunciante()">Crear anunciante</button>
+    </div>`;
+}
+ 
+function saveNewAnunciante(){
+  const id = 'an' + (data.anunciante.length + 100);
+  data.anunciante.push({
+    id, agencia_id: document.getElementById('nu-ag').value || null,
+    nombre_comercial: document.getElementById('nu-nc').value || 'Sin nombre',
+    nombre_fiscal: document.getElementById('nu-nf').value || 'Sin razón social',
+    rfc_anunciante: document.getElementById('nu-rfc').value || '—',
+    localizacion: document.getElementById('nu-loc').value,
+    referencia_anunciante: document.getElementById('nu-ref').value,
+    contacto_nombre: document.getElementById('nu-cn').value,
+    contacto_email: document.getElementById('nu-ce').value,
+    contacto_telefono: document.getElementById('nu-ct').value,
+    dias_credito_default: parseInt(document.getElementById('nu-dc').value) || null,
+    activo: true, created_at: new Date().toISOString().substring(0,10)
+  });
+  state.selected = id;
+  render();
+}
+ 
+function toggleAnuncianteActivo(id){ const a = findById(data.anunciante, id); a.activo = !a.activo; render(); }
+ 
+function addMarca(anuncianteId){
+  const a = findById(data.anunciante, anuncianteId);
+  const marcas = data.marca.filter(m=>m.anunciante_id===a.id);
+  const contratos = data.contrato.filter(c=>c.anunciante_id===a.id);
+  const ag = a.agencia_id ? findById(data.agencia, a.agencia_id) : null;
+  document.getElementById('detail-pane').innerHTML = renderAnuncianteDetail(a, ag, marcas, contratos);
+  const marcasSec = document.querySelectorAll('#detail-pane .sec')[3];
+  const inlineForm = document.createElement('div');
+  inlineForm.className='inline-form';
+  inlineForm.innerHTML = `
+    <div class="if-title">Nueva marca</div>
+    <div class="fl">Nombre de marca</div>
+    <input class="fi" id="nm-nombre" placeholder="Ej. Pan Bimbo">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="selectAnunciante('${a.id}')">Cancelar</button>
+      <button class="btn btn-purple btn-sm" onclick="saveMarca('${a.id}')">Agregar</button>
+    </div>`;
+  marcasSec.parentNode.insertBefore(inlineForm, marcasSec.nextSibling);
+}
+ 
+function saveMarca(anuncianteId){
+  data.marca.push({id:'mc'+(data.marca.length+100), anunciante_id:anuncianteId, nombre_marca:document.getElementById('nm-nombre').value||'Nueva marca', activo:true});
+  selectAnunciante(anuncianteId);
+}
+ 
+function renderList(){ render(); }
+ 
+/* ─────────────────────────────────────────────
+   AGENCIAS — con audit log para % comisión
+───────────────────────────────────────────── */
+renderers.agencia = () => {
+  const items = data.agencia.filter(a=>{
+    if (state.filter==='activo' && !a.activo) return false;
+    if (state.filter==='inactivo' && a.activo) return false;
+    if (state.search) { const q = state.search.toLowerCase(); return a.nombre_agencia.toLowerCase().includes(q) || a.rfc_agencia.toLowerCase().includes(q); }
+    return true;
+  });
+  const sel = state.selected ? findById(data.agencia, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Agencias</div>
+      <div class="cat-sub">Agencias de medios que representan a anunciantes ante el grupo. El porcentaje de comisión default tiene <strong style="color:var(--red-text)">log de auditoría</strong> — cada cambio queda registrado.</div>
+    </div>
+    <button class="btn btn-purple" onclick="newAgencia()">+ Nueva agencia</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar nombre o RFC…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todas</button>
+    <button class="fp ${state.filter==='activo'?'active':''}" onclick="state.filter='activo';render()">Activas</button>
+    <button class="fp ${state.filter==='inactivo'?'active':''}" onclick="state.filter='inactivo';render()">Inactivas</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.agencia.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:34%">Nombre / Razón social</th>
+          <th style="width:16%">RFC</th>
+          <th style="width:22%">Contacto</th>
+          <th style="width:12%" class="td-center">% Comisión</th>
+          <th style="width:8%" class="td-center">Anunciantes</th>
+          <th style="width:8%" class="td-center">Estatus</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(a=>{
+            const anunciantes = data.anunciante.filter(an=>an.agencia_id===a.id).length;
+            return `<tr class="${state.selected===a.id?'sel':''}" onclick="state.selected='${a.id}';render()">
+              <td class="td-main">${a.nombre_agencia}</td>
+              <td class="td-mono">${a.rfc_agencia}</td>
+              <td class="td-2">${a.contacto_nombre||'—'}</td>
+              <td class="td-center td-mono">${a.porcentaje_comision_agencia_default?fmtPct(a.porcentaje_comision_agencia_default):'—'}</td>
+              <td class="td-center td-2">${anunciantes}</td>
+              <td class="td-center"><span class="badge ${a.activo?'b-green':'b-gray'}">${a.activo?'Activa':'Inactiva'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderAgenciaDetail(sel) : emptyDetail('Selecciona una agencia para ver el detalle')}</div>
+  </div>`;
+};
+ 
+function renderAgenciaDetail(a){
+  const anunciantes = data.anunciante.filter(x=>x.agencia_id===a.id);
+  const logs = data.log_cambios.filter(l=>l.entidad==='Agencia' && l.entidad_id===a.id);
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${a.nombre_agencia}</div>
+          <div class="dh-sub"><span class="badge ${a.activo?'b-green':'b-gray'}">${a.activo?'Activa':'Inactiva'}</span><span class="badge b-blue">${anunciantes.length} anunciantes</span></div>
+        </div>
+        <button class="btn btn-sm" onclick="editAgencia('${a.id}')">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl">RFC</div><div class="fv mono">${a.rfc_agencia}</div>
+ 
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre</div><div class="fv">${a.contacto_nombre||'—'}</div>
+      <div class="fl">Correo</div><div class="fv link">${a.contacto_email||'—'}</div>
+      <div class="fl">Teléfono</div><div class="fv">${a.contacto_telefono||'—'}</div>
+ 
+      <div class="sec">Parámetros sensibles</div>
+      <div class="audit-notice">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:1px"><path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6v4M8 12h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <div><strong>Campo protegido:</strong> el porcentaje de comisión default solo lo pueden modificar usuarios de Dirección o Admin. Todos los cambios quedan registrados en el log de auditoría.</div>
+      </div>
+      <div class="fl">% Comisión agencia (default) <span class="fl-tag audit">Audit log</span></div>
+      <div class="fv mono" style="font-size:18px;font-weight:600;color:var(--purple-text)">${a.porcentaje_comision_agencia_default?fmtPct(a.porcentaje_comision_agencia_default):'—'}</div>
+ 
+      <div class="sec">Historial de cambios (${logs.length})</div>
+      ${logs.length ? logs.map(l=>`
+        <div class="history-item">
+          <div class="history-when">${l.fecha_cambio}</div>
+          <div class="history-body">
+            <div class="history-user">${l.usuario}</div>
+            <div class="history-change"><strong>${l.campo_modificado}:</strong> <span class="old">${l.valor_anterior}</span> → <span class="new">${l.valor_nuevo}</span></div>
+            <div style="font-size:11px;color:var(--text3);margin-top:3px;font-style:italic">${l.motivo_cambio}</div>
+          </div>
+        </div>`).join('') : '<div style="font-size:13px;color:var(--text3);padding:8px 0">Sin cambios registrados.</div>'}
+ 
+      <div class="sec">Anunciantes representados (${anunciantes.length})</div>
+      ${anunciantes.length ? anunciantes.map(an=>`
+        <div class="rel-item" onclick="show('anunciante');state.selected='${an.id}';setTimeout(render,10)">
+          <div><div class="rel-name">${an.nombre_comercial}</div><div class="rel-sub">${an.rfc_anunciante}</div></div>
+          <span class="badge ${an.activo?'b-green':'b-gray'}">${an.activo?'Activo':'Inactivo'}</span>
+        </div>`).join('') : '<div style="font-size:13px;color:var(--text3);padding:6px 0">Sin anunciantes representados.</div>'}
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="toggleAgenciaActivo('${a.id}')">${a.activo?'Desactivar':'Activar'}</button>
+      <button class="btn btn-purple btn-sm" onclick="editAgencia('${a.id}')">Editar agencia</button>
+    </div>`;
+}
+ 
+function editAgencia(id){
+  const a = findById(data.agencia, id);
+  document.getElementById('detail-pane').innerHTML = `
+    <div class="dh"><div class="dh-name">Editando: ${a.nombre_agencia}</div></div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl fl-required">Nombre / Razón social</div><input class="fi" id="ag-nom" value="${a.nombre_agencia}">
+      <div class="fl fl-required">RFC</div><input class="fi" id="ag-rfc" value="${a.rfc_agencia}" maxlength="13">
+ 
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre</div><input class="fi" id="ag-cn" value="${a.contacto_nombre||''}">
+      <div class="fl">Correo</div><input class="fi" id="ag-ce" value="${a.contacto_email||''}">
+      <div class="fl">Teléfono</div><input class="fi" id="ag-ct" value="${a.contacto_telefono||''}">
+ 
+      <div class="sec">Parámetros sensibles</div>
+      <div class="audit-notice">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:1px"><path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="1.4"/><path d="M8 6v4M8 12h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <div>Modificar este valor genera un registro en el log de auditoría. Se te pedirá un motivo del cambio.</div>
+      </div>
+      <div class="fl">% Comisión default <span class="fl-tag audit">Audit log</span></div>
+      <input class="fi" id="ag-com" type="number" step="0.01" value="${a.porcentaje_comision_agencia_default||''}" min="0" max="100">
+      <div class="fl">Motivo del cambio (requerido si se modifica %)</div>
+      <textarea class="ftxt" id="ag-mot" placeholder="Ej. Renegociación del contrato anual..."></textarea>
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="state.selected='${id}';render()">Cancelar</button>
+      <button class="btn btn-purple btn-sm" onclick="saveAgencia('${id}')">Guardar cambios</button>
+    </div>`;
+}
+ 
+function saveAgencia(id){
+  const a = findById(data.agencia, id);
+  const newCom = parseFloat(document.getElementById('ag-com').value) || null;
+  // Audit log para % comisión
+  if (newCom !== a.porcentaje_comision_agencia_default) {
+    const motivo = document.getElementById('ag-mot').value;
+    if (!motivo) { alert('Debes capturar el motivo del cambio cuando modificas el % de comisión.'); return; }
+    data.log_cambios.unshift({
+      entidad:'Agencia', entidad_id:a.id, campo_modificado:'porcentaje_comision_agencia_default',
+      valor_anterior: (a.porcentaje_comision_agencia_default||'NULL').toString()+(a.porcentaje_comision_agencia_default?'.00':''),
+      valor_nuevo: (newCom||'NULL').toString()+(newCom?'.00':''),
+      usuario:'victor.garcia (Ventas)', fecha_cambio:new Date().toISOString().substring(0,16).replace('T',' '),
+      motivo_cambio: motivo
+    });
+  }
+  a.nombre_agencia = document.getElementById('ag-nom').value || a.nombre_agencia;
+  a.rfc_agencia = document.getElementById('ag-rfc').value || a.rfc_agencia;
+  a.contacto_nombre = document.getElementById('ag-cn').value;
+  a.contacto_email = document.getElementById('ag-ce').value;
+  a.contacto_telefono = document.getElementById('ag-ct').value;
+  a.porcentaje_comision_agencia_default = newCom;
+  render();
+}
+ 
+function newAgencia(){
+  state.selected = null;
+  document.getElementById('detail-pane').innerHTML = `
+    <div class="dh"><div class="dh-name">Nueva agencia</div></div>
+    <div class="db">
+      <div class="sec">Identificación</div>
+      <div class="fl fl-required">Nombre / Razón social</div><input class="fi" id="nag-nom" placeholder="Nombre de la agencia">
+      <div class="fl fl-required">RFC</div><input class="fi" id="nag-rfc" maxlength="13">
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre contacto</div><input class="fi" id="nag-cn">
+      <div class="fl">Correo</div><input class="fi" id="nag-ce">
+      <div class="fl">Teléfono</div><input class="fi" id="nag-ct">
+      <div class="sec">Comisión</div>
+      <div class="fl">% Comisión default</div><input class="fi" id="nag-com" type="number" step="0.01" placeholder="15" min="0" max="100">
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="render()">Cancelar</button>
+      <button class="btn btn-purple btn-sm" onclick="saveNewAgencia()">Crear agencia</button>
+    </div>`;
+}
+ 
+function saveNewAgencia(){
+  const id = 'ag'+(data.agencia.length+100);
+  data.agencia.push({
+    id, nombre_agencia: document.getElementById('nag-nom').value||'Sin nombre',
+    rfc_agencia: document.getElementById('nag-rfc').value||'—',
+    contacto_nombre: document.getElementById('nag-cn').value,
+    contacto_email: document.getElementById('nag-ce').value,
+    contacto_telefono: document.getElementById('nag-ct').value,
+    porcentaje_comision_agencia_default: parseFloat(document.getElementById('nag-com').value)||null,
+    activo:true, created_at: new Date().toISOString().substring(0,10)
+  });
+  state.selected = id; render();
+}
+ 
+function toggleAgenciaActivo(id){ const a=findById(data.agencia,id); a.activo=!a.activo; render(); }
+ 
+/* ─────────────────────────────────────────────
+   CONTRATOS
+───────────────────────────────────────────── */
+renderers.contrato = () => {
+  const items = data.contrato.filter(c=>{
+    if (state.filter==='vigente' && c.estado_contrato!=='vigente') return false;
+    if (state.filter==='finalizado' && c.estado_contrato!=='finalizado') return false;
+    if (state.search) { const q=state.search.toLowerCase(); return c.numero_contrato.toLowerCase().includes(q) || c.nombre_contrato.toLowerCase().includes(q); }
+    return true;
+  });
+  const sel = state.selected ? findById(data.contrato, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Contratos</div>
+      <div class="cat-sub">Contratos comerciales entre el grupo y los anunciantes. Define condiciones comerciales generales, vigencia y comisiones específicas que sobreescriben los defaults de la agencia.</div>
+    </div>
+    <button class="btn btn-purple" onclick="newContrato()">+ Nuevo contrato</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar número o nombre…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='vigente'?'active':''}" onclick="state.filter='vigente';render()">Vigentes</button>
+    <button class="fp ${state.filter==='finalizado'?'active':''}" onclick="state.filter='finalizado';render()">Finalizados</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.contrato.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:13%">Número</th>
+          <th style="width:23%">Nombre</th>
+          <th style="width:20%">Anunciante</th>
+          <th style="width:17%">Vigencia</th>
+          <th style="width:13%" class="td-right">Monto</th>
+          <th style="width:7%" class="td-center">% Com.</th>
+          <th style="width:7%" class="td-center">Estado</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(c=>{
+            const an = findById(data.anunciante, c.anunciante_id);
+            const cl = c.estado_contrato==='vigente'?'b-green':c.estado_contrato==='finalizado'?'b-gray':c.estado_contrato==='suspendido'?'b-amber':'b-red';
+            return `<tr class="${state.selected===c.id?'sel':''}" onclick="state.selected='${c.id}';render()">
+              <td class="td-mono">${c.numero_contrato}</td>
+              <td class="td-main">${c.nombre_contrato}</td>
+              <td class="td-2">${an?an.nombre_comercial:'—'}</td>
+              <td class="td-mono" style="font-size:11px">${c.fecha_inicio_contrato} → ${c.fecha_fin_contrato}</td>
+              <td class="td-right td-mono">${fmt(c.monto_contrato)}</td>
+              <td class="td-center td-mono">${fmtPct(c.porcentaje_comision_contrato||0)}</td>
+              <td class="td-center"><span class="badge ${cl}">${c.estado_contrato}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderContratoDetail(sel) : emptyDetail('Selecciona un contrato para ver el detalle')}</div>
+  </div>`;
+};
+ 
+function renderContratoDetail(c){
+  const an = findById(data.anunciante, c.anunciante_id);
+  const cl = c.estado_contrato==='vigente'?'b-green':c.estado_contrato==='finalizado'?'b-gray':c.estado_contrato==='suspendido'?'b-amber':'b-red';
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${c.nombre_contrato}</div>
+          <div class="dh-sub"><span class="td-mono" style="font-size:12px">${c.numero_contrato}</span> <span class="badge ${cl}">${c.estado_contrato}</span></div>
+        </div>
+        <button class="btn btn-sm">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="sec">Anunciante</div>
+      <div class="rel-item" onclick="show('anunciante');state.selected='${an?.id}';setTimeout(render,10)">
+        <div><div class="rel-name">${an?an.nombre_comercial:'—'}</div><div class="rel-sub">${an?an.rfc_anunciante:''}</div></div>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+ 
+      <div class="sec">Vigencia y monto</div>
+      <div class="r2">
+        <div><div class="fl">Inicio</div><div class="fv mono">${c.fecha_inicio_contrato}</div></div>
+        <div><div class="fl">Fin</div><div class="fv mono">${c.fecha_fin_contrato}</div></div>
+      </div>
+      <div class="fl">Monto contrato</div>
+      <div class="fv mono" style="font-size:18px;font-weight:600">${fmtFull(c.monto_contrato)}</div>
+      <div class="fl">% Comisión específica del contrato <span class="fl-tag cat">Sobreescribe agencia</span></div>
+      <div class="fv mono">${fmtPct(c.porcentaje_comision_contrato||0)}</div>
+ 
+      <div class="sec">Condiciones comerciales</div>
+      <div class="fv muted">${c.condiciones_comerciales||'<span style="color:var(--text3)">Sin condiciones especiales registradas</span>'}</div>
+ 
+      ${c.observaciones_contrato ? `<div class="sec">Observaciones</div><div class="fv muted">${c.observaciones_contrato}</div>` : ''}
+ 
+      <div class="sec">Archivo</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);font-size:13px;color:var(--text3)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.1"/><path d="M5 5h6M5 8h6M5 11h4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
+        Sin archivo cargado. <span style="margin-left:auto;color:#185FA5;cursor:pointer">Cargar PDF →</span>
+      </div>
+    </div>
+    <div class="df">
+      <button class="btn btn-sm">Cambiar estado</button>
+      <button class="btn btn-purple btn-sm">Editar contrato</button>
+    </div>`;
+}
+ 
+function newContrato(){ alert('Formulario de nuevo contrato (similar a otros — RFC del anunciante, fechas, monto, etc.)'); }
+ 
+/* ─────────────────────────────────────────────
+   AFILIADOS Y ESTACIONES (juntos)
+───────────────────────────────────────────── */
+renderers.afiliado = () => {
+  const items = data.afiliado.filter(a=>{
+    if (state.filter==='activo' && !a.activo) return false;
+    if (state.filter==='inactivo' && a.activo) return false;
+    if (state.search) { const q=state.search.toLowerCase(); return a.nombre_afiliado.toLowerCase().includes(q) || a.rfc_afiliado.toLowerCase().includes(q); }
+    return true;
+  });
+  const sel = state.selected ? findById(data.afiliado, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Afiliados y estaciones</div>
+      <div class="cat-sub">Empresas externas que operan estaciones (emisoras) de radio o TV. Cada afiliado opera una o más estaciones — al seleccionar una estación en una orden, se infieren automáticamente plaza, afiliado y razón social.</div>
+    </div>
+    <button class="btn btn-teal" onclick="newAfiliado()">+ Nuevo afiliado</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar afiliado o RFC…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todos</button>
+    <button class="fp ${state.filter==='activo'?'active':''}" onclick="state.filter='activo';render()">Activos</button>
+    <button class="fp ${state.filter==='inactivo'?'active':''}" onclick="state.filter='inactivo';render()">Inactivos</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.afiliado.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:36%">Afiliado</th>
+          <th style="width:18%">Plaza principal</th>
+          <th style="width:18%">RFC</th>
+          <th style="width:10%" class="td-center">Estaciones</th>
+          <th style="width:9%" class="td-center">Estatus</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(a=>{
+            const plaza = findById(data.plaza, a.plaza_id);
+            const ests = data.estacion.filter(e=>e.afiliado_id===a.id).length;
+            return `<tr class="${state.selected===a.id?'sel-teal':''}" onclick="state.selected='${a.id}';render()">
+              <td class="td-main">${a.nombre_afiliado}<div style="font-size:11px;color:var(--text3);margin-top:2px;font-weight:400">${a.razon_social_afiliado}</div></td>
+              <td class="td-2">${plaza?plaza.nombre_plaza+', '+plaza.estado:'—'}</td>
+              <td class="td-mono">${a.rfc_afiliado}</td>
+              <td class="td-center td-2">${ests}</td>
+              <td class="td-center"><span class="badge ${a.activo?'b-green':'b-gray'}">${a.activo?'Activo':'Inactivo'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane" id="detail-pane">${sel ? renderAfiliadoDetail(sel) : emptyDetail('Selecciona un afiliado para ver sus estaciones')}</div>
+  </div>`;
+};
+ 
+function renderAfiliadoDetail(a){
+  const plaza = findById(data.plaza, a.plaza_id);
+  const ests = data.estacion.filter(e=>e.afiliado_id===a.id);
+  const tipoMap = {fm:'b-teal',am:'b-amber',tv:'b-blue'};
+  return `
+    <div class="dh">
+      <div class="dh-row">
+        <div>
+          <div class="dh-name">${a.nombre_afiliado}</div>
+          <div class="dh-sub">${plaza?plaza.nombre_plaza+', '+plaza.estado:''} · <span class="badge b-blue">${ests.length} estaciones</span></div>
+        </div>
+        <button class="btn btn-sm">Editar</button>
+      </div>
+    </div>
+    <div class="db">
+      <div class="sec">Datos fiscales</div>
+      <div class="fl">Razón social</div><div class="fv">${a.razon_social_afiliado}</div>
+      <div class="fl">RFC</div><div class="fv mono">${a.rfc_afiliado}</div>
+      <div class="fl">Plaza principal</div><div class="fv">${plaza?plaza.nombre_plaza+', '+plaza.estado:'—'}</div>
+ 
+      <div class="sec">Contacto</div>
+      <div class="fl">Nombre</div><div class="fv">${a.contacto_nombre||'—'}</div>
+      <div class="fl">Correo</div><div class="fv link">${a.contacto_email||'—'}</div>
+      <div class="fl">Teléfono</div><div class="fv">${a.contacto_telefono||'—'}</div>
+ 
+      <div class="sec">Estaciones (${ests.length}) <button class="btn btn-xs" onclick="addEstacion('${a.id}')">+ Agregar</button></div>
+      ${ests.map(e=>{
+        const pl = findById(data.plaza, e.plaza_id);
+        return `<div class="rel-item">
+          <div>
+            <div class="rel-name">${e.nombre_estacion}</div>
+            <div class="rel-sub">${e.frecuencia} · ${pl?pl.nombre_plaza:''}${e.venta_directa_carmen_aristegui_cdmx?' · <span style="color:var(--purple-text);font-weight:500">CA-CDMX</span>':''}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="badge ${tipoMap[e.tipo_senal]||'b-gray'}">${e.tipo_senal.toUpperCase()}</span>
+            <span class="badge ${e.activo?'b-green':'b-gray'}">${e.activo?'Act':'Inact'}</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="df">
+      <button class="btn btn-sm" onclick="toggleAfiliadoActivo('${a.id}')">${a.activo?'Desactivar':'Activar'}</button>
+      <button class="btn btn-teal btn-sm">Editar afiliado</button>
+    </div>`;
+}
+ 
+function newAfiliado(){ alert('Formulario de nuevo afiliado (similar a anunciante).'); }
+function addEstacion(afilId){ alert('Formulario inline de nueva estación con: nombre/clave, frecuencia, tipo (FM/AM/TV) y flag CA-CDMX.'); }
+function toggleAfiliadoActivo(id){ const a=findById(data.afiliado,id); a.activo=!a.activo; render(); }
+ 
+/* ─────────────────────────────────────────────
+   PLAZAS — simple
+───────────────────────────────────────────── */
+renderers.plaza = () => {
+  const sel = state.selected ? findById(data.plaza, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div><div class="cat-title">Plazas</div><div class="cat-sub">Plazas geográficas de transmisión.</div></div>
+    <button class="btn btn-purple" onclick="newPlaza()">+ Nueva plaza</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar plaza o estado…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${data.plaza.length} plazas</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr><th style="width:50%">Plaza</th><th style="width:35%">Estado</th><th style="width:8%" class="td-center">Estaciones</th><th style="width:7%" class="td-center">Estatus</th></tr></thead>
+        <tbody>
+          ${data.plaza.filter(p=>!state.search||p.nombre_plaza.toLowerCase().includes(state.search.toLowerCase())||p.estado.toLowerCase().includes(state.search.toLowerCase())).map(p=>{
+            const ests = data.estacion.filter(e=>e.plaza_id===p.id).length;
+            return `<tr class="${state.selected===p.id?'sel':''}" onclick="state.selected='${p.id}';render()">
+              <td class="td-main">${p.nombre_plaza}</td>
+              <td class="td-2">${p.estado}</td>
+              <td class="td-center td-2">${ests}</td>
+              <td class="td-center"><span class="badge ${p.activo?'b-green':'b-gray'}">${p.activo?'Activa':'Inactiva'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane">${sel ? `
+      <div class="dh"><div class="dh-name">${sel.nombre_plaza}</div><div class="dh-sub">${sel.estado}</div></div>
+      <div class="db">
+        <div class="sec">Datos</div>
+        <div class="fl">Plaza</div><div class="fv">${sel.nombre_plaza}</div>
+        <div class="fl">Estado</div><div class="fv">${sel.estado}</div>
+        <div class="sec">Tarifas vigentes</div>
+        ${data.tarifa.filter(t=>t.plaza_id===sel.id&&t.activo).map(t=>`<div class="rel-item"><div><div class="rel-name">${t.tipo_senal.toUpperCase()} · ${t.duracion_spot}</div><div class="rel-sub">${fmt(t.tarifa_bruta)} bruta · ${t.descuento_pct}% desc.</div></div></div>`).join('')||'<div style="font-size:13px;color:var(--text3)">Sin tarifas vigentes</div>'}
+      </div>
+    ` : emptyDetail('Selecciona una plaza')}</div>
+  </div>`;
+};
+function newPlaza(){ alert('Form nueva plaza: nombre + estado.'); }
+ 
+/* ─────────────────────────────────────────────
+   TARIFAS POR PLAZA
+───────────────────────────────────────────── */
+renderers.tarifa = () => {
+  const items = data.tarifa.filter(t=>{
+    if (state.filter==='vigente' && !t.activo) return false;
+    if (state.filter==='expirada' && t.activo) return false;
+    return true;
+  });
+  const sel = state.selected ? findById(data.tarifa, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div><div class="cat-title">Tarifas por plaza</div><div class="cat-sub">Tarifas de referencia por plaza, tipo de señal y duración. Se sugieren al capturar órdenes; el precio final por estación puede sobreescribirse.</div></div>
+    <button class="btn btn-purple" onclick="newTarifa()">+ Nueva tarifa</button>
+  </div>
+  <div class="toolbar">
+    <button class="fp ${state.filter==='all'?'active':''}" onclick="state.filter='all';render()">Todas</button>
+    <button class="fp ${state.filter==='vigente'?'active':''}" onclick="state.filter='vigente';render()">Vigentes</button>
+    <button class="fp ${state.filter==='expirada'?'active':''}" onclick="state.filter='expirada';render()">Expiradas</button>
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.tarifa.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr>
+          <th style="width:22%">Plaza</th>
+          <th style="width:11%">Señal</th>
+          <th style="width:11%">Duración</th>
+          <th style="width:14%" class="td-right">Tarifa bruta</th>
+          <th style="width:10%" class="td-center">Desc</th>
+          <th style="width:14%" class="td-right">Tarifa neta</th>
+          <th style="width:18%">Vigencia</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(t=>{
+            const pl = findById(data.plaza, t.plaza_id);
+            const neto = t.tarifa_bruta*(1-t.descuento_pct/100);
+            return `<tr class="${state.selected===t.id?'sel':''}" onclick="state.selected='${t.id}';render()">
+              <td class="td-main">${pl?pl.nombre_plaza:'—'}</td>
+              <td class="td-2">${t.tipo_senal.toUpperCase()}</td>
+              <td class="td-2">${t.duracion_spot}</td>
+              <td class="td-right td-mono">${fmt(t.tarifa_bruta)}</td>
+              <td class="td-center td-mono">${t.descuento_pct}%</td>
+              <td class="td-right td-mono" style="color:var(--purple-text);font-weight:500">${fmt(neto)}</td>
+              <td class="td-mono" style="font-size:11px">${t.vigencia_desde} → ${t.vigencia_hasta}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane">${sel ? (()=>{
+      const pl=findById(data.plaza,sel.plaza_id);
+      const neto=sel.tarifa_bruta*(1-sel.descuento_pct/100);
+      return `
+        <div class="dh"><div class="dh-name">${pl?pl.nombre_plaza:'—'} · ${sel.tipo_senal.toUpperCase()} ${sel.duracion_spot}</div><div class="dh-sub"><span class="badge ${sel.activo?'b-green':'b-amber'}">${sel.activo?'Vigente':'Expirada'}</span></div></div>
+        <div class="db">
+          <div class="sec">Tarifa</div>
+          <div class="r2">
+            <div><div class="fl">Tarifa bruta</div><div class="fv mono" style="font-size:18px;font-weight:600">${fmtFull(sel.tarifa_bruta)}</div></div>
+            <div><div class="fl">Descuento</div><div class="fv mono">${sel.descuento_pct}%</div></div>
+          </div>
+          <div class="fl">Tarifa neta <span class="fl-tag calc">Calc</span></div>
+          <div class="fv mono" style="font-size:20px;font-weight:600;color:var(--purple-text)">${fmtFull(neto)}</div>
+          <div class="sec">Vigencia</div>
+          <div class="r2">
+            <div><div class="fl">Desde</div><div class="fv mono">${sel.vigencia_desde}</div></div>
+            <div><div class="fl">Hasta</div><div class="fv mono">${sel.vigencia_hasta}</div></div>
+          </div>
+          ${sel.notas?`<div class="sec">Notas</div><div class="fv muted">${sel.notas}</div>`:''}
+        </div>
+        <div class="df"><button class="btn btn-sm">${sel.activo?'Marcar expirada':'Reactivar'}</button><button class="btn btn-purple btn-sm">Editar</button></div>
+      `;
+    })() : emptyDetail('Selecciona una tarifa')}</div>
+  </div>`;
+};
+function newTarifa(){ alert('Form nueva tarifa: plaza, tipo señal, duración, tarifa bruta, descuento %, vigencia.'); }
+ 
+/* ─────────────────────────────────────────────
+   VENDEDORES — con audit log para % comisión
+───────────────────────────────────────────── */
+renderers.vendedor = () => {
+  const items = data.vendedor.filter(v=>!state.search||v.nombre_vendedor.toLowerCase().includes(state.search.toLowerCase())||v.email_vendedor.toLowerCase().includes(state.search.toLowerCase()));
+  const sel = state.selected ? findById(data.vendedor, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div><div class="cat-title">Vendedores</div><div class="cat-sub">Vendedores y ejecutivos comerciales del grupo. El porcentaje de comisión default tiene <strong style="color:var(--red-text)">log de auditoría</strong>.</div></div>
+    <button class="btn btn-purple" onclick="newVendedor()">+ Nuevo vendedor</button>
+  </div>
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar vendedor…" value="${state.search}" oninput="state.search=this.value;renderList()">
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${data.vendedor.length}</span>
+  </div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr><th style="width:30%">Nombre</th><th style="width:35%">Correo</th><th style="width:18%" class="td-center">% Comisión</th><th style="width:17%" class="td-center">Estatus</th></tr></thead>
+        <tbody>
+          ${items.map(v=>`<tr class="${state.selected===v.id?'sel':''}" onclick="state.selected='${v.id}';render()">
+            <td class="td-main">${v.nombre_vendedor}</td>
+            <td class="td-2 td-mono" style="font-size:12px">${v.email_vendedor}</td>
+            <td class="td-center td-mono">${v.porcentaje_comision_default?fmtPct(v.porcentaje_comision_default):'—'}</td>
+            <td class="td-center"><span class="badge ${v.activo?'b-green':'b-gray'}">${v.activo?'Activo':'Inactivo'}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane">${sel?`
+      <div class="dh"><div class="dh-name">${sel.nombre_vendedor}</div><div class="dh-sub">${sel.email_vendedor}</div></div>
+      <div class="db">
+        <div class="sec">Parámetros sensibles</div>
+        <div class="audit-notice"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:1px"><path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="1.4"/><path d="M8 6v4M8 12h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <div>Modificable por Dirección/Admin. Cada cambio queda registrado en log de auditoría.</div></div>
+        <div class="fl">% Comisión default <span class="fl-tag audit">Audit log</span></div>
+        <div class="fv mono" style="font-size:18px;font-weight:600;color:var(--purple-text)">${fmtPct(sel.porcentaje_comision_default||0)}</div>
+      </div>
+      <div class="df"><button class="btn btn-purple btn-sm">Editar</button></div>
+    `:emptyDetail('Selecciona un vendedor')}</div>
+  </div>`;
+};
+function newVendedor(){ alert('Form nuevo vendedor: nombre, correo, % comisión default.'); }
+ 
+/* ─────────────────────────────────────────────
+   CATEGORÍAS
+───────────────────────────────────────────── */
+renderers.categoria = () => {
+  const sel = state.selected ? findById(data.categoria, state.selected) : null;
+  return `
+  <div class="cat-header">
+    <div><div class="cat-title">Categorías comerciales</div><div class="cat-sub">Catálogo de categorías de industria para segmentar órdenes y reportes.</div></div>
+    <button class="btn btn-purple" onclick="newCategoria()">+ Nueva categoría</button>
+  </div>
+  <div class="toolbar"><input class="search" placeholder="Buscar categoría…" value="${state.search}" oninput="state.search=this.value;renderList()"><div class="tb-spacer"></div><span class="tb-count">${data.categoria.length} categorías</span></div>
+  <div class="split">
+    <div class="list-pane">
+      <table>
+        <thead><tr><th style="width:30%">Categoría</th><th style="width:55%">Descripción</th><th style="width:15%" class="td-center">Estatus</th></tr></thead>
+        <tbody>
+          ${data.categoria.filter(c=>!state.search||c.nombre_categoria.toLowerCase().includes(state.search.toLowerCase())).map(c=>`<tr class="${state.selected===c.id?'sel':''}" onclick="state.selected='${c.id}';render()">
+            <td class="td-main">${c.nombre_categoria}</td>
+            <td class="td-2">${c.descripcion_categoria||'—'}</td>
+            <td class="td-center"><span class="badge ${c.activo?'b-green':'b-gray'}">${c.activo?'Activa':'Inactiva'}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="detail-pane">${sel?`
+      <div class="dh"><div class="dh-name">${sel.nombre_categoria}</div></div>
+      <div class="db">
+        <div class="fl">Descripción</div><div class="fv muted">${sel.descripcion_categoria||'Sin descripción'}</div>
+      </div>
+      <div class="df"><button class="btn btn-purple btn-sm">Editar</button></div>
+    `:emptyDetail('Selecciona una categoría')}</div>
+  </div>`;
+};
+function newCategoria(){ alert('Form nueva categoría: nombre + descripción.'); }
+ 
+/* ════════════════════════════════════════════════
+   CONSTANTES DEL SISTEMA (solo lectura)
+   Agrupa valores SAT (UsoCFDI, FormaPago, MetodoPago, ClaveProdServ,
+   ClaveUnidad, MonedaSAT, RegimenFiscal) + configuración del timbrador
+   (TipoComprobante, Serie). Filtros por grupo. Edición restringida a
+   administrador del sistema (no disponible en este prototipo).
+════════════════════════════════════════════════ */
+const CONSTANTES_GROUPS = ['TipoComprobante','Serie','RegimenFiscal','ClaveProdServ','ClaveUnidad','UsoCFDI','FormaPago','MetodoPago','MonedaSAT'];
+const CONSTANTES_GROUP_LABEL = {
+  'TipoComprobante':  'Tipo de comprobante CFDI',
+  'Serie':            'Serie de la factura',
+  'RegimenFiscal':    'Régimen fiscal SAT',
+  'ClaveProdServ':    'Clave de producto/servicio SAT',
+  'ClaveUnidad':      'Clave de unidad SAT',
+  'UsoCFDI':          'Uso del CFDI',
+  'FormaPago':        'Forma de pago SAT',
+  'MetodoPago':       'Método de pago SAT',
+  'MonedaSAT':        'Moneda',
+};
+const CONSTANTES_GROUP_DESC = {
+  'TipoComprobante':  'Tipo de CFDI emitido. "33" es el formato legacy del timbrador externo; "I/E/P" son los códigos CFDI 4.0.',
+  'Serie':            'Cadena que identifica la serie de la factura emisora. Cada empresa facturadora usa una serie distinta.',
+  'RegimenFiscal':    'Régimen fiscal del emisor según catálogo SAT c_RegimenFiscal.',
+  'ClaveProdServ':    'Clave del producto/servicio según catálogo SAT c_ClaveProdServ. OIR factura típicamente servicios de publicidad.',
+  'ClaveUnidad':      'Unidad de medida del concepto facturado. Para servicios suele ser "E48".',
+  'UsoCFDI':          'Catálogo SAT c_UsoCFDI. El receptor elige el uso que dará a la factura.',
+  'FormaPago':        'Catálogo SAT c_FormaPago. Medio por el que se realiza el pago.',
+  'MetodoPago':       'PUE (pago en una sola exhibición) o PPD (pago en parcialidades o diferido).',
+  'MonedaSAT':        'Catálogo SAT c_Moneda. MXN es el default.',
+};
+ 
+renderers.constantes = () => {
+  if (!state.filterGroup) state.filterGroup = 'all';
+  const allConst = data.constantes || [];
+ 
+  // Filtrado
+  let items = allConst.slice();
+  if (state.filterGroup !== 'all') items = items.filter(c => c.grupo === state.filterGroup);
+  if (state.search){
+    const q = state.search.toLowerCase();
+    items = items.filter(c =>
+      c.clave.toLowerCase().includes(q) ||
+      c.descripcion.toLowerCase().includes(q) ||
+      c.grupo.toLowerCase().includes(q)
+    );
+  }
+ 
+  // Counts por grupo
+  const counts = {};
+  CONSTANTES_GROUPS.forEach(g => { counts[g] = allConst.filter(c => c.grupo === g).length; });
+ 
+  const filterLabel = state.filterGroup !== 'all' ? CONSTANTES_GROUP_LABEL[state.filterGroup] : '';
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Constantes del sistema <span style="font-size:11px;color:var(--text3);font-weight:500;background:var(--surface2);padding:2px 8px;border-radius:10px;margin-left:6px">Solo lectura</span></div>
+      <div class="cat-sub">Catálogos del SAT y configuración del timbrador externo usados por Facturación (Fase 2). Los valores que aparecen aquí son los que el operador puede elegir en las pantallas 4.1 y 4.2. La edición está restringida al administrador del sistema.</div>
+    </div>
+  </div>
+ 
+  <!-- Filtros por grupo -->
+  <div style="background:var(--surface2);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+    <button class="fp ${state.filterGroup==='all'?'active':''}" onclick="state.filterGroup='all';render()">Todas <span style="opacity:.6;margin-left:3px">${allConst.length}</span></button>
+    ${CONSTANTES_GROUPS.map(g => `<button class="fp ${state.filterGroup===g?'active':''}" onclick="state.filterGroup='${g}';render()" title="${CONSTANTES_GROUP_DESC[g]||''}">${CONSTANTES_GROUP_LABEL[g]||g} <span style="opacity:.6;margin-left:3px">${counts[g]||0}</span></button>`).join('')}
+  </div>
+ 
+  <div class="toolbar">
+    <input class="search" placeholder="Buscar por clave, descripción o grupo…" value="${state.search||''}" oninput="state.search=this.value;render()">
+    <div class="tb-spacer"></div>
+    <span class="tb-count">${items.length} de ${allConst.length}</span>
+  </div>
+ 
+  ${filterLabel ? `<div style="padding:10px 22px;background:var(--purple-bg);border-bottom:1px solid var(--border);font-size:11.5px;color:var(--purple-text);line-height:1.5"><strong>${filterLabel}</strong> · ${CONSTANTES_GROUP_DESC[state.filterGroup]||''}</div>`:''}
+ 
+  <div style="flex:1;overflow:auto;padding:0">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:18%">Grupo</th>
+          <th style="width:14%">Clave</th>
+          <th style="width:48%">Descripción</th>
+          <th style="width:12%">Valor configurable</th>
+          <th style="width:8%" class="td-center">Estatus</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.length === 0 ? `<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text3);font-size:12px">Sin coincidencias.</td></tr>` :
+          items.map(c => {
+            return `<tr>
+              <td><span class="badge b-purple" style="font-size:10px">${c.grupo}</span></td>
+              <td class="td-mono" style="font-weight:600">${c.clave}</td>
+              <td class="td-2">${c.descripcion}</td>
+              <td class="td-mono" style="font-size:11px;color:var(--text2)">${c.valor||'—'}</td>
+              <td class="td-center"><span class="badge ${c.activo?'b-green':'b-gray'}" style="font-size:10px">${c.activo?'Activo':'Inactivo'}</span></td>
+            </tr>`;
+          }).join('')
+        }
+      </tbody>
+    </table>
+  </div>
+  `;
+};
+ 
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+render();
+</script>
+</body>
+</html>

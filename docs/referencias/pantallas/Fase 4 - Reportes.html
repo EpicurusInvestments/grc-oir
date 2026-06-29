@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GRC-OIR — Fase 4: Reportes & Consulta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f3ef;--surface:#fff;--surface2:#f0efe9;--surface3:#e6e5de;
+  --border:#e0dfd8;--border-med:#c8c7bf;--border-strong:#b0afa8;
+  --text:#181816;--text2:#5c5c58;--text3:#9c9c96;
+  --purple:#534AB7;--purple-bg:#EEEDFE;--purple-text:#3C3489;
+  --teal:#0F6E56;--teal-bg:#E1F5EE;--teal-text:#085041;
+  --blue:#185FA5;--blue-bg:#E6F1FB;--blue-text:#0C447C;
+  --amber:#BA7517;--amber-bg:#FAEEDA;--amber-text:#633806;
+  --red-bg:#FCEBEB;--red-text:#791F1F;
+  --green-bg:#EAF3DE;--green-text:#27500A;
+  --gray:#5C5C58;--gray-bg:#F1EFE8;--gray-text:#444441;--gray-dark:#3D3D3A;
+  --r:8px;--rl:12px;
+  --font:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  --mono:'IBM Plex Mono','SF Mono','Consolas',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+ 
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100}
+.logo{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--purple)}
+.fase-tag{font-size:11px;font-family:var(--mono);background:var(--gray-bg);color:var(--gray-text);padding:3px 10px;border-radius:20px;font-weight:500}
+.header-spacer{flex:1}
+.user-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--gray-bg);color:var(--gray-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+ 
+.app-body{flex:1;display:flex;min-height:0;overflow:hidden}
+ 
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:14px 0}
+.side-section{margin-bottom:18px}
+.side-title{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:0 18px;margin-bottom:6px}
+.side-item{display:flex;align-items:center;gap:9px;padding:7px 18px;font-size:13px;color:var(--text2);cursor:pointer;border-left:2px solid transparent;transition:all .12s;user-select:none}
+.side-item:hover{color:var(--text);background:var(--surface2)}
+.side-item.active{color:var(--gray-dark);background:var(--gray-bg);border-left-color:var(--gray-dark);font-weight:500}
+.side-icon{width:14px;height:14px;flex-shrink:0;opacity:.8}
+ 
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+ 
+.cat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.cat-title{font-size:18px;font-weight:600}
+.cat-sub{font-size:12px;color:var(--text3);margin-top:3px;max-width:820px}
+ 
+.period-selector{display:flex;align-items:center;gap:8px}
+.period-selector select{height:34px;padding:0 11px;border-radius:var(--r);border:1px solid var(--border-med);background:var(--surface);font-family:var(--mono);font-size:12px;color:var(--text);cursor:pointer;outline:none}
+.period-selector select:focus{border-color:var(--gray-dark)}
+ 
+.toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.fp{height:28px;padding:0 13px;border-radius:20px;border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
+.fp:hover{color:var(--text);border-color:var(--border-strong)}
+.fp.active{background:var(--gray-bg);border-color:var(--gray);color:var(--gray-dark);font-weight:500}
+.tb-spacer{flex:1}
+ 
+.dashboard{flex:1;overflow:auto;padding:18px 22px}
+ 
+/* KPI cards arriba */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;position:relative}
+.kpi.accent{border-left:3px solid var(--gray-dark)}
+.kpi-lbl{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:5px}
+.kpi-val{font-size:22px;font-weight:600;font-family:var(--mono);color:var(--text);line-height:1.1}
+.kpi-val.good{color:var(--green-text)}
+.kpi-val.bad{color:var(--red-text)}
+.kpi-val.warn{color:var(--amber-text)}
+.kpi-sub{font-size:11px;color:var(--text3);margin-top:5px;display:flex;align-items:center;gap:5px}
+.kpi-trend{font-family:var(--mono);font-weight:600;font-size:11px;padding:1px 5px;border-radius:6px}
+.kpi-trend.up{background:var(--green-bg);color:var(--green-text)}
+.kpi-trend.down{background:var(--red-bg);color:var(--red-text)}
+.kpi-trend.flat{background:var(--surface3);color:var(--text2)}
+ 
+/* Section card */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;margin-bottom:14px}
+.card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.card-title-sub{font-size:11px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0}
+ 
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+ 
+/* P&L Table */
+.pl-table{width:100%;border-collapse:collapse;font-size:13px}
+.pl-table td{padding:7px 0;border-bottom:1px dashed var(--border)}
+.pl-table tr.sec-header td{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;padding-top:14px;padding-bottom:5px;border-bottom:1px solid var(--text3)}
+.pl-table tr.sec-header td:first-child{color:var(--gray-dark)}
+.pl-table tr.line td:first-child{padding-left:18px;color:var(--text2)}
+.pl-table tr.line td:last-child{font-family:var(--mono);text-align:right}
+.pl-table tr.subtotal td{font-weight:600;border-bottom:none;padding-top:8px;padding-bottom:8px}
+.pl-table tr.subtotal td:last-child{font-family:var(--mono);text-align:right;border-top:1px solid var(--border-med)}
+.pl-table tr.total td{font-weight:700;font-size:14px;padding-top:11px;padding-bottom:11px;border-top:2px solid var(--text);border-bottom:2px solid var(--text)}
+.pl-table tr.total td:last-child{font-family:var(--mono);text-align:right;font-size:16px}
+.pl-neg{color:var(--red-text)}
+.pl-pos{color:var(--green-text)}
+ 
+/* Bar chart */
+.chart-bar{display:flex;align-items:flex-end;justify-content:space-between;height:160px;gap:10px;padding:8px 0 0}
+.chart-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:default;position:relative}
+.chart-bar-stack{width:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.chart-bar-fill{width:80%;background:var(--gray-dark);border-radius:3px 3px 0 0;position:relative;transition:opacity .15s}
+.chart-bar-fill:hover{opacity:.85}
+.chart-bar-fill.pos{background:var(--green-text)}
+.chart-bar-fill.neg{background:var(--red-text)}
+.chart-bar-fill.muted{background:var(--gray)}
+.chart-col-lbl{font-size:10px;color:var(--text3);font-family:var(--mono);font-weight:500}
+.chart-col-val{font-size:10px;color:var(--text2);font-family:var(--mono);font-weight:600;position:absolute;top:-2px;left:50%;transform:translate(-50%,-100%)}
+ 
+/* Horizontal bar (rankings) */
+.hbar-row{display:grid;grid-template-columns:170px 1fr 100px;gap:10px;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid var(--border)}
+.hbar-row:last-child{border-bottom:none}
+.hbar-lbl{color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbar-bg{height:18px;background:var(--surface2);border-radius:3px;position:relative;overflow:hidden}
+.hbar-fill{height:100%;background:var(--gray-dark);border-radius:3px}
+.hbar-fill.good{background:var(--green-text)}
+.hbar-fill.warn{background:var(--amber)}
+.hbar-fill.danger{background:var(--red-text)}
+.hbar-val{font-family:var(--mono);font-size:12px;text-align:right;font-weight:600}
+ 
+/* Table reportes */
+.r-table{width:100%;border-collapse:collapse;font-size:13px}
+.r-table thead th{padding:9px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.r-table tbody td{padding:10px 14px;border-bottom:1px solid var(--border)}
+.r-table tbody tr:hover td{background:var(--surface2)}
+.r-table .td-right{text-align:right;font-family:var(--mono)}
+.r-table .td-center{text-align:center}
+.r-table .td-mono{font-family:var(--mono);font-size:12px;color:var(--text2)}
+ 
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.b-purple{background:var(--purple-bg);color:var(--purple-text)}
+.b-teal{background:var(--teal-bg);color:var(--teal-text)}
+.b-blue{background:var(--blue-bg);color:var(--blue-text)}
+.b-amber{background:var(--amber-bg);color:var(--amber-text)}
+.b-red{background:var(--red-bg);color:var(--red-text)}
+.b-green{background:var(--green-bg);color:var(--green-text)}
+.b-gray{background:var(--gray-bg);color:var(--gray-text)}
+ 
+.btn{height:34px;padding:0 14px;border-radius:var(--r);border:1px solid var(--border-med);background:transparent;font-family:var(--font);font-size:13px;color:var(--text);cursor:pointer;transition:all .12s;white-space:nowrap;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--surface2)}
+.btn-sm{height:28px;padding:0 11px;font-size:12px}
+.btn-dark{background:var(--gray-dark);border-color:var(--gray-dark);color:#fff}
+.btn-dark:hover{background:#2c2c2a;color:#fff}
+ 
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
+</style>
+</head>
+<body>
+ 
+<header class="app-header">
+  <div class="logo">GRC<span>·</span>OIR</div>
+  <div class="fase-tag">FASE 4 · REPORTES</div>
+  <div class="header-spacer"></div>
+  <div class="user-chip">
+    <div class="user-avatar">DM</div>
+    <span>Dirección · daniel.mora</span>
+  </div>
+</header>
+ 
+<div class="app-body">
+ 
+  <aside class="sidebar">
+    <div class="side-section">
+      <div class="side-title">Reportes financieros</div>
+      <div class="side-item active" data-view="estado_resultados" onclick="show('estado_resultados')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M2 13V3M14 13H2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 10v-3M8 10v-5M11 10v-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Estado de resultados
+      </div>
+    </div>
+ 
+    <div class="side-section">
+      <div class="side-title">Dashboards</div>
+      <div class="side-item" data-view="dash_comercial" onclick="show('dash_comercial')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><path d="M3 13l3-3 3 3 4-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 5h3v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Comercial
+      </div>
+      <div class="side-item" data-view="dash_cobranza" onclick="show('dash_cobranza')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 4v4l3 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Cobranza
+      </div>
+      <div class="side-item" data-view="dash_operativo" onclick="show('dash_operativo')">
+        <svg class="side-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5 7h6M5 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Operativo
+      </div>
+    </div>
+  </aside>
+ 
+  <main class="main" id="main"></main>
+</div>
+ 
+<script>
+/* ════════════════════════════════════════════════
+   DATOS DE PERÍODO
+════════════════════════════════════════════════ */
+const periodos = [
+  {periodo:'2025-01', label:'Enero 2025',
+   ingresos_facturados:2_600_000, ingresos_cobrados:2_080_000,
+   costo_afiliados:1_040_000, costo_agencias:312_000, costo_comisiones_vendedores:83_200, costo_comisiones_agencias:0,
+   costo_nominas:820_000, costo_overhead:218_000},
+  {periodo:'2025-02', label:'Febrero 2025',
+   ingresos_facturados:2_950_000, ingresos_cobrados:2_360_000,
+   costo_afiliados:1_180_000, costo_agencias:354_000, costo_comisiones_vendedores:94_400, costo_comisiones_agencias:0,
+   costo_nominas:830_000, costo_overhead:215_500},
+  {periodo:'2025-03', label:'Marzo 2025',
+   ingresos_facturados:4_450_000, ingresos_cobrados:3_560_000,
+   costo_afiliados:1_780_000, costo_agencias:534_000, costo_comisiones_vendedores:142_400, costo_comisiones_agencias:0,
+   costo_nominas:838_000, costo_overhead:241_000},
+  {periodo:'2025-04', label:'Abril 2025',
+   ingresos_facturados:3_400_000, ingresos_cobrados:2_720_000,
+   costo_afiliados:1_360_000, costo_agencias:408_000, costo_comisiones_vendedores:108_800, costo_comisiones_agencias:0,
+   costo_nominas:835_000, costo_overhead:228_400},
+  {periodo:'2025-05', label:'Mayo 2025',
+   ingresos_facturados:5_650_000, ingresos_cobrados:4_520_000,
+   costo_afiliados:2_260_000, costo_agencias:678_000, costo_comisiones_vendedores:180_800, costo_comisiones_agencias:0,
+   costo_nominas:842_500, costo_overhead:248_300},
+  {periodo:'2025-06', label:'Junio 2025 (en curso)',
+   ingresos_facturados:4_180_000, ingresos_cobrados:3_344_000,
+   costo_afiliados:1_672_000, costo_agencias:501_600, costo_comisiones_vendedores:133_760, costo_comisiones_agencias:0,
+   costo_nominas:842_500, costo_overhead:227_300},
+];
+ 
+// Calcular utilidades
+periodos.forEach(p=>{
+  p.utilidad_bruta = p.ingresos_cobrados - p.costo_afiliados - p.costo_agencias - p.costo_comisiones_vendedores - p.costo_comisiones_agencias;
+  p.utilidad_neta = p.utilidad_bruta - p.costo_nominas - p.costo_overhead;
+  p.margen_bruto_pct = (p.utilidad_bruta / p.ingresos_cobrados) * 100;
+  p.margen_neto_pct = (p.utilidad_neta / p.ingresos_cobrados) * 100;
+});
+ 
+/* ════════════════════════════════════════════════
+   DATOS PARA DASHBOARDS
+════════════════════════════════════════════════ */
+const ventas_por_vendedor = [
+  {nombre:'Roberto López',          ventas:8_420_000, ordenes:24, comisiones:336_800},
+  {nombre:'Patricia Méndez',        ventas:5_980_000, ordenes:18, comisiones:269_100},
+  {nombre:'Eduardo Castro',         ventas:4_310_000, ordenes:15, comisiones:150_850},
+  {nombre:'Carmen Aristegui',       ventas:3_540_000, ordenes:9,  comisiones:177_000},
+];
+ 
+const ventas_por_anunciante = [
+  {nombre:'Grupo Bimbo',     ventas:6_840_000, ordenes:11},
+  {nombre:'Televisa Publ.',  ventas:4_120_000, ordenes:7},
+  {nombre:'OXXO',            ventas:3_650_000, ordenes:8},
+  {nombre:'Soriana',         ventas:2_980_000, ordenes:9},
+  {nombre:'Modelo',          ventas:2_450_000, ordenes:4},
+  {nombre:'Otros (12)',      ventas:2_210_000, ordenes:27},
+];
+ 
+const ventas_por_categoria = [
+  {cat:'Alimentos y bebidas',  ventas:9_290_000, share:40.0},
+  {cat:'Retail',               ventas:6_630_000, share:28.6},
+  {cat:'Telecomunicaciones',   ventas:4_120_000, share:17.7},
+  {cat:'Automotriz',           ventas:1_580_000, share:6.8},
+  {cat:'Farmacéutica',         ventas:980_000, share:4.2},
+  {cat:'Otros',                ventas:650_000, share:2.7},
+];
+ 
+const ventas_por_agencia = [
+  {nombre:'OMD México',       ventas:8_120_000, comision_pct:15, comision:1_218_000},
+  {nombre:'Mindshare México', ventas:6_540_000, comision_pct:15, comision:981_000},
+  {nombre:'Initiative',       ventas:2_980_000, comision_pct:12.5, comision:372_500},
+  {nombre:'Trato directo',    ventas:4_610_000, comision_pct:0,   comision:0},
+];
+ 
+const aging_cobranza = [
+  {bucket:'0-30 días',  importe:2_180_000, count:8,  color:'good'},
+  {bucket:'31-60 días', importe:1_650_000, count:5,  color:'good'},
+  {bucket:'61-90 días', importe:687_000,   count:2,  color:'warn'},
+  {bucket:'+90 días',   importe:225_000,   count:1,  color:'danger'},
+];
+ 
+const cobranza_por_cliente = [
+  {anunciante:'Grupo Bimbo',     por_cobrar:1_183_200, vencido:0,       dias_prom:48},
+  {anunciante:'OXXO',            por_cobrar:687_000,   vencido:0,       dias_prom:42},
+  {anunciante:'Televisa Publ.',  por_cobrar:225_000,   vencido:225_000, dias_prom:72},
+  {anunciante:'Soriana',         por_cobrar:540_000,   vencido:0,       dias_prom:51},
+  {anunciante:'Modelo',          por_cobrar:432_000,   vencido:0,       dias_prom:28},
+];
+ 
+const incidencias_por_afiliado = [
+  {afiliado:'Grupo Radio Centro', total:8, faltantes:3, cambio_horario:4, cambio_fecha:1, tasa_pct:11.2},
+  {afiliado:'Multimedios EO',     total:5, faltantes:2, cambio_horario:2, cambio_fecha:1, tasa_pct:5.6},
+  {afiliado:'OIR Bajío',          total:3, faltantes:2, cambio_horario:1, cambio_fecha:0, tasa_pct:7.1},
+  {afiliado:'Radio Fórmula GDL',  total:2, faltantes:1, cambio_horario:1, cambio_fecha:0, tasa_pct:8.3},
+];
+ 
+const cumplimiento_por_estacion = [
+  {estacion:'XHMT-FM (MTY)',     ordenado:1240, ejecutado:1218, pct:98.2},
+  {estacion:'XHMA-AM (MTY)',     ordenado:980,  ejecutado:980,  pct:100.0},
+  {estacion:'XHREY-FM (MTY)',    ordenado:540,  ejecutado:530,  pct:98.1},
+  {estacion:'XHLE-FM (LEÓN)',    ordenado:720,  ejecutado:702,  pct:97.5},
+  {estacion:'XEQR-AM (CDMX)',    ordenado:880,  ejecutado:840,  pct:95.5},
+  {estacion:'XHRC-FM (CDMX)',    ordenado:760,  ejecutado:732,  pct:96.3},
+];
+ 
+/* ════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════ */
+function fmt(n){return '$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:0,maximumFractionDigits:0})}
+function fmtK(n){
+  const v = Math.abs(Number(n));
+  if (v>=1_000_000) return '$'+(n/1_000_000).toFixed(2)+'M';
+  if (v>=1000) return '$'+(n/1000).toFixed(0)+'K';
+  return '$'+Number(n||0).toLocaleString('es-MX');
+}
+function fmtPct(n){return Number(n||0).toFixed(n%1===0?0:1)+'%'}
+function trendStr(curr, prev){
+  if (!prev) return {pct:0, dir:'flat', txt:'—'};
+  const pct = ((curr - prev) / Math.abs(prev)) * 100;
+  return {pct, dir: pct>1?'up':pct<-1?'down':'flat', txt: (pct>=0?'+':'')+pct.toFixed(1)+'%'};
+}
+ 
+let state = {view:'estado_resultados', periodo:'2025-05'};
+ 
+function show(view){
+  state.view = view;
+  document.querySelectorAll('.side-item').forEach(el=>el.classList.toggle('active', el.dataset.view===view));
+  render();
+}
+ 
+function setPeriodo(p){
+  state.periodo = p;
+  render();
+}
+ 
+function render(){
+  const main = document.getElementById('main');
+  const r = renderers[state.view];
+  main.innerHTML = r ? r() : '<div style="padding:40px;color:var(--text3)">Vista no implementada.</div>';
+}
+ 
+/* ════════════════════════════════════════════════
+   ESTADO DE RESULTADOS
+════════════════════════════════════════════════ */
+const renderers = {};
+ 
+renderers.estado_resultados = () => {
+  const p = periodos.find(x=>x.periodo===state.periodo) || periodos[periodos.length-1];
+  const prevIdx = periodos.findIndex(x=>x.periodo===p.periodo) - 1;
+  const prev = prevIdx>=0 ? periodos[prevIdx] : null;
+ 
+  const tIngresos = trendStr(p.ingresos_cobrados, prev?.ingresos_cobrados);
+  const tBruta = trendStr(p.utilidad_bruta, prev?.utilidad_bruta);
+  const tNeta = trendStr(p.utilidad_neta, prev?.utilidad_neta);
+  const tFacturado = trendStr(p.ingresos_facturados, prev?.ingresos_facturados);
+ 
+  // Chart de utilidad neta por mes
+  const maxAbs = Math.max(...periodos.map(x=>Math.abs(x.utilidad_neta)));
+  const chartBars = periodos.map(x => {
+    const pct = Math.abs(x.utilidad_neta) / maxAbs * 100;
+    const isCurrent = x.periodo === p.periodo;
+    return {periodo: x.periodo.substring(5), valor: x.utilidad_neta, pct, isCurrent};
+  });
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Estado de resultados</div>
+      <div class="cat-sub">P&amp;L consolidado por período. Calculado automáticamente desde facturas, cobranza, requisiciones y costos adicionales. Compara contra el mes anterior.</div>
+    </div>
+    <div class="period-selector">
+      <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600">Período</span>
+      <select onchange="setPeriodo(this.value)">
+        ${periodos.map(x=>`<option value="${x.periodo}" ${x.periodo===p.periodo?'selected':''}>${x.label}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm" onclick="alert('Exportar PDF/Excel')">⬇ Exportar</button>
+    </div>
+  </div>
+ 
+  <div class="dashboard">
+ 
+    <!-- KPI principales -->
+    <div class="kpi-grid">
+      <div class="kpi accent">
+        <div class="kpi-lbl">Facturado</div>
+        <div class="kpi-val">${fmtK(p.ingresos_facturados)}</div>
+        <div class="kpi-sub"><span class="kpi-trend ${tFacturado.dir}">${tFacturado.txt}</span> vs mes anterior</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Cobrado</div>
+        <div class="kpi-val">${fmtK(p.ingresos_cobrados)}</div>
+        <div class="kpi-sub"><span class="kpi-trend ${tIngresos.dir}">${tIngresos.txt}</span> · ${fmtPct((p.ingresos_cobrados/p.ingresos_facturados)*100)} del facturado</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Utilidad bruta</div>
+        <div class="kpi-val ${p.utilidad_bruta>=0?'good':'bad'}">${fmtK(p.utilidad_bruta)}</div>
+        <div class="kpi-sub"><span class="kpi-trend ${tBruta.dir}">${tBruta.txt}</span> · margen ${fmtPct(p.margen_bruto_pct)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Utilidad neta</div>
+        <div class="kpi-val ${p.utilidad_neta>=0?'good':'bad'}">${fmtK(p.utilidad_neta)}</div>
+        <div class="kpi-sub"><span class="kpi-trend ${tNeta.dir}">${tNeta.txt}</span> · margen ${fmtPct(p.margen_neto_pct)}</div>
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <!-- P&L Table -->
+      <div class="card">
+        <div class="card-title">P&amp;L · ${p.label}<span class="card-title-sub">Detalle</span></div>
+        <table class="pl-table">
+          <tr class="sec-header"><td>INGRESOS</td><td>${p.label.substring(0,3).toUpperCase()}</td></tr>
+          <tr class="line"><td>Facturado en el período</td><td>${fmtFull(p.ingresos_facturados)}</td></tr>
+          <tr class="line"><td>Cobrado en el período</td><td>${fmtFull(p.ingresos_cobrados)}</td></tr>
+          <tr class="subtotal"><td>Total ingresos cobrados</td><td>${fmtFull(p.ingresos_cobrados)}</td></tr>
+ 
+          <tr class="sec-header"><td>COSTOS DIRECTOS</td><td></td></tr>
+          <tr class="line"><td>Pagos a afiliados</td><td class="pl-neg">(${fmtFull(p.costo_afiliados)})</td></tr>
+          <tr class="line"><td>Pagos a agencias (facturas)</td><td class="pl-neg">(${fmtFull(p.costo_agencias)})</td></tr>
+          <tr class="line"><td>Comisiones a vendedores</td><td class="pl-neg">(${fmtFull(p.costo_comisiones_vendedores)})</td></tr>
+          ${p.costo_comisiones_agencias>0?`<tr class="line"><td>Comisiones a agencias (req.)</td><td class="pl-neg">(${fmtFull(p.costo_comisiones_agencias)})</td></tr>`:''}
+          <tr class="subtotal"><td>Total costos directos</td><td class="pl-neg">(${fmtFull(p.costo_afiliados+p.costo_agencias+p.costo_comisiones_vendedores+p.costo_comisiones_agencias)})</td></tr>
+ 
+          <tr class="total ${p.utilidad_bruta>=0?'':''}"><td>UTILIDAD BRUTA</td><td class="${p.utilidad_bruta>=0?'pl-pos':'pl-neg'}">${p.utilidad_bruta>=0?fmtFull(p.utilidad_bruta):'('+fmtFull(Math.abs(p.utilidad_bruta))+')'}</td></tr>
+ 
+          <tr class="sec-header"><td>COSTOS INDIRECTOS</td><td></td></tr>
+          <tr class="line"><td>Nóminas (NOI)</td><td class="pl-neg">(${fmtFull(p.costo_nominas)})</td></tr>
+          <tr class="line"><td>Overhead</td><td class="pl-neg">(${fmtFull(p.costo_overhead)})</td></tr>
+          <tr class="subtotal"><td>Total costos indirectos</td><td class="pl-neg">(${fmtFull(p.costo_nominas+p.costo_overhead)})</td></tr>
+ 
+          <tr class="total"><td>UTILIDAD NETA</td><td class="${p.utilidad_neta>=0?'pl-pos':'pl-neg'}">${p.utilidad_neta>=0?fmtFull(p.utilidad_neta):'('+fmtFull(Math.abs(p.utilidad_neta))+')'}</td></tr>
+        </table>
+      </div>
+ 
+      <!-- Composición de costos -->
+      <div>
+        <div class="card">
+          <div class="card-title">Composición de costos<span class="card-title-sub">% del cobrado</span></div>
+          ${(() => {
+            const costRows = [
+              {label:'Afiliados', val:p.costo_afiliados, cls:''},
+              {label:'Agencias', val:p.costo_agencias, cls:''},
+              {label:'Comisiones vend.', val:p.costo_comisiones_vendedores, cls:''},
+              {label:'Nóminas', val:p.costo_nominas, cls:''},
+              {label:'Overhead', val:p.costo_overhead, cls:''},
+            ];
+            const max = Math.max(...costRows.map(r=>r.val));
+            return costRows.map(r=>{
+              const pct = (r.val/p.ingresos_cobrados)*100;
+              const barPct = (r.val/max)*100;
+              return `<div class="hbar-row">
+                <div class="hbar-lbl">${r.label}</div>
+                <div class="hbar-bg"><div class="hbar-fill" style="width:${barPct}%"></div></div>
+                <div class="hbar-val">${fmtK(r.val)} <span style="color:var(--text3);font-size:11px;font-weight:400">${fmtPct(pct)}</span></div>
+              </div>`;
+            }).join('');
+          })()}
+        </div>
+ 
+        <div class="card">
+          <div class="card-title">Indicadores clave<span class="card-title-sub">Período actual</span></div>
+          <div class="grid2">
+            <div>
+              <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Margen bruto</div>
+              <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:${p.margen_bruto_pct>=0?'var(--green-text)':'var(--red-text)'}">${fmtPct(p.margen_bruto_pct)}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Margen neto</div>
+              <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:${p.margen_neto_pct>=0?'var(--green-text)':'var(--red-text)'}">${fmtPct(p.margen_neto_pct)}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">% Cobranza</div>
+              <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--text)">${fmtPct((p.ingresos_cobrados/p.ingresos_facturados)*100)}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Costo afiliados / cobrado</div>
+              <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--text)">${fmtPct((p.costo_afiliados/p.ingresos_cobrados)*100)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+ 
+    <!-- Tendencia mensual -->
+    <div class="card">
+      <div class="card-title">Evolución de utilidad neta<span class="card-title-sub">6 meses</span></div>
+      <div class="chart-bar">
+        ${chartBars.map(b=>{
+          const isPos = b.valor >= 0;
+          const cls = b.isCurrent ? (isPos?'pos':'neg') : 'muted';
+          return `<div class="chart-col">
+            <div class="chart-bar-stack" title="${b.periodo}: ${fmt(b.valor)}">
+              <div class="chart-bar-fill ${cls}" style="height:${b.pct}%;position:relative">
+                <span class="chart-col-val" style="color:${isPos?'var(--green-text)':'var(--red-text)'};font-weight:600">${fmtK(b.valor)}</span>
+              </div>
+            </div>
+            <div class="chart-col-lbl" style="${b.isCurrent?'color:var(--gray-dark);font-weight:700':''}">${b.periodo}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:center;gap:18px;font-size:11px;color:var(--text3);margin-top:14px;padding-top:10px;border-top:1px dashed var(--border)">
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--green-text)"></span>Mes seleccionado positivo</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--red-text)"></span>Mes seleccionado negativo</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--gray)"></span>Otros meses</span>
+      </div>
+    </div>
+ 
+    <!-- Tabla histórica -->
+    <div class="card">
+      <div class="card-title">Detalle histórico mensual</div>
+      <table class="r-table">
+        <thead><tr>
+          <th>Período</th>
+          <th class="td-right">Facturado</th>
+          <th class="td-right">Cobrado</th>
+          <th class="td-right">Costos directos</th>
+          <th class="td-right">Util. bruta</th>
+          <th class="td-right">Costos indirectos</th>
+          <th class="td-right">Util. neta</th>
+          <th class="td-right">Margen %</th>
+        </tr></thead>
+        <tbody>
+          ${[...periodos].reverse().map(x=>{
+            const cd = x.costo_afiliados + x.costo_agencias + x.costo_comisiones_vendedores + x.costo_comisiones_agencias;
+            const ci = x.costo_nominas + x.costo_overhead;
+            const cls = x.periodo===p.periodo ? 'style="background:var(--gray-bg);font-weight:500"' : '';
+            return `<tr ${cls}>
+              <td class="td-mono">${x.label}</td>
+              <td class="td-right">${fmtK(x.ingresos_facturados)}</td>
+              <td class="td-right">${fmtK(x.ingresos_cobrados)}</td>
+              <td class="td-right" style="color:var(--red-text)">(${fmtK(cd)})</td>
+              <td class="td-right" style="color:${x.utilidad_bruta>=0?'var(--green-text)':'var(--red-text)'};font-weight:500">${x.utilidad_bruta>=0?'':'('}${fmtK(Math.abs(x.utilidad_bruta))}${x.utilidad_bruta>=0?'':')'}</td>
+              <td class="td-right" style="color:var(--red-text)">(${fmtK(ci)})</td>
+              <td class="td-right" style="color:${x.utilidad_neta>=0?'var(--green-text)':'var(--red-text)'};font-weight:600">${x.utilidad_neta>=0?'':'('}${fmtK(Math.abs(x.utilidad_neta))}${x.utilidad_neta>=0?'':')'}</td>
+              <td class="td-right" style="color:${x.margen_neto_pct>=0?'var(--green-text)':'var(--red-text)'}">${fmtPct(x.margen_neto_pct)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+ 
+  </div>`;
+};
+ 
+function fmtFull(n){return Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})}
+ 
+/* ════════════════════════════════════════════════
+   DASHBOARD COMERCIAL
+════════════════════════════════════════════════ */
+renderers.dash_comercial = () => {
+  const totalVentas = ventas_por_vendedor.reduce((s,v)=>s+v.ventas,0);
+  const totalOrdenes = ventas_por_vendedor.reduce((s,v)=>s+v.ordenes,0);
+  const totalComisiones = ventas_por_vendedor.reduce((s,v)=>s+v.comisiones,0);
+  const ticketProm = totalVentas / totalOrdenes;
+ 
+  const maxV = Math.max(...ventas_por_vendedor.map(v=>v.ventas));
+  const maxA = Math.max(...ventas_por_anunciante.map(a=>a.ventas));
+  const maxAg = Math.max(...ventas_por_agencia.map(a=>a.ventas));
+  const maxCat = Math.max(...ventas_por_categoria.map(c=>c.ventas));
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Dashboard comercial</div>
+      <div class="cat-sub">Análisis de ventas por vendedor, anunciante, agencia y categoría. Acumulado año 2025.</div>
+    </div>
+    <div class="period-selector">
+      <select><option>YTD 2025</option><option>Junio 2025</option><option>Mayo 2025</option><option>Q2 2025</option></select>
+      <button class="btn btn-sm">⬇ Exportar</button>
+    </div>
+  </div>
+ 
+  <div class="dashboard">
+ 
+    <div class="kpi-grid">
+      <div class="kpi accent">
+        <div class="kpi-lbl">Ventas YTD</div>
+        <div class="kpi-val">${fmtK(totalVentas)}</div>
+        <div class="kpi-sub">${totalOrdenes} órdenes</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Ticket promedio</div>
+        <div class="kpi-val">${fmtK(ticketProm)}</div>
+        <div class="kpi-sub">por orden</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Comisiones vendedores</div>
+        <div class="kpi-val">${fmtK(totalComisiones)}</div>
+        <div class="kpi-sub">${fmtPct(totalComisiones/totalVentas*100)} del total</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Anunciantes activos</div>
+        <div class="kpi-val">${ventas_por_anunciante.length+11}</div>
+        <div class="kpi-sub">17 con ventas en YTD</div>
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Top vendedores<span class="card-title-sub">por ventas YTD</span></div>
+        ${ventas_por_vendedor.map(v=>`
+          <div class="hbar-row">
+            <div class="hbar-lbl">${v.nombre}<div style="font-size:10px;color:var(--text3);font-weight:400">${v.ordenes} órdenes · ${fmt(v.comisiones)} comisión</div></div>
+            <div class="hbar-bg"><div class="hbar-fill" style="width:${(v.ventas/maxV)*100}%"></div></div>
+            <div class="hbar-val">${fmtK(v.ventas)}</div>
+          </div>
+        `).join('')}
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Top anunciantes<span class="card-title-sub">por ventas YTD</span></div>
+        ${ventas_por_anunciante.map(a=>`
+          <div class="hbar-row">
+            <div class="hbar-lbl">${a.nombre}<div style="font-size:10px;color:var(--text3);font-weight:400">${a.ordenes} órdenes</div></div>
+            <div class="hbar-bg"><div class="hbar-fill good" style="width:${(a.ventas/maxA)*100}%"></div></div>
+            <div class="hbar-val">${fmtK(a.ventas)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Ventas por categoría<span class="card-title-sub">distribución</span></div>
+        ${ventas_por_categoria.map(c=>`
+          <div class="hbar-row">
+            <div class="hbar-lbl">${c.cat}</div>
+            <div class="hbar-bg"><div class="hbar-fill" style="background:var(--purple);width:${(c.ventas/maxCat)*100}%"></div></div>
+            <div class="hbar-val">${fmtK(c.ventas)} <span style="color:var(--text3);font-size:11px;font-weight:400">${fmtPct(c.share)}</span></div>
+          </div>
+        `).join('')}
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Ventas por agencia<span class="card-title-sub">comisión asociada</span></div>
+        ${ventas_por_agencia.map(a=>`
+          <div class="hbar-row">
+            <div class="hbar-lbl">${a.nombre}<div style="font-size:10px;color:var(--text3);font-weight:400">${a.comision_pct>0?fmtPct(a.comision_pct)+' comisión · '+fmt(a.comision):'Sin comisión'}</div></div>
+            <div class="hbar-bg"><div class="hbar-fill" style="background:var(--blue);width:${(a.ventas/maxAg)*100}%"></div></div>
+            <div class="hbar-val">${fmtK(a.ventas)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+ 
+    <div class="card">
+      <div class="card-title">Evolución ventas mensuales</div>
+      <div class="chart-bar">
+        ${periodos.map(p=>{
+          const max = Math.max(...periodos.map(x=>x.ingresos_facturados));
+          const pct = (p.ingresos_facturados/max)*100;
+          return `<div class="chart-col">
+            <div class="chart-bar-stack">
+              <div class="chart-bar-fill" style="height:${pct}%;background:var(--gray-dark);position:relative">
+                <span class="chart-col-val">${fmtK(p.ingresos_facturados)}</span>
+              </div>
+            </div>
+            <div class="chart-col-lbl">${p.periodo.substring(5)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+ 
+  </div>`;
+};
+ 
+/* ════════════════════════════════════════════════
+   DASHBOARD COBRANZA
+════════════════════════════════════════════════ */
+renderers.dash_cobranza = () => {
+  const totalPorCobrar = aging_cobranza.reduce((s,a)=>s+a.importe,0);
+  const totalVencido = aging_cobranza.filter(a=>a.color!=='good').reduce((s,a)=>s+a.importe,0);
+  const totalFacturas = aging_cobranza.reduce((s,a)=>s+a.count,0);
+  const diasPromedio = 51;
+ 
+  const maxClient = Math.max(...cobranza_por_cliente.map(c=>c.por_cobrar));
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Dashboard cobranza</div>
+      <div class="cat-sub">Aging de cuentas por cobrar, comportamiento por cliente, tendencias de cobranza.</div>
+    </div>
+    <div class="period-selector">
+      <select><option>Al ${new Date().toISOString().substring(0,10)}</option></select>
+      <button class="btn btn-sm">⬇ Exportar</button>
+    </div>
+  </div>
+ 
+  <div class="dashboard">
+ 
+    <div class="kpi-grid">
+      <div class="kpi accent">
+        <div class="kpi-lbl">Total por cobrar</div>
+        <div class="kpi-val">${fmtK(totalPorCobrar)}</div>
+        <div class="kpi-sub">${totalFacturas} facturas</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Vencido</div>
+        <div class="kpi-val bad">${fmtK(totalVencido)}</div>
+        <div class="kpi-sub">${fmtPct(totalVencido/totalPorCobrar*100)} del total</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">DSO promedio</div>
+        <div class="kpi-val">${diasPromedio}d</div>
+        <div class="kpi-sub">días promedio cobro</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Cobrado mes</div>
+        <div class="kpi-val good">${fmtK(951200)}</div>
+        <div class="kpi-sub">junio 2025</div>
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Aging de cuentas por cobrar<span class="card-title-sub">distribución por antigüedad</span></div>
+        ${aging_cobranza.map(a=>{
+          const pct = (a.importe/totalPorCobrar)*100;
+          return `<div class="hbar-row">
+            <div class="hbar-lbl">${a.bucket}<div style="font-size:10px;color:var(--text3);font-weight:400">${a.count} facturas</div></div>
+            <div class="hbar-bg"><div class="hbar-fill ${a.color}" style="width:${(a.importe/totalPorCobrar)*100*1.5}%;max-width:100%"></div></div>
+            <div class="hbar-val">${fmtK(a.importe)} <span style="color:var(--text3);font-size:11px;font-weight:400">${fmtPct(pct)}</span></div>
+          </div>`;
+        }).join('')}
+ 
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px">
+            <span>Vigente (0-60d)</span>
+            <span class="td-mono" style="color:var(--green-text);font-weight:600">${fmtK(3_830_000)} (${fmtPct(3_830_000/totalPorCobrar*100)})</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px">
+            <span>En riesgo (61-90d)</span>
+            <span class="td-mono" style="color:var(--amber-text);font-weight:600">${fmtK(687_000)} (${fmtPct(687_000/totalPorCobrar*100)})</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)">
+            <span>Crítico (+90d)</span>
+            <span class="td-mono" style="color:var(--red-text);font-weight:600">${fmtK(225_000)} (${fmtPct(225_000/totalPorCobrar*100)})</span>
+          </div>
+        </div>
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Cobranza por cliente<span class="card-title-sub">comportamiento</span></div>
+        <table class="r-table">
+          <thead><tr><th>Anunciante</th><th class="td-right">Por cobrar</th><th class="td-right">Vencido</th><th class="td-center">DSO</th></tr></thead>
+          <tbody>
+            ${cobranza_por_cliente.map(c=>`<tr>
+              <td class="td-main" style="font-weight:500">${c.anunciante}</td>
+              <td class="td-right">${fmtK(c.por_cobrar)}</td>
+              <td class="td-right" style="color:${c.vencido>0?'var(--red-text)':'var(--text3)'};font-weight:${c.vencido>0?600:400}">${c.vencido>0?fmtK(c.vencido):'—'}</td>
+              <td class="td-center" style="color:${c.dias_prom>60?'var(--red-text)':c.dias_prom>45?'var(--amber-text)':'var(--text2)'};font-family:var(--mono);font-size:12px">${c.dias_prom}d</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+ 
+    <div class="card">
+      <div class="card-title">Cobrado vs facturado por mes<span class="card-title-sub">ratio de cobranza</span></div>
+      <div class="chart-bar">
+        ${periodos.map(p=>{
+          const max = Math.max(...periodos.map(x=>x.ingresos_facturados));
+          const pctF = (p.ingresos_facturados/max)*100;
+          const pctC = (p.ingresos_cobrados/max)*100;
+          return `<div class="chart-col">
+            <div style="display:flex;align-items:flex-end;width:100%;height:100%;gap:4px;justify-content:center">
+              <div style="width:35%;background:var(--gray);height:${pctF}%;border-radius:3px 3px 0 0;position:relative">
+                <span style="font-size:9px;position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-family:var(--mono);color:var(--text3);font-weight:600">${fmtK(p.ingresos_facturados)}</span>
+              </div>
+              <div style="width:35%;background:var(--green-text);height:${pctC}%;border-radius:3px 3px 0 0"></div>
+            </div>
+            <div class="chart-col-lbl">${p.periodo.substring(5)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:center;gap:18px;font-size:11px;color:var(--text3);margin-top:14px;padding-top:10px;border-top:1px dashed var(--border)">
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--gray)"></span>Facturado</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--green-text)"></span>Cobrado</span>
+      </div>
+    </div>
+ 
+  </div>`;
+};
+ 
+/* ════════════════════════════════════════════════
+   DASHBOARD OPERATIVO
+════════════════════════════════════════════════ */
+renderers.dash_operativo = () => {
+  const totalSpotsOrd = cumplimiento_por_estacion.reduce((s,e)=>s+e.ordenado,0);
+  const totalSpotsEj = cumplimiento_por_estacion.reduce((s,e)=>s+e.ejecutado,0);
+  const cumplGral = (totalSpotsEj/totalSpotsOrd)*100;
+  const totalInc = incidencias_por_afiliado.reduce((s,i)=>s+i.total,0);
+ 
+  const maxInc = Math.max(...incidencias_por_afiliado.map(i=>i.total));
+ 
+  return `
+  <div class="cat-header">
+    <div>
+      <div class="cat-title">Dashboard operativo</div>
+      <div class="cat-sub">Cumplimiento de transmisión, incidencias por afiliado y eficiencia operativa.</div>
+    </div>
+    <div class="period-selector">
+      <select><option>YTD 2025</option><option>Junio 2025</option><option>Mayo 2025</option></select>
+      <button class="btn btn-sm">⬇ Exportar</button>
+    </div>
+  </div>
+ 
+  <div class="dashboard">
+ 
+    <div class="kpi-grid">
+      <div class="kpi accent">
+        <div class="kpi-lbl">Cumplimiento general</div>
+        <div class="kpi-val ${cumplGral>=98?'good':cumplGral>=95?'warn':'bad'}">${fmtPct(cumplGral)}</div>
+        <div class="kpi-sub">${totalSpotsEj.toLocaleString()} de ${totalSpotsOrd.toLocaleString()} spots</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Spots transmitidos YTD</div>
+        <div class="kpi-val">${totalSpotsEj.toLocaleString()}</div>
+        <div class="kpi-sub">en 14 estaciones</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Incidencias YTD</div>
+        <div class="kpi-val warn">${totalInc}</div>
+        <div class="kpi-sub">${fmtPct(totalInc/(totalSpotsOrd/100)*1)}‰ tasa</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Afiliados activos</div>
+        <div class="kpi-val">${incidencias_por_afiliado.length+2}</div>
+        <div class="kpi-sub">6 con operación regular</div>
+      </div>
+    </div>
+ 
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Cumplimiento por estación<span class="card-title-sub">spots transmitidos / ordenados</span></div>
+        <table class="r-table">
+          <thead><tr><th>Estación</th><th class="td-right">Ordenado</th><th class="td-right">Ejecutado</th><th class="td-center">% Cumpl.</th></tr></thead>
+          <tbody>
+            ${cumplimiento_por_estacion.map(e=>{
+              const cls = e.pct>=99?'var(--green-text)':e.pct>=97?'var(--text)':e.pct>=95?'var(--amber-text)':'var(--red-text)';
+              return `<tr>
+                <td class="td-main">${e.estacion}</td>
+                <td class="td-right">${e.ordenado.toLocaleString()}</td>
+                <td class="td-right">${e.ejecutado.toLocaleString()}</td>
+                <td class="td-center" style="color:${cls};font-weight:600;font-family:var(--mono)">${fmtPct(e.pct)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+ 
+      <div class="card">
+        <div class="card-title">Incidencias por afiliado<span class="card-title-sub">YTD 2025</span></div>
+        ${incidencias_por_afiliado.map(i=>`
+          <div class="hbar-row" style="grid-template-columns:170px 1fr 60px">
+            <div class="hbar-lbl">${i.afiliado}<div style="font-size:10px;color:var(--text3);font-weight:400">Faltantes ${i.faltantes} · Horario ${i.cambio_horario} · Fecha ${i.cambio_fecha}</div></div>
+            <div class="hbar-bg"><div class="hbar-fill ${i.tasa_pct>10?'danger':i.tasa_pct>7?'warn':''}" style="width:${(i.total/maxInc)*100}%"></div></div>
+            <div class="hbar-val">${i.total}</div>
+          </div>
+        `).join('')}
+        <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3)">
+          Tasa = incidencias / OE totales del afiliado. Por encima de 10% activa revisión.
+        </div>
+      </div>
+    </div>
+ 
+    <div class="card">
+      <div class="card-title">Composición de incidencias YTD</div>
+      ${(() => {
+        const tipos = [
+          {label:'Faltante',        count: incidencias_por_afiliado.reduce((s,i)=>s+i.faltantes,0), cls:'danger'},
+          {label:'Cambio horario',  count: incidencias_por_afiliado.reduce((s,i)=>s+i.cambio_horario,0), cls:''},
+          {label:'Cambio fecha',    count: incidencias_por_afiliado.reduce((s,i)=>s+i.cambio_fecha,0), cls:'warn'},
+        ];
+        const max = Math.max(...tipos.map(t=>t.count));
+        return tipos.map(t=>`
+          <div class="hbar-row">
+            <div class="hbar-lbl">${t.label}</div>
+            <div class="hbar-bg"><div class="hbar-fill ${t.cls}" style="width:${(t.count/max)*100}%"></div></div>
+            <div class="hbar-val">${t.count} <span style="color:var(--text3);font-size:11px;font-weight:400">${fmtPct(t.count/totalInc*100)}</span></div>
+          </div>
+        `).join('');
+      })()}
+    </div>
+ 
+  </div>`;
+};
+ 
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+render();
+</script>
+</body>
+</html>
