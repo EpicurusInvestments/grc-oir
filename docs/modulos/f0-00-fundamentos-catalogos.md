@@ -61,6 +61,39 @@ catálogo nuevo se reduzca a definir su entidad, su formulario y sus reglas.
 ## Dependencias
 - Ninguna (es la base). Debe completarse antes que F0-01..F0-05.
 
+## Estado de implementación
+
+### Backend — ENTREGADO (tanda 1)
+Inicializado el proyecto FastAPI con **uv** (Python 3.12; `pyproject.toml`, `uv.lock`) y
+la base reutilizable:
+- `app/core/`: `config` (lee `.env`; arma la URL ODBC con el guion de `GRC-OIR`),
+  `db` (engine **perezoso** + sesión síncrona pyodbc), `errors` (sobre uniforme),
+  `security` (matriz RBAC como datos + `requiere_permiso` + auth dev-only fail-closed),
+  `field_permissions.verificar` y `audit.log_cambio_parametro` (hooks con firma estable
+  para F0-03/F5).
+- `app/modules/catalogos/`: `BaseRepository`, `BaseService`, `schemas` (`Page`,
+  `ListParams`, `CatalogoReadBase`, `CambioEstadoIn`) y `build_crud_router` (factory de
+  los 5 endpoints estándar). Router agregador vacío (F0-01 le cuelga cada catálogo).
+- `app/main.py`: `/api/v1`, OpenAPI activo (`/docs`), `/health` y `/health/db`.
+- **Alembic** configurado (`alembic.ini`, `migrations/env.py` cableado a `Base.metadata`)
+  **sin revisiones** todavía (no hay tablas; la primera migración es de F0-01).
+- **Pruebas:** 12 pasando (SQLite en memoria con entidad de juguete): CRUD genérico,
+  paginación, filtro `activo`, búsqueda, baja lógica, RBAC y fail-closed. `ruff` y `mypy`
+  (strict) limpios.
+
+Decisiones registradas: **ADR-007** (CRUD genérico + registry), **ADR-008** (auth
+dev-only fail-closed), **ADR-009** (pyodbc síncrono + engine perezoso).
+
+> Nota de verificación: localmente `GET /health/db` no conecta porque (a) este host tiene
+> ODBC Driver 17, no el 18 (la imagen Docker sí instala el 18), y (b) la contraseña de
+> prueba de RDS parece rotada (login 18456). La cadena de conexión y el endpoint son
+> correctos: se alcanzó el servidor SQL. Pendiente del equipo: confirmar credencial dev.
+
+### Frontend — PENDIENTE (tanda 2)
+Explorador + componentes compartidos (`shared/ui`) y el registry de catálogos.
+
 ## Pendientes / dudas
 - (Resuelto) Quién edita los catálogos → por ahora solo Admin (IT).
-- (Resuelto) Paginación → por página.
+- (Resuelto) Paginación → por página (`?page&size`).
+- (Abierto) SSO corporativo `[[POR LLENAR]]`: reemplazar `get_current_user` (ADR-008).
+- (Abierto) Credencial/endpoint de RDS de desarrollo: validar contra `/health/db`.
