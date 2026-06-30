@@ -89,8 +89,31 @@ dev-only fail-closed), **ADR-009** (pyodbc síncrono + engine perezoso).
 > prueba de RDS parece rotada (login 18456). La cadena de conexión y el endpoint son
 > correctos: se alcanzó el servidor SQL. Pendiente del equipo: confirmar credencial dev.
 
-### Frontend — PENDIENTE (tanda 2)
-Explorador + componentes compartidos (`shared/ui`) y el registry de catálogos.
+### Frontend — ENTREGADO (tanda 2)
+Inicializado **Vite + React + TypeScript (strict)** con PrimeReact, TanStack Query y
+React Hook Form + Zod (deps listas para los formularios de F0-01+).
+- `src/shared/ui/`: patrón de pantalla reutilizable — `theme.css` (tokens del HTML
+  aprobado, **color por fase F0 morado**, IBM Plex Sans/Mono, `--detail-width: 420px`),
+  `ExplorerLayout` (header + sidebar con contador `side-count` + área principal),
+  `ListDetailLayout` (split lista + detalle ~420px) + `DetailEmpty`, `CatalogToolbar`
+  (búsqueda + filtros en pills + contador), `StatusBadge` (Activo/Inactivo), `FieldTag`
+  (Catálogo/Heredado/Calculado/Derivado/Audit log/Timbrado), `Paginator` (por página,
+  envuelve PrimeReact) y `ConfirmDialog` (cambio de estado).
+- `src/shared/lib/`: `apiClient` (axios contra `VITE_API_URL`, headers de auth dev en
+  development, normaliza el sobre de error), `createCatalogApi` (CRUD tipado contra
+  `/catalogos/<recurso>`, gemelo de `build_crud_router`), `useCatalog` (queries/mutations
+  TanStack con invalidación). `shared/types.ts`: `Page<T>`, `ListParams`, etc.
+- `src/modules/catalogos/`: `catalogRegistry` (grupos y entradas del sidebar según la
+  pantalla aprobada; cada catálogo de F0-01+ registra su `render`) y
+  `CatalogosExplorerPage` (arma el explorador desde el registry; placeholder "no
+  implementado" hasta que cada módulo registre su pantalla).
+- `src/app/`: `providers` (QueryClient + PrimeReact), `router`, `main.tsx`.
+- **Calidad:** `tsc --noEmit`, `eslint` y `vitest` (prueba de `StatusBadge`) en verde;
+  `vite build` y el dev server arrancan correctamente.
+
+Pasos manuales pendientes para F0-01: registrar la entrada del catálogo (con su `render`)
+en `catalogRegistry`, definir `types.ts`/`api.ts`/`hooks.ts` del módulo y su pantalla
+lista+detalle usando los componentes de `shared/ui`.
 
 ## Pendientes / dudas
 - (Resuelto) Quién edita los catálogos → por ahora solo Admin (IT).

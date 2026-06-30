@@ -101,4 +101,21 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   red/credenciales. La cadena de conexión usa `odbc_connect=` URL-encodeado para soportar
   el guion del nombre `GRC-OIR`.
 
-[[Agregar aquí cada nueva decisión: ADR-010, ...]]
+### ADR-010 — Vulnerabilidades de esbuild/Vite en desarrollo: aceptadas temporalmente
+- **Estado:** aceptada · **Fecha:** (F0-00)
+- **Contexto:** `npm audit` reporta 5 vulnerabilidades (3 moderate, 1 high, 1 critical)
+  que se originan todas en `esbuild` y se propagan en cascada a `vite`, `vitest`,
+  `@vitest/mocker` y `vite-node`. El aviso (GHSA-67mh-4wv8-2f99) afecta únicamente al
+  **servidor de desarrollo** (permite que un sitio web haga peticiones al dev server y
+  lea la respuesta); no afecta el build de producción.
+- **Decisión:** NO aplicar `npm audit fix --force`, porque actualizaría Vite a una
+  versión mayor (8.x) con cambios incompatibles que romperían el frontend recién montado.
+  Se aceptan temporalmente, dado que el riesgo real es bajo (desarrollo local no expuesto
+  a internet).
+- **Consecuencias:** pendiente conocido. Se revisará en una tarea dedicada de
+  actualización de dependencias cuando Vite/Vitest publiquen versiones que cierren el
+  aviso sin ruptura. No bloquea F0-00.
+- **Revisar:** ejecutar `npm audit` periódicamente; reevaluar si aparece un vector que
+  afecte producción.
+
+[[Agregar aquí cada nueva decisión: ADR-011, ...]]
