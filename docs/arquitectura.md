@@ -60,4 +60,62 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   que no se reincorpore por error pensando que fue un olvido. Si el negocio lo requiere
   después, se reintroducirá como una bandera/atributo más general.
 
-[[Agregar aquí cada nueva decisión: ADR-007, ...]]
+### ADR-007 — CRUD genérico de catálogos + registry (F0-00)
+- **Estado:** aceptada · **Fecha:** 2026-06 (F0-00)
+- **Contexto:** los 15 catálogos de F0 comparten la misma mecánica (lista paginada con
+  filtros, alta/edición, baja lógica) y la misma pantalla "explorador". Reimplementarla
+  por catálogo sería repetitivo y propenso a inconsistencias.
+- **Decisión:** una base reutilizable en `app/modules/catalogos/`:
+  `BaseRepository` (datos), `BaseService` (negocio, devuelve siempre `XxxRead`) y la
+  factory `build_crud_router(...)` que arma los 5 endpoints estándar con `requiere_permiso`
+  ya cableado. Cada catálogo (F0-01+) es un submódulo/archivo que aporta su modelo +
+  schemas + (opcional) subclase de servicio. En el front, un `catalogRegistry` cumple el
+  papel gemelo (cada catálogo registra label/grupo/columnas/detalle).
+- **Consecuencias:** dar de alta un catálogo ≈ definir entidad + 1 llamada a la factory.
+  Los puntos de extensión `_pre_create`/`_pre_update` del servicio son donde F0-03
+  enchufará `field_permissions.verificar` y `audit.log_cambio_parametro` para los % de
+  comisión sin re-cablear. `crud_router.py` usa anotaciones dinámicas (no PEP 563) para
+  que FastAPI reconozca los modelos; mypy las ignora solo en ese archivo.
+
+### ADR-008 — Autenticación de desarrollo: dev-only y fail-closed (F0-00)
+- **Estado:** aceptada (provisional) · **Fecha:** 2026-06 (F0-00)
+- **Contexto:** el SSO corporativo sigue `[[POR LLENAR]]`, pero el RBAC por área
+  (`requiere_permiso`) debe poder probarse desde la Entrega 1.
+- **Decisión:** `get_current_user` (en `core/security.py`) resuelve el usuario por headers
+  de desarrollo `X-Dev-User`/`X-Dev-Area` (con admin por defecto en `.env`), pero **solo
+  si `APP_ENV=development`**. En cualquier otro entorno sin SSO, la autenticación **falla
+  cerrada** (401): nunca asume admin. Es una sola función, marcada `# TODO(SSO)`.
+- **Consecuencias:** se prueban todas las áreas en local sin SSO, sin riesgo de dejar una
+  puerta abierta en qa/producción. Al integrar el SSO se reemplaza únicamente esa función.
+
+### ADR-009 — Acceso a datos síncrono (pyodbc) + engine perezoso (F0-00)
+- **Estado:** aceptada · **Fecha:** 2026-06 (F0-00)
+- **Contexto:** SQL Server en RDS con ODBC Driver 18; había que elegir sync vs async y
+  evitar que un RDS inalcanzable impida arrancar la app en local/CI.
+- **Decisión:** backend **síncrono** (pyodbc, endpoints `def` que FastAPI corre en
+  threadpool), consistente en toda la capa de datos. El engine se crea de forma
+  **perezosa** (no al importar): la app arranca aunque RDS no responda, y la conexión se
+  prueba bajo demanda en `GET /health/db`.
+- **Consecuencias:** arranque robusto sin red; `/health/db` distingue problemas de driver
+  (la imagen Docker instala el Driver 18; algunos hosts solo tienen el 17) de problemas de
+  red/credenciales. La cadena de conexión usa `odbc_connect=` URL-encodeado para soportar
+  el guion del nombre `GRC-OIR`.
+
+### ADR-010 — Vulnerabilidades de esbuild/Vite en desarrollo: aceptadas temporalmente
+- **Estado:** aceptada · **Fecha:** (F0-00)
+- **Contexto:** `npm audit` reporta 5 vulnerabilidades (3 moderate, 1 high, 1 critical)
+  que se originan todas en `esbuild` y se propagan en cascada a `vite`, `vitest`,
+  `@vitest/mocker` y `vite-node`. El aviso (GHSA-67mh-4wv8-2f99) afecta únicamente al
+  **servidor de desarrollo** (permite que un sitio web haga peticiones al dev server y
+  lea la respuesta); no afecta el build de producción.
+- **Decisión:** NO aplicar `npm audit fix --force`, porque actualizaría Vite a una
+  versión mayor (8.x) con cambios incompatibles que romperían el frontend recién montado.
+  Se aceptan temporalmente, dado que el riesgo real es bajo (desarrollo local no expuesto
+  a internet).
+- **Consecuencias:** pendiente conocido. Se revisará en una tarea dedicada de
+  actualización de dependencias cuando Vite/Vitest publiquen versiones que cierren el
+  aviso sin ruptura. No bloquea F0-00.
+- **Revisar:** ejecutar `npm audit` periódicamente; reevaluar si aparece un vector que
+  afecte producción.
+
+[[Agregar aquí cada nueva decisión: ADR-011, ...]]

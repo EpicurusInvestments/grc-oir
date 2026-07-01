@@ -32,7 +32,7 @@ services:
     container_name: grcoir-frontend
     env_file: .env
     ports:
-      - "5173:5173"   # [[POR LLENAR: puerto según Vite (5173) o Next.js (3000)]]
+      - "5173:5173"   # puerto del dev server de Vite
     volumes:
       - ./frontend:/app
       # node_modules vive DENTRO del contenedor (volumen anónimo) para no chocar

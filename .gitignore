@@ -35,3 +35,6 @@ Thumbs.db
 # Logs y temporales
 *.log
 tmp/
+
+# Archivos adicionales
+~$*

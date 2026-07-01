@@ -1,0 +1,81 @@
+# pyproject.toml — Backend del Sistema GRC-OIR
+# Gestor de dependencias: uv (rápido y reproducible con uv.lock).
+# Runtime fijado a Python 3.12 (ver Dockerfile).
+
+[project]
+name = "grc-oir-backend"
+version = "0.1.0"
+description = "Backend (FastAPI) del Sistema GRC-OIR — Grupo Radio Centro / OIR"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "pyodbc>=5.1",
+]
+
+[dependency-groups]
+# Dependencias solo de desarrollo/CI (no van a la imagen de producción).
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",        # cliente de pruebas para FastAPI TestClient
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ── Lint / format ─────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app"]
+
+[tool.ruff.lint]
+# E/F (pyflakes+pycodestyle), I (isort), UP (pyupgrade), B (bugbear)
+select = ["E", "F", "I", "UP", "B"]
+# UP046/UP047: preferimos `Generic[T]`/`TypeVar` explícitos a la sintaxis PEP 695 para
+# los genéricos acotados de la base de catálogos (más claro y sin sorpresas con Pydantic).
+ignore = ["UP046", "UP047"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Patrón estándar de FastAPI: las dependencias se declaran como defaults con Depends(...).
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "app.core.security.requiere_permiso",
+]
+
+# ── Tipos ─────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+# Alembic genera scripts con su propio estilo; no los tipamos estrictamente.
+exclude = ["migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["pyodbc"]
+ignore_missing_imports = true
+
+# crud_router usa anotaciones DINÁMICAS a propósito (payload: create_schema, etc.) para
+# que FastAPI las reconozca como modelos en tiempo de ejecución; mypy no puede tipar ese
+# patrón. Se silencian solo los códigos afectados, solo en ese archivo.
+[[tool.mypy.overrides]]
+module = ["app.modules.catalogos.crud_router"]
+disable_error_code = ["valid-type", "arg-type"]
+
+# ── Pruebas ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+addopts = "-q"

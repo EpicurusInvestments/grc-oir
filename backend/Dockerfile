@@ -21,12 +21,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Instalar dependencias de Python primero (aprovecha el caché de Docker:
-# si solo cambia el código, no se reinstala todo)
-COPY pyproject.toml ./
-# [[POR LLENAR: comando de instalación según el gestor elegido, p.ej.:]]
-# RUN pip install --no-cache-dir .
-# o con uv:  RUN pip install uv && uv sync --frozen
+# Gestor de dependencias: uv. Instalamos el entorno FUERA de /app (en /opt/venv)
+# porque en desarrollo docker-compose monta ./backend sobre /app: si el entorno
+# viviera dentro de /app, el bind-mount lo taparía (mismo problema que node_modules).
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Instalar dependencias primero (aprovecha el caché de capas: si solo cambia el
+# código, no se reinstalan). --no-install-project: instala SOLO las dependencias,
+# no el paquete del proyecto (su código se monta como volumen / se copia abajo).
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv && uv sync --frozen --no-install-project
 
 # El código se monta como volumen en desarrollo (ver docker-compose.yml),
 # pero lo copiamos también para que la imagen sirva sin volúmenes (CI/despliegue):
