@@ -73,9 +73,11 @@ class BaseService(
         return self._to_read(self.repo.update(obj, payload))
 
     def cambiar_estado(
-        self, id_: Any, activo: bool, usuario: CurrentUser
+        self, id_: Any, activo: bool, usuario: CurrentUser, forzar: bool = False
     ) -> ReadSchemaType:
         obj = self._get_or_404(id_)
+        if not activo:
+            self._pre_desactivar(obj, forzar, usuario)
         return self._to_read(self.repo.set_activo(obj, activo))
 
     # ── puntos de extensión (las subclases los sobreescriben) ───────────────────
@@ -89,4 +91,13 @@ class BaseService(
 
         Aquí las subclases llaman a `field_permissions.verificar(...)` y
         `audit.log_cambio_parametro(...)` para los campos sensibles de su entidad.
+        """
+
+    def _pre_desactivar(
+        self, obj: ModelType, forzar: bool, usuario: CurrentUser
+    ) -> None:
+        """Hook previo a la BAJA lógica (`activo=False`).
+
+        Las subclases validan aquí que no existan dependientes activos y, si los hay y
+        `forzar=False`, lanzan `DependenciasActivasError`. Por defecto no bloquea nada.
         """

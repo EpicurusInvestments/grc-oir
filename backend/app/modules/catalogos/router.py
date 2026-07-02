@@ -9,8 +9,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.modules.catalogos.afiliado import router as afiliado_router
+from app.modules.catalogos.estacion import router as estacion_router
+from app.modules.catalogos.plaza import router as plaza_router
+
 router = APIRouter(prefix="/catalogos", tags=["catalogos"])
 
-# Desde F0-01, por cada catálogo:
-#   from app.modules.catalogos.plaza import router as plaza_router
-#   router.include_router(plaza_router)
+# F0-01 · catálogos operativos (Plaza → Afiliado → Estación).
+router.include_router(plaza_router)
+router.include_router(afiliado_router)
+router.include_router(estacion_router)

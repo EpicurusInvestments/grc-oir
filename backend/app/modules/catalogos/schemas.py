@@ -30,9 +30,15 @@ class Page(BaseModel, Generic[T]):
 
 
 class CambioEstadoIn(BaseModel):
-    """Cuerpo del cambio de estado (baja/alta lógica)."""
+    """Cuerpo del cambio de estado (baja/alta lógica).
+
+    `forzar` permite completar una BAJA aunque existan dependientes activos: el servicio
+    bloquea la baja con `DependenciasActivasError` (409) salvo que el cliente confirme y
+    reintente con `forzar=True`. No afecta a las altas.
+    """
 
     activo: bool
+    forzar: bool = False
 
 
 class CatalogoReadBase(BaseModel):

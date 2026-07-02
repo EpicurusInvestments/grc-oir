@@ -52,6 +52,24 @@ class StateTransitionError(DomainError):
     status_code = 409
 
 
+class ConflictError(DomainError):
+    """Conflicto con el estado actual de los datos (p.ej. unicidad violada)."""
+
+    codigo = "conflicto"
+    status_code = 409
+
+
+class DependenciasActivasError(DomainError):
+    """Baja lógica bloqueada: la entidad tiene dependientes activos.
+
+    Se resuelve confirmando desde el cliente y reintentando con `forzar=True`.
+    `detalles` lleva el conteo de dependientes por tipo.
+    """
+
+    codigo = "dependencias_activas"
+    status_code = 409
+
+
 def _envelope(codigo: str, mensaje: str, detalles: Any = None) -> dict[str, Any]:
     return {"error": {"codigo": codigo, "mensaje": mensaje, "detalles": detalles}}
 
