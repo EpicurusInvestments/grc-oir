@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.config import settings
 from app.core.db import get_engine
 from app.core.errors import register_error_handlers
 from app.modules.catalogos.router import router as catalogos_router
@@ -22,6 +24,18 @@ app = FastAPI(
     description="Backend del Sistema GRC-OIR (Grupo Radio Centro / OIR).",
     docs_url="/docs",
     openapi_url="/openapi.json",
+)
+
+# CORS: el frontend (SPA) vive en otro origen. Los orígenes permitidos son CONFIGURABLES
+# (CORS_ORIGINS en el entorno), nunca hardcodeados: en producción se pone el dominio real.
+# Se permiten todos los métodos y headers para cubrir el preflight (OPTIONS) de POST/PUT y
+# los headers de auth de desarrollo (X-Dev-User / X-Dev-Area). Ver ADR-013.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 register_error_handlers(app)

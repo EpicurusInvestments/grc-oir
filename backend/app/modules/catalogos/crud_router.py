@@ -83,7 +83,11 @@ def build_crud_router(
         usuario: CurrentUser = Depends(requiere_permiso(f"{permiso_base}:editar")),
         svc: BaseService[Any, Any, Any, Any] = Depends(get_service),
     ) -> Any:
-        """Activa/desactiva (baja lógica). Nunca borra físicamente."""
-        return svc.cambiar_estado(item_id, payload.activo, usuario)
+        """Activa/desactiva (baja lógica). Nunca borra físicamente.
+
+        En una baja con dependientes activos el servicio responde 409; el cliente puede
+        confirmar y reintentar con `forzar=true` en el cuerpo.
+        """
+        return svc.cambiar_estado(item_id, payload.activo, usuario, forzar=payload.forzar)
 
     return router

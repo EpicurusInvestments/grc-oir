@@ -449,3 +449,296 @@ body {
 .state-msg.error {
   color: var(--red-text);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Lista (tabla), panel de detalle y formularios.
+ * Portado de la pantalla aprobada (Fase_0_-_Catalogos.html) para las pantallas de
+ * catálogos concretos (F0-01+). El shell (arriba) lo montó F0-00; esto es el contenido.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Tabla de lista */
+.cat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cat-table thead th {
+  padding: 9px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  white-space: nowrap;
+  z-index: 1;
+}
+.cat-table tbody td {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.cat-table tbody tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.cat-table tbody tr:hover td {
+  background: var(--surface2);
+}
+.cat-table tbody tr.sel td {
+  background: var(--phase-bg);
+}
+.td-main {
+  font-weight: 500;
+  color: var(--text);
+}
+.td-2 {
+  color: var(--text2);
+}
+.td-mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+.td-right {
+  text-align: right;
+}
+.td-center {
+  text-align: center;
+}
+
+.b-blue {
+  background: var(--blue-bg);
+  color: var(--blue-text);
+}
+
+/* Panel de detalle: header / body / footer */
+.d-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-med);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+}
+.dh {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.dh-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dh-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dh-sub {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.db {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+.df {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+/* Secciones dentro del detalle */
+.sec {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 16px 0 9px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sec:first-child {
+  margin-top: 0;
+}
+
+/* Campos de formulario / lectura */
+.fl {
+  font-size: 11px;
+  color: var(--text3);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.fl-required::after {
+  content: "*";
+  color: var(--red-text);
+  margin-left: 2px;
+}
+.fv {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 11px;
+  min-height: 18px;
+}
+.fv.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.fv.muted {
+  color: var(--text2);
+}
+.fv.link {
+  color: #185fa5;
+}
+.fi {
+  width: 100%;
+  height: 34px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-med);
+  background: var(--surface2);
+  padding: 0 11px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  margin-bottom: 4px;
+  transition: border-color 0.15s;
+}
+.fi:focus {
+  border-color: var(--phase);
+  background: var(--surface);
+}
+.fi:read-only,
+.fi:disabled {
+  background: var(--surface3);
+  color: var(--text2);
+  cursor: not-allowed;
+}
+.fsel {
+  width: 100%;
+  height: 34px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-med);
+  background: var(--surface2);
+  padding: 0 9px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.fsel:focus {
+  border-color: var(--phase);
+  background: var(--surface);
+}
+.fsel:disabled {
+  background: var(--surface3);
+  color: var(--text2);
+  cursor: not-allowed;
+}
+.r2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+/* Mensaje de error de validación de campo */
+.fe {
+  font-size: 11px;
+  color: var(--red-text);
+  margin: -1px 0 9px;
+  min-height: 14px;
+}
+
+/* Aviso de valor heredado (p.ej. plaza de la estación desde el afiliado) */
+.inherit-notice {
+  background: var(--amber-bg);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  color: var(--amber-text);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Items relacionados (estaciones dentro del afiliado) */
+.rel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+  font-size: 13px;
+  transition: all 0.12s;
+}
+.rel-name {
+  font-weight: 500;
+  color: var(--text);
+}
+.rel-sub {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+/* Formulario inline (agregar/editar estación dentro del afiliado) */
+.inline-form {
+  background: var(--surface2);
+  border-radius: var(--rl);
+  border: 1px solid var(--border-med);
+  padding: 13px;
+  margin-bottom: 8px;
+}
+.if-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Botones extra del patrón aprobado */
+.btn-xs {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+.btn-danger {
+  background: var(--red-bg);
+  border-color: #f5c2c2;
+  color: var(--red-text);
+}
+.btn-danger:hover {
+  background: #f8dede;
+}

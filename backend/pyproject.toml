@@ -38,6 +38,9 @@ packages = ["app"]
 target-version = "py312"
 line-length = 100
 src = ["app"]
+# Los scripts de revisión de Alembic son GENERADOS (plantilla script.py.mako): no se
+# lintean para no pelear con su estilo. `migrations/env.py` sí se mantiene a mano.
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 # E/F (pyflakes+pycodestyle), I (isort), UP (pyupgrade), B (bugbear)

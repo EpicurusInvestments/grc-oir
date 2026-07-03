@@ -10,10 +10,21 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import DateTime, Engine, create_engine
+from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
+
+
+def datetime2() -> DateTime:
+    """Tipo de fecha/hora para columnas de auditoría.
+
+    En SQL Server usa `DATETIME2` (rango y precisión modernos, recomendado por la spec);
+    en otros dialectos (p.ej. SQLite en las pruebas) cae a `DATETIME`. Se devuelve una
+    instancia nueva por columna para no compartir estado entre modelos.
+    """
+    return DateTime().with_variant(mssql.DATETIME2(), "mssql")  # type: ignore[no-untyped-call]
 
 
 class Base(DeclarativeBase):

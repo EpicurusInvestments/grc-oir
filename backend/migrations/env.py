@@ -15,13 +15,16 @@ from logging.config import fileConfig
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
-from sqlalchemy import engine_from_config, pool
 
-# TODO(F0-01+): importar los modelos para que Base.metadata los conozca, p.ej.:
-#   from app.modules.catalogos import plaza  # noqa: F401
+# F0-01: importar los modelos para que Base.metadata conozca sus tablas (autogenerate).
+from app.modules.catalogos import afiliado, estacion, plaza  # noqa: F401
+from sqlalchemy import create_engine, pool
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.sqlalchemy_url)
+
+# La URL NO se pasa por `config.set_main_option`: contiene el odbc_connect URL-encodeado
+# (con '%'), y configparser lo interpretaría como sintaxis de interpolación y fallaría.
+# Se usa `settings.sqlalchemy_url` directamente al crear el engine / configurar el contexto.
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -41,10 +44,8 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+    connectable = create_engine(
+        settings.sqlalchemy_url, poolclass=pool.NullPool, future=True
     )
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
