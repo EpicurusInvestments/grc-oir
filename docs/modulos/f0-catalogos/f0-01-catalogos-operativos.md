@@ -12,19 +12,32 @@ Gestionar dónde y a través de quién se transmite: plazas geográficas, afilia
 
 ## Entidades (spec BD v2)
 
-### Plaza (5 campos)
-`plaza_id` (PK), `nombre_plaza` (NOT NULL), `estado`, `activo`, `created_at`.
+> **Estado: IMPLEMENTADO** (backend + migración aplicada a RDS + frontend). Migración
+> Alembic `7300e6f940a3`. Ver `docs/API-CONTRACT.md` para los endpoints.
 
-### Afiliado (11 campos)
+> **Nota de unificación (E-3):** aunque la spec lista `created_at` como único timestamp de
+> Plaza y Estación, se agregó `updated_at` a **las tres** entidades para cumplir la
+> convención "updated_at en toda entidad" de `CLAUDE.md §6`. Desviación consciente y
+> uniforme respecto a la enumeración de la spec.
+
+### Plaza
+`plaza_id` (PK, `UNIQUEIDENTIFIER`), `nombre_plaza` (NOT NULL), `estado`, `activo`,
+`created_at`, `updated_at`.
+
+### Afiliado
 `afiliado_id` (PK), `nombre_afiliado` (NOT NULL), `razon_social_afiliado` (NOT NULL),
-`rfc_afiliado` (NOT NULL, 13), `plaza_id` (FK), `contacto_nombre`, `contacto_email`,
-`contacto_telefono`, `activo`, `created_at`, `updated_at`. No accede al sistema.
+`rfc_afiliado` (NOT NULL, **único**), `plaza_id` (FK **NOT NULL** — decisión E-1),
+`contacto_nombre`, `contacto_email`, `contacto_telefono`, `activo`, `created_at`,
+`updated_at`. No accede al sistema.
 - La `plaza_id` del afiliado es la plaza en la que opera. La estación la hereda (ver abajo).
+- **RFC:** se valida el formato oficial mexicano de **12-13 caracteres** (12 = persona
+  moral, que es el caso típico de un afiliado; 13 = física), no exactamente 13. Se
+  normaliza a mayúsculas. La columna es `NVARCHAR(13)` con índice UNIQUE.
 
-### Estacion (9 campos en spec; 1 omitido — ver nota)
-`estacion_id` (PK), `afiliado_id` (FK NOT NULL), `plaza_id` (FK NOT NULL),
-`nombre_estacion` (NOT NULL), `frecuencia`, `tipo_senal` (ENUM: fm│am│tv),
-`activo`, `created_at`.
+### Estacion (1 campo de la spec omitido — ver nota)
+`estacion_id` (PK), `afiliado_id` (FK NOT NULL), `plaza_id` (FK NOT NULL, **derivada** del
+afiliado), `nombre_estacion` (NOT NULL), `frecuencia`, `tipo_senal` (ENUM `fm│am│tv`, como
+`VARCHAR` + CHECK `ck_estacion_tipo_senal`), `activo`, `created_at`, `updated_at`.
 - **Campo omitido:** `venta_directa_carmen_aristegui_cdmx` (BIT) de la spec se **omite
   deliberadamente** (decisión del equipo). Registrado como desviación en
   `docs/arquitectura.md` (ADR-006) para que no se reincorpore por error.
@@ -47,24 +60,44 @@ La estación **hereda la plaza de su afiliado**. Implicaciones de diseño:
 ## Estados y transiciones
 - Estos catálogos solo manejan `activo` (alta lógica/baja lógica). Sin máquina de estados.
 
-## Pantallas (de la pantalla F0)
-- Lista + detalle por catálogo (Plaza, Afiliado), con filtros Activos/Inactivos/Todos
-  y paginación por página.
-- Estación: al capturar/seleccionar el afiliado, el formulario autocompleta plaza
-  (solo lectura) y razón social del afiliado.
-- Botones `+ Nueva plaza`, `+ Nuevo afiliado`, `Editar`, `Activar/Desactivar`.
+## Pantallas (implementadas, patrón lista + detalle)
+- **Plaza** (`plaza`) y **Afiliados y estaciones** (`afiliado`) son dos entradas del grupo
+  "Operación" del explorador. La **Estación NO tiene entrada propia**: se administra
+  **anidada** dentro del detalle del afiliado (lista de estaciones + form inline).
+- Ambas con filtros Activos/Inactivos/Todos, búsqueda y paginación por página.
+- **Columnas de lista (1:1 con la pantalla aprobada):**
+  - Plazas: Plaza · Estado · Estaciones · Estatus.
+  - Afiliados: Afiliado (nombre + razón social) · Plaza principal · RFC · Estaciones · Estatus.
+  - `Estaciones` (conteo) y `Plaza principal` (nombre) son **datos derivados** que el
+    backend calcula por lote (sin N+1) y expone como `estaciones_count` / `plaza_nombre`
+    (solo lectura). El conteo incluye estaciones inactivas (mismo criterio en ambas listas).
+- Formularios con React Hook Form + Zod (validaciones espejo del backend).
+- **Estación (inline):** al agregar/editar, la plaza se muestra de solo lectura con el tag
+  «Heredado» (viene del afiliado) junto con su razón social; se captura nombre/clave,
+  frecuencia y tipo de señal (FM/AM/TV).
+- Baja con dependientes: cuando el backend responde 409, la UI muestra un diálogo de
+  confirmación y reintenta con `forzar`.
+- Botones `+ Nueva plaza`, `+ Nuevo afiliado`, `+ Agregar` (estación), `Editar`,
+  `Activar/Desactivar`. Acciones de escritura visibles solo para admin (el backend valida).
 
 ## Roles / permisos
 - **Captura: solo Admin (IT)** por ahora. En una **versión posterior**, Ventas también
   podrá capturar y editar afiliados/estaciones (cuando se habilite, ajustar RBAC).
 - Lectura: demás áreas.
 
-## Reglas de negocio clave
-- `rfc_afiliado`: 13 caracteres, formato RFC válido, único.
-- Estación obliga `afiliado_id`; `plaza_id` se hereda del afiliado (Opción A), no se
-  captura manualmente.
-- Baja lógica; **no permitir desactivar una plaza/afiliado que tenga estaciones activas
-  dependientes sin antes advertir** al usuario (confirmar/forzar). Comportamiento confirmado.
+## Reglas de negocio clave (implementadas en la capa de servicio)
+- `rfc_afiliado`: formato RFC MX de 12-13 caracteres (ver nota arriba), único (índice
+  UNIQUE + verificación en servicio → 409 `conflicto` con mensaje claro).
+- Estación obliga `afiliado_id`; `plaza_id` se hereda del afiliado (Opción A, ADR-005): el
+  servicio la asigna = `Afiliado.plaza_id` y NO se captura en el formulario. Si cambia el
+  afiliado en una edición, se recalcula.
+- Baja lógica con confirmación (E-2): **no se puede desactivar**
+  - una **plaza** con afiliados activos **o** estaciones activas, ni
+  - un **afiliado** con estaciones activas,
+  sin confirmar. El servicio responde 409 `dependencias_activas` (con el conteo en
+  `detalles`) y el cliente reintenta con `forzar=true`. Mecanismo aditivo en la base
+  (`CambioEstadoIn.forzar`, hook `_pre_desactivar`). La estación no tiene dependientes, su
+  baja es directa.
 
 ## Integraciones
 - Ninguna.
@@ -73,6 +106,12 @@ La estación **hereda la plaza de su afiliado**. Implicaciones de diseño:
 - F0-00 (fundamentos). Plaza antes que Afiliado antes que Estación.
 
 ## Pendientes / dudas
-- (Resuelto) Plaza de la estación → Opción A: hereda del afiliado.
+- (Resuelto) Plaza de la estación → Opción A: hereda del afiliado (ADR-005).
 - (Resuelto) Campo `venta_directa_carmen_aristegui_cdmx` → omitido (ADR-006).
-- (Resuelto) Desactivar con dependientes → advertir antes de proceder.
+- (Resuelto) Desactivar con dependientes → advertir antes de proceder (E-2; alcance de
+  Plaza ampliado a afiliados activos O estaciones activas).
+- (Resuelto) `afiliado.plaza_id` → NOT NULL (E-1), requerido por la herencia de plaza.
+- (Resuelto) `updated_at` → agregado a las tres entidades (E-3, ver nota arriba).
+- (Aclaración) `rfc_afiliado` → 12-13 caracteres (no exactamente 13): 12 para personas
+  morales, que es el caso de los afiliados. Confirmar con el equipo si algún afiliado
+  pudiera ser persona física (13).

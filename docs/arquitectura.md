@@ -118,4 +118,66 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Revisar:** ejecutar `npm audit` periódicamente; reevaluar si aparece un vector que
   afecte producción.
 
-[[Agregar aquí cada nueva decisión: ADR-011, ...]]
+### ADR-011 — Timestamps: `DATETIME2` cross-dialect y `updated_at` en toda entidad (F0-01)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-01)
+- **Contexto:** `sa.DateTime` compila a `DATETIME` (legacy, menor rango/precisión) en SQL
+  Server, pero la spec y las buenas prácticas piden `DATETIME2`. Además, las pruebas
+  corren en SQLite, que no conoce `DATETIME2`. Por otro lado, la spec lista solo
+  `created_at` en Plaza/Estación, mientras `CLAUDE.md §6` exige `updated_at` en toda entidad.
+- **Decisión:** un helper `datetime2()` en `core/db.py` devuelve
+  `DateTime().with_variant(mssql.DATETIME2(), "mssql")`: usa `DATETIME2` en SQL Server y
+  cae a `DATETIME` en SQLite (pruebas). Se agrega `updated_at` a **las tres** entidades de
+  F0-01 (unifica el criterio de §6 sobre la enumeración de la spec; ver ficha f0-01, E-3).
+- **Consecuencias:** columnas de auditoría con el tipo correcto en producción sin romper
+  las pruebas locales; desviación consciente y uniforme respecto a la spec en `updated_at`.
+
+### ADR-012 — Conexión y migraciones: engine desde `settings`, secretos con `$` entre comillas (F0-01)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-01)
+- **Contexto:** al generar/aplicar la primera migración real surgieron dos problemas: (1)
+  `migrations/env.py` pasaba la URL por `config.set_main_option`, y `configparser`
+  interpretaba el `%` del `odbc_connect` URL-encodeado como sintaxis de interpolación y
+  fallaba; (2) `python-dotenv` interpola `$` en los valores del `.env`, mutilando
+  contraseñas con `$` (p.ej. `...$$w0rd...`) → *Login failed*.
+- **Decisión:** (1) `env.py` ya NO pasa la URL por configparser: crea el engine
+  directamente con `create_engine(settings.sqlalchemy_url, ...)` (online) y usa
+  `settings.sqlalchemy_url` en el contexto offline. (2) Las contraseñas con caracteres
+  especiales (`$`) se escriben entre **comillas simples** en el `.env` (documentado en
+  `.env.example`), porque python-dotenv no interpola dentro de comillas simples.
+- **Consecuencias:** `alembic upgrade`/`--autogenerate` funcionan contra RDS; regla clara
+  para credenciales en `.env` local y en el gestor de secretos de qa/producción. La
+  primera migración (`7300e6f940a3`) creó Plaza, Afiliado y Estación en `GRC-OIR`.
+
+### ADR-013 — CORS configurable por entorno (F0-01)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-01)
+- **Contexto:** el frontend (SPA en `http://localhost:5173`) y el backend
+  (`http://localhost:8000`) viven en orígenes distintos. Sin CORS, el navegador cancela el
+  preflight `OPTIONS` de los `POST`/`PUT` (405) y no se pueden crear/editar registros; los
+  `GET` simples sí pasaban. En producción el frontend tendrá otro dominio.
+- **Decisión:** se agrega `CORSMiddleware` de FastAPI en `app/main.py` con los orígenes
+  permitidos tomados de la variable de entorno **`CORS_ORIGINS`** (coma-separada), nunca
+  hardcodeados. En desarrollo, `http://localhost:5173`; en qa/producción se define el
+  dominio real. Se habilitan todos los métodos y headers para cubrir el preflight y los
+  headers de auth de desarrollo (`X-Dev-User` / `X-Dev-Area`); `allow_credentials=True`
+  para soportar cookies/credenciales cuando se integre el SSO.
+- **Consecuencias:** el frontend puede crear/editar contra el backend en local; la
+  configuración de orígenes es por entorno (12-factor). Al integrar el SSO, revisar si
+  conviene restringir `allow_headers`/`allow_methods` a lo estrictamente necesario.
+
+### ADR-014 — Comparar columnas BIT con `== True/False`, no con `.is_(...)` (F0-01)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-01)
+- **Contexto:** un conteo usaba `Columna.activo.is_(True)`. SQLAlchemy lo compila a
+  `activo IS 1`, que en SQL Server es **sintaxis inválida** (`IS` solo compara con NULL);
+  en SQLite (donde corren las pruebas) sí funciona. Resultado: 500 en RDS al desactivar
+  afiliados/plazas, pero pruebas en verde — un bug que se colaba por la brecha
+  SQLite↔SQL Server.
+- **Decisión:** para columnas booleanas (`BIT`) se compara con `== True` / `== False`
+  (SQLAlchemy → `activo = 1` / `= 0`, portable) o con la variable Python directamente
+  (`col == params.activo`). Nunca `.is_(True/False)` sobre BIT (`.is_(None)` sí es válido,
+  es para NULL). Se acompaña de `# noqa: E712` donde aplica.
+- **Consecuencias:** desactivación funciona en RDS. Para evitar recurrencia se agregaron
+  pruebas: una que compila el filtro con el dialecto de SQL Server y exige `activo = 1`
+  (no `IS`), y un guard que escanea los módulos de catálogos y falla si reaparece
+  `.is_(True/False)`. **Lección transversal:** validar contra SQL Server (no solo SQLite)
+  las consultas con especificidades de dialecto (BIT, tipos de fecha, `TOP`/`LIMIT`, etc.).
+
+[[Agregar aquí cada nueva decisión: ADR-015, ...]]

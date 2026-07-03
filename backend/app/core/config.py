@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     secret_key: str = "dev-insecure-change-me"
     iva_rate: float = 0.16
+    # Orígenes permitidos por CORS (coma-separados). En dev, el frontend Vite.
+    # En qa/producción se pone el dominio real vía variable de entorno.
+    cors_origins: str = "http://localhost:5173"
 
     # ── Auth de desarrollo (mientras el SSO corporativo está [[POR LLENAR]]) ─────
     # Usuario/área por defecto cuando no se envían los headers X-Dev-User / X-Dev-Area.
@@ -55,6 +58,11 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.app_env.strip().lower() == "development"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Orígenes CORS como lista (se parsea el string coma-separado del entorno)."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def sqlalchemy_url(self) -> str:

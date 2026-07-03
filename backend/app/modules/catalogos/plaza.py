@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from math import ceil
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +27,7 @@ from app.core.security import CurrentUser
 from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.base_service import BaseService
 from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
 
 
 class Plaza(Base):
@@ -60,6 +61,8 @@ class PlazaRead(CatalogoReadBase):
     plaza_id: uuid.UUID
     nombre_plaza: str
     estado: str | None = None
+    # Derivado (solo lectura; NO se acepta en Create/Update):
+    estaciones_count: int = 0  # nº de estaciones en la plaza (todas)
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -77,6 +80,27 @@ class PlazaService(BaseService[Plaza, PlazaCreate, PlazaUpdate, PlazaRead]):
         super().__init__(repo)
         self._afiliado_repo = afiliado_repo
         self._estacion_repo = estacion_repo
+
+    # ── enriquecimiento (estaciones_count) ──────────────────────────────────────
+    def _read(self, obj: Plaza, count: int) -> PlazaRead:
+        return PlazaRead.model_validate(obj).model_copy(update={"estaciones_count": count})
+
+    def _to_read(self, obj: Plaza) -> PlazaRead:
+        # Camino de un solo registro (get/create/update/estado): 1 consulta puntual.
+        count = self._estacion_repo.contar_por_plazas([obj.plaza_id]).get(obj.plaza_id, 0)
+        return self._read(obj, count)
+
+    def list(self, params: ListParams) -> Page[PlazaRead]:
+        # Enriquecimiento por LOTE: 2 consultas por página (lista + conteos).
+        items, total = self.repo.list(params)
+        counts = self._estacion_repo.contar_por_plazas([p.plaza_id for p in items])
+        return Page[PlazaRead](
+            items=[self._read(p, counts.get(p.plaza_id, 0)) for p in items],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
 
     def _pre_desactivar(self, obj: Plaza, forzar: bool, usuario: CurrentUser) -> None:
         if forzar:

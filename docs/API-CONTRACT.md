@@ -18,7 +18,8 @@
   `core/security.py`. En catálogos (F0): solo **admin** escribe; las demás áreas leen.
 - **Errores:** estructura uniforme `{ "error": { "codigo", "mensaje", "detalles" } }`.
   Códigos: `validacion` (422), `sin_permiso` (403), `no_autenticado` (401),
-  `no_encontrado` (404), `transicion_invalida` (409), `error_dominio` (400).
+  `no_encontrado` (404), `transicion_invalida` (409), `conflicto` (409),
+  `dependencias_activas` (409), `error_dominio` (400).
 - **Paginación de listas (catálogos):** por página con `?page` (≥1, default 1) y `?size`
   (1–100, default 20). Respuesta: `{ items, total, page, size, pages }`. Filtros:
   `?activo` (true|false|omitir=todos) y `?q` (búsqueda de texto).
@@ -70,12 +71,57 @@ endpoints** bajo `/api/v1/catalogos/<recurso>` (p.ej. `/catalogos/plazas`). Perm
 | `GET /catalogos/<recurso>/{id}` | `catalogos:leer` | Obtiene uno (404 si no existe) |
 | `POST /catalogos/<recurso>` | `catalogos:crear` | Crea (201). Solo admin en F0 |
 | `PUT /catalogos/<recurso>/{id}` | `catalogos:editar` | Edita. Solo admin en F0 |
-| `POST /catalogos/<recurso>/{id}/estado` | `catalogos:editar` | Baja/alta lógica `{ "activo": bool }`. Nunca borra físico |
+| `POST /catalogos/<recurso>/{id}/estado` | `catalogos:editar` | Baja/alta lógica `{ "activo": bool, "forzar": bool }`. Nunca borra físico |
 
 - **Response de lista (`Page`):**
 ```json
 { "items": [ { "...": "..." } ], "total": 42, "page": 1, "size": 20, "pages": 3 }
 ```
+- **`forzar` en el cambio de estado:** por defecto `false`. Si una baja (`activo:false`)
+  tiene dependientes activos, el servicio responde **409 `dependencias_activas`** con el
+  conteo en `detalles`; el cliente confirma con el usuario y reintenta con `forzar:true`.
 - **Errores posibles:** 401 (sin auth / fuera de development sin SSO), 403 (área sin
-  permiso), 404 (no encontrado), 422 (validación). El detalle exacto de campos de cada
-  catálogo se documentará en su propio bloque al implementarlo (F0-01+).
+  permiso), 404 (no encontrado), 422 (validación), 409 (`conflicto`/`dependencias_activas`).
+
+### Catálogos operativos (F0-01) — Plaza · Afiliado · Estación
+
+Tres catálogos encadenados (Plaza ← Afiliado ← Estación) sobre el patrón CRUD estándar.
+PKs `UNIQUEIDENTIFIER`; textos `NVARCHAR`; `created_at`/`updated_at` en las tres
+entidades (`DATETIME2`). Escritura solo **admin** en F0.
+
+**`/catalogos/plazas`** — campos: `plaza_id`, `nombre_plaza` (req.), `estado`, `activo`,
+`created_at`, `updated_at`. Búsqueda `?q` sobre nombre y estado.
+- **Derivado (solo lectura):** `estaciones_count` = nº de estaciones en la plaza (**todas**,
+  activas e inactivas). No se acepta en Create/Update; se calcula en el servicio con una
+  consulta agregada por lote (sin N+1).
+- **Baja con dependientes:** no se puede desactivar una plaza con **afiliados activos o
+  estaciones activas** sin `forzar:true` (→ 409 `dependencias_activas`,
+  `detalles: { afiliados_activos, estaciones_activas }`).
+
+**`/catalogos/afiliados`** — campos: `afiliado_id`, `nombre_afiliado` (req.),
+`razon_social_afiliado` (req.), `rfc_afiliado` (req., **único**), `plaza_id` (req., FK),
+`contacto_nombre`, `contacto_email`, `contacto_telefono`, `activo`, timestamps.
+- **Derivados (solo lectura):** `plaza_nombre` = `nombre_plaza` de la plaza referenciada
+  por `plaza_id`; `estaciones_count` = nº de estaciones del afiliado (**todas**, mismo
+  criterio que Plaza). No se aceptan en Create/Update; se calculan en el servicio por lote
+  (sin N+1).
+- **RFC:** formato oficial mexicano de **12-13 caracteres** (12 = persona moral, 13 =
+  física); se normaliza a mayúsculas. Único: RFC repetido → **409 `conflicto`**.
+- **Baja con dependientes:** afiliado con **estaciones activas** → 409 `dependencias_activas`
+  (`detalles: { estaciones_activas }`) salvo `forzar:true`.
+- Búsqueda `?q` sobre nombre, razón social y RFC.
+
+**`/catalogos/estaciones`** — campos: `estacion_id`, `afiliado_id` (req., FK),
+`plaza_id` (**derivada**, FK), `nombre_estacion` (req.), `frecuencia`,
+`tipo_senal` (`fm|am|tv`, CHECK), `activo`, timestamps.
+- **Herencia de plaza (ADR-005):** `plaza_id` NO se envía en `POST`/`PUT`; el servicio la
+  asigna = `Afiliado.plaza_id` (si cambia el afiliado en un `PUT`, se recalcula). Si el
+  `afiliado_id` no existe → 404.
+- **`GET /catalogos/estaciones/afiliado/{afiliado_id}`** (`catalogos:leer`): estaciones de
+  un afiliado, paginado con los mismos filtros `?page&size&activo&q`. Alimenta el panel
+  anidado de la pantalla de afiliados.
+
+Ejemplo alta de estación (sin `plaza_id`):
+```json
+{ "afiliado_id": "3f...", "nombre_estacion": "XHMT-FM", "frecuencia": "90.1 FM", "tipo_senal": "fm" }
+```

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -242,3 +244,102 @@ def test_plaza_baja_permitida_sin_dependientes(servicios: Servicios) -> None:
     plaza = _plaza(plaza_svc, "Puebla", "Puebla")
     baja = plaza_svc.cambiar_estado(plaza.plaza_id, activo=False, usuario=USUARIO)
     assert baja.activo is False
+
+
+# ── Campos derivados: conteo de estaciones y nombre de plaza ──────────────────────
+def test_plaza_incluye_conteo_estaciones(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc, plaza.plaza_id)
+    e1 = _estacion(est_svc, afi.afiliado_id, nombre="XHMT-FM")
+    _estacion(est_svc, afi.afiliado_id, nombre="XHMA-AM", tipo="am")
+    # Una inactiva IGUAL cuenta (mismo criterio que el HTML aprobado).
+    est_svc.cambiar_estado(e1.estacion_id, activo=False, usuario=USUARIO)
+
+    item = next(p for p in plaza_svc.list(ListParams()).items if p.plaza_id == plaza.plaza_id)
+    assert item.estaciones_count == 2
+    assert plaza_svc.get(plaza.plaza_id).estaciones_count == 2
+
+
+def test_plaza_sin_estaciones_cuenta_cero(servicios: Servicios) -> None:
+    plaza_svc, _, _ = servicios
+    plaza = _plaza(plaza_svc, "Vacía", "X")
+    assert plaza_svc.get(plaza.plaza_id).estaciones_count == 0
+
+
+def test_afiliado_incluye_plaza_nombre_y_conteo(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc, "Monterrey", "Nuevo León")
+    afi = _afiliado(afi_svc, plaza.plaza_id)
+    e1 = _estacion(est_svc, afi.afiliado_id, nombre="XHMT-FM")
+    est_svc.cambiar_estado(e1.estacion_id, activo=False, usuario=USUARIO)  # inactiva cuenta
+
+    item = next(a for a in afi_svc.list(ListParams()).items if a.afiliado_id == afi.afiliado_id)
+    assert item.plaza_nombre == "Monterrey"
+    assert item.estaciones_count == 1
+
+    leido = afi_svc.get(afi.afiliado_id)
+    assert leido.plaza_nombre == "Monterrey"
+    assert leido.estaciones_count == 1
+
+
+# ── Portabilidad a SQL Server del filtro de "activo" (BIT) — regresión ADR-014 ────
+def test_conteo_activas_desactivacion_funciona_por_dependientes(servicios: Servicios) -> None:
+    """Ruta de desactivación con dependientes (dispara el conteo de estaciones activas).
+
+    Cubre el flujo que en RDS fallaba por `.is_(True)`. En SQLite valida el comportamiento;
+    la portabilidad del SQL a SQL Server la garantiza `test_filtro_activo_*` (abajo).
+    """
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc, plaza.plaza_id)
+    _estacion(est_svc, afi.afiliado_id)  # estación activa dependiente
+
+    # Afiliado con estación activa → bloquea; con forzar procede.
+    with pytest.raises(DependenciasActivasError):
+        afi_svc.cambiar_estado(afi.afiliado_id, activo=False, usuario=USUARIO)
+    assert afi_svc.cambiar_estado(
+        afi.afiliado_id, activo=False, usuario=USUARIO, forzar=True
+    ).activo is False
+
+    # Plaza con afiliado/estación activos → bloquea; con forzar procede.
+    plaza2 = _plaza(plaza_svc, "CDMX", "CDMX")
+    afi2 = _afiliado(afi_svc, plaza2.plaza_id, rfc="OIR920301AB1", nombre="Dos")
+    _estacion(est_svc, afi2.afiliado_id, nombre="XHRC-FM")
+    with pytest.raises(DependenciasActivasError):
+        plaza_svc.cambiar_estado(plaza2.plaza_id, activo=False, usuario=USUARIO)
+    assert plaza_svc.cambiar_estado(
+        plaza2.plaza_id, activo=False, usuario=USUARIO, forzar=True
+    ).activo is False
+
+
+def test_filtro_activo_compila_para_sqlserver() -> None:
+    """El filtro `activo == True` debe rendir `activo = 1` en SQL Server, nunca `IS 1`.
+
+    `IS` en SQL Server solo compara con NULL; `.is_(True)` generaba SQL inválido (bug de
+    producción que SQLite no detectaba). Este guard fija el criterio a nivel de dialecto.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Estacion)
+        .where(Estacion.activo == True)  # noqa: E712
+    )
+    dialecto = mssql.dialect()  # type: ignore[no-untyped-call]
+    sql = str(stmt.compile(dialect=dialecto, compile_kwargs={"literal_binds": True}))
+    assert "activo = 1" in sql
+    assert "IS 1" not in sql and "IS 0" not in sql
+
+
+def test_sin_is_true_false_en_catalogos() -> None:
+    """Guard: prohíbe reintroducir `.is_(True)`/`.is_(False)` sobre columnas BIT en los
+    módulos de catálogos (no es portable a SQL Server). Ver ADR-014."""
+    import app.modules.catalogos as pkg
+
+    base = Path(pkg.__file__).resolve().parent
+    ofensores = [
+        f.name
+        for f in base.glob("*.py")
+        if ".is_(True)" in f.read_text(encoding="utf-8")
+        or ".is_(False)" in f.read_text(encoding="utf-8")
+    ]
+    assert not ofensores, f"Usar `== True/False` (no `.is_`) sobre BIT: {ofensores}"

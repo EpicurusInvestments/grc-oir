@@ -6,9 +6,17 @@
  * explorador la muestra automáticamente.
  */
 
+/* eslint-disable react-refresh/only-export-components --
+ * Por diseño (F0-00) este registro mezcla datos de configuración (grupos, entradas) con
+ * referencias a los componentes de pantalla vía `render`. No es un módulo de componentes;
+ * la regla de fast-refresh (solo afecta HMR) no aplica aquí. */
+
 import type { ReactNode } from "react";
 
 import type { SidebarGroup } from "@/shared/ui";
+
+import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
+import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 
 export interface CatalogEntry {
   key: string;
@@ -27,8 +35,13 @@ export const catalogRegistry: CatalogEntry[] = [
   { key: "anunciante", label: "Anunciantes", group: "Comerciales" },
   { key: "agencia", label: "Agencias", group: "Comerciales" },
   { key: "contrato", label: "Contratos", group: "Comerciales" },
-  { key: "afiliado", label: "Afiliados y estaciones", group: "Operación" },
-  { key: "plaza", label: "Plazas", group: "Operación" },
+  {
+    key: "afiliado",
+    label: "Afiliados y estaciones",
+    group: "Operación",
+    render: () => <AfiliadoCatalogPage />,
+  },
+  { key: "plaza", label: "Plazas", group: "Operación", render: () => <PlazaCatalogPage /> },
   { key: "tarifa", label: "Tarifas por plaza", group: "Operación" },
   { key: "vendedor", label: "Vendedores", group: "Soporte" },
   { key: "categoria", label: "Categorías", group: "Soporte" },

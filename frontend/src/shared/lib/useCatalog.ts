@@ -38,7 +38,8 @@ export function useCatalog<Read, Create, Update>(
 
   const useSetEstado = () =>
     useMutation({
-      mutationFn: ({ id, activo }: { id: string; activo: boolean }) => api.setEstado(id, activo),
+      mutationFn: ({ id, activo, forzar }: { id: string; activo: boolean; forzar?: boolean }) =>
+        api.setEstado(id, activo, forzar),
       onSuccess: invalidate,
     });
 

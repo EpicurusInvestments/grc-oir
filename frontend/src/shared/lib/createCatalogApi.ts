@@ -12,7 +12,9 @@ export interface CatalogApi<Read, Create, Update> {
   get: (id: string) => Promise<Read>;
   create: (data: Create) => Promise<Read>;
   update: (id: string, data: Update) => Promise<Read>;
-  setEstado: (id: string, activo: boolean) => Promise<Read>;
+  /** Baja/alta lógica. `forzar=true` completa una baja pese a dependientes activos
+   *  (el backend responde 409 `dependencias_activas` cuando hace falta confirmar). */
+  setEstado: (id: string, activo: boolean, forzar?: boolean) => Promise<Read>;
 }
 
 export function createCatalogApi<Read, Create, Update>(
@@ -38,8 +40,8 @@ export function createCatalogApi<Read, Create, Update>(
       const { data } = await apiClient.put<Read>(`${base}/${id}`, payload);
       return data;
     },
-    async setEstado(id, activo) {
-      const { data } = await apiClient.post<Read>(`${base}/${id}/estado`, { activo });
+    async setEstado(id, activo, forzar = false) {
+      const { data } = await apiClient.post<Read>(`${base}/${id}/estado`, { activo, forzar });
       return data;
     },
   };

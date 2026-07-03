@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
+from math import ceil
 from typing import Any
 from uuid import uuid4
 
@@ -31,7 +33,8 @@ from app.core.security import CurrentUser
 from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.base_service import BaseService
 from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.modules.catalogos.plaza import Plaza
+from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
 
 # Formato oficial RFC MX: 3-4 letras (3 moral / 4 física) + AAMMDD + homoclave (3).
 RFC_REGEX = re.compile(r"^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$")
@@ -108,6 +111,9 @@ class AfiliadoRead(CatalogoReadBase):
     contacto_nombre: str | None = None
     contacto_email: str | None = None
     contacto_telefono: str | None = None
+    # Derivados (solo lectura; NO se aceptan en Create/Update):
+    plaza_nombre: str | None = None  # nombre_plaza de la plaza referenciada
+    estaciones_count: int = 0  # nº de estaciones del afiliado (todas)
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
@@ -124,9 +130,21 @@ class AfiliadoRepository(BaseRepository[Afiliado]):
         total = self.db.scalar(
             select(func.count())
             .select_from(Afiliado)
-            .where(Afiliado.plaza_id == plaza_id, Afiliado.activo.is_(True))
+            # Se compara con `== True` (SQLAlchemy lo traduce a `activo = 1`), portable a
+            # SQL Server; la variante con IS-booleano NO lo es (IS solo compara con NULL en
+            # SQL Server). Ver ADR-014.
+            .where(Afiliado.plaza_id == plaza_id, Afiliado.activo == True)  # noqa: E712
         )
         return int(total or 0)
+
+    def nombres_de_plazas(self, plaza_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Nombre de plaza por id, en UNA consulta (para enriquecer la lista sin N+1)."""
+        if not plaza_ids:
+            return {}
+        rows = self.db.execute(
+            select(Plaza.plaza_id, Plaza.nombre_plaza).where(Plaza.plaza_id.in_(set(plaza_ids)))
+        ).all()
+        return {row[0]: row[1] for row in rows}
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -140,6 +158,34 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
         super().__init__(repo)
         self._afiliado_repo = repo
         self._estacion_repo = estacion_repo
+
+    # ── enriquecimiento (plaza_nombre + estaciones_count) ───────────────────────
+    def _read(self, obj: Afiliado, plaza_nombre: str | None, count: int) -> AfiliadoRead:
+        return AfiliadoRead.model_validate(obj).model_copy(
+            update={"plaza_nombre": plaza_nombre, "estaciones_count": count}
+        )
+
+    def _to_read(self, obj: Afiliado) -> AfiliadoRead:
+        # Camino de un solo registro (get/create/update/estado): 2 consultas puntuales.
+        nombre = self._afiliado_repo.nombres_de_plazas([obj.plaza_id]).get(obj.plaza_id)
+        count = self._estacion_repo.contar_por_afiliados([obj.afiliado_id]).get(obj.afiliado_id, 0)
+        return self._read(obj, nombre, count)
+
+    def list(self, params: ListParams) -> Page[AfiliadoRead]:
+        # Enriquecimiento por LOTE: 3 consultas por página (lista + nombres + conteos).
+        items, total = self.repo.list(params)
+        nombres = self._afiliado_repo.nombres_de_plazas([a.plaza_id for a in items])
+        counts = self._estacion_repo.contar_por_afiliados([a.afiliado_id for a in items])
+        return Page[AfiliadoRead](
+            items=[
+                self._read(a, nombres.get(a.plaza_id), counts.get(a.afiliado_id, 0))
+                for a in items
+            ],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
 
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         self._verificar_rfc_unico(payload["rfc_afiliado"], excluir_id=None)

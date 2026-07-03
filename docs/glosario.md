@@ -31,6 +31,9 @@
 - **Reconciliada** — Marca de una OE validada contra lo solicitado; cuando todas las OE
   de una OC están reconciliadas, la OC puede cerrarse (`orden_cerrada`).
 - **Plaza** — Plaza geográfica de transmisión; se infiere al elegir estación.
+- **Estación** — Emisora (FM/AM/TV) operada por un afiliado. `tipo_senal ∈ {fm, am, tv}`.
+  **Hereda la plaza de su afiliado** (ADR-005): no se captura, se deriva. Se administra
+  anidada dentro del afiliado (no tiene pantalla propia).
 - **TarifaPlaza** — Tarifa de referencia por plaza, tipo de señal (fm/am/tv) y duración
   de spot (20s/30s/60s/mención). Valor sugerido al capturar órdenes.
 

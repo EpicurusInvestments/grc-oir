@@ -101,7 +101,9 @@ class EstacionRepository(BaseRepository[Estacion]):
         total = self.db.scalar(
             select(func.count())
             .select_from(Estacion)
-            .where(Estacion.afiliado_id == afiliado_id, Estacion.activo.is_(True))
+            # `== True` → `activo = 1`, portable a SQL Server (la variante IS-booleana no
+            # lo es: IS solo compara con NULL en SQL Server). Ver ADR-014.
+            .where(Estacion.afiliado_id == afiliado_id, Estacion.activo == True)  # noqa: E712
         )
         return int(total or 0)
 
@@ -109,9 +111,35 @@ class EstacionRepository(BaseRepository[Estacion]):
         total = self.db.scalar(
             select(func.count())
             .select_from(Estacion)
-            .where(Estacion.plaza_id == plaza_id, Estacion.activo.is_(True))
+            .where(Estacion.plaza_id == plaza_id, Estacion.activo == True)  # noqa: E712
         )
         return int(total or 0)
+
+    def contar_por_afiliados(self, afiliado_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """Conteo de estaciones (TODAS, activas e inactivas) por afiliado, en UNA consulta.
+
+        Se usa para enriquecer la lista de afiliados sin caer en N+1.
+        """
+        if not afiliado_ids:
+            return {}
+        rows = self.db.execute(
+            select(Estacion.afiliado_id, func.count(Estacion.estacion_id))
+            .where(Estacion.afiliado_id.in_(set(afiliado_ids)))
+            .group_by(Estacion.afiliado_id)
+        ).all()
+        return {row[0]: int(row[1]) for row in rows}
+
+    def contar_por_plazas(self, plaza_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """Conteo de estaciones (TODAS) por plaza, en UNA consulta (mismo criterio que
+        el conteo por afiliado). Evita N+1 al enriquecer la lista de plazas."""
+        if not plaza_ids:
+            return {}
+        rows = self.db.execute(
+            select(Estacion.plaza_id, func.count(Estacion.estacion_id))
+            .where(Estacion.plaza_id.in_(set(plaza_ids)))
+            .group_by(Estacion.plaza_id)
+        ).all()
+        return {row[0]: int(row[1]) for row in rows}
 
     def list_por_afiliado(
         self, afiliado_id: uuid.UUID, params: ListParams
