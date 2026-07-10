@@ -210,4 +210,71 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   necesitaran filtros extra de lista, convendría evaluar un punto de extensión en la factory
   en vez de repetir el retiro de ruta.
 
-[[Agregar aquí cada nueva decisión: ADR-016, ...]]
+### ADR-016 — Parámetros sensibles: `LogCambioParametro` persistida y mecanismo único en `core/` (F0-03)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 1)
+- **Contexto:** F0-03 introduce los primeros **PARÁMETROS SENSIBLES** de la spec
+  (`porcentaje_comision_agencia_default`, y en tandas siguientes `dias_credito_default` y
+  `porcentaje_comision_contrato`). CLAUDE.md (principio 6) exige permiso por campo + registro
+  en bitácora al modificarlos. Los hooks `core/field_permissions.verificar(...)` y
+  `core/audit.log_cambio_parametro(...)` existían desde F0-00 con firma estable, pero el
+  segundo **solo escribía al logger** (sin persistir) y ninguno tenía consumidores. La
+  entidad/pantalla `LogCambioParametro` pertenece a F5, pero la tabla y el registro se
+  necesitan YA (F0-03 es donde primero se usan).
+- **Decisión:**
+  1. **Crear la tabla `log_cambio_parametro` en la migración de F0-03** (no esperar a F5) y
+     definir su modelo SQLAlchemy en `core/audit.py` (junto al hook), para que quede en
+     `Base.metadata` al importar el hook. Valores anterior/nuevo como **texto** (los campos
+     sensibles son heterogéneos: `Decimal`, `Integer`, ...).
+  2. **`log_cambio_parametro` pasa a persistir**: se le agrega `db: Session` (firma sin
+     consumidores previos → cambio seguro) y hace `db.add(...)` en la **misma sesión** del
+     servicio; el `commit` del repositorio lo escribe **atómicamente** junto con el cambio
+     de la entidad. Conserva el `logger.info`.
+  3. **Un único orquestador** `audit.registrar_cambio_sensible(...)` encapsula la política:
+     `field_permissions.verificar` → exigir `motivo` (solo en edición) → `log_cambio_parametro`.
+     Los servicios (Agencia, luego Anunciante/Contrato) lo llaman desde `_pre_create`
+     (alta, `anterior=None`, sin exigir motivo — decisión E-3) y `_pre_update` (solo si el
+     valor **cambia**). `motivo_cambio` es un campo **transitorio** del schema Update: el
+     servicio lo consume (`payload.pop`) y nunca llega a la BD.
+  4. **Permiso por campo hoy = solo `admin`** (decisión confirmada de la ficha); cuando F5
+     administre `PermisoCampo` se cambia solo el cuerpo de `field_permissions.verificar`.
+- **Consecuencias:** la auditoría de sensibles opera end-to-end desde F0-03 sin re-trabajo
+  en F5 (solo faltará la pantalla de consulta). El mecanismo vive una sola vez en `core/`;
+  cada entidad sensible solo declara su campo y llama al orquestador. La atomicidad garantiza
+  que no haya cambios sin su traza (ni trazas de cambios revertidos). En el frontend, estos
+  campos llevan el tag «Audit log» y piden "Motivo del cambio".
+
+### ADR-017 — Collation de la BD `GRC-OIR` (RDS) confirmada case-insensitive (F0-03)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 1)
+- **Contexto:** la unicidad de `nombre_agencia` debía ser insensible a mayúsculas/minúsculas.
+  Faltaba confirmar el comportamiento del índice único frente a la collation real de RDS
+  (decisión E-6).
+- **Decisión / hallazgo:** `SELECT DATABASEPROPERTYEX('GRC-OIR','Collation')` en RDS devuelve
+  **`SQL_Latin1_General_CP1_CI_AS`** (Case-Insensitive, Accent-Sensitive). Por tanto el índice
+  único `ix_agencia_nombre_agencia` ya trata "ACME"/"acme" como duplicado a nivel de motor. El
+  servicio, además, verifica con `func.lower(...)` (portable a SQL Server y SQLite) para dar un
+  **409 `conflicto`** claro antes del `INSERT`, en lugar de un `IntegrityError` crudo.
+- **Consecuencias:** las verificaciones de unicidad textual son CI de forma consistente
+  (motor + servicio) sin `COLLATE` explícito. Es **accent-sensitive**: "media"≠"médiá"
+  (aceptable para nombres propios; revisar si el negocio pidiera lo contrario).
+
+### ADR-018 — El handler de `RequestValidationError` serializa con `jsonable_encoder` (F0-03)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 1 — bug encontrado en pruebas)
+- **Contexto:** un `PUT`/`POST` con un dato mal formado que dispara un **validador propio**
+  (`@field_validator`/`@model_validator` que hace `raise ValueError(...)`, p.ej. RFC de
+  Agencia/Afiliado o la vigencia de TarifaPlaza) devolvía **500** en vez de 422. Causa: el
+  handler central de `errors.py` metía `exc.errors()` directamente en el `JSONResponse`, y
+  para esos errores Pydantic v2 incluye en `ctx` el **objeto `ValueError` original**, que
+  `json.dumps` no puede serializar (`TypeError: Object of type ValueError is not JSON
+  serializable`). Las validaciones de tipo/longitud/rango sí serializaban (por eso no se
+  había detectado). Es un defecto del **handler central**, no de los validadores (que
+  lanzan `ValueError` correctamente).
+- **Decisión:** pasar `exc.errors()` por **`fastapi.encoders.jsonable_encoder`** antes de
+  armar el sobre (igual que el handler por defecto de FastAPI). El mensaje humano del
+  validador se conserva en el campo `msg` de cada error; el `ctx` no serializable se
+  reduce a algo seguro.
+- **Consecuencias:** cualquier validador de dominio que lance `ValueError` produce ahora un
+  **422 `validacion`** legible con el sobre uniforme, en todos los módulos (Agencia,
+  Afiliado, TarifaPlaza y futuros). Regresión cubierta con pruebas HTTP en
+  `test_f0_03_agencia.py` (POST y PUT con RFC inválido → 422, no 500).
+
+[[Agregar aquí cada nueva decisión: ADR-019, ...]]

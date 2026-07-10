@@ -181,3 +181,62 @@ Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivad
   "created_by": "admin", "activo": true
 }
 ```
+
+### Parámetros sensibles y auditoría (F0-03) — mecanismo transversal
+
+Algunos campos de la spec están marcados como **PARÁMETRO SENSIBLE** (p.ej.
+`porcentaje_comision_agencia_default`, `dias_credito_default`,
+`porcentaje_comision_contrato`). Al **crear o modificar** uno de ellos, el servicio aplica
+—una sola vez, en `core/`— el mecanismo de campo sensible (ver ADR-016):
+
+1. **Permiso por campo:** `field_permissions.verificar(...)`. Por ahora **solo `admin`**
+   puede escribir estos campos; cualquier otra área → **403 `sin_permiso`** aunque tuviera
+   permiso de escritura del catálogo.
+2. **Motivo del cambio:** en **edición**, si el valor cambia, el request DEBE incluir
+   `motivo_cambio` (string no vacío); su ausencia → **400 `error_dominio`**. En el **alta**
+   NO se exige motivo (es la captura inicial).
+3. **Bitácora:** se registra una fila en `LogCambioParametro` (entidad, entidad_id, campo,
+   valor anterior/nuevo, usuario, ip, fecha, motivo) en la **misma transacción** que el
+   cambio. Editar un campo NO sensible, o "cambiarlo" al mismo valor, **no** genera bitácora.
+
+Notas de request: `motivo_cambio` es un campo **transitorio** del cuerpo de edición (no es
+columna ni se devuelve en el `Read`). Los porcentajes viajan como **string** (precisión
+`Decimal`, criterio E-4). `LogCambioParametro` se administra desde una pantalla en F5, pero
+la tabla y el registro operan desde F0-03.
+
+### Catálogos comerciales (F0-03) — Agencia · Anunciante · Marca · Contrato
+
+Cadena comercial (Agencia ← Anunciante ← Marca/Contrato) sobre el patrón CRUD estándar
+(escritura solo **admin** en F0). *Tanda 1: Agencia (Anunciante, Marca y Contrato llegan en
+las siguientes tandas).*
+
+**`/catalogos/agencias`** — campos: `agencia_id`, `nombre_agencia` (req., **único**),
+`rfc_agencia` (req.), `contacto_nombre`, `contacto_email`, `contacto_telefono`,
+**`porcentaje_comision_agencia_default` (PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
+`updated_at`.
+- **`nombre_agencia` único (case-insensitive):** los nombres se normalizan colapsando
+  espacios; la unicidad ignora mayúsculas/minúsculas (la BD `GRC-OIR` usa collation
+  `SQL_Latin1_General_CP1_CI_AS`, case-insensitive; el servicio además compara con `LOWER()`
+  para responder **409 `conflicto`** antes del insert).
+- **RFC:** mismo formato oficial mexicano de **12-13 caracteres** que F0-01 (se reutiliza el
+  regex); se normaliza a mayúsculas.
+- **`porcentaje_comision_agencia_default`:** `NUMERIC(5,2)`, rango 0–100 (CHECK
+  `ck_agencia_comision`), viaja como **string**. Es sensible: alta y edición pasan por el
+  mecanismo de auditoría descrito arriba (`motivo_cambio` requerido al modificarlo).
+- **Baja lógica:** por `POST /catalogos/agencias/{id}/estado`. *(La baja con anunciantes
+  activos se bloqueará con 409 `dependencias_activas` a partir de la tanda 2, cuando exista
+  la entidad Anunciante.)*
+- Búsqueda `?q` sobre nombre y RFC.
+
+Ejemplo alta de agencia:
+```json
+{
+  "nombre_agencia": "Publicidad Total", "rfc_agencia": "PTO950101ABC",
+  "contacto_nombre": "Ana López", "contacto_email": "ana@ejemplo.mx",
+  "porcentaje_comision_agencia_default": "15.00"
+}
+```
+Ejemplo edición del % sensible (motivo requerido):
+```json
+{ "porcentaje_comision_agencia_default": "12.50", "motivo_cambio": "Renegociación anual" }
+```
