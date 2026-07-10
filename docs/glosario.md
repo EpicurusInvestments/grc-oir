@@ -36,6 +36,12 @@
   anidada dentro del afiliado (no tiene pantalla propia).
 - **TarifaPlaza** — Tarifa de referencia por plaza, tipo de señal (fm/am/tv) y duración
   de spot (20s/30s/60s/mención). Valor sugerido al capturar órdenes.
+- **Tarifa bruta / Tarifa neta** — La bruta es el precio de lista; la **neta** es un campo
+  **Calculado** por el sistema: `bruta * (1 - descuento_pct/100)`. No se captura.
+- **Vigencia (de tarifa)** — Periodo `[vigencia_desde, vigencia_hasta]` en que aplica una
+  tarifa. Una tarifa es **Vigente** si su fin no es anterior a hoy, o **Expirada** si ya
+  venció (derivado de la fecha, no un estado guardado). Dos tarifas activas de la misma
+  combinación (plaza + señal + duración) **no pueden solaparse** en vigencia.
 
 ## Fiscal y finanzas
 

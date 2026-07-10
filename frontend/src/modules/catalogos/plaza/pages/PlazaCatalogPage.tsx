@@ -7,6 +7,8 @@
 
 import { useState } from "react";
 
+import { fmtMoneda } from "@/modules/catalogos/tarifa/format";
+import { useTarifasVigentesPorPlaza } from "@/modules/catalogos/tarifa/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
 import type { ListParams } from "@/shared/types";
@@ -52,6 +54,9 @@ export function PlazaCatalogPage() {
   const crear = useCreate();
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
+
+  // Tarifas vigentes de la plaza seleccionada (sección del panel de detalle, F0-02).
+  const tarifasVigentes = useTarifasVigentesPorPlaza(selected?.plaza_id ?? null);
 
   const reset = () => {
     setSelected(null);
@@ -144,6 +149,29 @@ export function PlazaCatalogPage() {
           <div className="fv">{selected.nombre_plaza}</div>
           <div className="fl">Estado</div>
           <div className="fv">{selected.estado ?? "—"}</div>
+
+          <div className="sec">Tarifas vigentes</div>
+          {tarifasVigentes.isLoading && <div className="state-msg">Cargando tarifas…</div>}
+          {tarifasVigentes.isError && (
+            <div className="state-msg error">No se pudieron cargar las tarifas.</div>
+          )}
+          {!tarifasVigentes.isLoading &&
+            !tarifasVigentes.isError &&
+            (tarifasVigentes.data?.items.length ?? 0) === 0 && (
+              <div className="fv muted">Sin tarifas vigentes.</div>
+            )}
+          {tarifasVigentes.data?.items.map((t) => (
+            <div className="rel-item" key={t.tarifa_plaza_id}>
+              <div>
+                <div className="rel-name">
+                  {t.tipo_senal.toUpperCase()} · {t.duracion_spot}
+                </div>
+                <div className="rel-sub">
+                  {fmtMoneda(t.tarifa_bruta)} bruta · {t.descuento_pct}% desc.
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
         {canWrite && (
           <div className="df">

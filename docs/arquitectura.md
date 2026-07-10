@@ -180,4 +180,34 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `.is_(True/False)`. **Lección transversal:** validar contra SQL Server (no solo SQLite)
   las consultas con especificidades de dialecto (BIT, tipos de fecha, `TOP`/`LIMIT`, etc.).
 
-[[Agregar aquí cada nueva decisión: ADR-015, ...]]
+### ADR-015 — TarifaPlaza: neta calculada+persistida, anti-solapamiento y filtro de vigencia (F0-02)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-02)
+- **Contexto:** la entidad `TarifaPlaza` introduce en F0 cosas que los catálogos previos no
+  tenían: un campo **calculado** (`tarifa_neta`), **montos decimales**, **vigencias** con
+  regla de no-solapamiento, y un filtro derivado Vigentes/Expiradas que el CRUD genérico de
+  F0-00 no contempla. Además la tabla `Usuario` aún no existe (llega en F0-04).
+- **Decisión:**
+  1. **`tarifa_neta` calculada en el servicio con `Decimal` y persistida** (fórmula de la
+     spec `bruta * (1 - descuento/100)`, `ROUND_HALF_UP` a 2 decimales). No se acepta en los
+     schemas Create/Update; se recalcula en cada edición con los valores efectivos.
+  2. **Montos como `NUMERIC(14,2)` / `NUMERIC(5,2)`** (nunca float) y **serializados como
+     string** en el JSON de la API para preservar precisión (E-4).
+  3. **Anti-solapamiento en el repositorio** con intervalos cerrados
+     (`existente.desde <= nuevo.hasta AND nuevo.desde <= existente.hasta`, bordes
+     inclusivos), solo contra tarifas **activas** de la misma combinación, excluyendo la
+     propia al editar. Se valida al crear, editar y **reactivar**; conflicto → 409.
+  4. **`vigencia_desde`/`vigencia_hasta` ambas NOT NULL** (E-1: el negocio no maneja tarifas
+     abiertas) + CHECK `vigencia_hasta >= vigencia_desde`.
+  5. **`created_by` como texto (username), no FK** (E-2): no hay tabla `Usuario` hasta F0-04;
+     se reevaluará migrar a FK entonces.
+  6. **Filtro Vigentes/Expiradas server-side** sin tocar `crud_router.py` (E-3): en
+     `tarifa.py` se retira SOLO la ruta `listar` que arma la factory y se registra una
+     equivalente que acepta `?vigencia`; el `hoy` lo fija el servidor. El resto de endpoints
+     de la factory quedan intactos. Mismo espíritu con que `estacion.py` añade su ruta propia.
+- **Consecuencias:** primer catálogo con dinero y fechas; sienta el patrón (Decimal en
+  servicio, string en el cable, comparaciones de fecha/booleanas portables a SQL Server —
+  ADR-014). La personalización de la ruta de lista es local al módulo; si más catálogos
+  necesitaran filtros extra de lista, convendría evaluar un punto de extensión en la factory
+  en vez de repetir el retiro de ruta.
+
+[[Agregar aquí cada nueva decisión: ADR-016, ...]]

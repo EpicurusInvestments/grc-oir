@@ -17,6 +17,7 @@ import type { SidebarGroup } from "@/shared/ui";
 
 import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
+import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
 
 export interface CatalogEntry {
   key: string;
@@ -42,7 +43,12 @@ export const catalogRegistry: CatalogEntry[] = [
     render: () => <AfiliadoCatalogPage />,
   },
   { key: "plaza", label: "Plazas", group: "Operación", render: () => <PlazaCatalogPage /> },
-  { key: "tarifa", label: "Tarifas por plaza", group: "Operación" },
+  {
+    key: "tarifa",
+    label: "Tarifas por plaza",
+    group: "Operación",
+    render: () => <TarifaCatalogPage />,
+  },
   { key: "vendedor", label: "Vendedores", group: "Soporte" },
   { key: "categoria", label: "Categorías", group: "Soporte" },
   { key: "constantes", label: "Constantes del sistema", group: "Configuración" },

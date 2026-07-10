@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from app.modules.catalogos.afiliado import router as afiliado_router
 from app.modules.catalogos.estacion import router as estacion_router
 from app.modules.catalogos.plaza import router as plaza_router
+from app.modules.catalogos.tarifa import router as tarifa_router
 
 router = APIRouter(prefix="/catalogos", tags=["catalogos"])
 
@@ -19,3 +20,6 @@ router = APIRouter(prefix="/catalogos", tags=["catalogos"])
 router.include_router(plaza_router)
 router.include_router(afiliado_router)
 router.include_router(estacion_router)
+
+# F0-02 · tarifas por plaza (depende de Plaza).
+router.include_router(tarifa_router)
