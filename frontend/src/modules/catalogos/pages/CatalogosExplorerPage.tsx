@@ -8,18 +8,41 @@
 
 import { useMemo, useState } from "react";
 
+import { useAfiliados } from "@/modules/catalogos/afiliado/hooks";
 import {
   buildSidebarGroups,
   catalogRegistry,
   type CatalogEntry,
 } from "@/modules/catalogos/catalogRegistry";
+import { usePlazas } from "@/modules/catalogos/plaza/hooks";
+import { useTarifas } from "@/modules/catalogos/tarifa/hooks";
 import { currentUser } from "@/shared/lib/currentUser";
 import { ExplorerLayout } from "@/shared/ui";
 
 const FASE_LABEL = "FASE 0 · CATÁLOGOS";
 
 export function CatalogosExplorerPage() {
-  const groups = useMemo(() => buildSidebarGroups(catalogRegistry), []);
+  // Conteos reales solo de los catálogos ya implementados (F0-01/F0-02): una consulta
+  // ligera (size:1) por catálogo, reutilizando el `total` del listado paginado. Sus
+  // mutaciones invalidan la key del catálogo y refrescan el contador. Los catálogos aún no
+  // implementados (F0-03/04/05) no consultan nada y el Sidebar los muestra en 0.
+  const plazaTotal = usePlazas().useList({ page: 1, size: 1 }).data?.total;
+  const afiliadoTotal = useAfiliados().useList({ page: 1, size: 1 }).data?.total;
+  const tarifaTotal = useTarifas().useList({ page: 1, size: 1 }).data?.total;
+
+  const groups = useMemo(() => {
+    const counts: Record<string, number | undefined> = {
+      plaza: plazaTotal,
+      afiliado: afiliadoTotal,
+      tarifa: tarifaTotal,
+    };
+    return buildSidebarGroups(
+      catalogRegistry.map((e) =>
+        counts[e.key] !== undefined ? { ...e, count: counts[e.key] } : e,
+      ),
+    );
+  }, [plazaTotal, afiliadoTotal, tarifaTotal]);
+
   const [activeKey, setActiveKey] = useState<string | null>(catalogRegistry[0]?.key ?? null);
 
   const entry: CatalogEntry | undefined = catalogRegistry.find((e) => e.key === activeKey);

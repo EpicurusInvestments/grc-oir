@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, or_, select
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -65,10 +65,16 @@ def sqlite_session() -> Iterator[Session]:
 def contexto(sqlite_session: Session) -> tuple[TarifaService, Plaza]:
     db = sqlite_session
     plaza_repo = BaseRepository(db, Plaza, search_columns=[Plaza.nombre_plaza])
-    tarifa_repo = TarifaRepository(db, TarifaPlaza, search_columns=[TarifaPlaza.notas])
+    # Sin search_columns: la búsqueda `q` se resuelve con JOIN a plaza en _apply_filters.
+    tarifa_repo = TarifaRepository(db, TarifaPlaza)
     svc = TarifaService(tarifa_repo, plaza_repo=plaza_repo)
     plaza = plaza_repo.create({"nombre_plaza": "CDMX", "estado": "Ciudad de México"})
     return svc, plaza
+
+
+def _crear_plaza(svc: TarifaService, nombre: str) -> Plaza:
+    # El servicio expone su repo de plazas; se usa para crear una segunda plaza en pruebas.
+    return svc._plaza_repo.create({"nombre_plaza": nombre, "estado": nombre})
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────────
@@ -288,6 +294,35 @@ def test_created_by_se_guarda(contexto: tuple[TarifaService, Plaza]) -> None:
     assert t.created_by == "tester"
 
 
+def test_filtro_por_plaza(contexto: tuple[TarifaService, Plaza]) -> None:
+    svc, plaza = contexto
+    otra = _crear_plaza(svc, "León")
+    _tarifa(svc, plaza.plaza_id, tipo="fm")
+    _tarifa(svc, plaza.plaza_id, tipo="am")
+    _tarifa(svc, otra.plaza_id, tipo="fm")
+
+    solo_cdmx = svc.list(TarifaListParams(plaza_id=plaza.plaza_id))
+    assert solo_cdmx.total == 2
+    assert all(t.plaza_id == plaza.plaza_id for t in solo_cdmx.items)
+
+
+def test_filtro_plaza_mas_vigente(contexto: tuple[TarifaService, Plaza]) -> None:
+    # Alimenta la sección "Tarifas vigentes" del panel de Plaza: plaza + activo + vigente.
+    svc, plaza = contexto
+    hoy = date(2026, 7, 8)
+    _tarifa(svc, plaza.plaza_id, tipo="fm", desde=date(2026, 1, 1), hasta=date(2026, 12, 31))
+    expirada = _tarifa(
+        svc, plaza.plaza_id, tipo="am", desde=date(2024, 1, 1), hasta=date(2024, 12, 31)
+    )
+    svc.cambiar_estado(expirada.tarifa_plaza_id, activo=False, usuario=USUARIO)
+
+    vigentes = svc.list(
+        TarifaListParams(plaza_id=plaza.plaza_id, activo=True, vigencia="vigente", hoy=hoy)
+    )
+    assert vigentes.total == 1
+    assert vigentes.items[0].tipo_senal == "fm"
+
+
 def test_filtro_vigencia_vigente_expirada(contexto: tuple[TarifaService, Plaza]) -> None:
     svc, plaza = contexto
     hoy = date(2026, 7, 8)
@@ -302,6 +337,62 @@ def test_filtro_vigencia_vigente_expirada(contexto: tuple[TarifaService, Plaza])
     assert vigentes.total == 1
     assert expiradas.total == 1
     assert todas.total == 2
+
+
+# ── Búsqueda `q` (nombre/estado de plaza + notas, vía JOIN) ───────────────────────
+def test_busqueda_q_por_nombre_de_plaza(contexto: tuple[TarifaService, Plaza]) -> None:
+    svc, cdmx = contexto  # "CDMX" / "Ciudad de México"
+    leon = _crear_plaza(svc, "León")
+    _tarifa(svc, cdmx.plaza_id, tipo="fm")
+    _tarifa(svc, leon.plaza_id, tipo="fm")
+
+    res = svc.list(TarifaListParams(q="león"))  # parcial + case-insensitive
+    assert res.total == 1
+    assert res.items[0].plaza_id == leon.plaza_id
+
+
+def test_busqueda_q_por_estado_de_plaza(contexto: tuple[TarifaService, Plaza]) -> None:
+    svc, cdmx = contexto  # estado "Ciudad de México"
+    _tarifa(svc, cdmx.plaza_id, tipo="fm")
+    res = svc.list(TarifaListParams(q="méxico"))
+    assert res.total == 1
+    assert res.items[0].plaza_id == cdmx.plaza_id
+
+
+def test_busqueda_q_por_notas(contexto: tuple[TarifaService, Plaza]) -> None:
+    svc, cdmx = contexto
+    _tarifa(svc, cdmx.plaza_id, tipo="fm", notas="Temporada alta")
+    _tarifa(svc, cdmx.plaza_id, tipo="am", notas=None)
+    res = svc.list(TarifaListParams(q="temporada"))
+    assert res.total == 1
+    assert res.items[0].notas == "Temporada alta"
+
+
+def test_busqueda_q_sin_coincidencia(contexto: tuple[TarifaService, Plaza]) -> None:
+    svc, cdmx = contexto
+    _tarifa(svc, cdmx.plaza_id, tipo="fm", notas="general")
+    assert svc.list(TarifaListParams(q="zzz-no-existe")).total == 0
+
+
+def test_busqueda_q_join_compila_para_sqlserver() -> None:
+    """La búsqueda `q` hace JOIN a plaza y usa `ilike` (portable: `lower() LIKE lower()` en
+    SQL Server), no operadores no portables. Guard a nivel de dialecto (ver ADR-014)."""
+    patron = "%cdmx%"
+    stmt = (
+        select(TarifaPlaza)
+        .join(Plaza, TarifaPlaza.plaza_id == Plaza.plaza_id)
+        .where(
+            or_(
+                Plaza.nombre_plaza.ilike(patron),
+                Plaza.estado.ilike(patron),
+                TarifaPlaza.notas.ilike(patron),
+            )
+        )
+    )
+    sql = str(stmt.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))  # type: ignore[no-untyped-call]
+    assert "JOIN" in sql.upper()
+    assert "LIKE" in sql.upper()
+    assert "lower(" in sql.lower()  # ilike → lower(col) LIKE lower(patrón)
 
 
 # ── Portabilidad a SQL Server (regresión ADR-014) ────────────────────────────────

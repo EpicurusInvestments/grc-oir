@@ -125,3 +125,59 @@ Ejemplo alta de estación (sin `plaza_id`):
 ```json
 { "afiliado_id": "3f...", "nombre_estacion": "XHMT-FM", "frecuencia": "90.1 FM", "tipo_senal": "fm" }
 ```
+
+### Tarifas por plaza (F0-02) — TarifaPlaza
+
+Catálogo de tarifas de referencia por **plaza + tipo de señal + duración de spot**, con
+vigencia, sobre el patrón CRUD estándar (escritura solo **admin** en F0). Depende de Plaza.
+
+**`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `plaza_id` (req., FK),
+`tipo_senal` (`fm|am|tv`, CHECK), `duracion_spot` (`20s|30s|60s|mencion`, CHECK),
+`tarifa_bruta` (req., ≥0), `descuento_pct` (req., 0–100), **`tarifa_neta` (Calculado)**,
+`vigencia_desde` (req.), `vigencia_hasta` (req.), `notas`, `activo`, `created_at`,
+`created_by`, `updated_at`.
+- **Montos como string:** `tarifa_bruta`, `descuento_pct` y `tarifa_neta` viajan como
+  **string** en el JSON (entrada y salida) para preservar la precisión `Decimal` (E-4). El
+  servidor acepta también número, pero devuelve string.
+- **Campo calculado `tarifa_neta`:** `tarifa_bruta * (1 - descuento_pct/100)`, redondeado a
+  2 decimales. **NO se acepta en Create/Update** (no está en el request); lo calcula y
+  persiste el servidor, y lo recalcula en cada edición.
+- **Derivados (solo lectura):** `plaza_nombre` y `plaza_estado` (nombre y estado geográfico
+  de la plaza referenciada), calculados por lote (sin N+1). No se aceptan en Create/Update.
+- **`created_by`:** username del capturista (texto, no FK; la entidad Usuario llega en
+  F0-04). Lo fija el servidor desde el usuario autenticado, no el cliente.
+- **Vigencia:** `vigencia_hasta >= vigencia_desde` (ambas obligatorias). Violarla → **422**
+  en el request (validación de schema) o **400 `error_dominio`** si se detecta en el
+  servicio con valores efectivos (edición parcial que solo cambia una fecha).
+- **Sin solapamiento (409 `conflicto`):** al crear, editar o **reactivar** una tarifa
+  activa, no puede existir OTRA tarifa activa con la misma combinación (plaza + tipo_senal +
+  duracion_spot) cuyo rango `[vigencia_desde, vigencia_hasta]` se solape (bordes
+  **inclusivos**: tocarse un día ya es solape). `detalles` incluye la tarifa en conflicto y
+  su vigencia.
+- **Filtros de lista:** además de `?activo` y `?q` (busca en notas), acepta:
+  - **`?vigencia=todas|vigente|expirada`** (derivado de `vigencia_hasta` vs la fecha del
+    servidor: `vigente` = no vencida, `expirada` = vencida). Dimensión independiente de
+    `activo`. La fecha "hoy" la fija el servidor, no el cliente.
+  - **`?plaza_id`** (UUID): acota a una plaza. Combinado con `activo=true&vigencia=vigente`
+    alimenta la sección "Tarifas vigentes" del panel de detalle de Plaza.
+- **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la plaza,
+  estado de la plaza y notas** (coincide en cualquiera). Resuelta con un JOIN a `plaza` en
+  el repositorio (sin N+1); `ilike` portable a SQL Server.
+
+Ejemplo alta de tarifa (sin `tarifa_neta`):
+```json
+{
+  "plaza_id": "1a...", "tipo_senal": "fm", "duracion_spot": "30s",
+  "tarifa_bruta": "9000.00", "descuento_pct": "10",
+  "vigencia_desde": "2025-01-01", "vigencia_hasta": "2025-12-31",
+  "notas": "Tarifa general FM CDMX"
+}
+```
+Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivados):
+```json
+{
+  "tarifa_plaza_id": "9c...", "tarifa_bruta": "9000.00", "descuento_pct": "10",
+  "tarifa_neta": "8100.00", "plaza_nombre": "CDMX", "plaza_estado": "Ciudad de México",
+  "created_by": "admin", "activo": true
+}
+```

@@ -45,6 +45,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     Unicode,
+    or_,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -196,8 +197,13 @@ class TarifaPlazaRead(CatalogoReadBase):
 
 # ── Parámetros de lista (extienden los genéricos con el filtro de vigencia) ──────
 class TarifaListParams(ListParams):
-    """`ListParams` + filtro derivado por vigencia. `hoy` lo fija el servidor."""
+    """`ListParams` + filtro por plaza + filtro derivado por vigencia.
 
+    `hoy` lo fija el servidor. `plaza_id` acota a una plaza (lo usa el panel de detalle de
+    Plaza para listar sus tarifas vigentes).
+    """
+
+    plaza_id: uuid.UUID | None = None
     vigencia: Literal["todas", "vigente", "expirada"] = "todas"
     hoy: date | None = None
 
@@ -205,7 +211,26 @@ class TarifaListParams(ListParams):
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class TarifaRepository(BaseRepository[TarifaPlaza]):
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
-        stmt = super()._apply_filters(stmt, params)  # activo + q (notas)
+        # La base aplica `activo`; `q` NO (search_columns vacío) porque la búsqueda de
+        # tarifas abarca campos de la PLAZA (nombre/estado) además de notas → requiere JOIN.
+        stmt = super()._apply_filters(stmt, params)
+        plaza_id = getattr(params, "plaza_id", None)
+        if plaza_id is not None:
+            stmt = stmt.where(TarifaPlaza.plaza_id == plaza_id)
+        q = (getattr(params, "q", None) or "").strip()
+        if q:
+            patron = f"%{q}%"
+            # Un solo JOIN con plaza (relación N:1, no duplica filas). Coincidencia parcial
+            # case-insensitive en cualquiera de los tres campos. `ilike` es portable a SQL
+            # Server (compila a lower(...) LIKE lower(...)); `estado` puede ser NULL y
+            # simplemente no coincide.
+            stmt = stmt.join(Plaza, TarifaPlaza.plaza_id == Plaza.plaza_id).where(
+                or_(
+                    Plaza.nombre_plaza.ilike(patron),
+                    Plaza.estado.ilike(patron),
+                    TarifaPlaza.notas.ilike(patron),
+                )
+            )
         vigencia = getattr(params, "vigencia", "todas")
         hoy = getattr(params, "hoy", None)
         if hoy is not None and vigencia == "vigente":
@@ -401,7 +426,9 @@ class TarifaService(
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_tarifa_service(db: Session = Depends(get_db)) -> TarifaService:
-    repo = TarifaRepository(db, TarifaPlaza, search_columns=[TarifaPlaza.notas])
+    # Sin `search_columns`: la búsqueda `q` se maneja en TarifaRepository._apply_filters con
+    # un JOIN a plaza (abarca nombre/estado de la plaza + notas).
+    repo = TarifaRepository(db, TarifaPlaza)
     return TarifaService(repo, plaza_repo=BaseRepository(db, Plaza))
 
 
@@ -429,18 +456,25 @@ def listar_tarifas(
     size: int = Query(20, ge=1, le=100),
     activo: bool | None = Query(None, description="None=todas, true=activas, false=inactivas"),
     q: str | None = Query(None, description="Búsqueda de texto en notas"),
+    plaza_id: uuid.UUID | None = Query(None, description="Acota a una plaza"),
     vigencia: Literal["todas", "vigente", "expirada"] = Query(
         "todas", description="Filtro derivado por vigencia_hasta vs la fecha actual"
     ),
     usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
     svc: TarifaService = Depends(get_tarifa_service),
 ) -> Page[TarifaPlazaRead]:
-    """Lista de tarifas con filtros: activo/inactivo, texto y vigencia (vigente/expirada).
+    """Lista de tarifas con filtros: plaza, activo/inactivo, texto y vigencia.
 
     `hoy` se fija en el servidor (no se confía al cliente) para el filtro de vigencia.
     """
     return svc.list(
         TarifaListParams(
-            page=page, size=size, activo=activo, q=q, vigencia=vigencia, hoy=date.today()
+            page=page,
+            size=size,
+            activo=activo,
+            q=q,
+            plaza_id=plaza_id,
+            vigencia=vigencia,
+            hoy=date.today(),
         )
     )
