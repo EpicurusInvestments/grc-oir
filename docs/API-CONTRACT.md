@@ -223,9 +223,8 @@ las siguientes tandas).*
 - **`porcentaje_comision_agencia_default`:** `NUMERIC(5,2)`, rango 0–100 (CHECK
   `ck_agencia_comision`), viaja como **string**. Es sensible: alta y edición pasan por el
   mecanismo de auditoría descrito arriba (`motivo_cambio` requerido al modificarlo).
-- **Baja lógica:** por `POST /catalogos/agencias/{id}/estado`. *(La baja con anunciantes
-  activos se bloqueará con 409 `dependencias_activas` a partir de la tanda 2, cuando exista
-  la entidad Anunciante.)*
+- **Baja con dependientes:** no se puede desactivar una agencia con **anunciantes activos**
+  sin `forzar:true` (→ 409 `dependencias_activas`, `detalles: { anunciantes_activos }`).
 - Búsqueda `?q` sobre nombre y RFC.
 
 Ejemplo alta de agencia:
@@ -240,3 +239,37 @@ Ejemplo edición del % sensible (motivo requerido):
 ```json
 { "porcentaje_comision_agencia_default": "12.50", "motivo_cambio": "Renegociación anual" }
 ```
+
+**`/catalogos/anunciantes`** — campos: `anunciante_id`, **`agencia_id` (FK NULL = directo)**,
+`nombre_comercial` (req.), `nombre_fiscal` (req., el que va en la factura),
+`rfc_anunciante` (req.), `localizacion`, `referencia_anunciante`, `contacto_*`,
+**`dias_credito_default` (PARÁMETRO SENSIBLE, entero ≥0)**, `activo`, timestamps.
+- **Vía agencia / Directo:** `agencia_id` NULL ⇒ el anunciante es directo (sin agencia). Si
+  se envía, debe existir (→ 404 si no). Filtro de lista **`?relacion=todas|via_agencia|directo`**
+  (dimensión independiente de `?activo`).
+- **`dias_credito_default`:** entero ≥0 (CHECK `ck_anunciante_dias_credito`). Es sensible:
+  alta y edición pasan por el mecanismo de auditoría (motivo requerido al modificarlo).
+- **RFC:** mismo formato 12-13 que Agencia/Afiliado (no único).
+- **Derivados (solo lectura):** `agencia_nombre` (`nombre_agencia` de la agencia, o `null`
+  si es directo) y `marcas_count` (nº de marcas del anunciante, **todas**). Calculados por
+  lote (sin N+1); no se aceptan en Create/Update.
+- **Baja con dependientes:** anunciante con **marcas activas** → 409 `dependencias_activas`
+  (`detalles: { marcas_activas }`) salvo `forzar:true`. *(La validación por contratos
+  activos se añade en la tanda 3.)*
+- Búsqueda `?q` sobre nombre comercial, nombre fiscal y RFC.
+
+Ejemplo alta directo (sin agencia) con días de crédito:
+```json
+{
+  "nombre_comercial": "Refrescos del Valle", "nombre_fiscal": "Refrescos del Valle SA de CV",
+  "rfc_anunciante": "RVA950101AB1", "dias_credito_default": 30
+}
+```
+
+**`/catalogos/marcas`** — campos: `marca_id`, `anunciante_id` (req., FK), `nombre_marca`
+(req.), `activo`, `created_at`, `updated_at`. **Se administra anidada dentro del Anunciante**
+(no tiene entrada de sidebar propia), igual que Estación dentro de Afiliado.
+- CRUD estándar + **`GET /catalogos/marcas/anunciante/{anunciante_id}`** (`catalogos:leer`):
+  marcas de un anunciante, paginado con los filtros `?page&size&activo&q`. Alimenta el panel
+  anidado de la pantalla de anunciantes.
+- El `anunciante_id` debe existir (→ 404 si no). Sin campos sensibles.

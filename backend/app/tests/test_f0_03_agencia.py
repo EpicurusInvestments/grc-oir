@@ -70,10 +70,14 @@ def sqlite_session() -> Iterator[Session]:
 
 @pytest.fixture
 def svc(sqlite_session: Session) -> AgenciaService:
+    from app.modules.catalogos.anunciante import Anunciante, AnuncianteRepository
+
     repo = AgenciaRepository(
         sqlite_session, Agencia, search_columns=[Agencia.nombre_agencia, Agencia.rfc_agencia]
     )
-    return AgenciaService(repo)
+    return AgenciaService(
+        repo, anunciante_repo=AnuncianteRepository(sqlite_session, Anunciante)
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

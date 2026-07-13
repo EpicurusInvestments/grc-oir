@@ -19,7 +19,14 @@ from alembic import context
 from app.core import audit  # noqa: F401  (modelo LogCambioParametro)
 from app.core.config import settings
 from app.core.db import Base
-from app.modules.catalogos import afiliado, agencia, estacion, plaza, tarifa  # noqa: F401
+from app.modules.catalogos import (  # noqa: F401
+    afiliado,
+    agencia,
+    anunciante,
+    estacion,
+    plaza,
+    tarifa,
+)
 from sqlalchemy import create_engine, pool
 
 config = context.config

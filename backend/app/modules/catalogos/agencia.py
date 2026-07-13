@@ -32,7 +32,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
-from app.core.errors import ConflictError
+from app.core.errors import ConflictError, DependenciasActivasError
 from app.core.security import CurrentUser
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
 from app.modules.catalogos.base_repository import BaseRepository
@@ -156,9 +156,10 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
     read_schema = AgenciaRead
     entidad = "Agencia"
 
-    def __init__(self, repo: AgenciaRepository) -> None:
+    def __init__(self, repo: AgenciaRepository, *, anunciante_repo: Any) -> None:
         super().__init__(repo)
         self._agencia_repo = repo
+        self._anunciante_repo = anunciante_repo
 
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         payload["nombre_agencia"] = _normaliza_nombre(payload["nombre_agencia"])
@@ -204,6 +205,17 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
                 requiere_motivo=True,
             )
 
+    def _pre_desactivar(self, obj: Agencia, forzar: bool, usuario: CurrentUser) -> None:
+        if forzar:
+            return
+        anunciantes = self._anunciante_repo.contar_activos_por_agencia(obj.agencia_id)
+        if anunciantes:
+            raise DependenciasActivasError(
+                "No se puede desactivar la agencia porque tiene anunciantes activos. "
+                "Confirma para desactivarla de todos modos.",
+                detalles={"anunciantes_activos": anunciantes},
+            )
+
     def _verificar_nombre_unico(self, nombre: str, excluir_id: uuid.UUID | None) -> None:
         if self._agencia_repo.get_by_nombre(nombre, excluir_id) is not None:
             raise ConflictError(
@@ -214,12 +226,18 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_agencia_service(db: Session = Depends(get_db)) -> AgenciaService:
+    # Import perezoso para evitar el ciclo agencia ↔ anunciante (anunciante importa Agencia
+    # en el nivel de módulo; aquí la referencia inversa se resuelve en tiempo de request).
+    from app.modules.catalogos.anunciante import Anunciante, AnuncianteRepository
+
     repo = AgenciaRepository(
         db,
         Agencia,
         search_columns=[Agencia.nombre_agencia, Agencia.rfc_agencia],
     )
-    return AgenciaService(repo)
+    return AgenciaService(
+        repo, anunciante_repo=AnuncianteRepository(db, Anunciante)
+    )
 
 
 router = build_crud_router(
