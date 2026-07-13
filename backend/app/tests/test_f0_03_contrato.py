@@ -280,3 +280,35 @@ def test_listar_por_anunciante(svc: ContratoService, anunciante_id: uuid.UUID) -
     # Otro anunciante (inexistente) no ve estos contratos.
     ajenos = svc.list(ContratoListParams(anunciante_id=uuid.uuid4()))
     assert ajenos.total == 0
+
+
+def test_filtro_por_estado(svc: ContratoService, anunciante_id: uuid.UUID) -> None:
+    c1 = _contrato(svc, anunciante_id, numero="C-1")  # vigente
+    _contrato(svc, anunciante_id, numero="C-2")  # vigente
+    svc.transicionar_estado(c1.contrato_id, EstadoContrato.FINALIZADO, ADMIN)
+
+    assert svc.list(ContratoListParams(estado=EstadoContrato.VIGENTE)).total == 1
+    assert svc.list(ContratoListParams(estado=EstadoContrato.FINALIZADO)).total == 1
+    assert svc.list(ContratoListParams()).total == 2  # sin filtro
+
+
+def test_anunciante_rfc_enriquecido(svc: ContratoService, anunciante_id: uuid.UUID) -> None:
+    c = _contrato(svc, anunciante_id)
+    leido = svc.get(c.contrato_id)
+    assert leido.anunciante_nombre == "Refrescos"
+    assert leido.anunciante_rfc == "RSA950101AB1"
+
+
+def test_historial_contrato(svc: ContratoService, anunciante_id: uuid.UUID, db: Session) -> None:
+    c = _contrato(svc, anunciante_id, comision="8")
+    svc.update(
+        c.contrato_id,
+        ContratoUpdate(porcentaje_comision_contrato=Decimal("9.5"), motivo_cambio="Ajuste"),
+        ADMIN,
+    )
+    hist = svc.historial(c.contrato_id)
+    assert len(hist) == 2
+    assert all(h.entidad == "Contrato" and h.entidad_id == str(c.contrato_id) for h in hist)
+    pares = {(h.valor_anterior, h.valor_nuevo) for h in hist}
+    assert (None, "8") in pares  # alta con % capturado
+    assert ("8.00", "9.5") in pares  # edición

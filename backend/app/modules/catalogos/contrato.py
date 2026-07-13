@@ -187,8 +187,9 @@ class ContratoRead(CatalogoReadBase):
     archivo_contrato_path: str | None = None
     observaciones_contrato: str | None = None
     created_by: str | None = None
-    # Derivado (solo lectura; NO se acepta en Create/Update):
+    # Derivados (solo lectura; NO se aceptan en Create/Update):
     anunciante_nombre: str | None = None  # nombre_comercial del anunciante
+    anunciante_rfc: str | None = None  # rfc_anunciante del anunciante
 
     # Montos como STRING para preservar la precisión Decimal (ADR-015 E-4).
     @field_serializer("monto_contrato", "porcentaje_comision_contrato")
@@ -203,9 +204,10 @@ class TransicionEstadoIn(BaseModel):
 
 
 class ContratoListParams(ListParams):
-    """`ListParams` + acotar a un anunciante (para la sección Contratos del panel)."""
+    """`ListParams` + acotar a un anunciante + filtrar por estado del contrato."""
 
     anunciante_id: uuid.UUID | None = None
+    estado: EstadoContrato | None = None
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
@@ -215,6 +217,10 @@ class ContratoRepository(BaseRepository[Contrato]):
         anunciante_id = getattr(params, "anunciante_id", None)
         if anunciante_id is not None:
             stmt = stmt.where(Contrato.anunciante_id == anunciante_id)
+        estado = getattr(params, "estado", None)
+        if estado is not None:
+            # `estado` es un StrEnum; se compara por su valor textual (columna VARCHAR).
+            stmt = stmt.where(Contrato.estado_contrato == EstadoContrato(estado).value)
         return stmt
 
     def contar_activos_por_anunciante(self, anunciante_id: uuid.UUID) -> int:
@@ -225,18 +231,20 @@ class ContratoRepository(BaseRepository[Contrato]):
         )
         return int(total or 0)
 
-    def nombres_de_anunciantes(
+    def datos_de_anunciantes(
         self, anunciante_ids: Sequence[uuid.UUID]
-    ) -> dict[uuid.UUID, str]:
-        """nombre_comercial por anunciante, en UNA consulta (evita N+1)."""
+    ) -> dict[uuid.UUID, tuple[str, str]]:
+        """(nombre_comercial, rfc) por anunciante, en UNA consulta (evita N+1)."""
         if not anunciante_ids:
             return {}
         rows = self.db.execute(
-            select(Anunciante.anunciante_id, Anunciante.nombre_comercial).where(
-                Anunciante.anunciante_id.in_(set(anunciante_ids))
-            )
+            select(
+                Anunciante.anunciante_id,
+                Anunciante.nombre_comercial,
+                Anunciante.rfc_anunciante,
+            ).where(Anunciante.anunciante_id.in_(set(anunciante_ids)))
         ).all()
-        return {row[0]: row[1] for row in rows}
+        return {row[0]: (row[1], row[2]) for row in rows}
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -256,23 +264,26 @@ class ContratoService(BaseService[Contrato, ContratoCreate, ContratoUpdate, Cont
         self._anunciante_repo = anunciante_repo
         self._almacenamiento = almacenamiento
 
-    # ── enriquecimiento (anunciante_nombre) ─────────────────────────────────────
-    def _read(self, obj: Contrato, anunciante_nombre: str | None) -> ContratoRead:
+    # ── enriquecimiento (anunciante_nombre + anunciante_rfc) ────────────────────
+    def _read(
+        self, obj: Contrato, datos: tuple[str, str] | None
+    ) -> ContratoRead:
+        nombre, rfc = datos if datos else (None, None)
         return ContratoRead.model_validate(obj).model_copy(
-            update={"anunciante_nombre": anunciante_nombre}
+            update={"anunciante_nombre": nombre, "anunciante_rfc": rfc}
         )
 
     def _to_read(self, obj: Contrato) -> ContratoRead:
-        nombre = self._contrato_repo.nombres_de_anunciantes([obj.anunciante_id]).get(
+        datos = self._contrato_repo.datos_de_anunciantes([obj.anunciante_id]).get(
             obj.anunciante_id
         )
-        return self._read(obj, nombre)
+        return self._read(obj, datos)
 
     def list(self, params: ListParams) -> Page[ContratoRead]:
         items, total = self.repo.list(params)
-        nombres = self._contrato_repo.nombres_de_anunciantes([c.anunciante_id for c in items])
+        datos = self._contrato_repo.datos_de_anunciantes([c.anunciante_id for c in items])
         return Page[ContratoRead](
-            items=[self._read(c, nombres.get(c.anunciante_id)) for c in items],
+            items=[self._read(c, datos.get(c.anunciante_id)) for c in items],
             total=total,
             page=params.page,
             size=params.size,
@@ -391,6 +402,39 @@ router = build_crud_router(
     get_service=get_contrato_service,
     id_type=uuid.UUID,
 )
+
+# La factory arma un `listar` genérico; el contrato necesita ADEMÁS el filtro por estado
+# (Vigentes/Finalizados…). Se retira SOLO esa ruta y se registra una equivalente con
+# `?estado`, sin tocar `crud_router.py` (mismo patrón que TarifaPlaza/Anunciante).
+router.routes = [r for r in router.routes if getattr(r, "name", None) != "listar"]
+
+
+@router.get("", response_model=Page[ContratoRead])
+def listar_contratos(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por número o nombre de contrato"),
+    estado: EstadoContrato | None = Query(
+        None, description="Filtro por estado del contrato (vigente/suspendido/finalizado/cancelado)"
+    ),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> Page[ContratoRead]:
+    return svc.list(
+        ContratoListParams(page=page, size=size, activo=activo, q=q, estado=estado)
+    )
+
+
+@router.get("/{item_id}/historial", response_model=list[audit.LogCambioParametroRead])
+def historial_contrato(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> list[audit.LogCambioParametroRead]:
+    """Historial de cambios de `porcentaje_comision_contrato` de UN contrato, más reciente
+    primero. Lectura acotada; la administración completa es de F5 (ADR-021)."""
+    return list(svc.historial(item_id))
 
 
 @router.get("/anunciante/{anunciante_id}", response_model=Page[ContratoRead])

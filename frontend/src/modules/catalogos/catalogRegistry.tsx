@@ -18,6 +18,7 @@ import type { SidebarGroup } from "@/shared/ui";
 import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
 import { AgenciaCatalogPage } from "./agencia/pages/AgenciaCatalogPage";
 import { AnuncianteCatalogPage } from "./anunciante/pages/AnuncianteCatalogPage";
+import { ContratoCatalogPage } from "./contrato/pages/ContratoCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
 
@@ -47,7 +48,12 @@ export const catalogRegistry: CatalogEntry[] = [
     group: "Comerciales",
     render: () => <AgenciaCatalogPage />,
   },
-  { key: "contrato", label: "Contratos", group: "Comerciales" },
+  {
+    key: "contrato",
+    label: "Contratos",
+    group: "Comerciales",
+    render: () => <ContratoCatalogPage />,
+  },
   {
     key: "afiliado",
     label: "Afiliados y estaciones",

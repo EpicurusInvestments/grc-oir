@@ -309,8 +309,14 @@ Ejemplo alta directo (sin agencia) con días de crédito:
 - **Adjuntos (S3):** `archivo_contrato_path` = prefijo `contratos/<numero_contrato>/`
   (recalculado si cambia el número). La **subida real a S3 está diferida** (adaptador local;
   falta configurar `S3_BUCKET_CONTRATOS`); no hay endpoint de upload todavía.
-- **Derivado (solo lectura):** `anunciante_nombre` (`nombre_comercial` del anunciante).
+- **Derivados (solo lectura):** `anunciante_nombre` (`nombre_comercial`) y `anunciante_rfc`
+  (`rfc_anunciante`) del anunciante, calculados por lote (sin N+1).
+- **Filtro por estado:** la lista acepta **`?estado=vigente|suspendido|finalizado|cancelado`**
+  (además de `?activo` y `?q`). Alimenta las pills Todos/Vigentes/Finalizados de la pantalla.
 - Búsqueda `?q` sobre número y nombre del contrato.
+- **`GET /catalogos/contratos/{id}/historial`** (`catalogos:leer`): historial de auditoría
+  del contrato (cambios de `porcentaje_comision_contrato`), más reciente primero. Mismo
+  formato y alcance acotado que Agencia/Anunciante (ADR-021).
 
 **`GET /catalogos/contratos/anunciante/{anunciante_id}`** (`catalogos:leer`) — contratos de
 un anunciante, paginado con `?page&size&activo&q`. Alimenta la sección "Contratos" del panel
