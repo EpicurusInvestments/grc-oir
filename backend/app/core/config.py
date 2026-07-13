@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     sso_provider: str = ""
     sso_client_id: str = ""
 
+    # ── Almacenamiento de adjuntos de contrato (S3) ──────────────────────────────
+    # Vacío en F0-03: la subida a S3 está diferida y se usa el adaptador local. Cuando se
+    # configure el bucket, el adaptador S3 leerá estos valores (credenciales por el
+    # proveedor de AWS del entorno, nunca aquí).
+    s3_bucket_contratos: str = ""
+    aws_region: str = ""
+
     @property
     def is_development(self) -> bool:
         return self.app_env.strip().lower() == "development"

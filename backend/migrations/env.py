@@ -23,6 +23,7 @@ from app.modules.catalogos import (  # noqa: F401
     afiliado,
     agencia,
     anunciante,
+    contrato,
     estacion,
     plaza,
     tarifa,

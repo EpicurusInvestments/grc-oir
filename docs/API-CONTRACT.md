@@ -273,3 +273,41 @@ Ejemplo alta directo (sin agencia) con días de crédito:
   marcas de un anunciante, paginado con los filtros `?page&size&activo&q`. Alimenta el panel
   anidado de la pantalla de anunciantes.
 - El `anunciante_id` debe existir (→ 404 si no). Sin campos sensibles.
+
+**`/catalogos/contratos`** — campos: `contrato_id`, `anunciante_id` (req., FK),
+`numero_contrato` (req.), `nombre_contrato` (req.), `fecha_inicio_contrato` (req.),
+`fecha_fin_contrato` (req.), `monto_contrato` (Decimal, string), **`porcentaje_comision_contrato`
+(PARÁMETRO SENSIBLE, Decimal string, nullable)**, `condiciones_comerciales`,
+`estado_contrato` (ENUM, **solo lectura vía CRUD**), `archivo_contrato_path`,
+`observaciones_contrato`, `activo`, `created_by`, timestamps.
+- **Fechas:** `fecha_fin_contrato >= fecha_inicio_contrato` → 422 (schema) o 400
+  `error_dominio` (servicio, en edición parcial con valores efectivos).
+- **`porcentaje_comision_contrato`:** NUMERIC(5,2) nullable (CHECK `NULL o 0..100`).
+  Sobreescribe el % default de la agencia cuando tiene valor. Es sensible: se audita en el
+  **alta solo si se captura** un valor, y en la edición cuando cambia (motivo requerido,
+  solo Admin). Viaja como **string**.
+- **`created_by`:** username del capturista (texto, no FK; lo fija el servidor).
+- **`estado_contrato`:** `vigente|suspendido|finalizado|cancelado`. **NO** se cambia por el
+  `PUT` genérico (no está en Create/Update); se crea en `vigente` y se transiciona por el
+  endpoint dedicado (abajo). Es una dimensión **independiente** de `activo` (baja lógica).
+- **Adjuntos (S3):** `archivo_contrato_path` = prefijo `contratos/<numero_contrato>/`
+  (recalculado si cambia el número). La **subida real a S3 está diferida** (adaptador local;
+  falta configurar `S3_BUCKET_CONTRATOS`); no hay endpoint de upload todavía.
+- **Derivado (solo lectura):** `anunciante_nombre` (`nombre_comercial` del anunciante).
+- Búsqueda `?q` sobre número y nombre del contrato.
+
+**`POST /catalogos/contratos/{id}/estado-contrato`** (`catalogos:editar`) — transiciona
+`estado_contrato` validando la **máquina de estados**. Cuerpo: `{ "estado": "suspendido" }`.
+- Transiciones permitidas: `vigente→{suspendido,finalizado,cancelado}`,
+  `suspendido→{vigente,cancelado}`, `finalizado→{cancelado}`, `cancelado→∅` (terminal).
+- Transición no permitida → **409 `transicion_invalida`** (`detalles` lista las permitidas).
+  Transicionar al mismo estado es idempotente (no cambia nada). No afecta `activo`.
+
+Ejemplo alta de contrato (sin `estado_contrato` ni `archivo_contrato_path`):
+```json
+{
+  "anunciante_id": "3f...", "numero_contrato": "C-2026-001", "nombre_contrato": "Campaña anual",
+  "fecha_inicio_contrato": "2026-01-01", "fecha_fin_contrato": "2026-12-31",
+  "monto_contrato": "500000.00", "porcentaje_comision_contrato": "8.50"
+}
+```

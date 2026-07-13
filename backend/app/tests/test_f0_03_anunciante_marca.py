@@ -71,6 +71,8 @@ def db() -> Iterator[Session]:
 
 @pytest.fixture
 def anunciante_svc(db: Session) -> AnuncianteService:
+    from app.modules.catalogos.contrato import Contrato, ContratoRepository
+
     repo = AnuncianteRepository(
         db,
         Anunciante,
@@ -81,7 +83,10 @@ def anunciante_svc(db: Session) -> AnuncianteService:
         ],
     )
     return AnuncianteService(
-        repo, agencia_repo=BaseRepository(db, Agencia), marca_repo=MarcaRepository(db, Marca)
+        repo,
+        agencia_repo=BaseRepository(db, Agencia),
+        marca_repo=MarcaRepository(db, Marca),
+        contrato_repo=ContratoRepository(db, Contrato),
     )
 
 

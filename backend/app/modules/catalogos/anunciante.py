@@ -200,11 +200,13 @@ class AnuncianteService(
         *,
         agencia_repo: BaseRepository[Agencia],
         marca_repo: Any,
+        contrato_repo: Any,
     ) -> None:
         super().__init__(repo)
         self._anunciante_repo = repo
         self._agencia_repo = agencia_repo
         self._marca_repo = marca_repo
+        self._contrato_repo = contrato_repo
 
     # ── enriquecimiento (agencia_nombre + marcas_count) ─────────────────────────
     def _read(
@@ -292,11 +294,12 @@ class AnuncianteService(
         if forzar:
             return
         marcas = self._marca_repo.contar_activas_por_anunciante(obj.anunciante_id)
-        if marcas:
+        contratos = self._contrato_repo.contar_activos_por_anunciante(obj.anunciante_id)
+        if marcas or contratos:
             raise DependenciasActivasError(
-                "No se puede desactivar el anunciante porque tiene marcas activas. "
-                "Confirma para desactivarlo de todos modos.",
-                detalles={"marcas_activas": marcas},
+                "No se puede desactivar el anunciante porque tiene marcas o contratos "
+                "activos. Confirma para desactivarlo de todos modos.",
+                detalles={"marcas_activas": marcas, "contratos_activos": contratos},
             )
 
     def _verificar_agencia(self, agencia_id: uuid.UUID) -> None:
@@ -423,6 +426,10 @@ class MarcaService(BaseService[Marca, MarcaCreate, MarcaUpdate, MarcaRead]):
 
 # ── Dependencias + routers ──────────────────────────────────────────────────────
 def get_anunciante_service(db: Session = Depends(get_db)) -> AnuncianteService:
+    # Import perezoso para evitar el ciclo anunciante ↔ contrato (contrato importa Anunciante
+    # en el nivel de módulo; la referencia inversa se resuelve en tiempo de request).
+    from app.modules.catalogos.contrato import Contrato, ContratoRepository
+
     repo = AnuncianteRepository(
         db,
         Anunciante,
@@ -436,6 +443,7 @@ def get_anunciante_service(db: Session = Depends(get_db)) -> AnuncianteService:
         repo,
         agencia_repo=BaseRepository(db, Agencia),
         marca_repo=MarcaRepository(db, Marca),
+        contrato_repo=ContratoRepository(db, Contrato),
     )
 
 

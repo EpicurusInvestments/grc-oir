@@ -277,4 +277,40 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   Afiliado, TarifaPlaza y futuros). Regresión cubierta con pruebas HTTP en
   `test_f0_03_agencia.py` (POST y PUT con RFC inválido → 422, no 500).
 
-[[Agregar aquí cada nueva decisión: ADR-019, ...]]
+### ADR-019 — Máquina de estados de Contrato con endpoint dedicado (F0-03)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 3)
+- **Contexto:** `Contrato.estado_contrato` (vigente/suspendido/finalizado/cancelado) es un
+  estado de negocio con transiciones restringidas, distinto de `activo` (baja lógica).
+  Meterlo en el `PUT` genérico permitiría saltos arbitrarios de estado.
+- **Decisión:** mapa de transiciones explícito en el servicio (`TRANSICIONES`):
+  `vigente→{suspendido,finalizado,cancelado}`, `suspendido→{vigente,cancelado}`,
+  `finalizado→{cancelado}`, `cancelado→∅`. Se cambia SOLO por
+  `POST /catalogos/contratos/{id}/estado-contrato`; transición no permitida →
+  `StateTransitionError` (409 `transicion_invalida`); mismo estado = idempotente.
+  `estado_contrato` NO se acepta en Create/Update (se crea en `vigente`). `activo` y
+  `estado_contrato` son dimensiones **independientes** (spec §6).
+- **Consecuencias:** primer catálogo con máquina de estados; sienta el patrón para las
+  entidades con estado de F1+ (OrdenCliente, FacturaCliente, etc.). Las transiciones de
+  estado NO se registran en `LogCambioParametro` (esa bitácora es para parámetros
+  sensibles; la auditoría general de operaciones es un tema aparte, posterior).
+
+### ADR-020 — Adjuntos de contrato: puerto de almacenamiento con subida S3 diferida (F0-03)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 3)
+- **Contexto:** los contratos guardan PDF en S3 bajo `contratos/<numero_contrato>/`, pero no
+  hay bucket ni credenciales todavía, y CLAUDE.md prohíbe inventarlas. La spec define
+  `archivo_contrato_path` (singular); un contrato tiene N archivos.
+- **Decisión:** (1) `archivo_contrato_path` guarda el **prefijo/carpeta** del contrato en S3
+  (no un archivo), calculado por el servicio; la lista de PDFs se obtendrá listando ese
+  prefijo. (2) **Puerto anti-corrupción** `integrations/almacenamiento/port.py`
+  (`prefijo_contrato`/`listar`/`subir`) con **adaptador local** (`adapter_local.py`) que
+  resuelve el prefijo pero NO sube (subida **diferida**: `subir()` lanza un error de dominio
+  claro). El servicio depende solo del puerto (inyectado). (3) Config `S3_BUCKET_CONTRATOS`
+  / `AWS_REGION` en `.env.example` sin valores; credenciales por el proveedor de AWS del
+  entorno (Secrets Manager en qa/producción), nunca versionadas. **Sin tabla
+  `ContratoDocumento`** por ahora (basta el prefijo; se reevalúa si se requiere metadata por
+  archivo — decisión E-2).
+- **Consecuencias:** el dominio queda listo para S3 sin acoplarse a él; activar la subida
+  real será añadir un `AlmacenamientoS3` que implemente el puerto y cambiar la inyección,
+  sin tocar la capa de negocio. La integración real de S3 se hará como tarea aparte tras F0-03.
+
+[[Agregar aquí cada nueva decisión: ADR-021, ...]]
