@@ -237,7 +237,7 @@ def test_tipo_senal_invalido_rechazado() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             plaza_id=uuid.uuid4(),
-            tipo_senal="xx",  # type: ignore[arg-type]
+            tipo_senal="xx",
             duracion_spot=DuracionSpot.S30,
             tarifa_bruta=Decimal("100"),
             vigencia_desde=date(2025, 1, 1),
@@ -250,7 +250,7 @@ def test_duracion_spot_invalida_rechazada() -> None:
         TarifaPlazaCreate(
             plaza_id=uuid.uuid4(),
             tipo_senal=TipoSenal.FM,
-            duracion_spot="45s",  # type: ignore[arg-type]
+            duracion_spot="45s",
             tarifa_bruta=Decimal("100"),
             vigencia_desde=date(2025, 1, 1),
             vigencia_hasta=date(2025, 12, 31),

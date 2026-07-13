@@ -10,6 +10,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.catalogos.afiliado import router as afiliado_router
+from app.modules.catalogos.agencia import router as agencia_router
+from app.modules.catalogos.anunciante import marca_router
+from app.modules.catalogos.anunciante import router as anunciante_router
+from app.modules.catalogos.contrato import router as contrato_router
 from app.modules.catalogos.estacion import router as estacion_router
 from app.modules.catalogos.plaza import router as plaza_router
 from app.modules.catalogos.tarifa import router as tarifa_router
@@ -23,3 +27,10 @@ router.include_router(estacion_router)
 
 # F0-02 · tarifas por plaza (depende de Plaza).
 router.include_router(tarifa_router)
+
+# F0-03 · catálogos comerciales (Agencia → Anunciante → Marca/Contrato).
+# Tanda 1: Agencia · Tanda 2: Anunciante + Marca anidada · Tanda 3: Contrato.
+router.include_router(agencia_router)
+router.include_router(anunciante_router)
+router.include_router(marca_router)
+router.include_router(contrato_router)

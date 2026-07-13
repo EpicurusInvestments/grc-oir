@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -86,9 +87,16 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # `exc.errors()` puede incluir en `ctx` el objeto ValueError original (lo agregan
+        # los validadores propios que hacen `raise ValueError(...)`, p.ej. RFC o vigencia);
+        # ese objeto NO es serializable a JSON y rompía el handler con un 500. Se pasa por
+        # `jsonable_encoder` (igual que el handler por defecto de FastAPI) para obtener un
+        # 422 legible; el mensaje humano queda en el campo `msg` de cada error.
         return JSONResponse(
             status_code=422,
-            content=_envelope("validacion", "Datos de entrada inválidos", exc.errors()),
+            content=_envelope(
+                "validacion", "Datos de entrada inválidos", jsonable_encoder(exc.errors())
+            ),
         )
 
     @app.exception_handler(StarletteHTTPException)

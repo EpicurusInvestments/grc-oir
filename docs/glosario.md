@@ -9,6 +9,12 @@
   por una agencia o tratar directo. En la operación se le llama "Anunciante".
 - **Agencia** — Agencia de medios que representa anunciantes ante el grupo. Cobra una
   comisión. No accede al sistema.
+- **Marca** — Marca comercial de un anunciante (p.ej. "Pan Bimbo"). Se administra anidada
+  dentro del anunciante (no tiene pantalla propia), como la estación dentro del afiliado.
+- **Contrato** — Contrato comercial entre el grupo y un anunciante: define vigencia
+  (`fecha_inicio`/`fecha_fin`), monto, condiciones y una **comisión específica** que
+  sobreescribe el default de la agencia. Tiene su propia máquina de estados
+  (`estado_contrato`: vigente → suspendido/finalizado/cancelado) independiente de `activo`.
 - **Afiliado** — Empresa externa que opera estaciones (emisoras). Factura al grupo por
   los servicios de transmisión. No accede al sistema.
 - **EmpresaFacturadora** — Entidad legal del grupo que emite facturas; puede haber varias.
@@ -67,7 +73,13 @@
 ## Sistema
 
 - **Parámetro sensible** — Campo cuyo cambio requiere permiso por campo y queda
-  registrado en LogCambioParametro (p.ej. porcentajes de comisión).
+  registrado en LogCambioParametro (p.ej. porcentajes de comisión, días de crédito). Al
+  modificarlo se exige un "motivo del cambio".
+- **LogCambioParametro** — Bitácora de cambios a parámetros sensibles: entidad, id, campo,
+  valor anterior/nuevo, usuario, fecha, ip y motivo. Se escribe desde F0-03 (una fila por
+  cambio, incluida el alta); su pantalla de administración completa llega en F5. Cada
+  catálogo con campos sensibles ofrece una lectura acotada por entidad
+  (`/catalogos/<recurso>/{id}/historial`).
 - **PermisoCampo** — Configuración de qué áreas/roles pueden editar campos protegidos.
 - **Tags de campo** — Etiquetas de UI que indican el origen del dato: Catálogo,
   Heredado, Calculado, Derivado, Audit log, Timbrado.
