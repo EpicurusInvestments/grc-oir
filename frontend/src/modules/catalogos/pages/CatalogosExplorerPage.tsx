@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 
 import { useAfiliados } from "@/modules/catalogos/afiliado/hooks";
+import { useAgencias } from "@/modules/catalogos/agencia/hooks";
 import {
   buildSidebarGroups,
   catalogRegistry,
@@ -29,19 +30,21 @@ export function CatalogosExplorerPage() {
   const plazaTotal = usePlazas().useList({ page: 1, size: 1 }).data?.total;
   const afiliadoTotal = useAfiliados().useList({ page: 1, size: 1 }).data?.total;
   const tarifaTotal = useTarifas().useList({ page: 1, size: 1 }).data?.total;
+  const agenciaTotal = useAgencias().useList({ page: 1, size: 1 }).data?.total;
 
   const groups = useMemo(() => {
     const counts: Record<string, number | undefined> = {
       plaza: plazaTotal,
       afiliado: afiliadoTotal,
       tarifa: tarifaTotal,
+      agencia: agenciaTotal,
     };
     return buildSidebarGroups(
       catalogRegistry.map((e) =>
         counts[e.key] !== undefined ? { ...e, count: counts[e.key] } : e,
       ),
     );
-  }, [plazaTotal, afiliadoTotal, tarifaTotal]);
+  }, [plazaTotal, afiliadoTotal, tarifaTotal, agenciaTotal]);
 
   const [activeKey, setActiveKey] = useState<string | null>(catalogRegistry[0]?.key ?? null);
 

@@ -263,6 +263,28 @@ def test_baja_agencia_con_anunciantes_activos(
     assert baja.activo is False
 
 
+# ── Conteo y lista de anunciantes por agencia (columna + panel de Agencia) ────────
+def test_agencia_anunciantes_count(
+    agencia_svc: AgenciaService, anunciante_svc: AnuncianteService
+) -> None:
+    ag = _agencia(agencia_svc)
+    _anunciante(anunciante_svc, agencia_id=ag, nombre="A1", rfc="AAA950101AB1")
+    _anunciante(anunciante_svc, agencia_id=ag, nombre="A2", rfc="BBB950101AB2")
+    _anunciante(anunciante_svc, agencia_id=None, nombre="Directo", rfc="DDD950101AB3")
+    assert agencia_svc.get(ag).anunciantes_count == 2
+
+
+def test_listar_anunciantes_por_agencia(
+    agencia_svc: AgenciaService, anunciante_svc: AnuncianteService
+) -> None:
+    ag = _agencia(agencia_svc)
+    _anunciante(anunciante_svc, agencia_id=ag, nombre="Con Agencia", rfc="CAG950101AB1")
+    _anunciante(anunciante_svc, agencia_id=None, nombre="Directo", rfc="DIR950101AB2")
+    page = anunciante_svc.list(AnuncianteListParams(agencia_id=ag))
+    assert page.total == 1
+    assert page.items[0].nombre_comercial == "Con Agencia"
+
+
 # ── Portabilidad a SQL Server (regresión ADR-014) ────────────────────────────────
 def test_filtro_directo_compila_is_null_para_sqlserver() -> None:
     """El filtro Directo usa `agencia_id IS NULL` (válido en SQL Server; ADR-014)."""

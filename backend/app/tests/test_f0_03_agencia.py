@@ -17,6 +17,7 @@ guard que compila con el dialecto mssql (ADR-014).
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from decimal import Decimal
 
@@ -34,6 +35,7 @@ from app.core.db import Base, get_db
 from app.core.errors import (
     ConflictError,
     DomainError,
+    NotFoundError,
     PermissionDeniedError,
     register_error_handlers,
 )
@@ -249,6 +251,31 @@ def test_unicidad_nombre_usa_lower_portable() -> None:
         stmt.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})  # type: ignore[no-untyped-call]
     )
     assert "lower(" in sql.lower()
+
+
+# ── Historial de auditoría (lectura acotada por entidad) ─────────────────────────
+def test_historial_registra_alta_y_edicion(svc: AgenciaService) -> None:
+    a = _crear(svc, comision="10")
+    svc.update(
+        a.agencia_id,
+        AgenciaUpdate(porcentaje_comision_agencia_default=Decimal("12"), motivo_cambio="Ajuste"),
+        ADMIN,
+    )
+    hist = svc.historial(a.agencia_id)
+    assert len(hist) == 2
+    # Todas las entradas son de esta agencia.
+    assert all(h.entidad == "Agencia" and h.entidad_id == str(a.agencia_id) for h in hist)
+    # Están el alta (anterior=None) y la edición (10.00 → 12).
+    pares = {(h.valor_anterior, h.valor_nuevo) for h in hist}
+    assert (None, "10") in pares
+    assert ("10.00", "12") in pares
+    edicion = next(h for h in hist if h.valor_anterior is not None)
+    assert edicion.motivo_cambio == "Ajuste"
+
+
+def test_historial_agencia_inexistente_404(svc: AgenciaService) -> None:
+    with pytest.raises(NotFoundError):
+        svc.historial(uuid.uuid4())
 
 
 # ── Errores de validación a nivel HTTP (regresión: RFC inválido daba 500) ─────────

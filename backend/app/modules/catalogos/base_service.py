@@ -8,8 +8,9 @@ subclases enchufan reglas de su entidad: fórmulas, `field_permissions.verificar
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import ceil
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
@@ -17,6 +18,9 @@ from app.core.errors import NotFoundError
 from app.core.security import CurrentUser
 from app.modules.catalogos.base_repository import BaseRepository, ModelType
 from app.modules.catalogos.schemas import ListParams, Page
+
+if TYPE_CHECKING:
+    from app.core.audit import LogCambioParametroRead
 
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
@@ -79,6 +83,20 @@ class BaseService(
         if not activo:
             self._pre_desactivar(obj, forzar, usuario)
         return self._to_read(self.repo.set_activo(obj, activo))
+
+    # ── auditoría (solo lectura del historial de ESTA entidad) ───────────────────
+    # Nota: se anota con `Sequence` (no `list`) porque dentro de esta clase el nombre
+    # `list` refiere al MÉTODO `list` de arriba, no al tipo builtin.
+    def historial(self, id_: Any) -> Sequence[LogCambioParametroRead]:
+        """Historial de cambios de parámetros sensibles de un registro (más reciente
+        primero). Lectura acotada; la administración completa de auditoría es de F5."""
+        from app.core import audit  # import diferido: evita acoplar la base con auditoría
+
+        self._get_or_404(id_)  # 404 si el registro no existe
+        return [
+            audit.LogCambioParametroRead.model_validate(r)
+            for r in audit.listar_historial(self.repo.db, self.entidad, id_)
+        ]
 
     # ── puntos de extensión (las subclases los sobreescriben) ───────────────────
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:

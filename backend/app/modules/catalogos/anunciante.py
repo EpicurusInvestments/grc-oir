@@ -147,9 +147,10 @@ class AnuncianteRead(CatalogoReadBase):
 
 
 class AnuncianteListParams(ListParams):
-    """`ListParams` + filtro derivado Vía agencia / Directo."""
+    """`ListParams` + filtro derivado Vía agencia / Directo + acotar a una agencia."""
 
     relacion: Literal["todas", "via_agencia", "directo"] = "todas"
+    agencia_id: uuid.UUID | None = None
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
@@ -162,7 +163,28 @@ class AnuncianteRepository(BaseRepository[Anunciante]):
             stmt = stmt.where(Anunciante.agencia_id.isnot(None))
         elif relacion == "directo":
             stmt = stmt.where(Anunciante.agencia_id.is_(None))
+        agencia_id = getattr(params, "agencia_id", None)
+        if agencia_id is not None:
+            stmt = stmt.where(Anunciante.agencia_id == agencia_id)
         return stmt
+
+    def contar_por_agencias(
+        self, agencia_ids: Sequence[uuid.UUID | None]
+    ) -> dict[uuid.UUID, int]:
+        """Conteo de anunciantes (TODOS) por agencia, en UNA consulta (evita N+1).
+
+        Ignora los `None` (anunciantes directos, sin agencia). Mismo criterio que el conteo
+        de estaciones por afiliado en F0-01.
+        """
+        ids = {a for a in agencia_ids if a is not None}
+        if not ids:
+            return {}
+        rows = self.db.execute(
+            select(Anunciante.agencia_id, func.count(Anunciante.anunciante_id))
+            .where(Anunciante.agencia_id.in_(ids))
+            .group_by(Anunciante.agencia_id)
+        ).all()
+        return {row[0]: int(row[1]) for row in rows}
 
     def contar_activos_por_agencia(self, agencia_id: uuid.UUID) -> int:
         total = self.db.scalar(
@@ -483,6 +505,22 @@ def listar_anunciantes(
 ) -> Page[AnuncianteRead]:
     return svc.list(
         AnuncianteListParams(page=page, size=size, activo=activo, q=q, relacion=relacion)
+    )
+
+
+@router.get("/agencia/{agencia_id}", response_model=Page[AnuncianteRead])
+def listar_anunciantes_por_agencia(
+    agencia_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por nombre comercial, fiscal o RFC"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: AnuncianteService = Depends(get_anunciante_service),
+) -> Page[AnuncianteRead]:
+    """Anunciantes de una agencia (para la sección 'Anunciantes representados' del panel)."""
+    return svc.list(
+        AnuncianteListParams(page=page, size=size, activo=activo, q=q, agencia_id=agencia_id)
     )
 
 

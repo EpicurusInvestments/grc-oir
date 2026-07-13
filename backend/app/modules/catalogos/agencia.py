@@ -22,6 +22,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from math import ceil
 from typing import Any
 from uuid import uuid4
 
@@ -33,12 +34,12 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError, DependenciasActivasError
-from app.core.security import CurrentUser
+from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
 from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.base_service import BaseService
 from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
 
 # Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo.
 CAMPO_COMISION = "porcentaje_comision_agencia_default"
@@ -130,6 +131,8 @@ class AgenciaRead(CatalogoReadBase):
     contacto_email: str | None = None
     contacto_telefono: str | None = None
     porcentaje_comision_agencia_default: Decimal
+    # Derivado (solo lectura; NO se acepta en Create/Update):
+    anunciantes_count: int = 0  # nº de anunciantes de la agencia (todos)
 
     # El % viaja como STRING para preservar la precisión Decimal (mismo criterio ADR-015).
     @field_serializer("porcentaje_comision_agencia_default")
@@ -160,6 +163,30 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
         super().__init__(repo)
         self._agencia_repo = repo
         self._anunciante_repo = anunciante_repo
+
+    # ── enriquecimiento (anunciantes_count) ─────────────────────────────────────
+    def _read(self, obj: Agencia, count: int) -> AgenciaRead:
+        return AgenciaRead.model_validate(obj).model_copy(
+            update={"anunciantes_count": count}
+        )
+
+    def _to_read(self, obj: Agencia) -> AgenciaRead:
+        count = self._anunciante_repo.contar_por_agencias([obj.agencia_id]).get(
+            obj.agencia_id, 0
+        )
+        return self._read(obj, count)
+
+    def list(self, params: ListParams) -> Page[AgenciaRead]:
+        # Enriquecimiento por LOTE: 2 consultas por página (lista + conteos agrupados).
+        items, total = self.repo.list(params)
+        counts = self._anunciante_repo.contar_por_agencias([a.agencia_id for a in items])
+        return Page[AgenciaRead](
+            items=[self._read(a, counts.get(a.agencia_id, 0)) for a in items],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
 
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         payload["nombre_agencia"] = _normaliza_nombre(payload["nombre_agencia"])
@@ -250,3 +277,17 @@ router = build_crud_router(
     get_service=get_agencia_service,
     id_type=uuid.UUID,
 )
+
+
+@router.get("/{item_id}/historial", response_model=list[audit.LogCambioParametroRead])
+def historial_agencia(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: AgenciaService = Depends(get_agencia_service),
+) -> list[audit.LogCambioParametroRead]:
+    """Historial de cambios a parámetros sensibles de UNA agencia (más reciente primero).
+
+    Lectura acotada de la bitácora (solo esta entidad); la administración completa de
+    auditoría es de F5. Requiere permiso de lectura de catálogos (ADR-021).
+    """
+    return list(svc.historial(item_id))

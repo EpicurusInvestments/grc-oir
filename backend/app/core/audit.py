@@ -22,7 +22,8 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Index, Unicode
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import Index, Unicode, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2
@@ -146,3 +147,40 @@ def registrar_cambio_sensible(
         usuario=usuario,
         motivo=motivo,
     )
+
+
+class LogCambioParametroRead(BaseModel):
+    """DTO de lectura de una entrada de la bitácora (para el historial por entidad)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    log_cambio_parametro_id: uuid.UUID
+    entidad: str
+    entidad_id: str
+    campo: str
+    valor_anterior: str | None = None
+    valor_nuevo: str | None = None
+    usuario: str
+    ip: str | None = None
+    motivo_cambio: str | None = None
+    fecha_cambio: datetime
+
+
+def listar_historial(
+    db: Session, entidad: str, entidad_id: Any
+) -> list[LogCambioParametro]:
+    """Historial de cambios de UNA entidad concreta, del más reciente al más antiguo.
+
+    Lectura acotada de `LogCambioParametro` filtrada por (entidad, entidad_id). La pantalla
+    de administración COMPLETA de auditoría pertenece a F5; esto solo alimenta la sección
+    "Historial de cambios" del panel de detalle de un catálogo (ver ADR-021).
+    """
+    stmt = (
+        select(LogCambioParametro)
+        .where(
+            LogCambioParametro.entidad == entidad,
+            LogCambioParametro.entidad_id == str(entidad_id),
+        )
+        .order_by(LogCambioParametro.fecha_cambio.desc())
+    )
+    return list(db.scalars(stmt).all())

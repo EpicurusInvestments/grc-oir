@@ -16,6 +16,7 @@ import type { ReactNode } from "react";
 import type { SidebarGroup } from "@/shared/ui";
 
 import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
+import { AgenciaCatalogPage } from "./agencia/pages/AgenciaCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
 
@@ -34,7 +35,12 @@ export const CATALOG_GROUPS = ["Comerciales", "Operación", "Soporte", "Configur
 /** Entradas iniciales (placeholders). F0-01+ añade `render` a cada una. */
 export const catalogRegistry: CatalogEntry[] = [
   { key: "anunciante", label: "Anunciantes", group: "Comerciales" },
-  { key: "agencia", label: "Agencias", group: "Comerciales" },
+  {
+    key: "agencia",
+    label: "Agencias",
+    group: "Comerciales",
+    render: () => <AgenciaCatalogPage />,
+  },
   { key: "contrato", label: "Contratos", group: "Comerciales" },
   {
     key: "afiliado",

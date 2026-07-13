@@ -225,7 +225,17 @@ las siguientes tandas).*
   mecanismo de auditoría descrito arriba (`motivo_cambio` requerido al modificarlo).
 - **Baja con dependientes:** no se puede desactivar una agencia con **anunciantes activos**
   sin `forzar:true` (→ 409 `dependencias_activas`, `detalles: { anunciantes_activos }`).
+- **Derivado (solo lectura):** `anunciantes_count` = nº de anunciantes de la agencia
+  (**todos**), calculado por lote (JOIN + COUNT agrupado, sin N+1).
 - Búsqueda `?q` sobre nombre y RFC.
+
+**`GET /catalogos/agencias/{id}/historial`** (`catalogos:leer`) — historial de auditoría de
+UNA agencia: lee `LogCambioParametro` filtrado por (`entidad="Agencia"`, `entidad_id=id`),
+ordenado del **más reciente al más antiguo**. Devuelve una lista de
+`{ log_cambio_parametro_id, entidad, entidad_id, campo, valor_anterior, valor_nuevo,
+usuario, ip, motivo_cambio, fecha_cambio }`. 404 si la agencia no existe.
+- **Alcance:** lectura acotada a una entidad para la sección "Historial de cambios" del
+  panel; la **administración completa** de auditoría es de F5 (ver ADR-021).
 
 Ejemplo alta de agencia:
 ```json
@@ -257,6 +267,9 @@ Ejemplo edición del % sensible (motivo requerido):
   (`detalles: { marcas_activas }`) salvo `forzar:true`. *(La validación por contratos
   activos se añade en la tanda 3.)*
 - Búsqueda `?q` sobre nombre comercial, nombre fiscal y RFC.
+- **`GET /catalogos/anunciantes/agencia/{agencia_id}`** (`catalogos:leer`): anunciantes de
+  una agencia, paginado con los filtros `?page&size&activo&q`. Alimenta la sección
+  "Anunciantes representados" del panel de detalle de Agencia.
 
 Ejemplo alta directo (sin agencia) con días de crédito:
 ```json

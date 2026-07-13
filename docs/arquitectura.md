@@ -313,4 +313,23 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   real será añadir un `AlmacenamientoS3` que implemente el puerto y cambiar la inyección,
   sin tocar la capa de negocio. La integración real de S3 se hará como tarea aparte tras F0-03.
 
-[[Agregar aquí cada nueva decisión: ADR-021, ...]]
+### ADR-021 — Lectura acotada del historial de auditoría por entidad en F0-03
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 4)
+- **Contexto:** el panel de detalle de la pantalla aprobada muestra un "Historial de
+  cambios" del registro (fecha, usuario, campo, valor anterior→nuevo, motivo). Esos datos
+  ya se persisten en `LogCambioParametro` desde F0-03 (ADR-016), pero la **pantalla de
+  administración completa** de auditoría (todos los cambios, filtros globales) es de F5. Se
+  necesitaba una lectura mínima sin adelantar F5.
+- **Decisión:** exponer un endpoint **de solo lectura acotado a una entidad**:
+  `GET /catalogos/<recurso>/{id}/historial`, que lee `LogCambioParametro` filtrado por
+  (`entidad`, `entidad_id`) ordenado por `fecha_cambio` desc. La lógica vive una sola vez en
+  `core/audit.listar_historial(...)` + `BaseService.historial(...)` (reutilizable por todos
+  los catálogos); cada módulo que lo necesite añade la ruta (Agencia en la tanda 4). Se
+  protege con `catalogos:leer` (mismo permiso de lectura del catálogo). NO expone escritura
+  ni consulta global: eso sigue siendo F5.
+- **Consecuencias:** el panel puede mostrar el historial desde F0-03 sin construir la
+  pantalla de F5; cuando llegue F5, su pantalla de administración consulta la misma tabla y
+  este endpoint por-entidad se conserva como atajo del detalle. Nota de rendimiento: la
+  consulta usa el índice `ix_log_cambio_parametro_entidad (entidad, entidad_id)`.
+
+[[Agregar aquí cada nueva decisión: ADR-022, ...]]
