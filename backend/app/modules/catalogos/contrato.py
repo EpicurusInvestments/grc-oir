@@ -30,7 +30,7 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -202,8 +202,21 @@ class TransicionEstadoIn(BaseModel):
     estado: EstadoContrato
 
 
+class ContratoListParams(ListParams):
+    """`ListParams` + acotar a un anunciante (para la sección Contratos del panel)."""
+
+    anunciante_id: uuid.UUID | None = None
+
+
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class ContratoRepository(BaseRepository[Contrato]):
+    def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
+        stmt = super()._apply_filters(stmt, params)  # activo + q sobre search_columns
+        anunciante_id = getattr(params, "anunciante_id", None)
+        if anunciante_id is not None:
+            stmt = stmt.where(Contrato.anunciante_id == anunciante_id)
+        return stmt
+
     def contar_activos_por_anunciante(self, anunciante_id: uuid.UUID) -> int:
         total = self.db.scalar(
             select(func.count())
@@ -378,6 +391,22 @@ router = build_crud_router(
     get_service=get_contrato_service,
     id_type=uuid.UUID,
 )
+
+
+@router.get("/anunciante/{anunciante_id}", response_model=Page[ContratoRead])
+def listar_contratos_por_anunciante(
+    anunciante_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por número o nombre de contrato"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> Page[ContratoRead]:
+    """Contratos de un anunciante (para la sección 'Contratos' del panel de anunciante)."""
+    return svc.list(
+        ContratoListParams(anunciante_id=anunciante_id, page=page, size=size, activo=activo, q=q)
+    )
 
 
 @router.post("/{item_id}/estado-contrato", response_model=ContratoRead)

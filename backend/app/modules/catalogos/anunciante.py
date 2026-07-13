@@ -524,6 +524,17 @@ def listar_anunciantes_por_agencia(
     )
 
 
+@router.get("/{item_id}/historial", response_model=list[audit.LogCambioParametroRead])
+def historial_anunciante(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: AnuncianteService = Depends(get_anunciante_service),
+) -> list[audit.LogCambioParametroRead]:
+    """Historial de cambios de `dias_credito_default` (u otros sensibles) de UN anunciante,
+    más reciente primero. Lectura acotada; la administración completa es de F5 (ADR-021)."""
+    return list(svc.historial(item_id))
+
+
 marca_router = build_crud_router(
     prefix="/marcas",
     tags=["catalogos:marcas"],

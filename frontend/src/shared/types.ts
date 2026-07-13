@@ -34,3 +34,19 @@ export interface ApiError {
     detalles?: unknown;
   };
 }
+
+/** Entrada del historial de auditoría (gemela de `LogCambioParametroRead` del backend).
+ * Alimenta la sección "Historial de cambios" del panel de detalle de los catálogos con
+ * parámetros sensibles (Agencia, Anunciante, Contrato). */
+export interface HistorialCambio {
+  log_cambio_parametro_id: string;
+  entidad: string;
+  entidad_id: string;
+  campo: string;
+  valor_anterior: string | null;
+  valor_nuevo: string | null;
+  usuario: string;
+  ip: string | null;
+  motivo_cambio: string | null;
+  fecha_cambio: string;
+}

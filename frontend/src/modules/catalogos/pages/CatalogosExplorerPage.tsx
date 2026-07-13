@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 
 import { useAfiliados } from "@/modules/catalogos/afiliado/hooks";
 import { useAgencias } from "@/modules/catalogos/agencia/hooks";
+import { useAnunciantes } from "@/modules/catalogos/anunciante/hooks";
 import {
   buildSidebarGroups,
   catalogRegistry,
@@ -31,6 +32,7 @@ export function CatalogosExplorerPage() {
   const afiliadoTotal = useAfiliados().useList({ page: 1, size: 1 }).data?.total;
   const tarifaTotal = useTarifas().useList({ page: 1, size: 1 }).data?.total;
   const agenciaTotal = useAgencias().useList({ page: 1, size: 1 }).data?.total;
+  const anuncianteTotal = useAnunciantes().useList({ page: 1, size: 1 }).data?.total;
 
   const groups = useMemo(() => {
     const counts: Record<string, number | undefined> = {
@@ -38,13 +40,14 @@ export function CatalogosExplorerPage() {
       afiliado: afiliadoTotal,
       tarifa: tarifaTotal,
       agencia: agenciaTotal,
+      anunciante: anuncianteTotal,
     };
     return buildSidebarGroups(
       catalogRegistry.map((e) =>
         counts[e.key] !== undefined ? { ...e, count: counts[e.key] } : e,
       ),
     );
-  }, [plazaTotal, afiliadoTotal, tarifaTotal, agenciaTotal]);
+  }, [plazaTotal, afiliadoTotal, tarifaTotal, agenciaTotal, anuncianteTotal]);
 
   const [activeKey, setActiveKey] = useState<string | null>(catalogRegistry[0]?.key ?? null);
 

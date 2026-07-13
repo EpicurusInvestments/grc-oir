@@ -42,6 +42,7 @@ from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.contrato import (
     Contrato,
     ContratoCreate,
+    ContratoListParams,
     ContratoRead,
     ContratoRepository,
     ContratoService,
@@ -269,3 +270,13 @@ def test_baja_logica(svc: ContratoService, anunciante_id: uuid.UUID) -> None:
     assert baja.activo is False
     # estado_contrato es independiente de activo.
     assert baja.estado_contrato == EstadoContrato.VIGENTE
+
+
+def test_listar_por_anunciante(svc: ContratoService, anunciante_id: uuid.UUID) -> None:
+    _contrato(svc, anunciante_id, numero="C-1")
+    _contrato(svc, anunciante_id, numero="C-2")
+    propios = svc.list(ContratoListParams(anunciante_id=anunciante_id))
+    assert propios.total == 2
+    # Otro anunciante (inexistente) no ve estos contratos.
+    ajenos = svc.list(ContratoListParams(anunciante_id=uuid.uuid4()))
+    assert ajenos.total == 0

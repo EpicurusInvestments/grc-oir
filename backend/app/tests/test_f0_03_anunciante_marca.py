@@ -285,6 +285,20 @@ def test_listar_anunciantes_por_agencia(
     assert page.items[0].nombre_comercial == "Con Agencia"
 
 
+# ── Historial de auditoría del anunciante (dias_credito_default) ──────────────────
+def test_historial_anunciante(anunciante_svc: AnuncianteService) -> None:
+    a = _anunciante(anunciante_svc, dias=30)
+    anunciante_svc.update(
+        a.anunciante_id, AnuncianteUpdate(dias_credito_default=45, motivo_cambio="Ajuste"), ADMIN
+    )
+    hist = anunciante_svc.historial(a.anunciante_id)
+    assert len(hist) == 2
+    assert all(h.entidad == "Anunciante" and h.entidad_id == str(a.anunciante_id) for h in hist)
+    pares = {(h.valor_anterior, h.valor_nuevo) for h in hist}
+    assert (None, "30") in pares  # alta
+    assert ("30", "45") in pares  # edición
+
+
 # ── Portabilidad a SQL Server (regresión ADR-014) ────────────────────────────────
 def test_filtro_directo_compila_is_null_para_sqlserver() -> None:
     """El filtro Directo usa `agencia_id IS NULL` (válido en SQL Server; ADR-014)."""

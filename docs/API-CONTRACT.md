@@ -270,6 +270,9 @@ Ejemplo edición del % sensible (motivo requerido):
 - **`GET /catalogos/anunciantes/agencia/{agencia_id}`** (`catalogos:leer`): anunciantes de
   una agencia, paginado con los filtros `?page&size&activo&q`. Alimenta la sección
   "Anunciantes representados" del panel de detalle de Agencia.
+- **`GET /catalogos/anunciantes/{id}/historial`** (`catalogos:leer`): historial de auditoría
+  del anunciante (cambios de `dias_credito_default`), más reciente primero. Mismo formato y
+  alcance acotado que el de Agencia (ver ADR-021).
 
 Ejemplo alta directo (sin agencia) con días de crédito:
 ```json
@@ -308,6 +311,10 @@ Ejemplo alta directo (sin agencia) con días de crédito:
   falta configurar `S3_BUCKET_CONTRATOS`); no hay endpoint de upload todavía.
 - **Derivado (solo lectura):** `anunciante_nombre` (`nombre_comercial` del anunciante).
 - Búsqueda `?q` sobre número y nombre del contrato.
+
+**`GET /catalogos/contratos/anunciante/{anunciante_id}`** (`catalogos:leer`) — contratos de
+un anunciante, paginado con `?page&size&activo&q`. Alimenta la sección "Contratos" del panel
+de detalle de Anunciante.
 
 **`POST /catalogos/contratos/{id}/estado-contrato`** (`catalogos:editar`) — transiciona
 `estado_contrato` validando la **máquina de estados**. Cuerpo: `{ "estado": "suspendido" }`.

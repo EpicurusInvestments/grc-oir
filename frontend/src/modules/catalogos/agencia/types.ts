@@ -28,19 +28,8 @@ export interface AgenciaAnunciante {
   activo: boolean;
 }
 
-/** Entrada del historial de auditoría (gemela de `LogCambioParametroRead` del backend). */
-export interface HistorialCambio {
-  log_cambio_parametro_id: string;
-  entidad: string;
-  entidad_id: string;
-  campo: string;
-  valor_anterior: string | null;
-  valor_nuevo: string | null;
-  usuario: string;
-  ip: string | null;
-  motivo_cambio: string | null;
-  fecha_cambio: string;
-}
+/** Historial de auditoría: DTO compartido (movido a shared/types en la Tanda 5). */
+export type { HistorialCambio } from "@/shared/types";
 
 export interface AgenciaCreate {
   nombre_agencia: string;
