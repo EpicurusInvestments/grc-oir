@@ -13,10 +13,13 @@ from app.modules.catalogos.afiliado import router as afiliado_router
 from app.modules.catalogos.agencia import router as agencia_router
 from app.modules.catalogos.anunciante import marca_router
 from app.modules.catalogos.anunciante import router as anunciante_router
+from app.modules.catalogos.categoria import router as categoria_router
 from app.modules.catalogos.contrato import router as contrato_router
+from app.modules.catalogos.empresa_facturadora import router as empresa_facturadora_router
 from app.modules.catalogos.estacion import router as estacion_router
 from app.modules.catalogos.plaza import router as plaza_router
 from app.modules.catalogos.tarifa import router as tarifa_router
+from app.modules.catalogos.vendedor import router as vendedor_router
 
 router = APIRouter(prefix="/catalogos", tags=["catalogos"])
 
@@ -34,3 +37,8 @@ router.include_router(agencia_router)
 router.include_router(anunciante_router)
 router.include_router(marca_router)
 router.include_router(contrato_router)
+
+# F0-04 · catálogos de facturación/finanzas (menú "Soporte").
+router.include_router(empresa_facturadora_router)
+router.include_router(vendedor_router)
+router.include_router(categoria_router)

@@ -332,4 +332,38 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   este endpoint por-entidad se conserva como atajo del detalle. Nota de rendimiento: la
   consulta usa el índice `ix_log_cambio_parametro_entidad (entidad, entidad_id)`.
 
-[[Agregar aquí cada nueva decisión: ADR-022, ...]]
+### ADR-022 — Alcance de catálogos de facturación/finanzas: omisiones y diferimientos (F0-04)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-04) · decisiones confirmadas por el equipo.
+- **Contexto:** la spec BD v2 lista 7 entidades para el grupo facturación/finanzas
+  (EmpresaFacturadora, Vendedor, Categoria, MetodoPago, CuentaContable, LayoutFactura,
+  Usuario). El equipo ajustó el alcance de F0-04.
+- **Decisión:**
+  1. **F0-04 implementa 4:** `EmpresaFacturadora`, `Vendedor` (con % sensible auditado),
+     `Categoria`, y el **modelo** de `Usuario` (tabla + seed; su pantalla es F5).
+  2. **`MetodoPago` y `CuentaContable`: diferidos a F0-05.** No se crean tabla ni pantalla
+     propias aquí; se gestionarán dentro de `ConstantesSistema` (pantalla "Constantes del
+     sistema", menú "Configuración").
+  3. **`LayoutFactura`: omitido por ahora** (ni entidad, ni pantalla). Es una **desviación
+     consciente** respecto a la spec v2; si el negocio lo requiere, se reintroduce como
+     tarea aparte.
+- **Consecuencias:** F0-04 queda enfocado; F2 (Facturación) tendrá que contemplar la
+  reintroducción de `LayoutFactura` si se necesita el layout del timbrador por empresa. Los
+  catálogos SAT/timbrador y método de pago/cuenta contable se consolidan en F0-05. Se
+  registra aquí para que la omisión no se lea como olvido.
+
+### ADR-023 — Modelo `Usuario` base + seed mínimo para RBAC (F0-04)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-04)
+- **Contexto:** el RBAC (`core/security.py`) resuelve el usuario por headers de desarrollo
+  (`X-Dev-User`/`X-Dev-Area`, ADR-008) sin tabla. F0-04 crea el **modelo** `Usuario` de la
+  spec para que F5 construya su pantalla y cablee `get_current_user` contra la tabla.
+- **Decisión:** tabla `usuario` con los **7 campos exactos** de la spec (sin `updated_at`;
+  el resto de catálogos sí lo llevan por ADR-011). `area` = VARCHAR + CHECK `ck_usuario_area`
+  con los mismos valores que `core.security.Area` (fuente única). `email` único. Se siembra
+  **un** admin alineado al dev: `nombre_usuario='dev.admin'`, `email='dev.admin@grcoir.com'`,
+  `area='admin'` (id determinista), de modo que en F5 el header `X-Dev-User=dev.admin` empate
+  con un registro real. La **pantalla** de administración de usuarios es de F5.
+- **Consecuencias:** el modelo vive en `app/modules/usuarios/models.py` (módulo espejo,
+  model-only, sin router/servicio). No hay endpoints de Usuario en F0-04. El seed evita el
+  desajuste header↔tabla cuando F5 conecte el RBAC a la BD.
+
+[[Agregar aquí cada nueva decisión: ADR-024, ...]]

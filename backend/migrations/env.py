@@ -15,7 +15,7 @@ from logging.config import fileConfig
 from alembic import context
 
 # Importar los modelos para que Base.metadata conozca sus tablas (autogenerate).
-# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora de auditoría.
+# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora · F0-04: facturación/finanzas + Usuario.
 from app.core import audit  # noqa: F401  (modelo LogCambioParametro)
 from app.core.config import settings
 from app.core.db import Base
@@ -23,11 +23,15 @@ from app.modules.catalogos import (  # noqa: F401
     afiliado,
     agencia,
     anunciante,
+    categoria,
     contrato,
+    empresa_facturadora,
     estacion,
     plaza,
     tarifa,
+    vendedor,
 )
+from app.modules.usuarios import models as usuarios_models  # noqa: F401
 from sqlalchemy import create_engine, pool
 
 config = context.config

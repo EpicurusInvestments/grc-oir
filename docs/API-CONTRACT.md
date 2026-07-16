@@ -337,3 +337,30 @@ Ejemplo alta de contrato (sin `estado_contrato` ni `archivo_contrato_path`):
   "monto_contrato": "500000.00", "porcentaje_comision_contrato": "8.50"
 }
 ```
+
+### Catálogos de facturación/finanzas (F0-04) — EmpresaFacturadora · Vendedor · Categoria
+
+Catálogos de apoyo (menú "Soporte") sobre el patrón CRUD estándar (escritura solo **admin**
+en F0). `MetodoPago`/`CuentaContable` se difieren a F0-05 y `LayoutFactura` se omite (ADR-022).
+
+**`/catalogos/empresas-facturadoras`** — campos: `empresa_facturadora_id`, `nombre_empresa`
+(req.), `rfc_empresa` (req., **único**), `direccion_empresa` (texto largo, NVARCHAR(MAX)),
+`activo`, `created_at`, `updated_at`.
+- **RFC** formato MX 12-13 (reutiliza el regex de F0-01); único → RFC repetido = **409
+  `conflicto`**. Búsqueda `?q` sobre nombre y RFC.
+
+**`/catalogos/vendedores`** — campos: `vendedor_id`, `nombre_vendedor` (req.),
+`email_vendedor`, **`porcentaje_comision_default` (PARÁMETRO SENSIBLE, string 0–100)**,
+`activo`, `created_at`, `updated_at`.
+- El % es sensible: **mismo mecanismo que F0-03** (permiso por campo → motivo requerido al
+  cambiar → `LogCambioParametro`; alta audita con `anterior=null`). Viaja como string.
+- **`GET /catalogos/vendedores/{id}/historial`** (`catalogos:leer`): historial de cambios
+  del % (más reciente primero; alcance acotado, ADR-021).
+- Búsqueda `?q` sobre nombre y correo.
+
+**`/catalogos/categorias`** — campos: `categoria_id`, `nombre_categoria` (req., **único
+case-insensitive**), `descripcion_categoria` (texto largo), `activo`, `created_at`,
+`updated_at`. Nombre duplicado (ignorando mayúsculas/espacios) → **409 `conflicto`**.
+
+**Usuario (modelo base, sin endpoints en F0-04):** la tabla `usuario` y su seed (1 admin
+`dev.admin`) se crean para el RBAC; su **pantalla y endpoints** son de F5 (ADR-023).
