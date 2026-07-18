@@ -17,8 +17,16 @@
   (`estado_contrato`: vigente → suspendido/finalizado/cancelado) independiente de `activo`.
 - **Afiliado** — Empresa externa que opera estaciones (emisoras). Factura al grupo por
   los servicios de transmisión. No accede al sistema.
-- **EmpresaFacturadora** — Entidad legal del grupo que emite facturas; puede haber varias.
-- **Vendedor** — Ejecutivo comercial con lógica de comisiones (principal y secundario).
+- **EmpresaFacturadora** — Entidad legal del grupo que emite facturas; puede haber varias
+  (RFC único). `direccion_empresa` es texto largo (TEXT en la spec).
+- **Vendedor** — Ejecutivo comercial. Tiene un `porcentaje_comision_default` (**parámetro
+  sensible**, auditado). La comisión por vendedor principal/secundario de una orden se
+  modela en la orden (F1), no en el catálogo.
+- **Categoria** — Categoría de industria (Automotriz, Alimentos, Telecom…) para segmentar
+  órdenes y reportes. `nombre_categoria` único (case-insensitive).
+- **Usuario** — Persona interna con un `area` (ventas│facturacion│tesoreria│cxc│cxp│
+  direccion│nominas│admin) para el RBAC. En F0 se crea el modelo + seed mínimo; su pantalla
+  de administración es F5.
 - **Áreas internas** — Ventas, Facturación, Tesorería, CxC, CxP, Dirección/Finanzas,
   Nóminas, Admin (IT). Únicos usuarios del sistema.
 

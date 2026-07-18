@@ -18,9 +18,12 @@ import type { SidebarGroup } from "@/shared/ui";
 import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
 import { AgenciaCatalogPage } from "./agencia/pages/AgenciaCatalogPage";
 import { AnuncianteCatalogPage } from "./anunciante/pages/AnuncianteCatalogPage";
+import { CategoriaCatalogPage } from "./categoria/pages/CategoriaCatalogPage";
 import { ContratoCatalogPage } from "./contrato/pages/ContratoCatalogPage";
+import { EmpresaFacturadoraCatalogPage } from "./empresaFacturadora/pages/EmpresaFacturadoraCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
+import { VendedorCatalogPage } from "./vendedor/pages/VendedorCatalogPage";
 
 export interface CatalogEntry {
   key: string;
@@ -67,8 +70,24 @@ export const catalogRegistry: CatalogEntry[] = [
     group: "Operación",
     render: () => <TarifaCatalogPage />,
   },
-  { key: "vendedor", label: "Vendedores", group: "Soporte" },
-  { key: "categoria", label: "Categorías", group: "Soporte" },
+  {
+    key: "vendedor",
+    label: "Vendedores",
+    group: "Soporte",
+    render: () => <VendedorCatalogPage />,
+  },
+  {
+    key: "categoria",
+    label: "Categorías",
+    group: "Soporte",
+    render: () => <CategoriaCatalogPage />,
+  },
+  {
+    key: "empresa_facturadora",
+    label: "Empresas facturadoras",
+    group: "Soporte",
+    render: () => <EmpresaFacturadoraCatalogPage />,
+  },
   { key: "constantes", label: "Constantes del sistema", group: "Configuración" },
 ];
 
