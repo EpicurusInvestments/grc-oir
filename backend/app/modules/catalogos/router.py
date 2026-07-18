@@ -14,7 +14,9 @@ from app.modules.catalogos.agencia import router as agencia_router
 from app.modules.catalogos.anunciante import marca_router
 from app.modules.catalogos.anunciante import router as anunciante_router
 from app.modules.catalogos.categoria import router as categoria_router
+from app.modules.catalogos.constantes_sistema import router as constantes_router
 from app.modules.catalogos.contrato import router as contrato_router
+from app.modules.catalogos.cuenta_contable import router as cuenta_contable_router
 from app.modules.catalogos.empresa_facturadora import router as empresa_facturadora_router
 from app.modules.catalogos.estacion import router as estacion_router
 from app.modules.catalogos.plaza import router as plaza_router
@@ -42,3 +44,8 @@ router.include_router(contrato_router)
 router.include_router(empresa_facturadora_router)
 router.include_router(vendedor_router)
 router.include_router(categoria_router)
+
+# F0-05 · último módulo de F0: constantes SAT/timbrador (menú "Configuración") + cuenta
+# contable (tabla propia; menú "Soporte"). MetodoPago vive como grupo de ConstantesSistema.
+router.include_router(constantes_router)
+router.include_router(cuenta_contable_router)
