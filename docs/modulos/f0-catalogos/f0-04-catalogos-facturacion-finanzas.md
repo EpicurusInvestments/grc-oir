@@ -103,7 +103,10 @@ ventas│facturacion│tesoreria│cxc│cxp│direccion│nominas│admin), `ro
   mecanismo de auditoría de F0-03 para el % de Vendedor (cero código nuevo en `core/`);
   ruta `GET /catalogos/vendedores/{id}/historial`. Decisiones registradas en ADR-022
   (omisiones) y ADR-023 (Usuario + seed).
-- **Tanda 2 (frontend):** pendiente.
+- **Tanda 2 (frontend): IMPLEMENTADA.** Vendedor (lista + detalle + `SensitiveField` para el
+  % + "Historial de cambios", patrón Agencia), Categoria y EmpresaFacturadora (catálogos
+  simples, patrón Plaza), registrados en `catalogRegistry` bajo el grupo **"Soporte"** con
+  sus contadores de sidebar. Campos vacíos "—", escritura oculta a no-admin.
 - **Tanda 3 (cierre + revision-modulo):** pendiente.
 
 ## Decisiones menores (resueltas)
