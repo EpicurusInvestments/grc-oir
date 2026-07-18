@@ -1,13 +1,14 @@
 # Módulo F0-04 — Catálogos de facturación/finanzas y base de Usuario · Fase: F0
 
-> Catálogos de apoyo a Facturación y Finanzas, en su mayoría CRUD simple, más el
-> **modelo** mínimo de Usuario para el RBAC (su pantalla de administración vive en F5).
-> Referencias: spec BD v2 y `Fase_0_-_Catalogos.html` (grupos "vendedor", "categoria").
+> **Estado: IMPLEMENTADO** (back + front, aplicado y verificado contra RDS). Catálogos de
+> apoyo a Facturación y Finanzas, en su mayoría CRUD simple, más el **modelo** mínimo de
+> Usuario para el RBAC (su pantalla de administración vive en F5). Referencias: spec BD v2
+> y `Fase_0_-_Catalogos.html` (grupos "vendedor", "categoria").
 >
 > **Alcance ajustado (respuestas del equipo, ver "Decisiones confirmadas"):** de las 7
 > entidades originalmente contempladas, este módulo implementa **solo 4**: EmpresaFacturadora,
 > Vendedor, Categoria y el modelo de Usuario. MetodoPago y CuentaContable se gestionan en
-> `ConstantesSistema` (F0-05); LayoutFactura se omite por ahora.
+> `ConstantesSistema` (F0-05); LayoutFactura se omite por ahora (ADR-022).
 
 ## Propósito
 
@@ -15,23 +16,29 @@ Completar los catálogos que F2 (Facturación) y F4 (Reportes) necesitan: empres
 facturadora, vendedores (con comisión) y categorías comerciales. Dejar listo el modelo de
 Usuario/área para el control de acceso.
 
-## Entidades a implementar en F0-04
+## Entidades implementadas (F0-04)
 
-### EmpresaFacturadora (6 campos)
-`empresa_facturadora_id` (PK), `nombre_empresa` (NOT NULL), `rfc_empresa` (NOT NULL),
-`direccion_empresa`, `activo`, `created_at`. (El grupo puede tener varias razones sociales.)
-- **Pantalla:** catálogo simple, ubicado en el menú **"Soporte"** del sidebar.
+> Los 3 catálogos llevan además `updated_at` (ADR-011), como el resto de catálogos previos.
 
-### Vendedor (6 campos)
+### EmpresaFacturadora (6 campos + `updated_at`)
+`empresa_facturadora_id` (PK), `nombre_empresa` (NVARCHAR(200), NOT NULL), `rfc_empresa`
+(NVARCHAR(13), NOT NULL, **único**), `direccion_empresa` (**TEXT → NVARCHAR(MAX)**), `activo`,
+`created_at`, `updated_at`. (El grupo puede tener varias razones sociales.)
+- **Pantalla:** catálogo simple, en el menú **"Soporte"**. Lista: Empresa · RFC · Estatus;
+  dirección en el detalle.
+
+### Vendedor (6 campos + `updated_at`)
 `vendedor_id` (PK), `nombre_vendedor` (NOT NULL), `email_vendedor`,
-**`porcentaje_comision_default` (DECIMAL · PARÁMETRO SENSIBLE — tag «Audit log»)**,
-`activo`, `created_at`. Separado de Usuario porque tiene lógica de comisiones.
-- **Pantalla:** grupo propio en el sidebar (menú "Soporte"), lista + detalle.
+**`porcentaje_comision_default` (NUMERIC(5,2) · PARÁMETRO SENSIBLE — tag «Audit log»)**,
+`activo`, `created_at`, `updated_at`. Separado de Usuario porque tiene lógica de comisiones.
+- **Pantalla:** menú "Soporte", lista + detalle. Lista: Nombre · Correo · % Comisión ·
+  Estatus. Detalle con "Historial de cambios" del %.
 
-### Categoria (5 campos)
-`categoria_id` (PK), `nombre_categoria` (NOT NULL), `descripcion_categoria`, `activo`,
-`created_at`. (Automotriz, Alimentos, Telecom, etc.)
-- **Pantalla:** grupo propio en el sidebar (menú "Soporte"), lista + detalle.
+### Categoria (5 campos + `updated_at`)
+`categoria_id` (PK), `nombre_categoria` (NOT NULL, **único case-insensitive**),
+`descripcion_categoria` (TEXT), `activo`, `created_at`, `updated_at`. (Automotriz, Alimentos,
+Telecom, etc.)
+- **Pantalla:** menú "Soporte", lista + detalle. Lista: Categoría · Descripción · Estatus.
 
 ### Usuario (7 campos) — solo el MODELO aquí
 `usuario_id` (PK), `nombre_usuario` (NOT NULL), `email` (NOT NULL), `area` (ENUM:
@@ -69,18 +76,19 @@ ventas│facturacion│tesoreria│cxc│cxp│direccion│nominas│admin), `ro
   F0-03). Por ahora solo Admin puede modificarlo; en F5 se abrirá a Dirección si aplica.
 
 ## Reglas de negocio clave
-- RFC de EmpresaFacturadora válido (persona moral); puede haber varias empresas facturadoras.
+- RFC de EmpresaFacturadora válido (12-13, formato MX; reutiliza el regex de F0-01) y
+  **único**; puede haber varias empresas facturadoras.
 - `porcentaje_comision_default` del vendedor: parámetro sensible (mismo tratamiento que
   F0-03 — auditoría en alta con `anterior=None` y en edición cuando cambia, motivo requerido).
-- `nombre_categoria` recomendable único (confirmar); Categoria es catálogo simple.
+- `nombre_categoria` **único, case-insensitive** (409 `conflicto`); Categoria es catálogo simple.
 - **Vendedor principal/secundario y sus comisiones NO se modelan aquí:** se modelan en la
   **orden** (F1). En F0-04, Vendedor es solo el catálogo con su comisión default.
 
 ## Auditoría
 - Un campo sensible en este módulo: `Vendedor.porcentaje_comision_default`. Reutiliza el
-  mecanismo `audit.registrar_cambio_sensible` / `LogCambioParametro` ya construido en F0-03.
-  El panel de detalle de Vendedor debe mostrar su "Historial de cambios" (reutilizando
-  `BaseService.historial`, como en F0-03).
+  mecanismo `audit.registrar_cambio_sensible` / `LogCambioParametro` de F0-03 (**cero código
+  nuevo en `core/`**). El panel de detalle de Vendedor muestra su "Historial de cambios"
+  (vía `BaseService.historial` + `GET /catalogos/vendedores/{id}/historial`), como en F0-03.
 
 ## Integraciones
 - Ninguna.
@@ -107,7 +115,11 @@ ventas│facturacion│tesoreria│cxc│cxp│direccion│nominas│admin), `ro
   % + "Historial de cambios", patrón Agencia), Categoria y EmpresaFacturadora (catálogos
   simples, patrón Plaza), registrados en `catalogRegistry` bajo el grupo **"Soporte"** con
   sus contadores de sidebar. Campos vacíos "—", escritura oculta a no-admin.
-- **Tanda 3 (cierre + revision-modulo):** pendiente.
+- **Tanda 3 (cierre): COMPLETADA.** Documentación al día (esta ficha, API-CONTRACT, ADR-022/023,
+  glosario) y `revision-modulo` pasada. Migraciones aplicadas a RDS; pruebas back/front en verde.
+
+## Migración (aplicada a RDS `GRC-OIR`)
+- `f1a4d0c25e63` — `empresa_facturadora`, `vendedor`, `categoria`, `usuario` (+ seed admin).
 
 ## Decisiones menores (resueltas)
 - `nombre_categoria` **único, case-insensitive** (E-1). `rfc_empresa` **único** (E-2).
