@@ -77,6 +77,32 @@
   del área): utilidad bruta y neta calculadas por fórmula.
 - **Antigüedad de saldos** — Clasificación de cuentas por cobrar por días vencidos
   (corriente, 1-30, 31-60, 61-90, 90+).
+- **ConstantesSistema** — Catálogos SAT/timbrador que el sistema usa al PREPARAR la factura
+  para el timbrador externo (F2). Entidad de configuración homogénea (`grupo`/`clave`/
+  `descripcion`/`valor`) con 9 grupos: TipoComprobante, Serie, RegimenFiscal, ClaveProdServ,
+  ClaveUnidad, UsoCFDI, FormaPago, MetodoPago, MonedaSAT. Solo lectura para operadores; el
+  Admin las edita (manual o por carga masiva CSV). Unicidad `(grupo, clave)` (la misma clave
+  puede repetirse entre grupos).
+- **MetodoPago (SAT)** — Grupo de ConstantesSistema con los métodos de pago del SAT: PUE
+  (pago en una sola exhibición) o PPD (pago en parcialidades o diferido). Se difirió de F0-04
+  y se gestiona como constante SAT, no como tabla propia.
+- **CuentaContable** — Catálogo contable interno: `codigo_cuenta` (único), `nombre_cuenta` y
+  `tipo_cuenta` (ENUM: ingreso│costo│gasto│activo│pasivo). Se modela como **tabla propia**
+  (no dentro de ConstantesSistema) por tener estructura distinta a las constantes SAT.
+
+## Importación de archivos
+
+- **Carga masiva CSV** — Alta de muchos registros a la vez desde un archivo CSV (además de la
+  captura manual). Debut en F0-05 para ConstantesSistema. El archivo se procesa en memoria y
+  no se persiste en el servidor.
+- **Dry-run → confirmar** — Patrón de la carga masiva: primero se sube en modo previsualización
+  (`commit=false`, NO escribe) y se muestra el reporte de qué se haría; solo si el usuario
+  confirma, se re-sube (`commit=true`) para aplicar. Stateless (el cliente re-sube el mismo
+  archivo).
+- **Modo de duplicados** — Qué hacer cuando una clave del archivo ya existe: `actualizar`
+  (upsert, default e idempotente), `omitir` (conservar sin cambios) o `rechazar`.
+- **Import parcial** — Las filas válidas se importan aunque otras sean inválidas; las
+  rechazadas se reportan con su motivo. Las válidas se aplican de forma atómica (todo o nada).
 
 ## Sistema
 
