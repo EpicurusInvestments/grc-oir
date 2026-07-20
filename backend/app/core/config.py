@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     app_env: str = "development"
     secret_key: str = "dev-insecure-change-me"
     iva_rate: float = 0.16
+    # ── Importación masiva CSV (F0-05) ───────────────────────────────────────────
+    # Límites del archivo de carga masiva de constantes. Configurables por entorno; si algún
+    # día se necesita cargar un catálogo SAT completo (p.ej. c_ClaveProdServ ~52k filas) se
+    # sube el tope. El archivo se procesa EN MEMORIA (no se persiste en el servidor).
+    import_csv_max_bytes: int = 2 * 1024 * 1024  # 2 MB
+    import_csv_max_rows: int = 5000
     # Orígenes permitidos por CORS (coma-separados). En dev, el frontend Vite.
     # En qa/producción se pone el dominio real vía variable de entorno.
     cors_origins: str = "http://localhost:5173"

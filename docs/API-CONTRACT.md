@@ -364,3 +364,44 @@ case-insensitive**), `descripcion_categoria` (texto largo), `activo`, `created_a
 
 **Usuario (modelo base, sin endpoints en F0-04):** la tabla `usuario` y su seed (1 admin
 `dev.admin`) se crean para el RBAC; su **pantalla y endpoints** son de F5 (ADR-023).
+
+### Constantes del sistema y cuenta contable (F0-05) — ConstantesSistema · CuentaContable
+
+Último módulo de F0. Catálogos SAT/timbrador (menú **"Configuración"**) que F2 consume al
+preparar el archivo plano del timbrador, y catálogo contable (menú **"Soporte"**). Escritura
+solo **admin**; lectura para todas las áreas (para el operador son de solo lectura).
+
+**`/catalogos/constantes`** — campos: `constante_sistema_id`, `grupo` (req., uno de los 9
+grupos SAT), `clave` (req.), `descripcion` (req.), `valor` (opcional), `activo`, `created_at`,
+`updated_at`. Grupos válidos: `TipoComprobante`, `Serie`, `RegimenFiscal`, `ClaveProdServ`,
+`ClaveUnidad`, `UsoCFDI`, `FormaPago`, `MetodoPago`, `MonedaSAT` (grupo inválido → **422**).
+- **Unicidad `(grupo, clave)`** case-insensitive: la misma clave puede repetirse entre grupos,
+  pero no dentro de uno → duplicado en el mismo grupo = **409 `conflicto`**. `grupo`/`clave` no
+  se editan (identidad natural): el `PUT` solo cambia `descripcion` y `valor`.
+- **`GET /catalogos/constantes?grupo=<grupo>`**: además de `page/size/activo/q`, filtra por
+  grupo. Búsqueda `?q` sobre clave, descripción y grupo.
+- **`GET /catalogos/constantes/conteos?solo_activos=<bool>`** (`catalogos:leer`): conteo por
+  grupo para las pills (devuelve los 9 grupos, con 0 si están vacíos).
+
+**`POST /catalogos/constantes/importar`** (`catalogos:crear`, solo **admin**) — carga masiva
+CSV. `multipart/form-data`: `archivo` (.csv), `commit` (bool, default `false`),
+`modo_duplicados` (`actualizar` | `omitir` | `rechazar`, default `actualizar`).
+- **Flujo dry-run → confirmar (stateless):** con `commit=false` devuelve el reporte de qué se
+  haría **sin escribir**; el cliente re-sube el mismo archivo con `commit=true` para aplicar.
+  El archivo se procesa en memoria y **no se persiste** en el servidor.
+- **Columnas:** `grupo,clave,descripcion,valor,activo` (encabezado; UTF-8 con/ sin BOM;
+  delimitador `,` o `;`). **Validación estructural** (columnas faltantes, vacío, no-UTF-8) →
+  **400 `archivo_invalido`**; exceso de tamaño/filas (2 MB / 5 000 por defecto, configurables)
+  → **413 `archivo_muy_grande`**; extensión ≠ `.csv` → **400 `archivo_invalido`**.
+- **Import parcial:** las filas válidas entran; las inválidas se reportan con su motivo.
+  Duplicados: `actualizar` (upsert, idempotente), `omitir` o `rechazar`; duplicado **dentro
+  del archivo** → segunda fila rechazada. Las filas válidas se aplican en **una transacción**.
+- **Reporte (200):** `{ commit, total_filas, creadas, actualizadas, omitidas, rechazadas,
+  errores_estructura, filas: [ { numero, grupo, clave, estado, motivo } ] }` donde `estado` ∈
+  `creada | actualizada | omitida | rechazada`.
+
+**`/catalogos/cuentas-contables`** — campos: `cuenta_contable_id`, `codigo_cuenta` (req.,
+**único case-insensitive**), `nombre_cuenta` (req.), `tipo_cuenta` (req., ENUM:
+`ingreso | costo | gasto | activo | pasivo`; inválido → **422**), `activo`, `created_at`,
+`updated_at`. Código duplicado → **409 `conflicto`**. Patrón CRUD estándar (sin carga CSV por
+ahora; el helper de importación quedó reutilizable — ADR-025). Búsqueda `?q` sobre código y nombre.
