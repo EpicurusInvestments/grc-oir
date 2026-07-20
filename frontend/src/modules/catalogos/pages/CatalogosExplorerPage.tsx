@@ -12,7 +12,9 @@ import { useAfiliados } from "@/modules/catalogos/afiliado/hooks";
 import { useAgencias } from "@/modules/catalogos/agencia/hooks";
 import { useAnunciantes } from "@/modules/catalogos/anunciante/hooks";
 import { useCategorias } from "@/modules/catalogos/categoria/hooks";
+import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useContratos } from "@/modules/catalogos/contrato/hooks";
+import { useCuentasContables } from "@/modules/catalogos/cuentaContable/hooks";
 import { useEmpresasFacturadoras } from "@/modules/catalogos/empresaFacturadora/hooks";
 import { useVendedores } from "@/modules/catalogos/vendedor/hooks";
 import {
@@ -41,6 +43,8 @@ export function CatalogosExplorerPage() {
   const vendedorTotal = useVendedores().useList({ page: 1, size: 1 }).data?.total;
   const categoriaTotal = useCategorias().useList({ page: 1, size: 1 }).data?.total;
   const empresaTotal = useEmpresasFacturadoras().useList({ page: 1, size: 1 }).data?.total;
+  const cuentaTotal = useCuentasContables().useList({ page: 1, size: 1 }).data?.total;
+  const constanteTotal = useConstantes().useList({ page: 1, size: 1 }).data?.total;
 
   const groups = useMemo(() => {
     const counts: Record<string, number | undefined> = {
@@ -53,6 +57,8 @@ export function CatalogosExplorerPage() {
       vendedor: vendedorTotal,
       categoria: categoriaTotal,
       empresa_facturadora: empresaTotal,
+      cuenta_contable: cuentaTotal,
+      constantes: constanteTotal,
     };
     return buildSidebarGroups(
       catalogRegistry.map((e) =>
@@ -69,6 +75,8 @@ export function CatalogosExplorerPage() {
     vendedorTotal,
     categoriaTotal,
     empresaTotal,
+    cuentaTotal,
+    constanteTotal,
   ]);
 
   const [activeKey, setActiveKey] = useState<string | null>(catalogRegistry[0]?.key ?? null);

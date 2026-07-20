@@ -15,6 +15,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "pyodbc>=5.1",
+    "python-multipart>=0.0.9",  # F0-05: carga de archivos (UploadFile/Form) para importación CSV
 ]
 
 [dependency-groups]
@@ -56,6 +57,8 @@ extend-immutable-calls = [
     "fastapi.Query",
     "fastapi.Path",
     "fastapi.Body",
+    "fastapi.File",
+    "fastapi.Form",
     "app.core.security.requiere_permiso",
 ]
 

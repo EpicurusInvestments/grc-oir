@@ -19,7 +19,9 @@ import { AfiliadoCatalogPage } from "./afiliado/pages/AfiliadoCatalogPage";
 import { AgenciaCatalogPage } from "./agencia/pages/AgenciaCatalogPage";
 import { AnuncianteCatalogPage } from "./anunciante/pages/AnuncianteCatalogPage";
 import { CategoriaCatalogPage } from "./categoria/pages/CategoriaCatalogPage";
+import { ConstantesSistemaPage } from "./constantesSistema/pages/ConstantesSistemaPage";
 import { ContratoCatalogPage } from "./contrato/pages/ContratoCatalogPage";
+import { CuentaContableCatalogPage } from "./cuentaContable/pages/CuentaContableCatalogPage";
 import { EmpresaFacturadoraCatalogPage } from "./empresaFacturadora/pages/EmpresaFacturadoraCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
@@ -88,7 +90,18 @@ export const catalogRegistry: CatalogEntry[] = [
     group: "Soporte",
     render: () => <EmpresaFacturadoraCatalogPage />,
   },
-  { key: "constantes", label: "Constantes del sistema", group: "Configuración" },
+  {
+    key: "cuenta_contable",
+    label: "Cuentas contables",
+    group: "Soporte",
+    render: () => <CuentaContableCatalogPage />,
+  },
+  {
+    key: "constantes",
+    label: "Constantes del sistema",
+    group: "Configuración",
+    render: () => <ConstantesSistemaPage />,
+  },
 ];
 
 /** Construye los grupos del sidebar a partir del registry, respetando CATALOG_GROUPS. */

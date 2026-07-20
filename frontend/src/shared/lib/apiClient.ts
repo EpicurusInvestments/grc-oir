@@ -37,6 +37,13 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** POST de `multipart/form-data` (carga de archivos). Axios fija el boundary del
+ *  Content-Type automáticamente al recibir un FormData. Lo usa la importación CSV. */
+export async function postFormData<T>(url: string, formData: FormData): Promise<T> {
+  const { data } = await apiClient.post<T>(url, formData);
+  return data;
+}
+
 apiClient.interceptors.response.use(
   (res) => res,
   (error: AxiosError<ApiError>) => {

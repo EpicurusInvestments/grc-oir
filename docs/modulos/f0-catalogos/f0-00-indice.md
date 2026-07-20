@@ -42,8 +42,8 @@ siempre primero.
 - **Edición de catálogos:** por ahora **solo Admin (IT)** puede editar todos los
   catálogos de F0. En una versión posterior, Ventas podrá capturar/editar
   afiliados/estaciones (ver F0-01).
-- **Constantes del sistema:** edición solo Admin; los valores se cargan con una **carga
-  inicial** (seed). Ver `f0-05`.
+- **Constantes del sistema:** edición solo Admin; **sin seed automático** — la carga inicial
+  es manual y la **carga masiva CSV** se usará cuando exista la lista oficial del SAT. Ver `f0-05`.
 - **Marca:** no tiene pantalla propia; **se gestiona anidada dentro de Anunciante**. Ver `f0-03`.
 - **Paginación:** las listas usan **paginación por página** (no scroll infinito).
 - **Plaza de la estación (Opción A):** la estación **hereda la plaza de su afiliado**;

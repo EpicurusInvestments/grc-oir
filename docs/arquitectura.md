@@ -366,4 +366,60 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   model-only, sin router/servicio). No hay endpoints de Usuario en F0-04. El seed evita el
   desajuste header↔tabla cuando F5 conecte el RBAC a la BD.
 
-[[Agregar aquí cada nueva decisión: ADR-024, ...]]
+### ADR-024 — CuentaContable como tabla propia; MetodoPago como constante SAT (F0-05)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-05) · decisión confirmada por el equipo.
+- **Contexto:** F0-05 consolida los catálogos SAT/timbrador en `ConstantesSistema` (entidad
+  HOMOGÉNEA: grupo/clave/descripcion/valor). Dos catálogos diferidos de F0-04 (ADR-022) debían
+  ubicarse aquí: `MetodoPago` y `CuentaContable`. El primero encaja como constante SAT simple;
+  el segundo tiene estructura propia (`codigo_cuenta`, `nombre_cuenta`, `tipo_cuenta` ENUM).
+- **Decisión:**
+  1. **`MetodoPago` = grupo de `ConstantesSistema`** (valores `PUE`/`PPD`): es homogéneo con el
+     resto de constantes SAT, no amerita tabla propia.
+  2. **`CuentaContable` = tabla propia** (Opción 2 del plan), NO un registro dentro de la
+     genérica. Motivos: (a) fidelidad a la spec v2 (regla de oro #3), que la lista como entidad
+     con campos propios; (b) su ENUM `tipo_cuenta` se implementa como VARCHAR + CHECK nombrado
+     (`ck_cuenta_contable_tipo`, 5 valores), imposible sobre el `valor` genérico compartido por
+     9 grupos; (c) integridad futura: una tabla real con PK permite que F3/F4 la referencien por
+     FK; (d) costo bajo: es otro catálogo sobre la base de F0-00 (como `Categoria`).
+  3. **Unicidad de `ConstantesSistema` = `(grupo, clave)`** compuesta y case-insensitive (la
+     misma clave puede repetirse entre grupos, no dentro de uno); `CuentaContable.codigo_cuenta`
+     único CI. Ambas verificadas en el servicio con `func.lower(...)` (ADR-017).
+- **Consecuencias:** los catálogos SAT quedan bajo una sola entidad flexible y CuentaContable
+  conserva su semántica y validación fuertes. `MetodoPago`/`CuentaContable` dejan de estar
+  "diferidos". Pendiente menor (F-6): confirmar con contabilidad si CuentaContable requiere
+  campos extra (naturaleza, agrupador); de ser así se amplía sin romper lo existente.
+
+### ADR-025 — Carga masiva CSV: dry-run→confirmar, stateless, import parcial atómico (F0-05)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F0-05, tanda 2) · primera importación de archivos
+  del proyecto.
+- **Contexto:** el Admin debe poder cargar los catálogos SAT en lote desde un CSV oficial,
+  además de la captura manual. Es la primera vez que el proyecto recibe archivos; había que
+  definir el mecanismo sin comprometer seguridad ni claridad del resultado.
+- **Decisión:**
+  1. **Endpoint** `POST /catalogos/constantes/importar` (`multipart/form-data`, `catalogos:crear`
+     → solo admin). `archivo` (.csv) + `commit` (bool) + `modo_duplicados`.
+  2. **Flujo dry-run → confirmar, STATELESS:** `commit=false` devuelve el reporte de qué se haría
+     sin escribir; el cliente re-sube el MISMO archivo con `commit=true` para aplicar (se
+     revalida). No se persiste el archivo en el servidor (sin temporales, sin PII residual).
+  3. **Validación en dos niveles:** estructural (columnas/vacío/UTF-8 → 400; tamaño/filas →
+     413) que aborta todo; y por fila (enum de grupo, obligatorios, longitudes, `activo`), que
+     NO aborta: **import parcial** (válidas entran, inválidas se reportan con motivo).
+  4. **Duplicados:** `actualizar` (upsert, default; idempotente al re-cargar la lista oficial),
+     `omitir` o `rechazar`; duplicado **dentro del archivo** → 2ª fila rechazada. Clasificación
+     sin N+1 precargando el índice `(grupo, clave)` en memoria (`mapa_por_grupo_clave`).
+  5. **Atomicidad:** el subconjunto válido se aplica en UNA transacción (rollback total si falla
+     a nivel BD). El reporte es idéntico en dry-run y commit (previsualización fiel).
+  6. **Límites/seguridad:** 2 MB / 5 000 filas (configurables en `config.py`); solo `.csv`;
+     procesado en memoria con `csv`/`io` de la stdlib (sin pandas). Única dependencia nueva:
+     `python-multipart` (requerida por FastAPI para `UploadFile`/`Form`).
+  7. **Helper reutilizable** `importacion_csv.py`: aísla lo mecánico y agnóstico al dominio
+     (lectura con tope, decodificación/BOM, sniff de delimitador, validación estructural, tipos
+     del reporte). La validación por fila y la política de duplicados viven en el servicio del
+     catálogo. Así CuentaContable u otros catálogos podrán tener carga CSV reusando el helper.
+- **Consecuencias:** patrón de importación de archivos establecido para todo el sistema (NOI,
+  estados de cuenta, XML de proveedor en fases posteriores podrán inspirarse en él, aunque esos
+  van por la capa de integración). La neutralización de CSV-injection (`= + - @`) corresponde a
+  la EXPORTACIÓN a Excel (F2/reportes), no a esta importación (que solo almacena texto). Por
+  ahora solo `ConstantesSistema` expone `/importar`; CuentaContable queda listo para sumarlo.
+
+[[Agregar aquí cada nueva decisión: ADR-026, ...]]
