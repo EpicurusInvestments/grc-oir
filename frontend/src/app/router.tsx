@@ -1,10 +1,15 @@
-/** Router de la app. F0-00: una sola ruta → explorador de catálogos. */
+/** Router de la app.
+ *  /           → Dashboard (Home real del sistema, malla de fases).
+ *  /catalogos  → Explorador de catálogos (F0).
+ *  Al construir una fase nueva: darle `enabled`+`route` en phaseRegistry y montar su ruta aquí.
+ */
 
 import { createBrowserRouter } from "react-router-dom";
 
+import { DashboardPage } from "@/modules/dashboard/pages/DashboardPage";
 import { CatalogosExplorerPage } from "@/modules/catalogos/pages/CatalogosExplorerPage";
 
 export const router = createBrowserRouter([
-  { path: "/", element: <CatalogosExplorerPage /> },
-  // F0-01+: rutas adicionales si algún catálogo necesita form full-screen propio.
+  { path: "/", element: <DashboardPage /> },
+  { path: "/catalogos", element: <CatalogosExplorerPage /> },
 ]);
