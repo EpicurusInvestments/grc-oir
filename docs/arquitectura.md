@@ -312,6 +312,9 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Consecuencias:** el dominio queda listo para S3 sin acoplarse a él; activar la subida
   real será añadir un `AlmacenamientoS3` que implemente el puerto y cambiar la inyección,
   sin tocar la capa de negocio. La integración real de S3 se hará como tarea aparte tras F0-03.
+- **Actualización (2026-07-23):** **IMPLEMENTADA** en **ADR-027** — se añadió el adaptador S3
+  real, la selección local/S3 por `STORAGE_BACKEND` y los endpoints de adjuntos. La subida
+  ya NO está diferida.
 
 ### ADR-021 — Lectura acotada del historial de auditoría por entidad en F0-03
 - **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 4)
@@ -454,4 +457,49 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   escalonado, hover con elevación y zoom) con respeto a `prefers-reduced-motion`. Ficha del
   módulo en `docs/modulos/transversal/dashboard-navegacion.md`.
 
-[[Agregar aquí cada nueva decisión: ADR-027, ...]]
+### ADR-027 — Integración REAL de S3 para adjuntos de contrato (implementa ADR-020)
+- **Estado:** aceptada · **Fecha:** 2026-07-23 · **implementa/cierra ADR-020**.
+- **Contexto:** ADR-020 dejó el puerto de almacenamiento anti-corrupción con la subida
+  DIFERIDA (adaptador local placeholder). Ya hay bucket privado (`s3-grc-oir-dev`, `us-west-2`)
+  y un usuario IAM con permisos mínimos, validado por el equipo. Toca implementar la subida/
+  descarga real de PDF de contrato sin cambiar cómo el dominio usa el puerto.
+- **Decisión:**
+  1. **Se reutiliza el puerto** `AlmacenamientoPort`, extendido con `obtener(clave)` y
+     `borrar(clave)`, y `listar` ahora devuelve `DocumentoAlmacenado` (nombre, clave, tamaño,
+     fecha). El servicio de Contrato sigue dependiendo SOLO del puerto (inyección).
+  2. **Dos adaptadores que cumplen el MISMO puerto:** `AlmacenamientoLocal` (ahora
+     **filesystem real**, default para dev/pruebas) y `AlmacenamientoS3` (boto3 sobre el
+     bucket privado). La **selección es por configuración** (`STORAGE_BACKEND=local|s3`);
+     `get_almacenamiento()` es el único punto de decisión y **falla ruidosa** si se pide `s3`
+     sin `S3_BUCKET_CONTRATOS`/`AWS_REGION` (no cae en silencio al local). Cero lógica
+     duplicada: saneo de nombre, validación PDF/tamaño y prefijo son compartidos
+     (`integrations/almacenamiento/documentos.py`).
+  3. **Credenciales:** `config.py` declara `aws_access_key_id`/`aws_secret_access_key`
+     (opcionales, vacías por defecto); pydantic-settings las lee del `.env` y el adaptador
+     las pasa **explícitamente** a boto3. Si están vacías (qa/producción), boto3 usa su
+     **cadena por defecto**: rol de instancia / AWS Secrets Manager. Siguen viniendo solo del
+     entorno/`.env`, **nunca hardcodeadas**. En `.env.example` van como `[[POR LLENAR]]`.
+     *(Corrige la decisión inicial F-1: se intentó dejarlas SOLO a la cadena por defecto de
+     boto3, pero pydantic-settings **no exporta a `os.environ`**, así que el `.env` no
+     alimentaba a boto3 y daba `NoCredentialsError`. Pasarlas explícitas resuelve el canal
+     pydantic-settings↔boto3 y funciona igual en local y Docker, depurando comillas.)*
+  4. **Servicio seguro de PDFs:** el bucket es privado; los PDF se sirven SIEMPRE por el
+     backend (que valida RBAC), nunca por URL pública ni presigned. El cliente jamás envía
+     una clave S3 cruda: manda solo el `nombre`, y el backend compone la clave desde el
+     prefijo del propio contrato → acota el acceso y bloquea *path traversal*.
+  5. **Endpoints** (bajo `/catalogos/contratos/{id}/adjuntos`): listar (GET) y descargar
+     (GET `/{nombre}`) = `catalogos:leer`; subir (POST, multipart) y borrar (DELETE) =
+     `catalogos:editar`. Validación: solo PDF (extensión + *magic bytes* `%PDF-`), tamaño
+     máx. configurable (`S3_MAX_PDF_BYTES`, default 10 MB) → 413; errores de S3 → 502
+     (`AlmacenamientoError`) con mensaje legible, sin filtrar detalle interno.
+  6. **Nombre repetido SOBRESCRIBE** (put idempotente), con aviso en la UI (decisión F-3);
+     si el negocio lo requiere, se puede cambiar a rechazar duplicados.
+- **Consecuencias:** activar S3 es cambiar una variable de entorno; el dominio no cambió.
+  `boto3` queda como dependencia formal en `pyproject.toml`. Sigue **sin tabla
+  `ContratoDocumento`** (basta el prefijo). **Limitación conocida:** renombrar
+  `numero_contrato` recalcula el prefijo pero NO mueve los objetos ya subidos en S3 (fuera
+  de alcance; se reevaluará si el negocio lo requiere). Pruebas sin credenciales: adaptador
+  local (filesystem) para servicio/router y un **cliente boto3 falso en memoria** para el
+  adaptador S3.
+
+[[Agregar aquí cada nueva decisión: ADR-028, ...]]

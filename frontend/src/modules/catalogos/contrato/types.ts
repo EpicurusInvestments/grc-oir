@@ -44,6 +44,16 @@ export interface ContratoUpdate extends Partial<ContratoCreate> {
   motivo_cambio?: string | null;
 }
 
+/** PDF adjunto de un contrato (metadata expuesta por el backend; la clave S3 no se expone). */
+export interface AdjuntoContrato {
+  nombre: string;
+  tamano_bytes: number;
+  modificado_en: string | null;
+}
+
+/** Tamaño máximo de PDF aceptado en el front (espejo del backend S3_MAX_PDF_BYTES = 10 MB). */
+export const ADJUNTO_MAX_BYTES = 10 * 1024 * 1024;
+
 /** Transiciones permitidas desde cada estado (gemelo de `TRANSICIONES` del backend). */
 export const TRANSICIONES: Record<EstadoContrato, EstadoContrato[]> = {
   vigente: ["suspendido", "finalizado", "cancelado"],

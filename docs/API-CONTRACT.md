@@ -306,9 +306,9 @@ Ejemplo alta directo (sin agencia) con días de crédito:
 - **`estado_contrato`:** `vigente|suspendido|finalizado|cancelado`. **NO** se cambia por el
   `PUT` genérico (no está en Create/Update); se crea en `vigente` y se transiciona por el
   endpoint dedicado (abajo). Es una dimensión **independiente** de `activo` (baja lógica).
-- **Adjuntos (S3):** `archivo_contrato_path` = prefijo `contratos/<numero_contrato>/`
-  (recalculado si cambia el número). La **subida real a S3 está diferida** (adaptador local;
-  falta configurar `S3_BUCKET_CONTRATOS`); no hay endpoint de upload todavía.
+- **Adjuntos (PDF):** `archivo_contrato_path` = prefijo `contratos/<numero_contrato>/`
+  (recalculado si cambia el número). La subida/descarga real está **implementada** (ADR-027);
+  ver endpoints de adjuntos abajo. Backend de almacenamiento por `STORAGE_BACKEND` (local|s3).
 - **Derivados (solo lectura):** `anunciante_nombre` (`nombre_comercial`) y `anunciante_rfc`
   (`rfc_anunciante`) del anunciante, calculados por lote (sin N+1).
 - **Filtro por estado:** la lista acepta **`?estado=vigente|suspendido|finalizado|cancelado`**
@@ -328,6 +328,25 @@ de detalle de Anunciante.
   `suspendido→{vigente,cancelado}`, `finalizado→{cancelado}`, `cancelado→∅` (terminal).
 - Transición no permitida → **409 `transicion_invalida`** (`detalles` lista las permitidas).
   Transicionar al mismo estado es idempotente (no cambia nada). No afecta `activo`.
+
+**Adjuntos (PDF) del contrato** (ADR-027) — bucket **privado**; los PDF se sirven SIEMPRE
+por el backend (nunca URL pública). El cliente maneja solo el **nombre** de archivo; la clave
+S3 la compone el servidor a partir del prefijo del propio contrato (bloquea *path traversal*).
+El backend de almacenamiento (local o S3) se elige por `STORAGE_BACKEND`.
+
+- **`GET /catalogos/contratos/{id}/adjuntos`** (`catalogos:leer`) — lista los PDF del
+  contrato. Devuelve `[{ "nombre", "tamano_bytes", "modificado_en" }]`.
+- **`POST /catalogos/contratos/{id}/adjuntos`** (`catalogos:editar`) — sube un PDF.
+  `multipart/form-data` con el campo **`archivo`**. Valida tipo (extensión `.pdf` + *magic
+  bytes* `%PDF-`) y tamaño (`S3_MAX_PDF_BYTES`, default 10 MB). Respuesta **201** con
+  `{ "nombre", "tamano_bytes", "modificado_en" }`. Un nombre repetido **sobrescribe**.
+  Errores: **400 `archivo_no_pdf`** (no es PDF), **413 `archivo_muy_grande`** (excede tamaño).
+- **`GET /catalogos/contratos/{id}/adjuntos/{nombre}`** (`catalogos:leer`) — descarga/sirve el
+  PDF (`application/pdf`, `Content-Disposition: inline`). El nombre se sanea.
+- **`DELETE /catalogos/contratos/{id}/adjuntos/{nombre}`** (`catalogos:editar`) — elimina el
+  PDF. Respuesta **204** (idempotente).
+- Común: contrato inexistente → **404 `no_encontrado`**; almacenamiento no disponible →
+  **502 `almacenamiento_no_disponible`**.
 
 Ejemplo alta de contrato (sin `estado_contrato` ni `archivo_contrato_path`):
 ```json

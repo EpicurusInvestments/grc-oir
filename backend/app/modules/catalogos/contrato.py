@@ -11,9 +11,11 @@ Contrato comercial de un anunciante. Reglas propias en la capa de servicio:
 - **`fecha_fin_contrato >= fecha_inicio_contrato`** (schema y servicio, con valores
   efectivos en edición parcial).
 - **`created_by`**: username del capturista (texto, no FK; la tabla Usuario llega en F0-04).
-- **Adjuntos (S3):** `archivo_contrato_path` guarda el PREFIJO del contrato en el bucket
-  (`contratos/<numero_contrato>/`), resuelto por el puerto de almacenamiento. La subida
-  real a S3 está DIFERIDA (adaptador local; ver `integrations/almacenamiento`).
+- **Adjuntos (PDF):** `archivo_contrato_path` guarda el PREFIJO del contrato
+  (`contratos/<numero_contrato>/`), resuelto por el puerto de almacenamiento. Los PDF se
+  suben/listan/descargan/borran vía endpoints dedicados, servidos SIEMPRE por el backend
+  (bucket privado). El backend concreto (local o S3) se elige por `STORAGE_BACKEND`
+  (ADR-027; ver `integrations/almacenamiento`).
 
 Montos/porcentajes con `Decimal`, serializados como string (ADR-015 E-4). Portabilidad
 SQL Server (ADR-014): comparaciones booleanas con `== True`; fechas contra parámetros.
@@ -30,16 +32,22 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, Query
+from fastapi import Depends, File, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core import audit
+from app.core.config import settings
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import DomainError, NotFoundError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
-from app.integrations.almacenamiento.adapter_local import AlmacenamientoLocal
+from app.integrations.almacenamiento import get_almacenamiento
+from app.integrations.almacenamiento.documentos import (
+    DocumentoAlmacenado,
+    leer_pdf,
+    sanear_nombre_archivo,
+)
 from app.integrations.almacenamiento.port import AlmacenamientoPort
 from app.modules.catalogos.anunciante import Anunciante
 from app.modules.catalogos.base_repository import BaseRepository
@@ -201,6 +209,28 @@ class TransicionEstadoIn(BaseModel):
     """Cuerpo de la transición de `estado_contrato`."""
 
     estado: EstadoContrato
+
+
+class DocumentoContratoRead(BaseModel):
+    """Metadata de un PDF adjunto del contrato (para listar/mostrar en la UI).
+
+    La `clave` completa en el bucket NO se expone: el cliente solo maneja el `nombre` y el
+    backend compone la clave a partir del prefijo del propio contrato (evita path traversal).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    nombre: str
+    tamano_bytes: int
+    modificado_en: datetime | None = None
+
+    @classmethod
+    def desde_documento(cls, doc: DocumentoAlmacenado) -> DocumentoContratoRead:
+        return cls(
+            nombre=doc.nombre,
+            tamano_bytes=doc.tamano_bytes,
+            modificado_en=doc.modificado_en,
+        )
 
 
 class ContratoListParams(ListParams):
@@ -372,6 +402,57 @@ class ContratoService(BaseService[Contrato, ContratoCreate, ContratoUpdate, Cont
             )
         return self._to_read(self.repo.update(obj, {"estado_contrato": nuevo.value}))
 
+    # ── adjuntos (PDF en el almacenamiento) ──────────────────────────────────────
+    # El cliente nunca envía una clave cruda: solo el `nombre` de archivo. El servicio
+    # resuelve el PREFIJO del propio contrato y compone la clave saneada, acotando el acceso
+    # a ese contrato y bloqueando path traversal (ADR-027).
+    def _prefijo(self, obj: Contrato) -> str:
+        return self._almacenamiento.prefijo_contrato(obj.numero_contrato)
+
+    # `Sequence` (no `list`): dentro de la clase `list` refiere al MÉTODO `list` de la base.
+    def listar_adjuntos(self, id_: Any) -> Sequence[DocumentoContratoRead]:
+        obj = self._get_or_404(id_)
+        docs = self._almacenamiento.listar(self._prefijo(obj))
+        return [DocumentoContratoRead.desde_documento(d) for d in docs]
+
+    def subir_adjunto(
+        self,
+        id_: Any,
+        *,
+        nombre_archivo: str,
+        contenido: bytes,
+        content_type: str | None,
+    ) -> DocumentoContratoRead:
+        """Sube (o SOBRESCRIBE si el nombre ya existe) un PDF del contrato.
+
+        Nota (decisión F-3): un nombre repetido reemplaza el archivo previo; si el negocio
+        lo requiere, se puede cambiar a rechazar duplicados (ver ADR-027).
+        """
+        obj = self._get_or_404(id_)
+        nombre = sanear_nombre_archivo(nombre_archivo)
+        self._almacenamiento.subir(
+            prefijo=self._prefijo(obj),
+            nombre_archivo=nombre,
+            contenido=contenido,
+            content_type=content_type or "application/pdf",
+        )
+        return DocumentoContratoRead(
+            nombre=nombre, tamano_bytes=len(contenido), modificado_en=datetime.now()
+        )
+
+    def obtener_adjunto(self, id_: Any, nombre_archivo: str) -> tuple[bytes, str]:
+        """Devuelve (bytes, nombre_saneado) del PDF, para servirlo por el backend."""
+        obj = self._get_or_404(id_)
+        nombre = sanear_nombre_archivo(nombre_archivo)
+        clave = f"{self._prefijo(obj)}{nombre}"
+        return self._almacenamiento.obtener(clave), nombre
+
+    def borrar_adjunto(self, id_: Any, nombre_archivo: str) -> None:
+        obj = self._get_or_404(id_)
+        nombre = sanear_nombre_archivo(nombre_archivo)
+        clave = f"{self._prefijo(obj)}{nombre}"
+        self._almacenamiento.borrar(clave)
+
     def _verificar_anunciante(self, anunciante_id: uuid.UUID) -> None:
         if self._anunciante_repo.get(anunciante_id) is None:
             raise NotFoundError(
@@ -388,7 +469,7 @@ def get_contrato_service(db: Session = Depends(get_db)) -> ContratoService:
     return ContratoService(
         repo,
         anunciante_repo=BaseRepository(db, Anunciante),
-        almacenamiento=AlmacenamientoLocal(),
+        almacenamiento=get_almacenamiento(),
     )
 
 
@@ -465,3 +546,64 @@ def transicionar_estado_contrato(
     Es independiente de `activo` (baja lógica), que se gestiona en `POST /{id}/estado`.
     """
     return svc.transicionar_estado(item_id, payload.estado, usuario)
+
+
+# ── Adjuntos (PDF del contrato) ─────────────────────────────────────────────────
+# Subir/borrar = escritura (catalogos:editar); listar/descargar = lectura (catalogos:leer).
+# El bucket es PRIVADO: los PDF se sirven SIEMPRE por el backend, nunca por URL pública.
+@router.get("/{item_id}/adjuntos", response_model=list[DocumentoContratoRead])
+def listar_adjuntos_contrato(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> list[DocumentoContratoRead]:
+    """Lista los PDF del contrato (bajo su prefijo en el almacenamiento)."""
+    return list(svc.listar_adjuntos(item_id))
+
+
+@router.post("/{item_id}/adjuntos", response_model=DocumentoContratoRead, status_code=201)
+def subir_adjunto_contrato(
+    item_id: uuid.UUID,
+    archivo: UploadFile = File(..., description="PDF del contrato (máx. configurable)"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:editar")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> DocumentoContratoRead:
+    """Sube un PDF al contrato. Valida tipo (PDF real) y tamaño antes de almacenar.
+
+    Un nombre repetido SOBRESCRIBE el archivo previo (ver ADR-027).
+    """
+    contenido = leer_pdf(archivo, max_bytes=settings.s3_max_pdf_bytes)
+    return svc.subir_adjunto(
+        item_id,
+        nombre_archivo=archivo.filename or "documento.pdf",
+        contenido=contenido,
+        content_type=archivo.content_type,
+    )
+
+
+@router.get("/{item_id}/adjuntos/{nombre_archivo}")
+def descargar_adjunto_contrato(
+    item_id: uuid.UUID,
+    nombre_archivo: str,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> Response:
+    """Descarga/sirve un PDF del contrato a través del backend (bucket privado)."""
+    contenido, nombre = svc.obtener_adjunto(item_id, nombre_archivo)
+    return Response(
+        content=contenido,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{nombre}"'},
+    )
+
+
+@router.delete("/{item_id}/adjuntos/{nombre_archivo}", status_code=204)
+def borrar_adjunto_contrato(
+    item_id: uuid.UUID,
+    nombre_archivo: str,
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:editar")),
+    svc: ContratoService = Depends(get_contrato_service),
+) -> Response:
+    """Elimina un PDF del contrato (idempotente)."""
+    svc.borrar_adjunto(item_id, nombre_archivo)
+    return Response(status_code=204)

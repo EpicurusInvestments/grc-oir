@@ -61,12 +61,25 @@ class Settings(BaseSettings):
     sso_provider: str = ""
     sso_client_id: str = ""
 
-    # ── Almacenamiento de adjuntos de contrato (S3) ──────────────────────────────
-    # Vacío en F0-03: la subida a S3 está diferida y se usa el adaptador local. Cuando se
-    # configure el bucket, el adaptador S3 leerá estos valores (credenciales por el
-    # proveedor de AWS del entorno, nunca aquí).
+    # ── Almacenamiento de adjuntos de contrato (local | S3) ──────────────────────
+    # STORAGE_BACKEND elige el adaptador (ver integrations/almacenamiento): 'local'
+    # (sistema de archivos; default para dev/pruebas) o 's3' (bucket privado real).
+    storage_backend: str = "local"
+    # Raíz del adaptador local (relativa al proceso). Solo aplica con STORAGE_BACKEND=local.
+    storage_local_root: str = "_storage_local"
+    # Bucket y región del adaptador S3 (requeridos si STORAGE_BACKEND=s3).
     s3_bucket_contratos: str = ""
     aws_region: str = ""
+    # Credenciales AWS. Se DECLARAN aquí para que pydantic-settings las lea del .env (y les
+    # quite las comillas) y el adaptador las pase EXPLÍCITAMENTE a boto3: pydantic-settings NO
+    # exporta a os.environ, así que el .env por sí solo no llega a la cadena de proveedores de
+    # boto3 (causaba NoCredentialsError). Siguen viniendo SOLO del entorno/.env, nunca del
+    # código. Si se dejan VACÍAS (qa/producción), boto3 usa su cadena por defecto: rol de
+    # instancia / AWS Secrets Manager. Ver ADR-027.
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    # Tamaño máximo de un PDF de contrato (bytes). Configurable por entorno; default 10 MB.
+    s3_max_pdf_bytes: int = 10 * 1024 * 1024
 
     @property
     def is_development(self) -> bool:
