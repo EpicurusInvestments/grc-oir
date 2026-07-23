@@ -422,4 +422,36 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   la EXPORTACIÓN a Excel (F2/reportes), no a esta importación (que solo almacena texto). Por
   ahora solo `ConstantesSistema` expone `/importar`; CuentaContable queda listo para sumarlo.
 
-[[Agregar aquí cada nueva decisión: ADR-026, ...]]
+### ADR-026 — Dashboard como Home real + navegación global entre fases (solo frontend)
+- **Estado:** aceptada · **Fecha:** 2026-07-20
+- **Contexto:** hasta ahora la única ruta (`/`) era el explorador de Catálogos, que hacía
+  de "home" de facto. El sistema tendrá 6 fases (F0–F5) y hacía falta un Home verdadero y
+  una forma de navegar entre fases, reutilizable por las pantallas futuras. Cambio
+  transversal, solo de presentación (no toca API ni BD).
+- **Decisión:**
+  1. **Rutas:** `/` → `DashboardPage` (Home, malla de 6 fases); `/catalogos` →
+     `CatalogosExplorerPage` (lo que antes vivía en `/`). El router queda declarado para
+     sumar cada fase futura con su propia ruta.
+  2. **Fuente única `phaseRegistry`** (`src/shared/phases/phaseRegistry.ts`): un arreglo con
+     las 6 fases (código, nombre, descripción, acento de color, ilustración WebP+PNG, ruta y
+     `enabled`). **Tanto el Dashboard como el drawer se generan iterando este arreglo.**
+     Activar una fase futura = poner `enabled: true` + su `route`, y montar la ruta. No se
+     tocan el Dashboard ni el menú.
+  3. **Navegación global reutilizable** (`AppNavDrawer`): drawer deslizante montado desde
+     `AppHeader`, por lo que **toda pantalla que use el header hereda la hamburguesa + el
+     menú** sin re-trabajo. Cierra con overlay, Escape y botón de cerrar.
+  4. **Estado "Próximamente":** las fases no construidas se muestran atenuadas, en escala de
+     grises y no clicables, con badge gris — consistente entre tarjeta y menú.
+  5. **Color por fase** reutilizando la paleta ya existente en `theme.css` (F0 morado · F1
+     teal · F2 azul · F3 ámbar · F4 gris · F5 rojo) vía clases `.pc-accent-*`; se añadieron
+     solo los tonos sólidos de acento que faltaban (azul/ámbar/gris/rojo).
+  6. **Imágenes:** 6 ilustraciones 3D optimizadas de PNG (~1–1.3 MB) a **WebP calidad 82**
+     (5–6 KB) con **PNG fallback** (~55–67 KB) vía `<picture>`; recortadas al contenido y
+     cuadradas a 256px. Total 6.7 MB → 32.6 KB WebP. Viven en
+     `src/modules/dashboard/assets/` (importadas → Vite las hashea).
+- **Consecuencias:** existe un Home real y un patrón de navegación entre fases listo para
+  reusar; cada fase nueva se "enciende" en un solo lugar. Animaciones sutiles (fade-in
+  escalonado, hover con elevación y zoom) con respeto a `prefers-reduced-motion`. Ficha del
+  módulo en `docs/modulos/transversal/dashboard-navegacion.md`.
+
+[[Agregar aquí cada nueva decisión: ADR-027, ...]]
