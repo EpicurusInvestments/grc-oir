@@ -16,6 +16,7 @@ dependencies = [
     "alembic>=1.13",
     "pyodbc>=5.1",
     "python-multipart>=0.0.9",  # F0-05: carga de archivos (UploadFile/Form) para importación CSV
+    "boto3>=1.34",  # Integración S3: adjuntos de contrato (bucket privado). Ver ADR-027.
 ]
 
 [dependency-groups]
@@ -71,7 +72,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["migrations/"]
 
 [[tool.mypy.overrides]]
-module = ["pyodbc"]
+module = ["pyodbc", "boto3", "botocore", "botocore.exceptions"]
 ignore_missing_imports = true
 
 # crud_router usa anotaciones DINÁMICAS a propósito (payload: create_schema, etc.) para

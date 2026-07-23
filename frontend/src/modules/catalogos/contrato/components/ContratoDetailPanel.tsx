@@ -1,7 +1,7 @@
 /** Panel de detalle del Contrato: anunciante, vigencia + monto, % de comisión (sensible),
- * condiciones/observaciones, adjuntos (PLACEHOLDER — subida S3 diferida, ADR-020),
- * historial de cambios y la MÁQUINA DE ESTADOS (solo transiciones válidas desde el estado
- * actual, vía el endpoint dedicado).
+ * condiciones/observaciones, adjuntos (PDF real — ADR-027), historial de cambios y la
+ * MÁQUINA DE ESTADOS (solo transiciones válidas desde el estado actual, vía el endpoint
+ * dedicado).
  */
 
 import { FieldTag, StatusBadge } from "@/shared/ui";
@@ -9,6 +9,7 @@ import { FieldTag, StatusBadge } from "@/shared/ui";
 import { fmtMonto, fmtPct } from "../format";
 import { useHistorialContrato } from "../hooks";
 import { ACCION_ESTADO, type Contrato, type EstadoContrato, ESTADO_BADGE, TRANSICIONES } from "../types";
+import { ContratoAdjuntos } from "./ContratoAdjuntos";
 
 const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
 
@@ -109,28 +110,8 @@ export function ContratoDetailPanel({
           </>
         )}
 
-        {/* ── Adjuntos: placeholder (subida S3 diferida, ADR-020) ── */}
-        <div className="sec">Adjuntos del contrato</div>
-        <div
-          style={{
-            padding: "9px 12px",
-            border: "1px dashed var(--border)",
-            borderRadius: "var(--r)",
-            fontSize: 13,
-            color: "var(--text3)",
-          }}
-        >
-          <div>
-            Carpeta en S3:{" "}
-            <span style={{ fontFamily: "var(--mono)" }}>
-              {oGuion(contrato.archivo_contrato_path)}
-            </span>
-          </div>
-          <div style={{ marginTop: 4 }}>
-            La subida de PDF estará disponible al configurar el bucket S3 (integración
-            diferida).
-          </div>
-        </div>
+        {/* ── Adjuntos (PDF): integración real (ADR-027) ── */}
+        <ContratoAdjuntos contrato={contrato} canWrite={canWrite} />
 
         {/* ── Máquina de estados ── */}
         {canWrite && (

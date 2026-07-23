@@ -1,17 +1,22 @@
 """Puerto de almacenamiento de documentos (patrón anti-corrupción).
 
 El dominio (servicios de negocio) depende SOLO de esta interfaz; el adaptador concreto
-(S3 real en el futuro, o el local de hoy) se inyecta. Así la subida a S3 se puede activar
-sin tocar la capa de negocio.
+(S3 real o el local de sistema de archivos) se inyecta por configuración. Así la subida a
+S3 se activa sin tocar la capa de negocio (ADR-020 → implementada en ADR-027).
 
-Estado F0-03: la subida real a S3 está DIFERIDA (no hay bucket/credenciales todavía). El
-adaptador local resuelve el **prefijo/carpeta** del contrato en S3
-(`contratos/<numero_contrato>/`), pero no sube ni lista archivos reales.
+Operaciones en términos del dominio:
+- `prefijo_contrato`: carpeta del contrato en el bucket (`contratos/<numero_contrato>/`).
+- `listar`: documentos bajo un prefijo (metadata mínima: nombre, clave, tamaño, fecha).
+- `subir`: sube un documento y devuelve su clave.
+- `obtener`: descarga los bytes de un documento por su clave.
+- `borrar`: elimina un documento por su clave.
 """
 
 from __future__ import annotations
 
 from typing import Protocol
+
+from app.integrations.almacenamiento.documentos import DocumentoAlmacenado
 
 
 class AlmacenamientoPort(Protocol):
@@ -21,8 +26,8 @@ class AlmacenamientoPort(Protocol):
         """Prefijo/carpeta del contrato en el bucket: `contratos/<numero_contrato>/`."""
         ...
 
-    def listar(self, prefijo: str) -> list[str]:
-        """Nombres de archivo bajo un prefijo (vacío mientras S3 no esté configurado)."""
+    def listar(self, prefijo: str) -> list[DocumentoAlmacenado]:
+        """Documentos bajo un prefijo (lista vacía si no hay ninguno)."""
         ...
 
     def subir(
@@ -33,5 +38,13 @@ class AlmacenamientoPort(Protocol):
         contenido: bytes,
         content_type: str | None = None,
     ) -> str:
-        """Sube un documento y devuelve su clave. Diferido en F0-03 (ver adaptador local)."""
+        """Sube un documento bajo el prefijo y devuelve su clave completa."""
+        ...
+
+    def obtener(self, clave: str) -> bytes:
+        """Descarga los bytes del documento identificado por `clave`."""
+        ...
+
+    def borrar(self, clave: str) -> None:
+        """Elimina el documento identificado por `clave` (idempotente)."""
         ...

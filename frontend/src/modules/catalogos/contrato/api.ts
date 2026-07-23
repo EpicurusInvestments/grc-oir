@@ -4,11 +4,17 @@
  * e historial de auditoría del contrato.
  */
 
-import { apiClient } from "@/shared/lib/apiClient";
+import { apiClient, postFormData } from "@/shared/lib/apiClient";
 import { createCatalogApi } from "@/shared/lib/createCatalogApi";
 import type { HistorialCambio, ListParams, Page } from "@/shared/types";
 
-import type { Contrato, ContratoCreate, ContratoUpdate, EstadoContrato } from "./types";
+import type {
+  AdjuntoContrato,
+  Contrato,
+  ContratoCreate,
+  ContratoUpdate,
+  EstadoContrato,
+} from "./types";
 
 export interface ContratoListParams extends ListParams {
   estado?: EstadoContrato;
@@ -37,5 +43,36 @@ export const contratoApi = {
       `/catalogos/contratos/${id}/historial`,
     );
     return data;
+  },
+
+  /** Adjuntos (PDF) del contrato. El bucket es privado: todo pasa por el backend. */
+  adjuntos: {
+    /** Lista los PDF del contrato. */
+    async listar(id: string): Promise<AdjuntoContrato[]> {
+      const { data } = await apiClient.get<AdjuntoContrato[]>(
+        `/catalogos/contratos/${id}/adjuntos`,
+      );
+      return data;
+    },
+    /** Sube un PDF (multipart). El backend valida tipo y tamaño. */
+    subir(id: string, archivo: File): Promise<AdjuntoContrato> {
+      const fd = new FormData();
+      fd.append("archivo", archivo);
+      return postFormData<AdjuntoContrato>(`/catalogos/contratos/${id}/adjuntos`, fd);
+    },
+    /** Descarga el PDF como blob (con headers de auth) para ver/guardar en el navegador. */
+    async descargar(id: string, nombre: string): Promise<Blob> {
+      const { data } = await apiClient.get<Blob>(
+        `/catalogos/contratos/${id}/adjuntos/${encodeURIComponent(nombre)}`,
+        { responseType: "blob" },
+      );
+      return data;
+    },
+    /** Borra un PDF del contrato. */
+    async borrar(id: string, nombre: string): Promise<void> {
+      await apiClient.delete(
+        `/catalogos/contratos/${id}/adjuntos/${encodeURIComponent(nombre)}`,
+      );
+    },
   },
 };

@@ -107,15 +107,24 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 - `porcentaje_comision_contrato` sobreescribe el default de la agencia cuando tiene valor.
 - `fecha_fin_contrato >= fecha_inicio_contrato` (schema y servicio).
 
-## Integraciones — almacenamiento de adjuntos de contrato (S3)
-- **Subida real DIFERIDA** (ADR-020): se construyó el **puerto anti-corrupción**
-  `integrations/almacenamiento/` con **adaptador local** que resuelve el prefijo
-  `contratos/<numero_contrato>/` (guardado en `archivo_contrato_path`), pero **no sube ni
-  lista** archivos reales. La UI muestra la sección de adjuntos como placeholder.
-- Config `S3_BUCKET_CONTRATOS` / `AWS_REGION` en `.env.example` (sin valores); credenciales
-  por el proveedor de AWS del entorno (Secrets Manager), nunca versionadas.
-- **Sin tabla `ContratoDocumento`** por ahora (basta el prefijo; se reevaluará si se
-  requiere metadata por archivo). La integración real de S3 será una tarea aparte.
+## Integraciones — almacenamiento de adjuntos de contrato (local | S3)
+- **Subida real IMPLEMENTADA** (ADR-027, implementa ADR-020): el **puerto anti-corrupción**
+  `integrations/almacenamiento/` tiene dos adaptadores que cumplen la misma interfaz —
+  `AlmacenamientoLocal` (filesystem, default para dev/pruebas) y `AlmacenamientoS3` (boto3,
+  bucket privado real). La **selección es por `STORAGE_BACKEND=local|s3`**
+  (`get_almacenamiento()`); el prefijo `contratos/<numero_contrato>/` se guarda en
+  `archivo_contrato_path`.
+- **Endpoints** (bajo `/catalogos/contratos/{id}/adjuntos`): listar/descargar = lectura,
+  subir/borrar = escritura. Solo PDF (extensión + *magic bytes*), tamaño máx. configurable
+  (`S3_MAX_PDF_BYTES`, default 10 MB). El bucket es **privado**: los PDF se sirven SIEMPRE por
+  el backend (RBAC), nunca por URL pública; el nombre se sanea y el acceso queda acotado al
+  prefijo del contrato (anti *path traversal*).
+- Config `STORAGE_BACKEND` / `S3_BUCKET_CONTRATOS` / `AWS_REGION` / `S3_MAX_PDF_BYTES` en
+  `.env.example`; **credenciales AWS por la cadena de proveedores del entorno** (boto3), nunca
+  versionadas ni en `config.py`.
+- **Sin tabla `ContratoDocumento`** (basta el prefijo). **Limitación conocida:** renombrar
+  `numero_contrato` no mueve los PDF ya subidos en S3 (fuera de alcance). **Nombre repetido
+  sobrescribe** (se puede cambiar a rechazar duplicados si el negocio lo pide).
 
 ## Migraciones (aplicadas a RDS `GRC-OIR`)
 - `c4e7a1b93f20` — `log_cambio_parametro` + `agencia`.
@@ -132,15 +141,16 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 - **ADR-017** — Collation `CI_AS` de RDS (unicidad textual case-insensitive).
 - **ADR-018** — Handler de validación serializa con `jsonable_encoder` (fix del 500 en RFC/fechas inválidos).
 - **ADR-019** — Máquina de estados de Contrato con endpoint dedicado.
-- **ADR-020** — Puerto de almacenamiento con subida S3 diferida.
+- **ADR-020** — Puerto de almacenamiento con subida S3 diferida (implementada por ADR-027).
 - **ADR-021** — Lectura acotada del historial de auditoría por entidad.
+- **ADR-027** — Integración REAL de S3: adaptador S3 + selección local/S3 por env + endpoints de adjuntos.
 
 ## Pendientes / dudas
 - (Resuelto) Marca → solo anidada en Anunciante, sin pantalla propia.
 - (Resuelto) Campos sensibles → por ahora solo Admin (IT) los modifica + auditoría.
 - (Resuelto) Transiciones de `estado_contrato` (ADR-019).
-- (Resuelto) Adjuntos → prefijo S3; sin tabla `ContratoDocumento`; subida diferida (ADR-020).
-- (Abierto) **Nombre del bucket S3** (`S3_BUCKET_CONTRATOS`) e integración real de subida:
-  tarea aparte posterior a F0-03. `[[POR LLENAR: nombre del bucket S3]]`
+- (Resuelto) Adjuntos → prefijo S3; sin tabla `ContratoDocumento` (ADR-020).
+- (Resuelto) **Integración real de subida/descarga** → adaptador S3 + selección por
+  `STORAGE_BACKEND`; bucket `s3-grc-oir-dev` (`us-west-2`), servido por el backend (ADR-027).
 - (Abierto, futuro) Abrir edición de sensibles a Dirección / Ventas-CxC cuando F5 administre
   `PermisoCampo`.

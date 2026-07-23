@@ -38,3 +38,6 @@ tmp/
 
 # Archivos adicionales
 ~$*
+
+# Almacenamiento local de adjuntos (STORAGE_BACKEND=local): PDFs de dev, no se versionan
+_storage_local/
