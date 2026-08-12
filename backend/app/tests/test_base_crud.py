@@ -6,7 +6,7 @@ import pytest
 
 from app.core.errors import NotFoundError
 from app.core.security import Area, CurrentUser
-from app.modules.catalogos.schemas import ListParams
+from app.shared.schemas import ListParams
 from app.tests._demo import DemoCreate, DemoService, DemoUpdate
 
 USUARIO = CurrentUser(username="tester", area=Area.ADMIN)

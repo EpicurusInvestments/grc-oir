@@ -30,7 +30,6 @@ from app.modules.catalogos.afiliado import (
     AfiliadoService,
     AfiliadoUpdate,
 )
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.estacion import (
     Estacion,
     EstacionCreate,
@@ -41,7 +40,8 @@ from app.modules.catalogos.estacion import (
     TipoSenal,
 )
 from app.modules.catalogos.plaza import Plaza, PlazaCreate, PlazaRead, PlazaService
-from app.modules.catalogos.schemas import ListParams
+from app.shared.base_repository import BaseRepository
+from app.shared.schemas import ListParams
 
 USUARIO = CurrentUser(username="tester", area=Area.ADMIN)
 
@@ -77,9 +77,7 @@ def servicios(sqlite_session: Session) -> tuple[PlazaService, AfiliadoService, E
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────────
-def _plaza(
-    svc: PlazaService, nombre: str = "Monterrey", estado: str = "Nuevo León"
-) -> PlazaRead:
+def _plaza(svc: PlazaService, nombre: str = "Monterrey", estado: str = "Nuevo León") -> PlazaRead:
     return svc.create(PlazaCreate(nombre_plaza=nombre, estado=estado), USUARIO)
 
 
@@ -107,9 +105,7 @@ def _estacion(
     tipo: str = "fm",
 ) -> EstacionRead:
     return svc.create(
-        EstacionCreate(
-            afiliado_id=afiliado_id, nombre_estacion=nombre, tipo_senal=TipoSenal(tipo)
-        ),
+        EstacionCreate(afiliado_id=afiliado_id, nombre_estacion=nombre, tipo_senal=TipoSenal(tipo)),
         USUARIO,
     )
 
@@ -298,9 +294,10 @@ def test_conteo_activas_desactivacion_funciona_por_dependientes(servicios: Servi
     # Afiliado con estación activa → bloquea; con forzar procede.
     with pytest.raises(DependenciasActivasError):
         afi_svc.cambiar_estado(afi.afiliado_id, activo=False, usuario=USUARIO)
-    assert afi_svc.cambiar_estado(
-        afi.afiliado_id, activo=False, usuario=USUARIO, forzar=True
-    ).activo is False
+    assert (
+        afi_svc.cambiar_estado(afi.afiliado_id, activo=False, usuario=USUARIO, forzar=True).activo
+        is False
+    )
 
     # Plaza con afiliado/estación activos → bloquea; con forzar procede.
     plaza2 = _plaza(plaza_svc, "CDMX", "CDMX")
@@ -308,9 +305,10 @@ def test_conteo_activas_desactivacion_funciona_por_dependientes(servicios: Servi
     _estacion(est_svc, afi2.afiliado_id, nombre="XHRC-FM")
     with pytest.raises(DependenciasActivasError):
         plaza_svc.cambiar_estado(plaza2.plaza_id, activo=False, usuario=USUARIO)
-    assert plaza_svc.cambiar_estado(
-        plaza2.plaza_id, activo=False, usuario=USUARIO, forzar=True
-    ).activo is False
+    assert (
+        plaza_svc.cambiar_estado(plaza2.plaza_id, activo=False, usuario=USUARIO, forzar=True).activo
+        is False
+    )
 
 
 def test_filtro_activo_compila_para_sqlserver() -> None:
@@ -320,9 +318,7 @@ def test_filtro_activo_compila_para_sqlserver() -> None:
     producción que SQLite no detectaba). Este guard fija el criterio a nivel de dialecto.
     """
     stmt = (
-        select(func.count())
-        .select_from(Estacion)
-        .where(Estacion.activo == True)  # noqa: E712
+        select(func.count()).select_from(Estacion).where(Estacion.activo == True)  # noqa: E712
     )
     dialecto = mssql.dialect()  # type: ignore[no-untyped-call]
     sql = str(stmt.compile(dialect=dialecto, compile_kwargs={"literal_binds": True}))

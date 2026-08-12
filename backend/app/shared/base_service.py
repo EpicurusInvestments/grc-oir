@@ -16,8 +16,8 @@ from pydantic import BaseModel
 
 from app.core.errors import NotFoundError
 from app.core.security import CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository, ModelType
-from app.modules.catalogos.schemas import ListParams, Page
+from app.shared.base_repository import BaseRepository, ModelType
+from app.shared.schemas import ListParams, Page
 
 if TYPE_CHECKING:
     from app.core.audit import LogCambioParametroRead
@@ -27,9 +27,7 @@ UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
 ReadSchemaType = TypeVar("ReadSchemaType", bound=BaseModel)
 
 
-class BaseService(
-    Generic[ModelType, CreateSchemaType, UpdateSchemaType, ReadSchemaType]
-):
+class BaseService(Generic[ModelType, CreateSchemaType, UpdateSchemaType, ReadSchemaType]):
     #: Schema de salida; lo define la subclase (p.ej. `read_schema = PlazaRead`).
     read_schema: type[ReadSchemaType]
     #: Nombre de la entidad de la spec, para mensajes/auditoría (p.ej. "Plaza").
@@ -68,9 +66,7 @@ class BaseService(
         self._pre_create(payload, usuario)
         return self._to_read(self.repo.create(payload))
 
-    def update(
-        self, id_: Any, data: UpdateSchemaType, usuario: CurrentUser
-    ) -> ReadSchemaType:
+    def update(self, id_: Any, data: UpdateSchemaType, usuario: CurrentUser) -> ReadSchemaType:
         obj = self._get_or_404(id_)
         payload = data.model_dump(exclude_unset=True)
         self._pre_update(obj, payload, usuario)
@@ -102,18 +98,14 @@ class BaseService(
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         """Hook previo al alta. Aquí van fórmulas/validaciones de la entidad."""
 
-    def _pre_update(
-        self, obj: ModelType, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: ModelType, payload: dict[str, Any], usuario: CurrentUser) -> None:
         """Hook previo a la edición.
 
         Aquí las subclases llaman a `field_permissions.verificar(...)` y
         `audit.log_cambio_parametro(...)` para los campos sensibles de su entidad.
         """
 
-    def _pre_desactivar(
-        self, obj: ModelType, forzar: bool, usuario: CurrentUser
-    ) -> None:
+    def _pre_desactivar(self, obj: ModelType, forzar: bool, usuario: CurrentUser) -> None:
         """Hook previo a la BAJA lógica (`activo=False`).
 
         Las subclases validan aquí que no existan dependientes activos y, si los hay y

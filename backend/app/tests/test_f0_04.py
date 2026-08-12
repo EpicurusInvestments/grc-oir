@@ -24,7 +24,6 @@ from app.core.audit import LogCambioParametro
 from app.core.db import Base
 from app.core.errors import ConflictError, DomainError, PermissionDeniedError
 from app.core.security import Area, CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.categoria import (
     Categoria,
     CategoriaCreate,
@@ -37,7 +36,6 @@ from app.modules.catalogos.empresa_facturadora import (
     EmpresaFacturadoraRepository,
     EmpresaFacturadoraService,
 )
-from app.modules.catalogos.schemas import ListParams
 from app.modules.catalogos.vendedor import (
     Vendedor,
     VendedorCreate,
@@ -45,6 +43,8 @@ from app.modules.catalogos.vendedor import (
     VendedorUpdate,
 )
 from app.modules.usuarios.models import Usuario
+from app.shared.base_repository import BaseRepository
+from app.shared.schemas import ListParams
 
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
 VENTAS = CurrentUser(username="vendedor", area=Area.VENTAS, ip="127.0.0.1")
@@ -84,9 +84,7 @@ def _empresa(
     rfc: str = "GRC950101AB1",
 ) -> Any:
     return svc.create(
-        EmpresaFacturadoraCreate(
-            nombre_empresa=nombre, rfc_empresa=rfc, direccion_empresa="CDMX"
-        ),
+        EmpresaFacturadoraCreate(nombre_empresa=nombre, rfc_empresa=rfc, direccion_empresa="CDMX"),
         ADMIN,
     )
 

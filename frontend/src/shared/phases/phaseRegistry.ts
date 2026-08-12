@@ -70,8 +70,10 @@ export const phaseRegistry: PhaseEntry[] = [
     accent: "teal",
     imageWebp: ordenesWebp,
     imagePng: ordenesPng,
-    route: null,
-    enabled: false,
+    // DEMO VISUAL en construcción por tandas (datos dummy, sin backend) — NO es la fase
+    // terminada. Recordar esto antes de integrar de verdad (ver CLAUDE.md raíz, regla 1).
+    route: "/ordenes",
+    enabled: true,
   },
   {
     key: "f2",

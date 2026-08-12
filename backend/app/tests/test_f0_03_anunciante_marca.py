@@ -48,8 +48,8 @@ from app.modules.catalogos.anunciante import (
     MarcaRepository,
     MarcaService,
 )
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.schemas import ListParams
+from app.shared.base_repository import BaseRepository
+from app.shared.schemas import ListParams
 
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
 VENTAS = CurrentUser(username="vendedor", area=Area.VENTAS, ip="127.0.0.1")
@@ -104,9 +104,7 @@ def agencia_svc(db: Session) -> AgenciaService:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def _agencia(agencia_svc: AgenciaService, nombre: str = "ACME Media") -> uuid.UUID:
-    a = agencia_svc.create(
-        AgenciaCreate(nombre_agencia=nombre, rfc_agencia="AME950101AB1"), ADMIN
-    )
+    a = agencia_svc.create(AgenciaCreate(nombre_agencia=nombre, rfc_agencia="AME950101AB1"), ADMIN)
     return a.agencia_id
 
 

@@ -15,7 +15,8 @@ from logging.config import fileConfig
 from alembic import context
 
 # Importar los modelos para que Base.metadata conozca sus tablas (autogenerate).
-# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora · F0-04: facturación/finanzas + Usuario.
+# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora ·
+# F0-04: facturación/finanzas + Usuario · F1: ordenes (ver ADR-028 y siguientes).
 from app.core import audit  # noqa: F401  (modelo LogCambioParametro)
 from app.core.config import settings
 from app.core.db import Base
@@ -30,6 +31,12 @@ from app.modules.catalogos import (  # noqa: F401
     plaza,
     tarifa,
     vendedor,
+)
+from app.modules.ordenes import (  # noqa: F401  (F1 — ver ADR-028 y siguientes)
+    incidencia,
+    orden_cliente,
+    orden_estacion,
+    verificacion,
 )
 from app.modules.usuarios import models as usuarios_models  # noqa: F401
 from sqlalchemy import create_engine, pool
@@ -58,9 +65,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(
-        settings.sqlalchemy_url, poolclass=pool.NullPool, future=True
-    )
+    connectable = create_engine(settings.sqlalchemy_url, poolclass=pool.NullPool, future=True)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():

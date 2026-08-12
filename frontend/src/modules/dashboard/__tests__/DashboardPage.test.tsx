@@ -26,13 +26,16 @@ describe("DashboardPage", () => {
     }
   });
 
-  it("solo F0 (Catálogos) es navegable; el resto aparece 'Próximamente'", () => {
+  it("solo las fases habilitadas (hoy F0 y F1) son navegables; el resto aparece 'Próximamente'", () => {
     const grid = renderGrid();
+    const activas = phaseRegistry.filter((p) => p.enabled);
     const inactivas = phaseRegistry.filter((p) => !p.enabled);
 
-    // La fase activa se renderiza como <button> (clicable); las inactivas como <div>.
-    expect(grid.getByText("Catálogos").closest("button")).not.toBeNull();
+    // Las fases activas se renderizan como <button> (clicable); las inactivas como <div>.
+    for (const fase of activas) {
+      expect(grid.getByText(fase.name).closest("button")).not.toBeNull();
+    }
     expect(grid.getAllByText("Próximamente")).toHaveLength(inactivas.length);
-    expect(phaseRegistry.filter((p) => p.enabled)).toHaveLength(1);
+    expect(activas).toHaveLength(2);
   });
 });

@@ -31,10 +31,10 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError
 from app.core.security import CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase
 
 
 class TipoCuenta(StrEnum):
@@ -109,9 +109,7 @@ class CuentaContableRepository(BaseRepository[CuentaContable]):
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
 class CuentaContableService(
-    BaseService[
-        CuentaContable, CuentaContableCreate, CuentaContableUpdate, CuentaContableRead
-    ]
+    BaseService[CuentaContable, CuentaContableCreate, CuentaContableUpdate, CuentaContableRead]
 ):
     read_schema = CuentaContableRead
     entidad = "CuentaContable"

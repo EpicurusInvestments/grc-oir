@@ -24,6 +24,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ── Base de datos local para desarrollo (SQLite) — F1, ADR-028 ───────────────
+    # Si viene definida (p.ej. "sqlite:///./dev_ordenes.db"), la app entera apunta a ese
+    # archivo SQLite en vez de a SQL Server/RDS. Vacía (default) = comportamiento de
+    # siempre, sin cambios: se construye la URL mssql+pyodbc de abajo. Los MODELOS son
+    # los mismos en ambos casos (misma `Base.metadata`); esto solo elige qué motor
+    # materializa el esquema. RDS sigue siendo la única base de producción — este switch
+    # es exclusivamente para desarrollo/pruebas locales de F1.
+    database_url: str = ""
+
     # ── Base de datos (AWS RDS SQL Server) ─────────────────────────────────────
     db_host: str = "localhost"
     db_port: int = 1433
@@ -92,7 +101,14 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_url(self) -> str:
-        """URL `mssql+pyodbc` usando odbc_connect (soporta el guion de GRC-OIR)."""
+        """URL de conexión activa.
+
+        Si `DATABASE_URL` está definida, se usa tal cual (desarrollo local con SQLite,
+        F1 — ver ADR-028). Si no, se construye la URL `mssql+pyodbc` de siempre contra
+        RDS: el comportamiento existente no cambia cuando la variable no está seteada.
+        """
+        if self.database_url:
+            return self.database_url
         odbc_str = (
             f"DRIVER={{{self.odbc_driver}}};"
             f"SERVER={self.db_host},{self.db_port};"

@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.db import get_engine
 from app.core.errors import register_error_handlers
 from app.modules.catalogos.router import router as catalogos_router
+from app.modules.ordenes.router import router as ordenes_router
 
 app = FastAPI(
     title="Sistema GRC-OIR — API",
@@ -66,4 +67,5 @@ app.include_router(health)
 # ── API v1 ──────────────────────────────────────────────────────────────────────
 api_v1 = APIRouter(prefix="/api/v1")
 api_v1.include_router(catalogos_router)
+api_v1.include_router(ordenes_router)
 app.include_router(api_v1)

@@ -43,7 +43,6 @@ from app.modules.catalogos.anunciante import (
     Marca,
     MarcaRepository,
 )
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.contrato import (
     Contrato,
     ContratoCreate,
@@ -54,6 +53,7 @@ from app.modules.catalogos.contrato import (
 from app.modules.catalogos.contrato import (
     router as contrato_router,
 )
+from app.shared.base_repository import BaseRepository
 
 PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")

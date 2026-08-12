@@ -22,10 +22,10 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError
 from app.core.security import CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase
 
 
 def _normaliza_nombre(valor: str) -> str:
@@ -68,9 +68,7 @@ class CategoriaRead(CatalogoReadBase):
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class CategoriaRepository(BaseRepository[Categoria]):
-    def get_by_nombre(
-        self, nombre: str, excluir_id: uuid.UUID | None = None
-    ) -> Categoria | None:
+    def get_by_nombre(self, nombre: str, excluir_id: uuid.UUID | None = None) -> Categoria | None:
         # Comparación case-insensitive portable (LOWER); coincide con el índice único bajo
         # collation CI de SQL Server (ADR-017). `nombre` ya llega normalizado en espacios.
         stmt = select(Categoria).where(func.lower(Categoria.nombre_categoria) == nombre.lower())
@@ -92,14 +90,10 @@ class CategoriaService(BaseService[Categoria, CategoriaCreate, CategoriaUpdate, 
         payload["nombre_categoria"] = _normaliza_nombre(payload["nombre_categoria"])
         self._verificar_nombre_unico(payload["nombre_categoria"], excluir_id=None)
 
-    def _pre_update(
-        self, obj: Categoria, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Categoria, payload: dict[str, Any], usuario: CurrentUser) -> None:
         if "nombre_categoria" in payload:
             payload["nombre_categoria"] = _normaliza_nombre(payload["nombre_categoria"])
-            self._verificar_nombre_unico(
-                payload["nombre_categoria"], excluir_id=obj.categoria_id
-            )
+            self._verificar_nombre_unico(payload["nombre_categoria"], excluir_id=obj.categoria_id)
 
     def _verificar_nombre_unico(self, nombre: str, excluir_id: uuid.UUID | None) -> None:
         if self._categoria_repo.get_by_nombre(nombre, excluir_id) is not None:

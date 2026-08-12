@@ -7,6 +7,8 @@ export interface SidebarItem {
   label: string;
   count?: number;
   icon?: ReactNode;
+  /** Resalta el contador en rojo (p.ej. "Pendientes de asignar"). */
+  urgent?: boolean;
 }
 
 export interface SidebarGroup {
@@ -35,7 +37,7 @@ export function Sidebar({ groups, activeKey, onSelect }: SidebarProps) {
             >
               {item.icon}
               {item.label}
-              <span className="side-count">{item.count ?? 0}</span>
+              <span className={`side-count ${item.urgent ? "urgent" : ""}`}>{item.count ?? 0}</span>
             </button>
           ))}
         </div>

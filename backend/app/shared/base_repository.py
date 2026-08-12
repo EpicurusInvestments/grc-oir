@@ -16,7 +16,7 @@ from sqlalchemy import ColumnElement, func, inspect, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.core.db import Base
-from app.modules.catalogos.schemas import ListParams
+from app.shared.schemas import ListParams
 
 ModelType = TypeVar("ModelType", bound=Base)
 

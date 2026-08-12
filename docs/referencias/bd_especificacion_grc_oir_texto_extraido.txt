@@ -1,0 +1,2429 @@
+﻿GRC · OIR
+Especificación de base de datos
+Modelo de datos v2 · Todas las fases
+Versión 2.0 — Revisión con variables mínimas del levantamiento
+4 de junio de 2026
+Introducción
+Este documento especifica el modelo de datos del Sistema GRC-OIR v2. Organizado en 5 fases de implementación. Cada entidad incluye campos con tipo de dato, tipo de origen, restricciones, fórmulas de cálculo, catálogos relacionados y reglas de validación.
+Convenciones
+🔑 PK — Llave primaria. Identificador único, generado automáticamente.
+🔗 FK — Llave foránea. Referencia a la PK de otra entidad.
+NOT NULL — Campo obligatorio. FK NULL — Referencia opcional.
+Tipos de origen de campos
+Manual — Capturado por el usuario.
+Calculado — Generado automáticamente mediante una fórmula. No editable directamente.
+Derivado — Valor que se obtiene de otro campo o entidad relacionada.
+Auto — Clave o timestamp generada por el sistema.
+Catálogo — Valor que se selecciona de un catálogo existente.
+Booleano — Campo de sí/no, usado principalmente para filtros.
+Relación — Llave foránea que establece la relación con otra entidad.
+Cat/Manual — Se sugiere del catálogo pero permite captura manual si el valor no existe.
+Actores del sistema
+Internos (operan el sistema): Ventas, Facturación, Tesorería, CxC, CxP, Dirección/Finanzas, Nóminas.
+Externos (no acceden al sistema): Clientes, Agencias, Afiliados. Toda información de externos entra por captura manual o carga de archivo.
+Resumen del modelo
+Entidad
+Fase
+Campos
+Descripción
+Agencia
+FASE 0
+10
+Agencia de medios que representa a anunciantes ante el grupo. No accede al sistema.
+Anunciante
+FASE 0
+14
+Entidad que registra al cliente comercial (anunciante) que contrata transmisiones. En la operación del grupo se le conoc…
+Contrato
+FASE 0
+16
+Contrato comercial entre el grupo y un anunciante. Un anunciante puede tener múltiples contratos (anuales, por campaña, …
+Marca
+FASE 0
+5
+Marca comercial bajo un anunciante. Un anunciante puede tener muchas marcas. Permite segmentar órdenes por marca dentro …
+EmpresaFacturadora
+FASE 0
+6
+Entidad legal del grupo que emite las facturas. El grupo puede tener más de una razón social facturadora.
+Vendedor
+FASE 0
+6
+Vendedor o ejecutivo comercial. Separado de Usuario porque tiene lógica de comisiones y puede haber vendedores que no se…
+Plaza
+FASE 0
+5
+Plaza geográfica de transmisión. Al seleccionar una estación se infiere automáticamente la plaza.
+Afiliado
+FASE 0
+11
+Empresa externa que opera estaciones de transmisión (afiliada/emisora). No accede al sistema.
+Estacion
+FASE 0
+9
+Estación de radio o TV. Al seleccionarla se infieren plaza, afiliado y razón social del afiliado automáticamente.
+TarifaPlaza
+FASE 0
+13
+Tarifa de referencia por plaza, tipo de señal y duración de spot. Se usa como valor sugerido al capturar órdenes.
+MetodoPago
+FASE 0
+4
+Catálogo de métodos de pago aceptados (transferencia, cheque, efectivo, etc.). Usado en facturas y cobranza.
+CuentaContable
+FASE 0
+5
+Catálogo de cuentas contables. Usado en facturas para clasificación contable.
+LayoutFactura
+FASE 0
+5
+Catálogo de plantillas/layouts disponibles para imprimir facturas. Cada factura puede usar un layout distinto según clie…
+Categoria
+FASE 0
+5
+Catálogo de categorías comerciales de la venta (ej. Automotriz, Alimentos, Tecnología, Farmacéutica). Permite segmentar …
+Usuario
+FASE 0
+7
+Usuario interno del sistema. Cada área tiene permisos diferenciados. Adicionalmente, ciertos campos sensibles tienen per…
+OrdenCliente
+FASE 1
+36
+Orden de transmisión recibida del anunciante (cliente comercial) o su agencia. Es el documento de referencia para factur…
+OrdenEstacion
+FASE 1
+33
+Orden interna / asignación operativa. Se deriva de la OrdenCliente y siempre está ligada a ella. Cada registro represent…
+Verificacion
+FASE 1
+10
+Registro de lo realmente transmitido según el reporte del afiliado. Cuando el reporte llega y NO coincide con lo asignad…
+Incidencia
+FASE 1
+11
+Diferencia entre lo solicitado y lo verificado. Generada automáticamente cuando los spots o horarios verificados no coin…
+FacturaCliente
+FASE 2
+33
+Carátula de factura al cliente. El sistema PREPARA toda la información necesaria: emisor, receptor, conceptos, totales, …
+FacturaAfiliado
+FASE 2
+13
+Factura recibida del afiliado (emisora) por los servicios de transmisión. Captura manual o carga de archivo por CxP. Se …
+FacturaAfiliadoOrden
+FASE 2
+5
+Relación N:M entre FacturaAfiliado y OrdenEstacion. Permite distribuir el costo de una factura entre varias órdenes esta…
+FacturaAgencia
+FASE 2
+15
+Factura recibida de la agencia (por su comisión). Captura manual o carga de archivo por CxP. Se asocia a la OrdenCliente…
+CostoAdicional
+FASE 2
+10
+Costos adicionales: nóminas (formato NOI) y overhead libre. Alimentan el Estado de Resultados.
+CobranzaFactura
+FASE 3
+14
+Seguimiento de cobranza por factura emitida al cliente. Cada FacturaCliente timbrada genera un registro de cobranza. Aqu…
+PagoCliente
+FASE 3
+10
+Pago recibido del cliente. Captura manual o carga de relación de pagos por CxC.
+Requisicion
+FASE 3
+23
+Solicitud de pago generada por CxP hacia afiliado, agencia o comisiones. Incluye referencia a OC de SAP. Requiere autori…
+MovimientoBancario
+FASE 3
+11
+Movimiento bancario cargado por Tesorería. Referencia para conciliación.
+PeriodoResultados
+FASE 4
+14
+Consolidado de ingresos y costos por período (mes). Generado por Dirección/Finanzas.
+LogCambioParametro
+FASE 5
+10
+Registro histórico de cambios a parámetros sensibles del sistema. Cada modificación a un campo marcado como requires_aud…
+PermisoCampo
+FASE 5
+8
+Configuración de permisos a nivel de campo. Define qué áreas/roles pueden modificar campos específicos protegidos. Compl…
+FASE 0 — Catálogos
+Entidades base del sistema. Se configuran antes de operar cualquier módulo. Toda la captura es interna; los actores externos no acceden al sistema. Cuando un valor no exista en el catálogo, el sistema debe permitir captura manual y sugerir su incorporación al catálogo.
+Agencia
+Agencia de medios que representa a anunciantes ante el grupo. No accede al sistema.
+10 campos — 3 clave_autogenerada · 6 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK agencia_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_agencia
+VARCHAR(200)
+Manual
+NOT NULL
+Razón social de la agencia
+✓ Obligatorio, único
+rfc_agencia
+VARCHAR(13)
+Manual
+NOT NULL
+RFC fiscal de la agencia
+✓ 13 caracteres, formato RFC válido
+contacto_nombre
+VARCHAR(150)
+Manual
+Contacto principal
+contacto_email
+VARCHAR(150)
+Manual
+Correo del contacto
+✓ Formato email válido
+contacto_telefono
+VARCHAR(20)
+Manual
+Teléfono
+porcentaje_comision_agencia_default
+DECIMAL(5,2)
+Manual
+Porcentaje de comisión default. Valor sugerido al crear órdenes.
+▸ PARÁMETRO SENSIBLE: solo editable por usuarios autorizados. Cada cambio queda registrado en LogCambioParametro (usuario, fecha, valor anterior, valor nuevo).
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+Anunciante
+Entidad que registra al cliente comercial (anunciante) que contrata transmisiones. En la operación del grupo se le conoce como &quot;Anunciante&quot;, pero corresponde al cliente comercial. Un anunciante puede tener múltiples marcas, contratos y órdenes. Puede ser representado por una agencia o tratar directamente.
+14 campos — 3 clave_autogenerada · 1 relacion · 9 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK anunciante_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK agencia_id
+UUID
+Relación
+FK NULL
+Agencia que lo representa. NULL si trata directo.
+Catálogo: Agencia
+nombre_comercial
+VARCHAR(200)
+Manual
+NOT NULL
+Nombre comercial bajo el que opera el anunciante
+✓ Obligatorio
+nombre_fiscal
+VARCHAR(200)
+Manual
+NOT NULL
+Razón social exacta para facturación
+▸ Es el campo que aparece en la factura. Puede diferir del nombre comercial.
+rfc_anunciante
+VARCHAR(13)
+Manual
+NOT NULL
+RFC fiscal
+✓ 13 caracteres
+localizacion
+VARCHAR(300)
+Manual
+Ubicación geográfica principal o domicilio fiscal
+▸ Texto libre. Puede incluir ciudad, estado, dirección.
+referencia_anunciante
+VARCHAR(200)
+Manual
+Referencia interna del anunciante (código, alias, identificador externo)
+▸ Sirve para búsqueda y reconciliación con sistemas externos
+contacto_nombre
+VARCHAR(150)
+Manual
+Contacto principal
+contacto_email
+VARCHAR(150)
+Manual
+Correo del contacto
+contacto_telefono
+VARCHAR(20)
+Manual
+Teléfono
+dias_credito_default
+INTEGER
+Manual
+Días de crédito por defecto. Valor sugerido en CxC.
+▸ Editable por usuarios autorizados de Ventas o CxC. Es solo valor sugerido; en cada factura puede sobreescribirse.
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+Contrato
+Contrato comercial entre el grupo y un anunciante. Un anunciante puede tener múltiples contratos (anuales, por campaña, por temporada). El contrato define las condiciones comerciales generales bajo las cuales se cargan las ventas, comisiones y facturación.
+16 campos — 3 clave_autogenerada · 2 relacion · 10 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK contrato_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK anunciante_id
+UUID
+Relación
+FK NOT NULL
+Anunciante al que pertenece el contrato
+Catálogo: Anunciante
+numero_contrato
+VARCHAR(50)
+Manual
+NOT NULL
+Folio o número de contrato
+nombre_contrato
+VARCHAR(200)
+Manual
+NOT NULL
+Nombre descriptivo del contrato (ej. &quot;Anual 2025&quot;, &quot;Campaña Verano&quot;)
+fecha_inicio_contrato
+DATE
+Manual
+NOT NULL
+Fecha de inicio de vigencia
+fecha_fin_contrato
+DATE
+Manual
+NOT NULL
+Fecha de fin de vigencia
+✓ &gt;= fecha_inicio_contrato
+monto_contrato
+DECIMAL(14,2)
+Manual
+Monto total comprometido en el contrato
+porcentaje_comision_contrato
+DECIMAL(5,2)
+Manual
+Porcentaje de comisión específico para este contrato. Sobreescribe el default de la agencia.
+condiciones_comerciales
+TEXT
+Manual
+Condiciones específicas del contrato (descuentos, créditos, exclusividades)
+estado_contrato
+ENUM
+Manual
+NOT NULL
+vigente | suspendido | finalizado | cancelado
+archivo_contrato_path
+VARCHAR(500)
+Manual
+Ruta al PDF/documento del contrato firmado
+observaciones_contrato
+TEXT
+Manual
+Notas adicionales sobre el contrato
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario que capturó
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+Marca
+Marca comercial bajo un anunciante. Un anunciante puede tener muchas marcas. Permite segmentar órdenes por marca dentro del mismo anunciante.
+5 campos — 2 clave_autogenerada · 1 relacion · 1 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK marca_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK anunciante_id
+UUID
+Relación
+FK NOT NULL
+Anunciante al que pertenece la marca
+Catálogo: Anunciante
+nombre_marca
+VARCHAR(200)
+Manual
+NOT NULL
+Nombre comercial de la marca
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+EmpresaFacturadora
+Entidad legal del grupo que emite las facturas. El grupo puede tener más de una razón social facturadora.
+6 campos — 2 clave_autogenerada · 3 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK empresa_facturadora_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_empresa
+VARCHAR(200)
+Manual
+NOT NULL
+Nombre o razón social
+rfc_empresa
+VARCHAR(13)
+Manual
+NOT NULL
+RFC de la empresa facturadora
+direccion_empresa
+TEXT
+Manual
+Domicilio fiscal
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+Vendedor
+Vendedor o ejecutivo comercial. Separado de Usuario porque tiene lógica de comisiones y puede haber vendedores que no sean usuarios del sistema.
+6 campos — 2 clave_autogenerada · 3 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK vendedor_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_vendedor
+VARCHAR(200)
+Manual
+NOT NULL
+Nombre del vendedor
+email_vendedor
+VARCHAR(150)
+Manual
+Correo del vendedor
+porcentaje_comision_default
+DECIMAL(5,2)
+Manual
+Porcentaje de comisión default. Sobreescribible por orden.
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+Plaza
+Plaza geográfica de transmisión. Al seleccionar una estación se infiere automáticamente la plaza.
+5 campos — 2 clave_autogenerada · 2 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK plaza_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_plaza
+VARCHAR(100)
+Manual
+NOT NULL
+Nombre de la plaza (ej. Monterrey, CDMX)
+estado
+VARCHAR(50)
+Manual
+Estado de la república
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+Afiliado
+Empresa externa que opera estaciones de transmisión (afiliada/emisora). No accede al sistema.
+11 campos — 3 clave_autogenerada · 6 input_manual · 1 relacion · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK afiliado_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_afiliado
+VARCHAR(200)
+Manual
+NOT NULL
+Razón social del afiliado
+razon_social_afiliado
+VARCHAR(200)
+Manual
+NOT NULL
+Razón social exacta para documentos fiscales
+rfc_afiliado
+VARCHAR(13)
+Manual
+NOT NULL
+RFC fiscal
+FK plaza_id
+UUID
+Relación
+FK NULL
+Plaza geográfica principal
+Catálogo: Plaza
+contacto_nombre
+VARCHAR(150)
+Manual
+Contacto
+contacto_email
+VARCHAR(150)
+Manual
+Correo
+contacto_telefono
+VARCHAR(20)
+Manual
+Teléfono
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+Estacion
+Estación de radio o TV. Al seleccionarla se infieren plaza, afiliado y razón social del afiliado automáticamente.
+9 campos — 2 clave_autogenerada · 2 relacion · 2 input_manual · 1 catalogo · 2 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK estacion_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK afiliado_id
+UUID
+Relación
+FK NOT NULL
+Afiliado propietario
+Catálogo: Afiliado
+FK plaza_id
+UUID
+Relación
+FK NOT NULL
+Plaza donde transmite
+Catálogo: Plaza
+▸ Al seleccionar estación se auto-llena plaza, afiliado y razón social
+nombre_estacion
+VARCHAR(50)
+Manual
+NOT NULL
+Clave oficial (ej. XHMT-FM)
+frecuencia
+VARCHAR(30)
+Manual
+Frecuencia o canal
+tipo_senal
+ENUM
+Catálogo
+NOT NULL
+fm | am | tv
+venta_directa_carmen_aristegui_cdmx
+BOOLEAN
+Booleano
+NOT NULL
+Filtro operativo específico del negocio
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+TarifaPlaza
+Tarifa de referencia por plaza, tipo de señal y duración de spot. Se usa como valor sugerido al capturar órdenes.
+13 campos — 2 clave_autogenerada · 2 relacion · 2 catalogo · 5 input_manual · 1 calculado · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK tarifa_plaza_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK plaza_id
+UUID
+Relación
+FK NOT NULL
+Plaza a la que aplica
+Catálogo: Plaza
+tipo_senal
+ENUM
+Catálogo
+NOT NULL
+fm | am | tv
+duracion_spot
+ENUM
+Catálogo
+NOT NULL
+20s | 30s | 60s | mencion
+tarifa_bruta
+DECIMAL(12,2)
+Manual
+NOT NULL
+Precio de lista por spot
+descuento_pct
+DECIMAL(5,2)
+Manual
+NOT NULL
+Descuento acordado
+tarifa_neta
+DECIMAL(12,2)
+Calculado
+Tarifa después de descuento
+= tarifa_bruta * (1 - descuento_pct / 100)
+vigencia_desde
+DATE
+Manual
+NOT NULL
+Inicio de vigencia
+vigencia_hasta
+DATE
+Manual
+NOT NULL
+Fin de vigencia
+notas
+TEXT
+Manual
+Condiciones adicionales
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = vigente
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de captura
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario que capturó
+MetodoPago
+Catálogo de métodos de pago aceptados (transferencia, cheque, efectivo, etc.). Usado en facturas y cobranza.
+4 campos — 1 clave_autogenerada · 2 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK metodo_pago_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+clave_metodo
+VARCHAR(20)
+Manual
+NOT NULL
+Clave del método según catálogo SAT (ej. 01, 03, 99)
+descripcion_metodo
+VARCHAR(150)
+Manual
+NOT NULL
+Descripción del método (Efectivo, Cheque nominativo, Transferencia electrónica)
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+CuentaContable
+Catálogo de cuentas contables. Usado en facturas para clasificación contable.
+5 campos — 1 clave_autogenerada · 2 input_manual · 1 catalogo · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK cuenta_contable_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+codigo_cuenta
+VARCHAR(30)
+Manual
+NOT NULL
+Código de la cuenta contable
+nombre_cuenta
+VARCHAR(200)
+Manual
+NOT NULL
+Descripción de la cuenta
+tipo_cuenta
+ENUM
+Catálogo
+ingreso | costo | gasto | activo | pasivo
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+LayoutFactura
+Catálogo de plantillas/layouts disponibles para imprimir facturas. Cada factura puede usar un layout distinto según cliente, empresa facturadora o tipo de operación.
+5 campos — 1 clave_autogenerada · 3 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK layout_factura_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_layout
+VARCHAR(100)
+Manual
+NOT NULL
+Nombre identificador del layout
+descripcion_layout
+VARCHAR(300)
+Manual
+Descripción del uso o características del layout
+archivo_plantilla_path
+VARCHAR(500)
+Manual
+Ruta del archivo de plantilla (.html, .docx, etc.)
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+Categoria
+Catálogo de categorías comerciales de la venta (ej. Automotriz, Alimentos, Tecnología, Farmacéutica). Permite segmentar órdenes por categoría de producto/industria para reportes y análisis.
+5 campos — 2 clave_autogenerada · 2 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK categoria_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_categoria
+VARCHAR(100)
+Manual
+NOT NULL
+Nombre de la categoría (ej. Automotriz, Alimentos)
+descripcion_categoria
+VARCHAR(300)
+Manual
+Descripción de la categoría
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = activo
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+Usuario
+Usuario interno del sistema. Cada área tiene permisos diferenciados. Adicionalmente, ciertos campos sensibles tienen permisos a nivel de campo (ver LogCambioParametro).
+7 campos — 2 clave_autogenerada · 3 input_manual · 1 catalogo · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK usuario_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+nombre_usuario
+VARCHAR(150)
+Manual
+NOT NULL
+Nombre completo
+email
+VARCHAR(150)
+Manual
+NOT NULL
+Correo (login)
+area
+ENUM
+Catálogo
+NOT NULL
+ventas | facturacion | tesoreria | cxc | cxp | direccion | nominas | admin
+roles_adicionales
+TEXT
+Manual
+Roles adicionales separados por coma (ej. &quot;admin_parametros&quot;, &quot;auditor&quot;). Permite asignar permisos especiales sobre campos sensibles.
+▸ Mecanismo para otorgar permisos sobre campos protegidos sin cambiar el área principal
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = cuenta activa
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de alta
+FASE 1 — Órdenes de Transmisión
+Flujo operativo central. El anunciante envía una orden (OrdenCliente) con los datos generales de la campaña. De ahí se derivan las órdenes internas (OrdenEstacion), siempre ligadas a la original. Asignar una orden interna significa programarla: estación, contrato, categoría, horarios, spots y precio. Después de la transmisión llega el reporte de lo realmente ejecutado (Verificación). Si no coincide, se editan las órdenes internas para reflejar la realidad. Solo cuando están ajustadas se cierran (orden_cerrada) — y solo entonces Facturación puede jalar la información.
+OrdenCliente
+Orden de transmisión recibida del anunciante (cliente comercial) o su agencia. Es el documento de referencia para facturación y cobro. Contiene los datos comerciales, la programación de transmisión y tres estados independientes: orden, pago a afiliado y pago a agencia. Al cerrarse (estatus_orden = orden_cerrada) habilita la facturación.
+36 campos — 4 clave_autogenerada · 13 input_manual · 2 derivado · 9 relacion · 2 booleano · 4 calculado · 2 catalogo
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK orden_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+folio_orden
+VARCHAR(20)
+Auto
+NOT NULL
+Folio legible auto-generado (OC-YYYY-NNNN)
+numero_orden_cliente
+VARCHAR(50)
+Manual
+NOT NULL
+Número de orden asignado por el cliente o agencia (referencia externa)
+▸ Referencia del cliente, no nuestro folio
+fecha_venta
+DATE
+Manual
+NOT NULL
+Fecha en que se cerró la venta
+anio_venta
+INTEGER
+Derivado
+Año extraído de fecha_venta
+= YEAR(fecha_venta)
+mes_venta
+INTEGER
+Derivado
+Mes extraído de fecha_venta
+= MONTH(fecha_venta)
+FK empresa_facturadora_id
+UUID
+Relación
+FK NOT NULL
+Entidad legal del grupo que facturará
+Catálogo: EmpresaFacturadora
+FK vendedor_principal_id
+UUID
+Relación
+FK NOT NULL
+Vendedor responsable
+Catálogo: Vendedor
+FK vendedor_secundario_id
+UUID
+Relación
+FK NULL
+Segundo vendedor (compartido). NULL si no aplica.
+Catálogo: Vendedor
+FK anunciante_id
+UUID
+Relación
+FK NOT NULL
+Anunciante que origina la orden
+Catálogo: Anunciante
+FK agencia_id
+UUID
+Relación
+FK NULL
+Agencia que intermedia. NULL si es venta directa.
+Catálogo: Agencia
+FK contrato_id
+UUID
+Relación
+FK NULL
+Contrato bajo el cual se carga esta venta. NULL si no aplica.
+Catálogo: Contrato
+FK marca_id
+UUID
+Relación
+FK NULL
+Marca del anunciante para esta campaña
+Catálogo: Marca (editable si no existe)
+FK categoria_id
+UUID
+Relación
+FK NULL
+Categoría comercial de la venta
+Catálogo: Categoria (editable si no existe)
+producto
+VARCHAR(200)
+Manual
+Producto específico de la marca anunciado (ej. &quot;Coca-Cola Zero 600ml&quot;). Captura libre.
+▸ Más específico que marca. Texto libre para flexibilidad.
+direccion_facturacion
+TEXT
+Manual
+Dirección a usar en la factura. Se hereda del Anunciante pero puede sobreescribirse.
+facturacion_directa_cliente
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = se factura directo al anunciante sin intermediación de agencia. Es condición de esta venta, NO del catálogo de anunciante.
+▸ Flag de filtro para reportes
+afiliado_factura_directo_al_cliente
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = el afiliado emite factura directamente al anunciante (no a OIR). Condición específica de esta venta/campaña.
+▸ Si TRUE, el flujo de facturación cambia: el afiliado no nos factura a nosotros, sino al cliente final.
+fecha_inicio_campania
+DATE
+Manual
+NOT NULL
+Inicio de la campaña
+fecha_fin_campania
+DATE
+Manual
+NOT NULL
+Fin de la campaña
+✓ &gt;= fecha_inicio_campania
+total_dias_campania
+INTEGER
+Calculado
+Número total de días de campaña
+= DATEDIFF(fecha_fin_campania, fecha_inicio_campania) + 1
+duracion_spot
+ENUM
+Catálogo
+NOT NULL
+20s | 30s | 60s | mencion
+precio_unitario
+DECIMAL(12,2)
+Manual
+NOT NULL
+Precio promedio por spot acordado con el cliente. Referencia general.
+▸ Cada línea de ProgramacionTransmision puede tener su propio precio. Este es el promedio o referencia.
+total_spots
+INTEGER
+Manual
+NOT NULL
+Total de spots que solicita el cliente en esta orden
+▸ La distribución por estación/horario se detalla en las OrdenEstacion
+subtotal
+DECIMAL(14,2)
+Calculado
+Subtotal antes de IVA
+= total_spots * precio_unitario
+iva
+DECIMAL(14,2)
+Calculado
+IVA 16%
+= subtotal * 0.16
+total
+DECIMAL(14,2)
+Calculado
+Total con IVA
+= subtotal + iva
+observaciones_predefinidas
+TEXT
+Catálogo
+Observaciones seleccionadas de catálogo de cláusulas comunes
+▸ En implementación puede usar sub-catálogo de textos predefinidos
+observaciones_libres
+TEXT
+Manual
+Notas libres específicas de esta orden
+estatus_orden
+ENUM
+Manual
+NOT NULL
+recibida | capturada | en_transmision | en_verificacion | orden_cerrada | facturada | cobrada | cancelada
+▸ orden_cerrada habilita la facturación. Ocurre después de validar verificaciones contra solicitado.
+estatus_pago_afiliado
+ENUM
+Manual
+NOT NULL
+pendiente | en_revision | pagado
+estatus_pago_agencia
+ENUM
+Manual
+NOT NULL
+pendiente | en_revision | pagado
+archivo_orden_original_path
+VARCHAR(500)
+Manual
+PDF/imagen de la orden original recibida del cliente
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario de Ventas que capturó
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de captura
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+OrdenEstacion
+Orden interna / asignación operativa. Se deriva de la OrdenCliente y siempre está ligada a ella. Cada registro representa una asignación a una estación en un horario específico. &quot;Asignar&quot; = programar la transmisión con todos los datos operativos. Una OrdenCliente puede tener muchas OrdenEstacion (distintas estaciones y/o distintos horarios). Después del reporte de transmisión real, se edita para reflejar lo ejecutado. Solo cuando se cierra (estatus = cerrada), Facturación puede jalar la información.
+33 campos — 4 clave_autogenerada · 6 relacion · 11 input_manual · 3 derivado · 1 catalogo · 8 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK orden_estacion_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+folio_orden_estacion
+VARCHAR(25)
+Auto
+NOT NULL
+Folio legible (OE-YYYY-NNNNx)
+FK orden_id
+UUID
+Relación
+FK NOT NULL
+OrdenCliente de la cual se deriva. Siempre ligada.
+numero_orden_estacion
+VARCHAR(50)
+Manual
+Número de orden específico comunicado al afiliado
+FK contrato_id
+UUID
+Relación
+FK NULL
+Contrato bajo el cual se carga. Heredado de OrdenCliente.
+Catálogo: Contrato (editable si no existe)
+FK anunciante_id
+UUID
+Derivado
+FK NOT NULL
+Anunciante. Heredado de OrdenCliente.
+FK vendedor_id
+UUID
+Relación
+FK NOT NULL
+Vendedor asignado a esta orden interna. Puede diferir del principal de la OrdenCliente.
+Catálogo: Vendedor (editable si no existe)
+FK agencia_id
+UUID
+Derivado
+FK NULL
+Agencia. Heredada de OrdenCliente.
+FK categoria_id
+UUID
+Relación
+FK NULL
+Categoría comercial. Heredada de OrdenCliente.
+Catálogo: Categoria (editable si no existe)
+producto
+VARCHAR(200)
+Manual
+Producto específico. Heredado de OrdenCliente, editable.
+FK estacion_id
+UUID
+Relación
+FK NOT NULL
+Estación de afiliado destino. Al seleccionar se infieren plaza, afiliado y razón social.
+Catálogo: Estacion
+FK plaza_id
+UUID
+Derivado
+FK NOT NULL
+Plaza de la estación. Se llena automáticamente.
+Catálogo: Plaza
+fecha_transmision
+DATE
+Manual
+NOT NULL
+Fecha específica de transmisión para esta línea. Si la orden cubre un rango de fechas, se puede crear una OrdenEstacion por fecha o agrupar por rango.
+hora_inicio
+TIME
+Manual
+NOT NULL
+Hora de inicio del horario de transmisión
+hora_fin
+TIME
+Manual
+NOT NULL
+Hora de fin del horario
+duracion_spot
+ENUM
+Catálogo
+NOT NULL
+20s | 30s | 60s | mencion. Heredado de OrdenCliente.
+spots_solicitados
+INTEGER
+Manual
+NOT NULL
+Spots que se solicitan para este horario/estación según la OrdenCliente original
+✓ &gt;= 0
+spots_asignados
+INTEGER
+Manual
+NOT NULL
+Spots efectivamente programados/asignados con el afiliado. Puede ser menor o igual a los solicitados.
+✓ &gt;= 0
+spots_faltantes
+INTEGER
+Calculado
+Diferencia entre solicitados y asignados. Positivo = faltan spots por asignar.
+= spots_solicitados - spots_asignados
+precio_spot
+DECIMAL(12,2)
+Manual
+NOT NULL
+Precio negociado con la emisora. PUEDE DIFERIR del precio_unitario de la OrdenCliente — la diferencia es el margen.
+Catálogo: TarifaPlaza (editable si no existe)
+▸ Núcleo del margen comercial
+importe_estacion
+DECIMAL(14,2)
+Calculado
+Importe de esta asignación
+= spots_asignados * precio_spot
+porcentaje_participacion_oir
+DECIMAL(5,2)
+Manual
+NOT NULL
+Porcentaje que corresponde a OIR
+✓ 0-100
+importe_oir
+DECIMAL(14,2)
+Calculado
+Monto OIR
+= importe_estacion * porcentaje_participacion_oir / 100
+iva_oir
+DECIMAL(14,2)
+Calculado
+IVA
+= importe_oir * 0.16
+total_oir
+DECIMAL(14,2)
+Calculado
+Importe + IVA
+= importe_oir + iva_oir
+importe_emisora
+DECIMAL(14,2)
+Calculado
+Monto para la emisora
+= importe_estacion - importe_oir
+iva_emisora
+DECIMAL(14,2)
+Calculado
+IVA
+= importe_emisora * 0.16
+total_emisora
+DECIMAL(14,2)
+Calculado
+Importe + IVA
+= importe_emisora + iva_emisora
+estatus
+ENUM
+Manual
+NOT NULL
+borrador | asignada | en_transmision | en_revision | cerrada | cancelada. Solo en estatus &quot;cerrada&quot; Facturación puede jalar la información.
+▸ borrador = recién creada desde OrdenCliente. asignada = programada con afiliado. en_revision = llegó reporte y se está reconciliando. cerrada = datos ajustados y listos para facturación.
+observaciones_estacion
+TEXT
+Manual
+Instrucciones operativas para el afiliado o notas internas
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de creación
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+Verificacion
+Registro de lo realmente transmitido según el reporte del afiliado. Cuando el reporte llega y NO coincide con lo asignado, se registra aquí la evidencia. Luego Ventas edita la OrdenEstacion para reflejar la realidad (gestión de afectaciones) y la cierra. La verificación queda como respaldo/evidencia del reporte original del afiliado.
+10 campos — 3 clave_autogenerada · 2 relacion · 4 input_manual · 1 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK verificacion_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK orden_estacion_id
+UUID
+Relación
+FK NOT NULL
+OrdenEstacion verificada
+spots_verificados
+INTEGER
+Manual
+NOT NULL
+Spots confirmados por el afiliado
+fecha_verificacion
+DATE
+Manual
+NOT NULL
+Fecha del reporte del afiliado
+archivo_nombre
+VARCHAR(255)
+Manual
+Archivo cargado
+archivo_path
+VARCHAR(500)
+Auto
+Ruta del archivo
+notas_verificacion
+TEXT
+Manual
+Observaciones: afectaciones, cambios de horario, etc.
+reconciliada
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = se validó contra la programación solicitada. Habilita el cierre de la orden.
+▸ Cuando todas las OrdenEstacion de una OrdenCliente están reconciliadas, la orden puede pasar a estatus orden_cerrada.
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario de Ventas
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de registro
+Incidencia
+Diferencia entre lo solicitado y lo verificado. Generada automáticamente cuando los spots o horarios verificados no coinciden con los programados. No bloquea el cierre. Usada para análisis y para gestionar afectaciones (créditos al cliente, descuentos al afiliado).
+11 campos — 1 clave_autogenerada · 2 relacion · 5 input_manual · 2 derivado · 1 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK incidencia_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK verificacion_id
+UUID
+Relación
+FK NOT NULL
+Verificación que generó la incidencia
+FK orden_estacion_id
+UUID
+Relación
+FK NOT NULL
+OrdenEstacion afectada
+tipo_incidencia
+ENUM
+Manual
+NOT NULL
+faltante | excedente | cambio_horario | cambio_fecha | spot_no_emitido
+spots_ordenados
+INTEGER
+Derivado
+NOT NULL
+Copia de spots asignados
+spots_ejecutados
+INTEGER
+Derivado
+NOT NULL
+Copia de spots verificados
+diferencia_spots
+INTEGER
+Calculado
+spots_ejecutados − spots_ordenados
+= spots_ejecutados - spots_ordenados
+descripcion_incidencia
+TEXT
+Manual
+Causa de la incidencia
+fecha_incidencia
+DATE
+Manual
+NOT NULL
+Fecha en que ocurrió
+resolucion
+ENUM
+Manual
+NOT NULL
+pendiente | aceptada | credito_cliente | descuento_afiliado | sin_resolucion
+monto_ajuste
+DECIMAL(14,2)
+Manual
+Monto del crédito o descuento, si aplica
+FASE 2 — Facturación
+Preparación y registro de facturas. IMPORTANTE: el sistema NO timbra facturas — solo prepara toda la información necesaria para enviarla al sistema externo de timbrado. Después del timbrado, recibe de vuelta el folio fiscal, XML y PDF, que se registran en la factura.
+FacturaCliente
+Carátula de factura al cliente. El sistema PREPARA toda la información necesaria: emisor, receptor, conceptos, totales, observaciones, método de pago, cuenta contable y layout. Esta información se envía al sistema externo de timbrado. Una vez timbrada, el sistema registra el folio fiscal, XML y PDF recibidos. NO se generan CFDIs internamente.
+33 campos — 3 clave_autogenerada · 13 input_manual · 6 relacion · 9 derivado · 2 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK factura_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+numero_factura
+VARCHAR(30)
+Manual
+NOT NULL
+Folio interno de la factura
+numero_pedido
+VARCHAR(50)
+Manual
+Número de pedido del cliente / referencia comercial
+referencia_adicional
+VARCHAR(150)
+Manual
+Referencia adicional para reconciliación con el cliente
+FK orden_id
+UUID
+Relación
+FK NOT NULL
+OrdenCliente que se factura
+FK factura_relacionada_id
+UUID
+Relación
+FK NULL
+Factura previa relacionada (ej. cuando es una nota de crédito o complemento)
+▸ Self-FK a otra FacturaCliente
+FK empresa_facturadora_id
+UUID
+Derivado
+FK NOT NULL
+Heredado de OrdenCliente
+FK anunciante_id
+UUID
+Derivado
+FK NOT NULL
+Heredado de OrdenCliente
+FK agencia_id
+UUID
+Derivado
+FK NULL
+Agencia. NULL si facturación directa.
+razon_social_facturacion
+VARCHAR(200)
+Derivado
+NOT NULL
+Razón social fiscal del anunciante o agencia (según facturacion_directa_cliente)
+rfc_facturacion
+VARCHAR(13)
+Derivado
+NOT NULL
+RFC del receptor
+direccion_facturacion
+TEXT
+Derivado
+Dirección del receptor
+descripcion_factura
+TEXT
+Manual
+NOT NULL
+Descripción de los servicios facturados
+▸ Aparece en el cuerpo de la factura
+observaciones_factura
+TEXT
+Manual
+Observaciones adicionales a imprimir en la factura
+fecha_inicio_transmision
+DATE
+Derivado
+NOT NULL
+Fecha inicio del período transmitido. Heredada de OrdenCliente.
+fecha_fin_transmision
+DATE
+Derivado
+NOT NULL
+Fecha fin del período transmitido
+fecha_factura
+DATE
+Manual
+NOT NULL
+Fecha de emisión
+fecha_entrega_factura
+DATE
+Manual
+Fecha en que se entregó al cliente/agencia. Base para fecha estimada de cobro.
+subtotal_factura
+DECIMAL(14,2)
+Derivado
+NOT NULL
+Subtotal antes de IVA. Heredado de OrdenCliente.
+iva_factura
+DECIMAL(14,2)
+Calculado
+IVA 16%
+= subtotal_factura * 0.16
+total_factura
+DECIMAL(14,2)
+Calculado
+Total con IVA
+= subtotal_factura + iva_factura
+FK cuenta_contable_id
+UUID
+Relación
+FK NOT NULL
+Cuenta contable para clasificación
+Catálogo: CuentaContable
+FK metodo_pago_id
+UUID
+Relación
+FK NOT NULL
+Método de pago acordado
+Catálogo: MetodoPago
+info_cuenta_pago
+TEXT
+Manual
+Datos de cuenta bancaria para recibir el pago (CLABE, banco, titular)
+▸ Información que aparece en la factura para que el cliente pague
+FK layout_factura_id
+UUID
+Relación
+FK NOT NULL
+Plantilla a usar para imprimir
+Catálogo: LayoutFactura
+estado_facturacion
+ENUM
+Manual
+NOT NULL
+preparada | enviada_a_timbrado | timbrada | entregada | cobrada | cancelada
+▸ preparada = lista para enviar a timbrado externo. timbrada = se recibió folio fiscal de vuelta.
+folio_fiscal_sat
+VARCHAR(50)
+Manual
+UUID del CFDI timbrado por el sistema externo. NULL hasta timbrar.
+▸ Lo recibe del sistema externo de timbrado
+fecha_timbrado
+DATE
+Manual
+Fecha en que el sistema externo timbró la factura
+xml_path
+VARCHAR(500)
+Manual
+Ruta del XML recibido del timbrado
+pdf_path
+VARCHAR(500)
+Manual
+Ruta del PDF impreso
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario de Facturación
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de generación
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+FacturaAfiliado
+Factura recibida del afiliado (emisora) por los servicios de transmisión. Captura manual o carga de archivo por CxP. Se asigna a órdenes estación cerradas a través de FacturaAfiliadoOrden.
+13 campos — 3 clave_autogenerada · 2 relacion · 1 derivado · 6 input_manual · 1 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK factura_afiliado_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK afiliado_id
+UUID
+Relación
+FK NOT NULL
+Afiliado emisor
+Catálogo: Afiliado
+razon_social_afiliada
+VARCHAR(200)
+Derivado
+Heredado del catálogo Afiliado
+factura_emisora
+VARCHAR(50)
+Manual
+NOT NULL
+Folio de la factura según el afiliado
+fecha_factura_afiliado
+DATE
+Manual
+NOT NULL
+Fecha de la factura
+monto_factura_afiliado
+DECIMAL(14,2)
+Manual
+NOT NULL
+Subtotal
+iva_factura_afiliado
+DECIMAL(14,2)
+Manual
+NOT NULL
+IVA
+total_factura_afiliado
+DECIMAL(14,2)
+Calculado
+Total con IVA
+= monto_factura_afiliado + iva_factura_afiliado
+archivo_nombre
+VARCHAR(255)
+Manual
+Archivo cargado
+archivo_path
+VARCHAR(500)
+Auto
+Ruta
+estatus_factura_afiliado
+ENUM
+Manual
+NOT NULL
+recibida | en_revision | autorizada | pagada
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxP
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de captura
+FacturaAfiliadoOrden
+Relación N:M entre FacturaAfiliado y OrdenEstacion. Permite distribuir el costo de una factura entre varias órdenes estación cerradas.
+5 campos — 1 clave_autogenerada · 2 relacion · 2 input_manual
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK factura_afiliado_id
+UUID
+Relación
+FK NOT NULL
+Factura del afiliado
+FK orden_estacion_id
+UUID
+Relación
+FK NOT NULL
+Orden estación cerrada
+monto_asignado
+DECIMAL(14,2)
+Manual
+NOT NULL
+Porción del costo asignada
+notas_asignacion
+TEXT
+Manual
+Justificación
+FacturaAgencia
+Factura recibida de la agencia (por su comisión). Captura manual o carga de archivo por CxP. Se asocia a la OrdenCliente.
+15 campos — 3 clave_autogenerada · 3 relacion · 7 input_manual · 2 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK factura_agencia_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK agencia_id
+UUID
+Relación
+FK NOT NULL
+Agencia emisora
+Catálogo: Agencia
+FK orden_id
+UUID
+Relación
+FK NOT NULL
+OrdenCliente relacionada
+folio_factura_agencia
+VARCHAR(50)
+Manual
+Folio externo
+fecha_factura_agencia
+DATE
+Manual
+NOT NULL
+Fecha de la factura
+monto_factura_agencia
+DECIMAL(14,2)
+Manual
+NOT NULL
+Subtotal
+iva_factura_agencia
+DECIMAL(14,2)
+Manual
+NOT NULL
+IVA
+total_factura_agencia
+DECIMAL(14,2)
+Calculado
+Total con IVA
+= monto_factura_agencia + iva_factura_agencia
+porcentaje_comision_agencia
+DECIMAL(5,2)
+Manual
+Porcentaje de comisión en esta operación
+Catálogo: Agencia (editable si no existe)
+comision_agencia
+DECIMAL(14,2)
+Calculado
+Monto de la comisión
+= OrdenCliente.total * porcentaje_comision_agencia / 100
+archivo_nombre
+VARCHAR(255)
+Manual
+Archivo cargado
+archivo_path
+VARCHAR(500)
+Auto
+Ruta
+estatus_factura_agencia
+ENUM
+Manual
+NOT NULL
+recibida | en_revision | autorizada | pagada
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxP
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de captura
+CostoAdicional
+Costos adicionales: nóminas (formato NOI) y overhead libre. Alimentan el Estado de Resultados.
+10 campos — 3 clave_autogenerada · 1 catalogo · 2 relacion · 4 input_manual
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK costo_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+tipo_costo
+ENUM
+Catálogo
+NOT NULL
+nomina | overhead
+FK orden_id
+UUID
+Relación
+FK NULL
+OrdenCliente asociada. NULL para costos generales.
+descripcion_costo
+VARCHAR(300)
+Manual
+NOT NULL
+Descripción
+periodo_contable
+VARCHAR(7)
+Manual
+NOT NULL
+YYYY-MM
+monto_costo
+DECIMAL(14,2)
+Manual
+NOT NULL
+Monto en MXN
+archivo_nombre
+VARCHAR(255)
+Manual
+Respaldo
+archivo_path
+VARCHAR(500)
+Auto
+Ruta
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxP
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de captura
+FASE 3 — Cobranza &amp; Pagos
+Cobranza al cliente (CxC) y pagos a proveedores via requisiciones (CxP). Los pagos del cliente llegan externamente. Los pagos a afiliados, agencias y comisiones se gestionan con requisiciones que requieren autorización.
+CobranzaFactura
+Seguimiento de cobranza por factura emitida al cliente. Cada FacturaCliente timbrada genera un registro de cobranza. Aquí se registran días de crédito, método de pago, fecha estimada de cobro, pagos parciales y estatus.
+14 campos — 3 clave_autogenerada · 3 relacion · 1 derivado · 4 input_manual · 3 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK cobranza_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK factura_id
+UUID
+Relación
+FK NOT NULL
+FacturaCliente asociada
+FK anunciante_id
+UUID
+Derivado
+FK NOT NULL
+Heredado de FacturaCliente
+FK metodo_pago_id
+UUID
+Relación
+FK NOT NULL
+Forma de pago acordada para esta factura. Se hereda de FacturaCliente pero puede ajustarse.
+Catálogo: MetodoPago (editable si no existe)
+dias_credito
+INTEGER
+Manual
+NOT NULL
+Días de crédito pactados. Se sugiere de Anunciante.
+Catálogo: Anunciante (editable si no existe)
+fecha_estimada_cobro
+DATE
+Calculado
+Fecha proyectada de cobro
+= FacturaCliente.fecha_entrega_factura + dias_credito
+importe_cobrado
+DECIMAL(14,2)
+Calculado
+Suma de pagos recibidos
+= SUM(PagoCliente.monto_aplicado) WHERE cobranza_id
+importe_pendiente_cobro
+DECIMAL(14,2)
+Calculado
+Total factura − importe cobrado
+= FacturaCliente.total_factura - importe_cobrado
+fecha_cobro
+DATE
+Manual
+Fecha en que se cobró totalmente. NULL si aún hay saldo.
+estatus_cobro
+ENUM
+Manual
+NOT NULL
+pendiente | cobro_parcial | cobrada | vencida
+comentarios_cobranza
+TEXT
+Manual
+Notas de CxC sobre el seguimiento
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxC
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de registro
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+PagoCliente
+Pago recibido del cliente. Captura manual o carga de relación de pagos por CxC.
+10 campos — 3 clave_autogenerada · 3 relacion · 4 input_manual
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK pago_cliente_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+FK cobranza_id
+UUID
+Relación
+FK NOT NULL
+CobranzaFactura a la que se aplica
+fecha_pago_cliente
+DATE
+Manual
+NOT NULL
+Fecha del pago
+monto_aplicado
+DECIMAL(14,2)
+Manual
+NOT NULL
+Monto aplicado a esta factura
+FK metodo_pago_id
+UUID
+Relación
+FK NOT NULL
+Método con el que se recibió el pago
+Catálogo: MetodoPago
+referencia_pago
+VARCHAR(100)
+Manual
+Referencia bancaria, cheque, etc.
+archivo_nombre
+VARCHAR(255)
+Manual
+Comprobante
+archivo_path
+VARCHAR(500)
+Auto
+Ruta
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxC
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de registro
+Requisicion
+Solicitud de pago generada por CxP hacia afiliado, agencia o comisiones. Incluye referencia a OC de SAP. Requiere autorización antes de ejecutarse.
+23 campos — 3 clave_autogenerada · 9 input_manual · 7 relacion · 1 derivado · 3 calculado
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK requisicion_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+numero_requisicion
+VARCHAR(30)
+Manual
+NOT NULL
+Número interno
+numero_oc_sap
+VARCHAR(30)
+Manual
+Referencia OC en SAP
+tipo_requisicion
+ENUM
+Manual
+NOT NULL
+pago_afiliado | pago_agencia | comision_vendedor | comision_agencia
+FK factura_afiliado_id
+UUID
+Relación
+FK NULL
+Factura origen (si aplica)
+FK factura_agencia_id
+UUID
+Relación
+FK NULL
+Factura origen (si aplica)
+FK orden_id
+UUID
+Relación
+FK NULL
+OrdenCliente relacionada
+FK afiliado_id
+UUID
+Relación
+FK NULL
+Afiliado a pagar
+Catálogo: Afiliado
+FK agencia_id
+UUID
+Relación
+FK NULL
+Agencia a pagar
+Catálogo: Agencia
+razon_social_afiliada
+VARCHAR(200)
+Derivado
+Heredado de Afiliado
+monto_requisicion
+DECIMAL(14,2)
+Manual
+NOT NULL
+Monto
+FK vendedor_comision_id
+UUID
+Relación
+FK NULL
+Vendedor beneficiario (solo si tipo = comision_vendedor)
+Catálogo: Vendedor
+porcentaje_comision_vendedor
+DECIMAL(5,2)
+Manual
+Porcentaje
+Catálogo: Vendedor (editable si no existe)
+requisicion_comision_vendedor
+DECIMAL(14,2)
+Calculado
+Comisión calculada
+= OrdenCliente.total * porcentaje_comision_vendedor / 100
+porcentaje_comision_agencia_req
+DECIMAL(5,2)
+Manual
+Porcentaje
+requisicion_comision_agencia
+DECIMAL(14,2)
+Calculado
+Comisión calculada
+= OrdenCliente.total * porcentaje_comision_agencia_req / 100
+diferencia_afiliada
+DECIMAL(14,2)
+Calculado
+Diferencia para monitoreo de márgenes
+= monto_requisicion - FacturaAfiliado.total_factura_afiliado
+estatus_requisicion
+ENUM
+Manual
+NOT NULL
+pendiente | autorizada | pagada | cancelada
+fecha_pago_requisicion
+DATE
+Manual
+Fecha efectiva
+observaciones_cuentas_por_pagar
+TEXT
+Manual
+Observaciones
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario CxP
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de creación
+updated_at
+TIMESTAMP
+Auto
+Última modificación
+MovimientoBancario
+Movimiento bancario cargado por Tesorería. Referencia para conciliación.
+11 campos — 3 clave_autogenerada · 5 input_manual · 1 catalogo · 1 booleano · 1 relacion
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK movimiento_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+fecha_movimiento
+DATE
+Manual
+NOT NULL
+Fecha del movimiento
+tipo_movimiento
+ENUM
+Catálogo
+NOT NULL
+cargo | abono
+monto_movimiento
+DECIMAL(14,2)
+Manual
+NOT NULL
+Monto
+referencia_bancaria
+VARCHAR(100)
+Manual
+Referencia
+descripcion_movimiento
+VARCHAR(300)
+Manual
+Concepto
+conciliado
+BOOLEAN
+Booleano
+NOT NULL
+TRUE si fue conciliado
+archivo_nombre
+VARCHAR(255)
+Manual
+Estado de cuenta
+archivo_path
+VARCHAR(500)
+Auto
+Ruta
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario Tesorería
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de carga
+FASE 4 — Reportes &amp; Consulta
+Entidades de consolidación y reportes.
+PeriodoResultados
+Consolidado de ingresos y costos por período (mes). Generado por Dirección/Finanzas.
+14 campos — 2 clave_autogenerada · 1 input_manual · 10 calculado · 1 relacion
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK periodo_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+periodo_contable
+VARCHAR(7)
+Manual
+NOT NULL
+YYYY-MM
+ingresos_facturados
+DECIMAL(14,2)
+Calculado
+SUM FacturaCliente.total
+= SUM(FacturaCliente.total_factura) WHERE periodo
+ingresos_cobrados
+DECIMAL(14,2)
+Calculado
+SUM PagoCliente
+= SUM(PagoCliente.monto_aplicado) WHERE periodo
+costo_afiliados
+DECIMAL(14,2)
+Calculado
+SUM Requisicion pago_afiliado
+= SUM(Requisicion.monto_requisicion) WHERE tipo=pago_afiliado AND periodo
+costo_agencias
+DECIMAL(14,2)
+Calculado
+SUM Requisicion pago_agencia
+= SUM(Requisicion.monto_requisicion) WHERE tipo=pago_agencia AND periodo
+costo_comisiones_vendedores
+DECIMAL(14,2)
+Calculado
+SUM comisiones vendedor
+= SUM(Requisicion.requisicion_comision_vendedor) WHERE tipo=comision_vendedor AND periodo
+costo_comisiones_agencias
+DECIMAL(14,2)
+Calculado
+SUM comisiones agencia
+= SUM(Requisicion.requisicion_comision_agencia) WHERE tipo=comision_agencia AND periodo
+costo_nominas
+DECIMAL(14,2)
+Calculado
+SUM CostoAdicional nomina
+= SUM(CostoAdicional.monto_costo) WHERE tipo=nomina AND periodo
+costo_overhead
+DECIMAL(14,2)
+Calculado
+SUM CostoAdicional overhead
+= SUM(CostoAdicional.monto_costo) WHERE tipo=overhead AND periodo
+utilidad_bruta
+DECIMAL(14,2)
+Calculado
+Ingresos − costos directos
+= ingresos_cobrados - costo_afiliados - costo_agencias - costo_comisiones_vendedores - costo_comisiones_agencias
+utilidad_neta
+DECIMAL(14,2)
+Calculado
+Utilidad bruta − nóminas − overhead
+= utilidad_bruta - costo_nominas - costo_overhead
+FK created_by
+UUID
+Relación
+FK NOT NULL
+Usuario Dirección
+created_at
+TIMESTAMP
+Auto
+NOT NULL
+Fecha de generación
+FASE 5 — Seguridad y Auditoría
+Entidades transversales de auditoría y permisos. Aseguran trazabilidad sobre cambios a parámetros sensibles del sistema (porcentajes de comisión, días de crédito, condiciones comerciales, etc.) y permiten implementar permisos a nivel de campo.
+LogCambioParametro
+Registro histórico de cambios a parámetros sensibles del sistema. Cada modificación a un campo marcado como requires_audit_log genera automáticamente un registro aquí. Permite auditar quién cambió qué, cuándo y qué valor tenía antes.
+10 campos — 3 clave_autogenerada · 6 input_manual · 1 relacion
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK log_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+entidad
+VARCHAR(100)
+Manual
+NOT NULL
+Nombre de la entidad afectada (ej. &quot;Agencia&quot;, &quot;Anunciante&quot;)
+▸ Referencia textual al nombre de la entidad
+entidad_id
+UUID
+Manual
+NOT NULL
+ID del registro específico modificado
+▸ Apunta al UUID del registro en la entidad correspondiente
+campo_modificado
+VARCHAR(100)
+Manual
+NOT NULL
+Nombre técnico del campo (ej. &quot;porcentaje_comision_agencia_default&quot;)
+valor_anterior
+TEXT
+Manual
+Valor previo al cambio (como texto)
+▸ NULL si fue una creación
+valor_nuevo
+TEXT
+Manual
+NOT NULL
+Valor después del cambio
+FK usuario_id
+UUID
+Relación
+FK NOT NULL
+Usuario que realizó el cambio
+fecha_cambio
+TIMESTAMP
+Auto
+NOT NULL
+Timestamp exacto del cambio
+motivo_cambio
+TEXT
+Manual
+Razón opcional del cambio capturada por el usuario
+ip_origen
+VARCHAR(45)
+Auto
+IP desde donde se realizó el cambio
+▸ Para auditoría de seguridad
+PermisoCampo
+Configuración de permisos a nivel de campo. Define qué áreas/roles pueden modificar campos específicos protegidos. Complementa el control de acceso general por área del usuario.
+8 campos — 1 clave_autogenerada · 5 input_manual · 2 booleano
+Campo
+Tipo
+Origen
+Restricción
+Descripción
+PK permiso_id
+UUID
+Auto
+PK NOT NULL
+Identificador único
+entidad
+VARCHAR(100)
+Manual
+NOT NULL
+Entidad a la que aplica el permiso
+campo
+VARCHAR(100)
+Manual
+NOT NULL
+Campo específico protegido
+areas_autorizadas
+VARCHAR(300)
+Manual
+NOT NULL
+Lista de áreas autorizadas separadas por coma (ej. &quot;direccion,admin&quot;)
+roles_adicionales_autorizados
+VARCHAR(300)
+Manual
+Roles adicionales autorizados (ej. &quot;auditor,admin_parametros&quot;)
+requiere_audit_log
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = los cambios generan registro en LogCambioParametro
+descripcion_permiso
+VARCHAR(300)
+Manual
+Descripción del por qué este campo está protegido
+activo
+BOOLEAN
+Booleano
+NOT NULL
+TRUE = la regla está vigente
+Relaciones entre entidades
+Relación
+Card.
+Descripción
+Agencia → Cliente
+1:N
+Una agencia representa a varios clientes
+Cliente → Marca
+1:N
+Un cliente puede tener múltiples marcas
+Cliente → OrdenCliente
+1:N
+Un cliente puede tener múltiples órdenes
+Agencia → OrdenCliente
+1:N
+Una agencia puede intermediar en múltiples órdenes
+Vendedor → OrdenCliente
+1:N
+Un vendedor puede ser responsable de múltiples órdenes (principal o secundario)
+EmpresaFacturadora → OrdenCliente
+1:N
+Una empresa facturadora puede emitir facturas de múltiples órdenes
+OrdenCliente → OrdenEstacion
+1:N
+Una orden se subdivide en una o más órdenes por estación
+Afiliado → Estacion
+1:N
+Un afiliado opera una o más estaciones
+Plaza → Estacion
+1:N
+Una plaza puede tener múltiples estaciones
+Estacion → OrdenEstacion
+1:N
+Una estación puede recibir órdenes en diferentes períodos
+TarifaPlaza → OrdenEstacion
+Ref
+La tarifa de plaza se usa como referencia sugerida para el costo por spot
+OrdenEstacion → Verificacion
+1:1
+Cada orden estación tiene a lo mucho una verificación
+Verificacion → Incidencia
+1:N
+Una verificación puede generar cero o más incidencias
+OrdenCliente → FacturaCliente
+1:1
+Cada orden genera una factura al cliente
+Afiliado → FacturaAfiliado
+1:N
+Un afiliado puede enviar múltiples facturas
+FacturaAfiliado ↔ OrdenEstacion
+N:M
+Vía tabla FacturaAfiliadoOrden
+Agencia → FacturaAgencia
+1:N
+Una agencia puede enviar múltiples facturas
+OrdenCliente → FacturaAgencia
+1:N
+Una orden puede tener facturas de agencia
+FacturaCliente → CobranzaFactura
+1:1
+Cada factura emitida genera un registro de cobranza
+CobranzaFactura → PagoCliente
+1:N
+Una cobranza puede recibir múltiples pagos parciales
+FacturaAfiliado → Requisicion
+1:1
+Una factura de afiliado autorizada genera una requisición de pago
+FacturaAgencia → Requisicion
+1:1
+Una factura de agencia autorizada genera una requisición de pago
+Vendedor → Requisicion
+1:N
+Un vendedor puede tener múltiples requisiciones de comisión
+Campos calculados — Referencia de fórmulas
+Todos los campos cuyo valor se genera automáticamente mediante una fórmula.
+Campo
+Fórmula
+TarifaPlaza.tarifa_neta
+tarifa_bruta * (1 - descuento_pct / 100)
+OrdenCliente.anio_venta
+YEAR(fecha_venta)
+OrdenCliente.mes_venta
+MONTH(fecha_venta)
+OrdenCliente.total_dias_campania
+DATEDIFF(fecha_fin_campania, fecha_inicio_campania) + 1
+OrdenCliente.subtotal
+total_spots * precio_unitario
+OrdenCliente.iva
+subtotal * 0.16
+OrdenCliente.total
+subtotal + iva
+OrdenEstacion.spots_faltantes
+spots_solicitados - spots_asignados
+OrdenEstacion.importe_estacion
+spots_asignados * precio_spot
+OrdenEstacion.importe_oir
+importe_estacion * porcentaje_participacion_oir / 100
+OrdenEstacion.iva_oir
+importe_oir * 0.16
+OrdenEstacion.total_oir
+importe_oir + iva_oir
+OrdenEstacion.importe_emisora
+importe_estacion - importe_oir
+OrdenEstacion.iva_emisora
+importe_emisora * 0.16
+OrdenEstacion.total_emisora
+importe_emisora + iva_emisora
+Incidencia.diferencia_spots
+spots_ejecutados - spots_ordenados
+FacturaCliente.iva_factura
+subtotal_factura * 0.16
+FacturaCliente.total_factura
+subtotal_factura + iva_factura
+FacturaAfiliado.total_factura_afiliado
+monto_factura_afiliado + iva_factura_afiliado
+FacturaAgencia.total_factura_agencia
+monto_factura_agencia + iva_factura_agencia
+FacturaAgencia.comision_agencia
+OrdenCliente.total * porcentaje_comision_agencia / 100
+CobranzaFactura.fecha_estimada_cobro
+FacturaCliente.fecha_entrega_factura + dias_credito
+CobranzaFactura.importe_cobrado
+SUM(PagoCliente.monto_aplicado) WHERE cobranza_id
+CobranzaFactura.importe_pendiente_cobro
+FacturaCliente.total_factura - importe_cobrado
+Requisicion.requisicion_comision_vendedor
+OrdenCliente.total * porcentaje_comision_vendedor / 100
+Requisicion.requisicion_comision_agencia
+OrdenCliente.total * porcentaje_comision_agencia_req / 100
+Requisicion.diferencia_afiliada
+monto_requisicion - FacturaAfiliado.total_factura_afiliado
+PeriodoResultados.ingresos_facturados
+SUM(FacturaCliente.total_factura) WHERE periodo
+PeriodoResultados.ingresos_cobrados
+SUM(PagoCliente.monto_aplicado) WHERE periodo
+PeriodoResultados.costo_afiliados
+SUM(Requisicion.monto_requisicion) WHERE tipo=pago_afiliado AND periodo
+PeriodoResultados.costo_agencias
+SUM(Requisicion.monto_requisicion) WHERE tipo=pago_agencia AND periodo
+PeriodoResultados.costo_comisiones_vendedores
+SUM(Requisicion.requisicion_comision_vendedor) WHERE tipo=comision_vendedor AND periodo
+PeriodoResultados.costo_comisiones_agencias
+SUM(Requisicion.requisicion_comision_agencia) WHERE tipo=comision_agencia AND periodo
+PeriodoResultados.costo_nominas
+SUM(CostoAdicional.monto_costo) WHERE tipo=nomina AND periodo
+PeriodoResultados.costo_overhead
+SUM(CostoAdicional.monto_costo) WHERE tipo=overhead AND periodo
+PeriodoResultados.utilidad_bruta
+ingresos_cobrados - costo_afiliados - costo_agencias - costo_comisiones_vendedores - costo_comisiones_agencias
+PeriodoResultados.utilidad_neta
+utilidad_bruta - costo_nominas - costo_overhead
+

@@ -131,9 +131,7 @@ def parsear_csv(
     try:
         texto = contenido.decode("utf-8-sig")  # utf-8-sig descarta el BOM si está presente
     except UnicodeDecodeError as exc:
-        raise ImportacionArchivoError(
-            "El archivo no está codificado en UTF-8."
-        ) from exc
+        raise ImportacionArchivoError("El archivo no está codificado en UTF-8.") from exc
 
     # Delimitador: se intenta detectar `,` o `;` (Excel es-MX suele exportar `;`).
     muestra = texto[:4096]

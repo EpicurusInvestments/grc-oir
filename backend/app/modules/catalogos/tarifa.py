@@ -53,24 +53,18 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError, DomainError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
 from app.modules.catalogos.plaza import Plaza
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.enums import DuracionSpot
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 
 class TipoSenal(StrEnum):
     FM = "fm"
     AM = "am"
     TV = "tv"
-
-
-class DuracionSpot(StrEnum):
-    S20 = "20s"
-    S30 = "30s"
-    S60 = "60s"
-    MENCION = "mencion"
 
 
 CENTAVOS = Decimal("0.01")
@@ -86,9 +80,7 @@ def calcular_tarifa_neta(tarifa_bruta: Decimal, descuento_pct: Decimal) -> Decim
 class TarifaPlaza(Base):
     __tablename__ = "tarifa_plaza"
     __table_args__ = (
-        CheckConstraint(
-            "tipo_senal IN ('fm', 'am', 'tv')", name="ck_tarifa_plaza_tipo_senal"
-        ),
+        CheckConstraint("tipo_senal IN ('fm', 'am', 'tv')", name="ck_tarifa_plaza_tipo_senal"),
         CheckConstraint(
             "duracion_spot IN ('20s', '30s', '60s', 'mencion')",
             name="ck_tarifa_plaza_duracion_spot",
@@ -97,17 +89,13 @@ class TarifaPlaza(Base):
             "descuento_pct >= 0 AND descuento_pct <= 100",
             name="ck_tarifa_plaza_descuento_pct",
         ),
-        CheckConstraint(
-            "vigencia_hasta >= vigencia_desde", name="ck_tarifa_plaza_vigencia"
-        ),
+        CheckConstraint("vigencia_hasta >= vigencia_desde", name="ck_tarifa_plaza_vigencia"),
         # Acelera el filtrado por combinación y la consulta de solapamiento.
         Index("ix_tarifa_plaza_combo", "plaza_id", "tipo_senal", "duracion_spot"),
     )
 
     tarifa_plaza_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
-    plaza_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("plaza.plaza_id"), index=True
-    )
+    plaza_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plaza.plaza_id"), index=True)
     tipo_senal: Mapped[str] = mapped_column(Unicode(4))
     duracion_spot: Mapped[str] = mapped_column(Unicode(10))
     tarifa_bruta: Mapped[Decimal] = mapped_column(Numeric(14, 2))
@@ -285,9 +273,7 @@ class TarifaService(
     read_schema = TarifaPlazaRead
     entidad = "TarifaPlaza"
 
-    def __init__(
-        self, repo: TarifaRepository, *, plaza_repo: BaseRepository[Plaza]
-    ) -> None:
+    def __init__(self, repo: TarifaRepository, *, plaza_repo: BaseRepository[Plaza]) -> None:
         super().__init__(repo)
         self._tarifa_repo = repo
         self._plaza_repo = plaza_repo
@@ -334,9 +320,7 @@ class TarifaService(
             excluir_id=None,
         )
 
-    def _pre_update(
-        self, obj: TarifaPlaza, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: TarifaPlaza, payload: dict[str, Any], usuario: CurrentUser) -> None:
         if "plaza_id" in payload:
             self._verificar_plaza(payload["plaza_id"])
 

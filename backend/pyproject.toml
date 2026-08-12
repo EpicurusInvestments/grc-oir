@@ -79,7 +79,7 @@ ignore_missing_imports = true
 # que FastAPI las reconozca como modelos en tiempo de ejecución; mypy no puede tipar ese
 # patrón. Se silencian solo los códigos afectados, solo en ese archivo.
 [[tool.mypy.overrides]]
-module = ["app.modules.catalogos.crud_router"]
+module = ["app.shared.crud_router"]
 disable_error_code = ["valid-type", "arg-type"]
 
 # ── Pruebas ───────────────────────────────────────────────────────────────────

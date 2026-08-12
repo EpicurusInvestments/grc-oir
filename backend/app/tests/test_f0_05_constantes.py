@@ -47,7 +47,7 @@ from app.modules.catalogos.cuenta_contable import (
     TipoCuenta,
 )
 from app.modules.catalogos.cuenta_contable import router as cuenta_router
-from app.modules.catalogos.schemas import ListParams
+from app.shared.schemas import ListParams
 
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
 
@@ -106,9 +106,7 @@ def test_const_grupo_clave_unico_ci(const_svc: ConstanteSistemaService) -> None:
 def test_const_misma_clave_distinto_grupo_permitida(const_svc: ConstanteSistemaService) -> None:
     # "01" existe como FormaPago (Efectivo) y podría existir en otro grupo: no colisiona.
     _const(const_svc, grupo=GrupoConstante.FORMA_PAGO, clave="01", descripcion="Efectivo")
-    otra = _const(
-        const_svc, grupo=GrupoConstante.MONEDA_SAT, clave="01", descripcion="Solo prueba"
-    )
+    otra = _const(const_svc, grupo=GrupoConstante.MONEDA_SAT, clave="01", descripcion="Solo prueba")
     assert otra.clave == "01"
 
 

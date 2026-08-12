@@ -50,10 +50,10 @@ from app.integrations.almacenamiento.documentos import (
 )
 from app.integrations.almacenamiento.port import AlmacenamientoPort
 from app.modules.catalogos.anunciante import Anunciante
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 # Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo.
 CAMPO_COMISION = "porcentaje_comision_contrato"
@@ -89,9 +89,7 @@ class Contrato(Base):
             "estado_contrato IN ('vigente', 'suspendido', 'finalizado', 'cancelado')",
             name="ck_contrato_estado",
         ),
-        CheckConstraint(
-            "fecha_fin_contrato >= fecha_inicio_contrato", name="ck_contrato_fechas"
-        ),
+        CheckConstraint("fecha_fin_contrato >= fecha_inicio_contrato", name="ck_contrato_fechas"),
         CheckConstraint(
             "porcentaje_comision_contrato IS NULL OR "
             "(porcentaje_comision_contrato >= 0 AND porcentaje_comision_contrato <= 100)",
@@ -113,9 +111,7 @@ class Contrato(Base):
         Numeric(5, 2), default=None
     )
     condiciones_comerciales: Mapped[str | None] = mapped_column(Unicode(4000), default=None)
-    estado_contrato: Mapped[str] = mapped_column(
-        Unicode(20), default=EstadoContrato.VIGENTE.value
-    )
+    estado_contrato: Mapped[str] = mapped_column(Unicode(20), default=EstadoContrato.VIGENTE.value)
     # Prefijo del contrato en S3 (contratos/<numero>/). Subida diferida.
     archivo_contrato_path: Mapped[str | None] = mapped_column(Unicode(400), default=None)
     observaciones_contrato: Mapped[str | None] = mapped_column(Unicode(1000), default=None)
@@ -145,9 +141,7 @@ class ContratoCreate(BaseModel):
     @model_validator(mode="after")
     def _valida_fechas(self) -> ContratoCreate:
         if self.fecha_fin_contrato < self.fecha_inicio_contrato:
-            raise ValueError(
-                "fecha_fin_contrato debe ser mayor o igual que fecha_inicio_contrato."
-            )
+            raise ValueError("fecha_fin_contrato debe ser mayor o igual que fecha_inicio_contrato.")
         return self
 
 
@@ -173,9 +167,7 @@ class ContratoUpdate(BaseModel):
             and self.fecha_fin_contrato is not None
             and self.fecha_fin_contrato < self.fecha_inicio_contrato
         ):
-            raise ValueError(
-                "fecha_fin_contrato debe ser mayor o igual que fecha_inicio_contrato."
-            )
+            raise ValueError("fecha_fin_contrato debe ser mayor o igual que fecha_inicio_contrato.")
         return self
 
 
@@ -295,18 +287,14 @@ class ContratoService(BaseService[Contrato, ContratoCreate, ContratoUpdate, Cont
         self._almacenamiento = almacenamiento
 
     # ── enriquecimiento (anunciante_nombre + anunciante_rfc) ────────────────────
-    def _read(
-        self, obj: Contrato, datos: tuple[str, str] | None
-    ) -> ContratoRead:
+    def _read(self, obj: Contrato, datos: tuple[str, str] | None) -> ContratoRead:
         nombre, rfc = datos if datos else (None, None)
         return ContratoRead.model_validate(obj).model_copy(
             update={"anunciante_nombre": nombre, "anunciante_rfc": rfc}
         )
 
     def _to_read(self, obj: Contrato) -> ContratoRead:
-        datos = self._contrato_repo.datos_de_anunciantes([obj.anunciante_id]).get(
-            obj.anunciante_id
-        )
+        datos = self._contrato_repo.datos_de_anunciantes([obj.anunciante_id]).get(obj.anunciante_id)
         return self._read(obj, datos)
 
     def list(self, params: ListParams) -> Page[ContratoRead]:
@@ -344,9 +332,7 @@ class ContratoService(BaseService[Contrato, ContratoCreate, ContratoUpdate, Cont
                 requiere_motivo=False,
             )
 
-    def _pre_update(
-        self, obj: Contrato, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Contrato, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
 
         if "anunciante_id" in payload:
@@ -502,9 +488,7 @@ def listar_contratos(
     usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
     svc: ContratoService = Depends(get_contrato_service),
 ) -> Page[ContratoRead]:
-    return svc.list(
-        ContratoListParams(page=page, size=size, activo=activo, q=q, estado=estado)
-    )
+    return svc.list(ContratoListParams(page=page, size=size, activo=activo, q=q, estado=estado))
 
 
 @router.get("/{item_id}/historial", response_model=list[audit.LogCambioParametroRead])

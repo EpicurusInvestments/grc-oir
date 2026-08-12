@@ -185,9 +185,7 @@ def test_filas_excedidas_aborta(svc: ConstanteSistemaService, monkeypatch) -> No
     from app.modules.catalogos.importacion_csv import ArchivoDemasiadoGrandeError
 
     monkeypatch.setattr(config.settings, "import_csv_max_rows", 2)
-    contenido = _csv(
-        "UsoCFDI,G01,A,,true", "UsoCFDI,G02,B,,true", "UsoCFDI,G03,C,,true"
-    )
+    contenido = _csv("UsoCFDI,G01,A,,true", "UsoCFDI,G02,B,,true", "UsoCFDI,G03,C,,true")
     with pytest.raises(ArchivoDemasiadoGrandeError):
         svc.importar_csv(contenido, commit=False, modo=ModoDuplicados.ACTUALIZAR)
 
