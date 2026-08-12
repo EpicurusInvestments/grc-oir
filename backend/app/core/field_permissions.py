@@ -27,6 +27,5 @@ def verificar(entidad: str, campo: str, usuario: CurrentUser) -> None:
     if usuario.area is Area.ADMIN:
         return
     raise PermissionDeniedError(
-        f"El área '{usuario.area.value}' no puede modificar el campo sensible "
-        f"'{entidad}.{campo}'.",
+        f"El área '{usuario.area.value}' no puede modificar el campo sensible '{entidad}.{campo}'.",
     )

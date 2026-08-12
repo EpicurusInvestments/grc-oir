@@ -54,6 +54,12 @@ _ACCION_NIVEL: dict[str, Acceso] = {
 # Fuente: matriz de la propuesta. F0-00: en catálogos solo Admin escribe; las demás
 # áreas operativas solo leen (decisión confirmada, revisable cuando Ventas entre a
 # afiliados/estaciones en F0-01).
+#
+# NOTA (desviación explícita de la matriz de la propuesta, decisión del equipo): Admin
+# es superusuario — WRITE en TODOS los módulos, presentes y futuros — resuelto de forma
+# centralizada en `_nivel()`, no listado módulo por módulo aquí. La propuesta original
+# (§9) le daba a Admin solo lectura sobre Órdenes; se decidió ampliarlo a acceso total
+# para no bloquear pruebas/administración desde esa área.
 _LECTURA_CATALOGOS = {
     Area.VENTAS: Acceso.READ,
     Area.FACTURACION: Acceso.READ,
@@ -63,8 +69,20 @@ _LECTURA_CATALOGOS = {
     Area.DIRECCION: Acceso.READ,
 }
 
+# F1: matriz de la propuesta Pointwise (§9 "Roles y matriz de permisos"), columna
+# "Órdenes" — Ventas captura (C); Facturación/Tesorería/CxC/CxP/Dirección solo leen (L);
+# Nóminas sin acceso (—). Admin no se lista aquí: siempre WRITE vía `_nivel()`.
+_LECTURA_ORDENES = {
+    Area.FACTURACION: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXC: Acceso.READ,
+    Area.CXP: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+}
+
 RBAC: dict[str, dict[Area, Acceso]] = {
-    "catalogos": {Area.ADMIN: Acceso.WRITE, **_LECTURA_CATALOGOS},
+    "catalogos": _LECTURA_CATALOGOS,
+    "ordenes": {Area.VENTAS: Acceso.WRITE, **_LECTURA_ORDENES},
 }
 
 
@@ -103,6 +121,8 @@ def get_current_user(request: Request) -> CurrentUser:
 
 
 def _nivel(modulo: str, area: Area) -> Acceso:
+    if area is Area.ADMIN:
+        return Acceso.WRITE
     return RBAC.get(modulo, {}).get(area, Acceso.NONE)
 
 

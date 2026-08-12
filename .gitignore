@@ -16,6 +16,12 @@ venv/
 .ruff_cache/
 *.egg-info/
 
+# Base de datos SQLite local de desarrollo (F1, ADR-028) — nunca se versiona
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
 # Node / frontend
 node_modules/
 dist/

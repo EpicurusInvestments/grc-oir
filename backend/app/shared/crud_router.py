@@ -21,8 +21,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from app.core.security import CurrentUser, requiere_permiso
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.schemas import CambioEstadoIn, Page
+from app.shared.base_service import BaseService
+from app.shared.schemas import CambioEstadoIn, Page
 
 
 def build_crud_router(
@@ -47,7 +47,7 @@ def build_crud_router(
         usuario: CurrentUser = Depends(requiere_permiso(f"{permiso_base}:leer")),
         svc: BaseService[Any, Any, Any, Any] = Depends(get_service),
     ) -> Any:
-        from app.modules.catalogos.schemas import ListParams
+        from app.shared.schemas import ListParams
 
         return svc.list(ListParams(page=page, size=size, activo=activo, q=q))
 

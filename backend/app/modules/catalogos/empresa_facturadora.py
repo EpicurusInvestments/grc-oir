@@ -28,10 +28,10 @@ from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError
 from app.core.security import CurrentUser
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase
 
 
 def _normaliza_rfc(valor: str) -> str:
@@ -124,9 +124,7 @@ class EmpresaFacturadoraService(
         self, obj: EmpresaFacturadora, payload: dict[str, Any], usuario: CurrentUser
     ) -> None:
         if "rfc_empresa" in payload:
-            self._verificar_rfc_unico(
-                payload["rfc_empresa"], excluir_id=obj.empresa_facturadora_id
-            )
+            self._verificar_rfc_unico(payload["rfc_empresa"], excluir_id=obj.empresa_facturadora_id)
 
     def _verificar_rfc_unico(self, rfc: str, excluir_id: uuid.UUID | None) -> None:
         if self._empresa_repo.get_by_rfc(rfc, excluir_id) is not None:

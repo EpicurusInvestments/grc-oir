@@ -83,9 +83,7 @@ def sanear_nombre_archivo(nombre: str) -> str:
     base = re.split(r"[\\/]", nombre.strip())[-1]
     limpio = _CHARS_INVALIDOS.sub("-", base).strip("-. ")
     if not limpio:
-        raise ArchivoNoPdfError(
-            "Nombre de archivo inválido.", detalles={"nombre": nombre}
-        )
+        raise ArchivoNoPdfError("Nombre de archivo inválido.", detalles={"nombre": nombre})
 
     # Separa raíz + extensión y fuerza .pdf (case-insensitive).
     raiz, _, ext = limpio.rpartition(".")
@@ -122,7 +120,5 @@ def leer_pdf(archivo: UploadFile, *, max_bytes: int) -> bytes:
     if not contenido:
         raise ArchivoNoPdfError("El archivo está vacío.")
     if not contenido.startswith(_PDF_MAGIC):
-        raise ArchivoNoPdfError(
-            "El contenido del archivo no corresponde a un PDF válido."
-        )
+        raise ArchivoNoPdfError("El contenido del archivo no corresponde a un PDF válido.")
     return contenido

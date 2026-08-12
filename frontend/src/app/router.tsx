@@ -8,8 +8,11 @@ import { createBrowserRouter } from "react-router-dom";
 
 import { DashboardPage } from "@/modules/dashboard/pages/DashboardPage";
 import { CatalogosExplorerPage } from "@/modules/catalogos/pages/CatalogosExplorerPage";
+import { OrdenesExplorerPage } from "@/modules/ordenes/pages/OrdenesExplorerPage";
 
 export const router = createBrowserRouter([
   { path: "/", element: <DashboardPage /> },
   { path: "/catalogos", element: <CatalogosExplorerPage /> },
+  // DEMO VISUAL (datos dummy, sin backend) — ver docs/referencias/pantallas/Fase_1_-_Ordenes.html
+  { path: "/ordenes", element: <OrdenesExplorerPage /> },
 ]);

@@ -26,6 +26,7 @@
   --teal: #0f6e56;
   --teal-bg: #e1f5ee;
   --teal-text: #085041;
+  --teal-border: #5dcaa5;
   --blue-bg: #e6f1fb;
   --blue-text: #0c447c;
   --amber-bg: #faeeda;
@@ -224,6 +225,10 @@ body {
   background: #fff;
   color: var(--phase-text);
 }
+.side-count.urgent {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
 
 /* ── Main ── */
 .main {
@@ -391,6 +396,10 @@ body {
   background: var(--red-bg);
   color: var(--red-text);
 }
+.b-dark {
+  background: var(--text);
+  color: #fff;
+}
 
 /* ── Tags de campo (origen del dato) ── */
 .fl-tag {
@@ -461,6 +470,70 @@ body {
   background: #4840a0;
   border-color: #4840a0;
   color: #fff;
+}
+/* Variantes de color fijo (independientes de la fase activa), para botones de acción
+ * contextual cuyo color comunica el tipo de acción, no la fase (p.ej. "Cerrar orden" en
+ * ámbar de advertencia). Mismo criterio de color que las variantes `.b-*` de badge. */
+.btn-teal {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.btn-teal:hover {
+  background: #0d5e49;
+  border-color: #0d5e49;
+  color: #fff;
+}
+.btn-purple {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: #fff;
+}
+.btn-purple:hover {
+  background: #4840a0;
+  border-color: #4840a0;
+  color: #fff;
+}
+.btn-amber {
+  background: #ba7517;
+  border-color: #ba7517;
+  color: #fff;
+}
+.btn-amber:hover {
+  background: #a06412;
+  border-color: #a06412;
+  color: #fff;
+}
+.btn-dark {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
+}
+.btn-dark:hover {
+  background: #2c2c2a;
+  border-color: #2c2c2a;
+  color: #fff;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Panel de resumen para forms full-screen (patrón "captura + panel de resumen" de la
+ * propuesta): tarjetas cortas a la derecha con cálculos en vivo, checklist, etc.
+ * ───────────────────────────────────────────────────────────────────────────── */
+.info-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  padding: 14px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.info-panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 10px;
 }
 
 /* ── Estados de carga / error / vacío ── */
@@ -1119,4 +1192,90 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Alcance de color por fase para pantallas de UNA fase específica (más allá del
+ * dashboard/drawer, que ya usan `.pc-accent-*`). Aplica esta clase en la raíz de la
+ * pantalla de la fase para repintar `--phase*` SOLO dentro de ese subárbol, sin tocar los
+ * valores globales de `:root` (que siguen sirviendo a F0).
+ * ───────────────────────────────────────────────────────────────────────────── */
+.phase-f1 {
+  --phase: var(--teal);
+  --phase-bg: var(--teal-bg);
+  --phase-text: var(--teal-text);
+  --phase-border: var(--teal-border);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Timeline (F1 — ciclo de vida de OrdenCliente). Portado de la pantalla aprobada
+ * `Fase_1_-_Ordenes.html`: "completado" siempre teal y "vigente" siempre morado,
+ * fijos — no seguían el color de fase en el prototipo aprobado, así que se respeta igual.
+ * ───────────────────────────────────────────────────────────────────────────── */
+.timeline {
+  display: flex;
+  align-items: center;
+  margin: 8px 0 14px;
+  padding: 8px 0;
+}
+.tl-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  font-size: 10px;
+}
+.tl-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  width: 100%;
+  height: 1.5px;
+  background: var(--border-med);
+  z-index: 0;
+}
+.tl-step.done:not(:last-child)::after {
+  background: var(--teal);
+}
+.tl-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--border-med);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  z-index: 1;
+  color: var(--text3);
+}
+.tl-step.done .tl-dot {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.tl-step.current .tl-dot {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--purple-bg);
+}
+.tl-lbl {
+  margin-top: 5px;
+  color: var(--text3);
+  text-align: center;
+  font-size: 9px;
+  line-height: 1.2;
+  max-width: 60px;
+}
+.tl-step.done .tl-lbl {
+  color: var(--teal-text);
+}
+.tl-step.current .tl-lbl {
+  color: var(--purple-text);
+  font-weight: 600;
 }

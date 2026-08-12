@@ -29,9 +29,7 @@ from app.integrations.almacenamiento.documentos import (
 logger = logging.getLogger(__name__)
 
 
-def _crear_cliente(
-    region: str, access_key_id: str | None, secret_access_key: str | None
-) -> Any:
+def _crear_cliente(region: str, access_key_id: str | None, secret_access_key: str | None) -> Any:
     """Construye un cliente S3.
 
     Si se reciben `access_key_id`/`secret_access_key`, se pasan EXPLÍCITAMENTE a boto3; si
@@ -88,7 +86,7 @@ class AlmacenamientoS3:
             for pagina in paginator.paginate(Bucket=self._bucket, Prefix=prefijo):
                 for obj in pagina.get("Contents", []):
                     clave = obj["Key"]
-                    nombre = clave[len(prefijo):]
+                    nombre = clave[len(prefijo) :]
                     if not nombre:  # el "objeto carpeta" (clave == prefijo) se ignora
                         continue
                     modificado = obj.get("LastModified")
@@ -155,9 +153,7 @@ class AlmacenamientoS3:
             err = respuesta.get("Error", {})
             detalle["codigo_s3"] = err.get("Code")
             detalle["mensaje_s3"] = err.get("Message")
-            detalle["http_status"] = respuesta.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode"
-            )
+            detalle["http_status"] = respuesta.get("ResponseMetadata", {}).get("HTTPStatusCode")
 
         logger.error(
             "Fallo de S3: %s | bucket=%s region=%s | %s: %s | detalle=%s",

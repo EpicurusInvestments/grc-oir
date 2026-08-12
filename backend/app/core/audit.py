@@ -43,13 +43,9 @@ class LogCambioParametro(Base):
     """
 
     __tablename__ = "log_cambio_parametro"
-    __table_args__ = (
-        Index("ix_log_cambio_parametro_entidad", "entidad", "entidad_id"),
-    )
+    __table_args__ = (Index("ix_log_cambio_parametro_entidad", "entidad", "entidad_id"),)
 
-    log_cambio_parametro_id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True, default=uuid4
-    )
+    log_cambio_parametro_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     entidad: Mapped[str] = mapped_column(Unicode(60))
     entidad_id: Mapped[str] = mapped_column(Unicode(60))  # UUID como texto (genérico)
     campo: Mapped[str] = mapped_column(Unicode(80))
@@ -166,9 +162,7 @@ class LogCambioParametroRead(BaseModel):
     fecha_cambio: datetime
 
 
-def listar_historial(
-    db: Session, entidad: str, entidad_id: Any
-) -> list[LogCambioParametro]:
+def listar_historial(db: Session, entidad: str, entidad_id: Any) -> list[LogCambioParametro]:
     """Historial de cambios de UNA entidad concreta, del más reciente al más antiguo.
 
     Lectura acotada de `LogCambioParametro` filtrada por (entidad, entidad_id). La pantalla

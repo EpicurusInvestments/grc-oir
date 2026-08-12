@@ -30,11 +30,11 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError, DependenciasActivasError
 from app.core.security import CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
 from app.modules.catalogos.plaza import Plaza
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 # Formato oficial RFC MX: 3-4 letras (3 moral / 4 física) + AAMMDD + homoclave (3).
 RFC_REGEX = re.compile(r"^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$")
@@ -53,12 +53,8 @@ class Afiliado(Base):
     afiliado_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     nombre_afiliado: Mapped[str] = mapped_column(Unicode(160), index=True)
     razon_social_afiliado: Mapped[str] = mapped_column(Unicode(200))
-    rfc_afiliado: Mapped[str] = mapped_column(
-        Unicode(13), unique=True, index=True
-    )
-    plaza_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("plaza.plaza_id"), index=True
-    )
+    rfc_afiliado: Mapped[str] = mapped_column(Unicode(13), unique=True, index=True)
+    plaza_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plaza.plaza_id"), index=True)
     contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
@@ -118,9 +114,7 @@ class AfiliadoRead(CatalogoReadBase):
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class AfiliadoRepository(BaseRepository[Afiliado]):
-    def get_by_rfc(
-        self, rfc: str, excluir_id: uuid.UUID | None = None
-    ) -> Afiliado | None:
+    def get_by_rfc(self, rfc: str, excluir_id: uuid.UUID | None = None) -> Afiliado | None:
         stmt = select(Afiliado).where(Afiliado.rfc_afiliado == rfc)
         if excluir_id is not None:
             stmt = stmt.where(Afiliado.afiliado_id != excluir_id)
@@ -152,9 +146,7 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
     read_schema = AfiliadoRead
     entidad = "Afiliado"
 
-    def __init__(
-        self, repo: AfiliadoRepository, *, estacion_repo: Any
-    ) -> None:
+    def __init__(self, repo: AfiliadoRepository, *, estacion_repo: Any) -> None:
         super().__init__(repo)
         self._afiliado_repo = repo
         self._estacion_repo = estacion_repo
@@ -178,8 +170,7 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
         counts = self._estacion_repo.contar_por_afiliados([a.afiliado_id for a in items])
         return Page[AfiliadoRead](
             items=[
-                self._read(a, nombres.get(a.plaza_id), counts.get(a.afiliado_id, 0))
-                for a in items
+                self._read(a, nombres.get(a.plaza_id), counts.get(a.afiliado_id, 0)) for a in items
             ],
             total=total,
             page=params.page,
@@ -190,9 +181,7 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         self._verificar_rfc_unico(payload["rfc_afiliado"], excluir_id=None)
 
-    def _pre_update(
-        self, obj: Afiliado, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Afiliado, payload: dict[str, Any], usuario: CurrentUser) -> None:
         if "rfc_afiliado" in payload:
             self._verificar_rfc_unico(payload["rfc_afiliado"], excluir_id=obj.afiliado_id)
 

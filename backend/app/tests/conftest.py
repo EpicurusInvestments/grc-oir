@@ -18,8 +18,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.db import Base, get_db
 from app.core.errors import register_error_handlers
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.crud_router import build_crud_router
+from app.shared.base_repository import BaseRepository
+from app.shared.crud_router import build_crud_router
 from app.tests._demo import (
     CatalogoDemo,
     DemoCreate,

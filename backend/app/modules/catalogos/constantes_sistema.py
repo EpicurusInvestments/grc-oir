@@ -37,16 +37,16 @@ from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos import importacion_csv
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
 from app.modules.catalogos.importacion_csv import (
     EstadoFila,
     FilaResultado,
     ModoDuplicados,
     ResultadoImportacion,
 )
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 # Columnas del CSV de importación de constantes (plan F0-05, sección C).
 COLUMNAS_REQUERIDAS = ["grupo", "clave", "descripcion"]
@@ -243,9 +243,7 @@ class ConstanteSistemaService(
         if "valor" in payload and payload["valor"] is not None:
             payload["valor"] = _normaliza(payload["valor"]) or None
 
-    def _verificar_unico(
-        self, grupo: str, clave: str, excluir_id: uuid.UUID | None
-    ) -> None:
+    def _verificar_unico(self, grupo: str, clave: str, excluir_id: uuid.UUID | None) -> None:
         if self._const_repo.get_by_grupo_clave(grupo, clave, excluir_id) is not None:
             raise ConflictError(
                 f"Ya existe una constante con clave «{clave}» en el grupo «{grupo}».",
@@ -255,9 +253,7 @@ class ConstanteSistemaService(
     def conteos(self, *, solo_activos: bool) -> list[ConteoGrupo]:
         conteos = self._const_repo.conteos_por_grupo(solo_activos=solo_activos)
         # Todos los grupos aparecen (con 0 si no tienen registros) para pintar las pills.
-        return [
-            ConteoGrupo(grupo=g, total=conteos.get(g.value, 0)) for g in GrupoConstante
-        ]
+        return [ConteoGrupo(grupo=g, total=conteos.get(g.value, 0)) for g in GrupoConstante]
 
     # ── Importación masiva CSV (plan F0-05, sección C) ──────────────────────────
     def importar_csv(
@@ -409,9 +405,7 @@ def listar_constantes(
     svc: ConstanteSistemaService = Depends(get_constante_service),
 ) -> Page[ConstanteSistemaRead]:
     """Lista de constantes con filtros: grupo, activo/inactivo y búsqueda de texto."""
-    return svc.list(
-        ConstantesListParams(page=page, size=size, activo=activo, q=q, grupo=grupo)
-    )
+    return svc.list(ConstantesListParams(page=page, size=size, activo=activo, q=q, grupo=grupo))
 
 
 @router.get("/conteos", response_model=list[ConteoGrupo])

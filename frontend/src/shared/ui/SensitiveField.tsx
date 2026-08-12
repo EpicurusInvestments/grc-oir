@@ -13,6 +13,7 @@
  * (días de crédito) y Contrato (% de comisión).
  */
 
+import type { ReactNode } from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
 
 import { FieldTag } from "./FieldTag";
@@ -29,6 +30,8 @@ interface SensitiveFieldProps {
   hint?: string;
   /** Si se pasa, se muestra el campo "Motivo del cambio" (solo en edición). */
   motivo?: { register: UseFormRegisterReturn; error?: string };
+  /** Slot opcional junto a la etiqueta (p.ej. un aviso de "sobrescribe el catálogo"). */
+  badge?: ReactNode;
 }
 
 export function SensitiveField({
@@ -40,11 +43,12 @@ export function SensitiveField({
   placeholder,
   hint,
   motivo,
+  badge,
 }: SensitiveFieldProps) {
   return (
     <>
       <div className={`fl ${required ? "fl-required" : ""}`}>
-        {label} <FieldTag origin="audit" />
+        {label} <FieldTag origin="audit" /> {badge}
       </div>
       {hint && (
         <div className="fv muted" style={{ marginTop: -2, marginBottom: 4, fontSize: 11 }}>

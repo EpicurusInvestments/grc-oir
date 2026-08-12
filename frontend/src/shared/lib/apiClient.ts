@@ -14,12 +14,18 @@ const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
 export const apiClient = axios.create({ baseURL });
 
+/** Actualiza los headers de auth dev en caliente (p.ej. al cambiar de usuario en el
+ * selector de la demo, modo `api`) — sin esto, `X-Dev-User`/`X-Dev-Area` quedaban
+ * fijos al valor de `.env` desde la carga del módulo y no había forma de probar por
+ * UI un área distinta a la del arranque. */
+export function setDevAuthHeaders(username?: string, area?: string): void {
+  if (username) apiClient.defaults.headers.common["X-Dev-User"] = username;
+  if (area) apiClient.defaults.headers.common["X-Dev-Area"] = area;
+}
+
 // Auth de desarrollo (solo si Vite corre en modo dev y hay valores configurados).
 if (import.meta.env.DEV) {
-  const devUser = import.meta.env.VITE_DEV_USER;
-  const devArea = import.meta.env.VITE_DEV_AREA;
-  if (devUser) apiClient.defaults.headers.common["X-Dev-User"] = devUser;
-  if (devArea) apiClient.defaults.headers.common["X-Dev-Area"] = devArea;
+  setDevAuthHeaders(import.meta.env.VITE_DEV_USER, import.meta.env.VITE_DEV_AREA);
 }
 
 /** Error de API con el código del backend (sin_permiso, no_encontrado, ...). */

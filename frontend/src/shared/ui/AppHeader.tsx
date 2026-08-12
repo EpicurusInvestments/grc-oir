@@ -1,5 +1,6 @@
 /** Header del patrón: hamburguesa (menú global) · logo · tag de fase · usuario activo. */
 
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { AppNavDrawer } from "./AppNavDrawer";
@@ -7,6 +8,8 @@ import { AppNavDrawer } from "./AppNavDrawer";
 interface AppHeaderProps {
   faseLabel: string;
   user: { username: string; area: string };
+  /** Slot opcional antes del chip de usuario (p.ej. un control propio de una fase). */
+  beforeUser?: ReactNode;
 }
 
 function iniciales(username: string): string {
@@ -15,7 +18,7 @@ function iniciales(username: string): string {
   return partes.map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
 }
 
-export function AppHeader({ faseLabel, user }: AppHeaderProps) {
+export function AppHeader({ faseLabel, user, beforeUser }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -36,6 +39,7 @@ export function AppHeader({ faseLabel, user }: AppHeaderProps) {
         </div>
         <div className="fase-tag">{faseLabel}</div>
         <div className="header-spacer" />
+        {beforeUser}
         <div className="user-chip">
           <div className="user-avatar">{iniciales(user.username)}</div>
           <span>
