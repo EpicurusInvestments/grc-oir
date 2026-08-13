@@ -12,8 +12,8 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.usuarios.models import Usuario
+from app.shared.base_repository import BaseRepository
 
 
 class UsuarioRepository(BaseRepository[Usuario]):

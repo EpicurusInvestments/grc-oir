@@ -26,10 +26,10 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
 from app.core.security import CurrentUser, requiere_permiso
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase
 
 # Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo (mismo de F0-03).
 CAMPO_COMISION = "porcentaje_comision_default"
@@ -116,14 +116,9 @@ class VendedorService(BaseService[Vendedor, VendedorCreate, VendedorUpdate, Vend
             requiere_motivo=False,  # en el alta no se exige motivo (captura inicial)
         )
 
-    def _pre_update(
-        self, obj: Vendedor, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Vendedor, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
-        if (
-            CAMPO_COMISION in payload
-            and payload[CAMPO_COMISION] != obj.porcentaje_comision_default
-        ):
+        if CAMPO_COMISION in payload and payload[CAMPO_COMISION] != obj.porcentaje_comision_default:
             audit.registrar_cambio_sensible(
                 db=self._vendedor_repo.db,
                 entidad=self.entidad,

@@ -48,7 +48,7 @@ from app.modules.catalogos.agencia import (
     AgenciaService,
     AgenciaUpdate,
 )
-from app.modules.catalogos.schemas import ListParams
+from app.shared.schemas import ListParams
 
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
 VENTAS = CurrentUser(username="vendedor", area=Area.VENTAS, ip="127.0.0.1")
@@ -77,9 +77,7 @@ def svc(sqlite_session: Session) -> AgenciaService:
     repo = AgenciaRepository(
         sqlite_session, Agencia, search_columns=[Agencia.nombre_agencia, Agencia.rfc_agencia]
     )
-    return AgenciaService(
-        repo, anunciante_repo=AnuncianteRepository(sqlite_session, Anunciante)
-    )
+    return AgenciaService(repo, anunciante_repo=AnuncianteRepository(sqlite_session, Anunciante))
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

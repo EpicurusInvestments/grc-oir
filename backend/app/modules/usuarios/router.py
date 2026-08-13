@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import CurrentUser, requiere_permiso
-from app.modules.catalogos.crud_router import build_crud_router
 from app.modules.usuarios.repository import UsuarioRepository
 from app.modules.usuarios.schemas import (
     EstablecerPasswordIn,
@@ -26,6 +25,7 @@ from app.modules.usuarios.schemas import (
     UsuarioUpdate,
 )
 from app.modules.usuarios.service import UsuarioService
+from app.shared.crud_router import build_crud_router
 
 
 def get_usuario_service(db: Session = Depends(get_db)) -> UsuarioService:
@@ -56,6 +56,6 @@ def establecer_password(
     Endpoint separado de la edición del perfil a propósito: cambiar una contraseña es un
     acto explícito, no un efecto colateral de guardar un formulario. La contraseña anterior
     deja de funcionar de inmediato; las sesiones ya emitidas siguen vivas hasta expirar
-    (el token es *stateless* — ver limitaciones conocidas en ADR-028).
+    (el token es *stateless* — ver limitaciones conocidas en ADR-041).
     """
     return svc.establecer_password(usuario_id, payload.password, actual)

@@ -41,10 +41,10 @@ from app.core.errors import DependenciasActivasError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
 from app.modules.catalogos.agencia import Agencia
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 # Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo.
 CAMPO_DIAS_CREDITO = "dias_credito_default"
@@ -168,9 +168,7 @@ class AnuncianteRepository(BaseRepository[Anunciante]):
             stmt = stmt.where(Anunciante.agencia_id == agencia_id)
         return stmt
 
-    def contar_por_agencias(
-        self, agencia_ids: Sequence[uuid.UUID | None]
-    ) -> dict[uuid.UUID, int]:
+    def contar_por_agencias(self, agencia_ids: Sequence[uuid.UUID | None]) -> dict[uuid.UUID, int]:
         """Conteo de anunciantes (TODOS) por agencia, en UNA consulta (evita N+1).
 
         Ignora los `None` (anunciantes directos, sin agencia). Mismo criterio que el conteo
@@ -194,17 +192,13 @@ class AnuncianteRepository(BaseRepository[Anunciante]):
         )
         return int(total or 0)
 
-    def nombres_de_agencias(
-        self, agencia_ids: Sequence[uuid.UUID | None]
-    ) -> dict[uuid.UUID, str]:
+    def nombres_de_agencias(self, agencia_ids: Sequence[uuid.UUID | None]) -> dict[uuid.UUID, str]:
         """Nombre de agencia por id, en UNA consulta (evita N+1). Ignora los None (directos)."""
         ids = {a for a in agencia_ids if a is not None}
         if not ids:
             return {}
         rows = self.db.execute(
-            select(Agencia.agencia_id, Agencia.nombre_agencia).where(
-                Agencia.agencia_id.in_(ids)
-            )
+            select(Agencia.agencia_id, Agencia.nombre_agencia).where(Agencia.agencia_id.in_(ids))
         ).all()
         return {row[0]: row[1] for row in rows}
 
@@ -231,9 +225,7 @@ class AnuncianteService(
         self._contrato_repo = contrato_repo
 
     # ── enriquecimiento (agencia_nombre + marcas_count) ─────────────────────────
-    def _read(
-        self, obj: Anunciante, agencia_nombre: str | None, marcas: int
-    ) -> AnuncianteRead:
+    def _read(self, obj: Anunciante, agencia_nombre: str | None, marcas: int) -> AnuncianteRead:
         return AnuncianteRead.model_validate(obj).model_copy(
             update={"agencia_nombre": agencia_nombre, "marcas_count": marcas}
         )
@@ -286,9 +278,7 @@ class AnuncianteService(
             requiere_motivo=False,
         )
 
-    def _pre_update(
-        self, obj: Anunciante, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Anunciante, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
 
         if "agencia_id" in payload and payload["agencia_id"] is not None:
@@ -310,9 +300,7 @@ class AnuncianteService(
                 requiere_motivo=True,
             )
 
-    def _pre_desactivar(
-        self, obj: Anunciante, forzar: bool, usuario: CurrentUser
-    ) -> None:
+    def _pre_desactivar(self, obj: Anunciante, forzar: bool, usuario: CurrentUser) -> None:
         if forzar:
             return
         marcas = self._marca_repo.contar_activas_por_anunciante(obj.anunciante_id)
@@ -378,9 +366,7 @@ class MarcaRepository(BaseRepository[Marca]):
         )
         return int(total or 0)
 
-    def contar_por_anunciantes(
-        self, anunciante_ids: Sequence[uuid.UUID]
-    ) -> dict[uuid.UUID, int]:
+    def contar_por_anunciantes(self, anunciante_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
         """Conteo de marcas (TODAS) por anunciante, en UNA consulta (evita N+1)."""
         if not anunciante_ids:
             return {}
@@ -420,15 +406,11 @@ class MarcaService(BaseService[Marca, MarcaCreate, MarcaUpdate, MarcaRead]):
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         self._verificar_anunciante(payload["anunciante_id"])
 
-    def _pre_update(
-        self, obj: Marca, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Marca, payload: dict[str, Any], usuario: CurrentUser) -> None:
         if "anunciante_id" in payload:
             self._verificar_anunciante(payload["anunciante_id"])
 
-    def list_por_anunciante(
-        self, anunciante_id: uuid.UUID, params: ListParams
-    ) -> Page[MarcaRead]:
+    def list_por_anunciante(self, anunciante_id: uuid.UUID, params: ListParams) -> Page[MarcaRead]:
         items, total = self._marca_repo.list_por_anunciante(anunciante_id, params)
         return Page[MarcaRead](
             items=[self._to_read(o) for o in items],

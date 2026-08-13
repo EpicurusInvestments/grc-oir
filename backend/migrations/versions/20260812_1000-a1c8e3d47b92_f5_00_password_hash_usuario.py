@@ -21,8 +21,19 @@ F5-00 — Autenticación base:
   cualquiera con acceso al repositorio.
 
 Revision ID: a1c8e3d47b92
-Revises: b6d9f2a4c817
+Revises: 73fa97f9e718
 Create Date: 2026-08-12 10:00:00.000000
+
+Nota de integración (2026-08-13): esta migración se creó colgando de `b6d9f2a4c817`
+(F0-05), igual que la de F1 (`73fa97f9e718`), porque ambas ramas se desarrollaron en
+paralelo. Al integrar F5-00 con F1 eso dejaba DOS cabezas y Alembic no puede migrar con
+la cadena bifurcada, así que se re-encadenó ESTA (que aún no estaba en `main`) para que
+cuelgue de la de F1: F0-05 → F1 → F5-00. La de F1 no se tocó: ya estaba publicada.
+
+Las dos son conmutativas —F1 solo CREA las 6 tablas de órdenes y esta solo AGREGA una
+columna a `usuario`—, así que el orden es una decisión de higiene del historial, no una
+dependencia técnica. Las FK de F1 hacia `usuario.usuario_id` apuntan a la PK creada en
+F0-04, antepasado común de ambas ramas.
 """
 from __future__ import annotations
 
@@ -35,7 +46,7 @@ import sqlalchemy as sa
 
 # identificadores de revisión, usados por Alembic.
 revision: str = 'a1c8e3d47b92'
-down_revision: str | None = 'b6d9f2a4c817'
+down_revision: str | None = '73fa97f9e718'  # F1 (órdenes) — ver "Nota de integración"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

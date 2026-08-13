@@ -1,6 +1,6 @@
 # Módulo F5-00 — Autenticación base (login local + preparación Azure AD) · Fase: F5 (adelantado)
 
-> **Estado: IMPLEMENTADO** (2026-08-12). Decisiones técnicas en **ADR-028**; endpoints en
+> **Estado: IMPLEMENTADO** (2026-08-12). Decisiones técnicas en **ADR-041**; endpoints en
 > `docs/API-CONTRACT.md` (secciones «Autenticación» y «Gestión de usuarios»).
 >
 > **Adelanto consciente de F5.** Se construyó antes que el resto de F5 porque: (1) da una
@@ -130,7 +130,7 @@ Construido en 5 tandas, todas validadas por el líder del proyecto.
 | Gestión de usuarios | `app/modules/usuarios/` → CRUD + `POST /usuarios/{id}/password` |
 | Migración | `a1c8e3d47b92` — `usuario.password_hash` NVARCHAR(255) NULL + contraseña del seed desde el entorno |
 
-**Decisiones de implementación** (detalle y razones en ADR-028):
+**Decisiones de implementación** (detalle y razones en ADR-041):
 - Credencial de login = **email** (único e indexado); `nombre_usuario` no lo es.
 - `Area` y `CurrentUser` se movieron a `core/auth/identity.py` para romper el ciclo
   `security ↔ auth`, y se **re-exportan** desde `core/security.py`: los imports de F0 no
@@ -171,7 +171,7 @@ Construido en 5 tandas, todas validadas por el líder del proyecto.
 
 ## Limitaciones conocidas (riesgos aceptados, a revisitar en F5 pleno)
 
-Registradas también en ADR-028:
+Registradas también en ADR-041:
 
 1. **Sin control de intentos fallidos ni rate limiting** en el login.
 2. **Token en `localStorage`** del navegador: expuesto a XSS. La alternativa (cookie

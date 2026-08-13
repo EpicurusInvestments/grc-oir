@@ -4,7 +4,7 @@ Dos piezas:
 
 1. `get_current_user`: resuelve el usuario y su ÁREA delegando en el **proveedor de
    autenticación** configurado (`AUTH_PROVIDER` → `core/auth/get_auth_provider()`,
-   ADR-028). Desde F5-00 el caso normal es un **token JWT** emitido por `/auth/login`; el
+   ADR-041). Desde F5-00 el caso normal es un **token JWT** emitido por `/auth/login`; el
    modo `dev_headers` conserva los headers `X-Dev-User`/`X-Dev-Area` de ADR-008 para el
    trabajo local, y falla cerrado fuera de `APP_ENV=development`.
 
@@ -66,6 +66,12 @@ _ACCION_NIVEL: dict[str, Acceso] = {
 # Fuente: matriz de la propuesta. F0-00: en catálogos solo Admin escribe; las demás
 # áreas operativas solo leen (decisión confirmada, revisable cuando Ventas entre a
 # afiliados/estaciones en F0-01).
+#
+# NOTA (desviación explícita de la matriz de la propuesta, decisión del equipo): Admin
+# es superusuario — WRITE en TODOS los módulos, presentes y futuros — resuelto de forma
+# centralizada en `_nivel()`, no listado módulo por módulo aquí. La propuesta original
+# (§9) le daba a Admin solo lectura sobre Órdenes; se decidió ampliarlo a acceso total
+# para no bloquear pruebas/administración desde esa área.
 _LECTURA_CATALOGOS = {
     Area.VENTAS: Acceso.READ,
     Area.FACTURACION: Acceso.READ,
@@ -75,12 +81,25 @@ _LECTURA_CATALOGOS = {
     Area.DIRECCION: Acceso.READ,
 }
 
+# F1: matriz de la propuesta Pointwise (§9 "Roles y matriz de permisos"), columna
+# "Órdenes" — Ventas captura (C); Facturación/Tesorería/CxC/CxP/Dirección solo leen (L);
+# Nóminas sin acceso (—). Admin no se lista aquí: siempre WRITE vía `_nivel()`.
+_LECTURA_ORDENES = {
+    Area.FACTURACION: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXC: Acceso.READ,
+    Area.CXP: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+}
+
 RBAC: dict[str, dict[Area, Acceso]] = {
-    "catalogos": {Area.ADMIN: Acceso.WRITE, **_LECTURA_CATALOGOS},
+    "catalogos": _LECTURA_CATALOGOS,
+    "ordenes": {Area.VENTAS: Acceso.WRITE, **_LECTURA_ORDENES},
     # F5-00: la gestión de usuarios es exclusiva de Admin, INCLUSO en lectura. El padrón
     # de usuarios (quién existe, con qué área) no es un catálogo consultable por el resto
-    # de las áreas.
-    "usuarios": {Area.ADMIN: Acceso.WRITE},
+    # de las áreas. El diccionario va VACÍO a propósito: no hay ningún área con acceso
+    # además de Admin, que lo obtiene de `_nivel()` igual que en los demás módulos.
+    "usuarios": {},
 }
 
 
@@ -104,6 +123,8 @@ def get_current_user(
 
 
 def _nivel(modulo: str, area: Area) -> Acceso:
+    if area is Area.ADMIN:
+        return Acceso.WRITE
     return RBAC.get(modulo, {}).get(area, Acceso.NONE)
 
 

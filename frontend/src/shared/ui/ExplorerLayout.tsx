@@ -13,10 +13,13 @@ interface ExplorerLayoutProps {
   groups: SidebarGroup[];
   activeKey: string | null;
   onSelect: (key: string) => void;
-  /** Clase de color por fase (`phase-f5`, …). Sin ella se usa el color por defecto de
-   *  `:root`, que es F0 morado — así las pantallas de catálogos no cambian. */
-  phaseClass?: string;
   children: ReactNode;
+  /** Slot opcional en el header, antes del chip de usuario (ver `AppHeader.beforeUser`). */
+  headerExtra?: ReactNode;
+  /** Clase extra en la raíz para repintar los tokens `--phase*` de ESTA pantalla:
+   *  `phase-f1` (teal, Órdenes), `phase-f5` (rojo de marca, Seguridad)… Sin ella se usa el
+   *  color por defecto de `:root`, que es F0 morado — así los catálogos no cambian. */
+  rootClassName?: string;
 }
 
 export function ExplorerLayout({
@@ -25,12 +28,13 @@ export function ExplorerLayout({
   groups,
   activeKey,
   onSelect,
-  phaseClass,
   children,
+  headerExtra,
+  rootClassName,
 }: ExplorerLayoutProps) {
   return (
-    <div className={`app-shell ${phaseClass ?? ""}`}>
-      <AppHeader faseLabel={faseLabel} user={user} />
+    <div className={`app-shell ${rootClassName ?? ""}`}>
+      <AppHeader faseLabel={faseLabel} user={user} beforeUser={headerExtra} />
       <div className="app-body">
         <Sidebar groups={groups} activeKey={activeKey} onSelect={onSelect} />
         <main className="main">{children}</main>

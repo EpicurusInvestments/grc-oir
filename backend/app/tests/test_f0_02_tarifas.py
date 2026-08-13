@@ -27,10 +27,8 @@ from sqlalchemy.pool import StaticPool
 from app.core.db import Base
 from app.core.errors import ConflictError, DomainError, NotFoundError
 from app.core.security import Area, CurrentUser
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.tarifa import (
-    DuracionSpot,
     TarifaListParams,
     TarifaPlaza,
     TarifaPlazaCreate,
@@ -41,6 +39,8 @@ from app.modules.catalogos.tarifa import (
     TipoSenal,
     calcular_tarifa_neta,
 )
+from app.shared.base_repository import BaseRepository
+from app.shared.enums import DuracionSpot
 
 USUARIO = CurrentUser(username="tester", area=Area.ADMIN)
 
@@ -145,16 +145,14 @@ def test_vigencia_invertida_rechazada_en_create() -> None:
 
 
 def test_vigencia_invertida_rechazada_en_update_parcial(
-    contexto: tuple[TarifaService, Plaza]
+    contexto: tuple[TarifaService, Plaza],
 ) -> None:
     # Solo se cambia `vigencia_hasta` a una fecha anterior al `vigencia_desde` existente:
     # la validación cruzada la hace el SERVICIO con valores efectivos (no el schema).
     svc, plaza = contexto
     t = _tarifa(svc, plaza.plaza_id, desde=date(2025, 6, 1), hasta=date(2025, 12, 31))
     with pytest.raises(DomainError):
-        svc.update(
-            t.tarifa_plaza_id, TarifaPlazaUpdate(vigencia_hasta=date(2025, 1, 1)), USUARIO
-        )
+        svc.update(t.tarifa_plaza_id, TarifaPlazaUpdate(vigencia_hasta=date(2025, 1, 1)), USUARIO)
 
 
 # ── Solapamiento ──────────────────────────────────────────────────────────────
@@ -165,9 +163,7 @@ def test_solapamiento_rechazado(contexto: tuple[TarifaService, Plaza]) -> None:
         _tarifa(svc, plaza.plaza_id, desde=date(2025, 3, 1), hasta=date(2025, 9, 30))
 
 
-def test_solapamiento_adyacente_un_dia_rechazado(
-    contexto: tuple[TarifaService, Plaza]
-) -> None:
+def test_solapamiento_adyacente_un_dia_rechazado(contexto: tuple[TarifaService, Plaza]) -> None:
     # Bordes INCLUSIVOS: tocarse en un solo día (30-jun / 30-jun) cuenta como solape.
     svc, plaza = contexto
     _tarifa(svc, plaza.plaza_id, desde=date(2025, 1, 1), hasta=date(2025, 6, 30))
@@ -175,9 +171,7 @@ def test_solapamiento_adyacente_un_dia_rechazado(
         _tarifa(svc, plaza.plaza_id, desde=date(2025, 6, 30), hasta=date(2025, 12, 31))
 
 
-def test_sin_solapamiento_dias_contiguos_ok(
-    contexto: tuple[TarifaService, Plaza]
-) -> None:
+def test_sin_solapamiento_dias_contiguos_ok(contexto: tuple[TarifaService, Plaza]) -> None:
     svc, plaza = contexto
     _tarifa(svc, plaza.plaza_id, desde=date(2025, 1, 1), hasta=date(2025, 6, 30))
     t2 = _tarifa(svc, plaza.plaza_id, desde=date(2025, 7, 1), hasta=date(2025, 12, 31))
@@ -193,9 +187,7 @@ def test_distinta_combinacion_no_solapa(contexto: tuple[TarifaService, Plaza]) -
     assert t_am.tarifa_plaza_id and t_60.tarifa_plaza_id
 
 
-def test_solapa_pero_la_existente_esta_inactiva_ok(
-    contexto: tuple[TarifaService, Plaza]
-) -> None:
+def test_solapa_pero_la_existente_esta_inactiva_ok(contexto: tuple[TarifaService, Plaza]) -> None:
     svc, plaza = contexto
     t1 = _tarifa(svc, plaza.plaza_id, desde=date(2025, 1, 1), hasta=date(2025, 12, 31))
     svc.cambiar_estado(t1.tarifa_plaza_id, activo=False, usuario=USUARIO)
@@ -212,9 +204,7 @@ def test_update_no_choca_consigo_misma(contexto: tuple[TarifaService, Plaza]) ->
     assert upd.notas == "ajuste"
 
 
-def test_reactivar_con_solapamiento_rechazado(
-    contexto: tuple[TarifaService, Plaza]
-) -> None:
+def test_reactivar_con_solapamiento_rechazado(contexto: tuple[TarifaService, Plaza]) -> None:
     svc, plaza = contexto
     a = _tarifa(svc, plaza.plaza_id, desde=date(2025, 1, 1), hasta=date(2025, 12, 31))
     svc.cambiar_estado(a.tarifa_plaza_id, activo=False, usuario=USUARIO)

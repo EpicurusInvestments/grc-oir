@@ -22,10 +22,10 @@ from app.core.auth.identity import Area, CurrentUser
 from app.core.auth.passwords import hash_password
 from app.core.errors import ConflictError, DomainError
 from app.core.security_log import EventoSeguridad, registrar_evento_seguridad
-from app.modules.catalogos.base_service import BaseService
 from app.modules.usuarios.models import Usuario
 from app.modules.usuarios.repository import UsuarioRepository
 from app.modules.usuarios.schemas import UsuarioCreate, UsuarioRead, UsuarioUpdate
+from app.shared.base_service import BaseService
 
 
 def _normaliza(valor: str) -> str:

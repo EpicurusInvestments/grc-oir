@@ -10,7 +10,7 @@
 - Base: `/api/v1`. Formato: JSON. OpenAPI en `/docs` y `/openapi.json`.
 - **Autenticación (desde F5-00):** la API espera `Authorization: Bearer <token>`, donde el
   token lo emite `POST /api/v1/auth/login` y vive 8 h (configurable). El proveedor se elige
-  con `AUTH_PROVIDER` (ADR-028):
+  con `AUTH_PROVIDER` (ADR-041):
   - `local` (**default**) — login con email + contraseña contra la tabla `usuario`.
   - `dev_headers` — modo desarrollo: el usuario se resuelve por los headers `X-Dev-User` /
     `X-Dev-Area` (área ∈ ventas │ facturacion │ tesoreria │ cxc │ cxp │ direccion │ nominas │
@@ -172,7 +172,7 @@ demás áreas. Cualquier otra área recibe **403** `sin_permiso` en todos los ve
   al sistema sin quien administre usuarios, y recuperarlo exigiría entrar a la base a mano.
   Sí puede hacerlo sobre *otro* Admin.
 - **Efecto en las sesiones:** desactivar a un usuario **invalida su sesión en curso** de
-  inmediato (el estado se relee de la base en cada petición, ver ADR-028) y le impide
+  inmediato (el estado se relee de la base en cada petición, ver ADR-041) y le impide
   volver a iniciar sesión.
 
 #### `POST /api/v1/usuarios/{id}/password`
@@ -182,7 +182,7 @@ demás áreas. Cualquier otra área recibe **403** `sin_permiso` en todos los ve
 - **Validaciones clave:** misma política que en el alta (10 caracteres / 72 bytes).
 - **Efecto:** la contraseña anterior deja de funcionar de inmediato. Las **sesiones ya
   emitidas siguen vivas** hasta expirar, porque el token es *stateless* (limitación
-  conocida documentada en ADR-028).
+  conocida documentada en ADR-041).
 - **Efectos secundarios (traza):** el reseteo **no** va a `LogCambioParametro` (esa tabla
   guarda valor anterior/nuevo de parámetros de negocio; un reseteo no tiene valores que
   mostrar ahí). Queda registrado en el **log de seguridad** (`core/security_log.py`,
@@ -559,3 +559,123 @@ CSV. `multipart/form-data`: `archivo` (.csv), `commit` (bool, default `false`),
 `ingreso | costo | gasto | activo | pasivo`; inválido → **422**), `activo`, `created_at`,
 `updated_at`. Código duplicado → **409 `conflicto`**. Patrón CRUD estándar (sin carga CSV por
 ahora; el helper de importación quedó reutilizable — ADR-025). Búsqueda `?q` sobre código y nombre.
+
+## Órdenes (F1)
+
+Permiso base `ordenes`. **Matriz RBAC** (propuesta §9, columna "Órdenes"): **Ventas**
+captura (`ordenes:crear`/`editar`, implica `leer`); **Facturación, Tesorería, CxC, CxP,
+Dirección/Finanzas** solo leen (`ordenes:leer`); **Nóminas** sin acceso (403 en
+cualquier endpoint). **Admin es superusuario en TODOS los módulos** (desviación
+explícita de la matriz de la propuesta, decisión del equipo — ver `app/core/security.py`,
+`_nivel()`): tiene captura sobre Órdenes aunque la propuesta original solo le daba
+lectura, además del canal de comisiones (ver abajo), que también puede usar Dirección.
+
+Estas 4 entidades NO usan el patrón CRUD estándar de catálogos: no tienen `activo` (baja
+lógica) — usan sus propias máquinas de estado (`estatus_orden`, `estatus`).
+
+### Lectura (Tanda 3)
+
+**`GET /ordenes/clientes`** (`ordenes:leer`) — lista paginada de `OrdenCliente`.
+Filtros: `?q` (folio/número de orden), `?estatus_orden`, `?anunciante_id`, `?agencia_id`,
+`?vendedor_principal_id`, `?contrato_id`. Campos: los 36 de la spec BD v2 + 3 extensiones
+aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstring de
+`app/modules/ordenes/orden_cliente.py`. Montos/% como **string** (ADR-015).
+- **`GET /ordenes/clientes/{id}`** — uno (404 si no existe).
+- **`GET /ordenes/clientes/{id}/vobo`** — los 10 ítems fijos del checklist Vo.Bo.
+  (ADR-033), con su `completado`/`usuario_id`/`fecha_completado`.
+- **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a los % de
+  comisión snapshot (más reciente primero; mismo mecanismo `LogCambioParametro` que los
+  catálogos, `entidad="OrdenCliente"`).
+
+**`GET /ordenes/estaciones`** (`ordenes:leer`) — lista paginada de `OrdenEstacion`.
+Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de OrdenCliente),
+`?estacion_id`, `?plaza_id`, `?anunciante_id`, `?estatus`. `estatus` es un ciclo de vida
+**propio e independiente** del de la OC (ver ADR-030).
+- **`GET /ordenes/estaciones/{id}`** — uno (404 si no existe).
+- **`GET /ordenes/estaciones/{id}/dias`** — periodo de transmisión día a día
+  (`OrdenEstacionDia`, ADR-030: `spots_solicitados`/`asignados`/`programados`), ordenado
+  por `fecha_transmision`.
+
+**`GET /ordenes/verificaciones`** (`ordenes:leer`) — lista **plana** (no solo anidada bajo
+una OE) de `Verificacion`, una fila por día verificado — refleja la pantalla
+"Verificaciones" del frontend. Filtros: `?orden_estacion_id` (JOIN vía
+`orden_estacion_dia`), `?reconciliada`.
+- **`GET /ordenes/verificaciones/{id}`** — una (404 si no existe).
+
+**`GET /ordenes/incidencias`** (`ordenes:leer`) — lista **plana** de `Incidencia` —
+refleja la pantalla "Incidencias" del frontend. Filtros: `?q` (descripción),
+`?orden_estacion_id`, `?tipo_incidencia` (`faltante|excedente|cambio_horario|
+cambio_fecha|spot_no_emitido`), `?resolucion` (`pendiente|aceptada|credito_cliente|
+descuento_afiliado|sin_resolucion`).
+- **`GET /ordenes/incidencias/{id}`** — una (404 si no existe).
+- Sin alta manual ni edición de `resolucion` todavía (Tanda 5): el frontend no tiene
+  pantalla para eso hoy (ver docstring de `incidencia.py`, ADR-031) — se difiere hasta
+  que exista un consumidor real.
+
+### Escritura (Tanda 5)
+
+**`POST /ordenes/clientes`** (`ordenes:crear`) — alta de OrdenCliente. El servicio
+calcula `anio_venta`/`mes_venta`/`total_dias_campania`/`subtotal`/`iva`/`total` y el
+`folio_orden` (correlativo global `OC-{año}-####`, nunca se acepta del cliente); valida
+que `contrato_id`/`marca_id` (si vienen) pertenezcan al `anunciante_id` de la orden.
+Nace en `recibida`, con las 10 filas del checklist Vo.Bo. (`revision_checklist` opcional
+en el body marca cuáles ya vienen `completado`). `dar_vobo: true` intenta la transición a
+`capturada` en la MISMA alta (409 si el checklist no viene completo). Los 3 % de
+comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría con motivo.
+- **`PUT /ordenes/clientes/{id}`** (`ordenes:editar`) — edición normal. **409** si la
+  orden está en un estado congelado (`orden_cerrada`/`facturada`/`cobrada`). Recalcula
+  totales si cambian `total_spots`/`precio_unitario` o las fechas de campaña. **No**
+  acepta los 3 campos de comisión (`extra="forbid"` — 422 si se incluyen).
+- **`PATCH /ordenes/clientes/{id}/comisiones`** (`ordenes:leer` — ver nota de permisos
+  abajo) — ÚNICO canal para editar los 3 % de comisión DESPUÉS del alta (propuesta §9:
+  *"el % de comisión de un vendedor puede editarse solo por Dirección, aunque Ventas
+  tenga captura sobre el resto de la orden"*). **403** si el área no es Dirección/Admin;
+  **400** si algún valor cambia sin `motivo_cambio`. Auditado en `LogCambioParametro`
+  (`entidad="OrdenCliente"`).
+- **`PATCH /ordenes/clientes/{id}/vobo/{item_clave}`** (`ordenes:editar`) — marca/
+  desmarca UN ítem del checklist (`{"completado": bool}`). 422 si `item_clave` no es una
+  de las 10 fijas.
+- **`POST /ordenes/clientes/{id}/dar-vobo`** (`ordenes:editar`) — transición
+  `recibida`→`capturada`. 409 si falta algún ítem o si la orden ya no está en `recibida`.
+- **`POST /ordenes/clientes/{id}/cerrar`** (`ordenes:editar`) — transición a
+  `orden_cerrada`. Body: `{odc_cerrada_ref, carta_conciliacion_ref}` (ambos opcionales).
+  409 si la orden no está en `en_transmision`/`en_verificacion`, si no tiene ninguna
+  OrdenEstacion, o si alguna no está `cerrada`. Rellena (backfill) cualquier % de
+  comisión que siga `null` con el default vigente del catálogo (Vendedor/Agencia) —
+  **no** se audita (completar un vacío, no una edición). Calcula
+  `cierre_sin_odc_cerrada`/`cierre_sin_carta_conciliacion` de si los refs vinieron `null`.
+
+**`POST /ordenes/estaciones`** (`ordenes:crear`) — asigna una estación a una
+OrdenCliente. Hereda de la OC (`anunciante_id`, `vendedor_id`, `agencia_id`,
+`categoria_id`, `producto`, `contrato_id`, `duracion_spot`) y de la `Estacion`
+(`plaza_id`) — ninguno se acepta del cliente. Body: `orden_id`, `estacion_id`,
+`precio_spot`, `observaciones_estacion`, `dias` (mín. 1: `fecha_transmision`,
+`hora_inicio`, `hora_fin`, `spots_asignados`, `spots_solicitados` opcional). Calcula
+`porcentaje_participacion_oir = (precio_unitario_OC − precio_spot) / precio_unitario_OC
+× 100` (1 decimal) y los 7 importes/IVA/totales. **400** si `precio_spot` excede la
+tarifa cliente de la OC, si el balance de spots (esta OE + hermanas) excede
+`oc.total_spots`, o si algún día cae fuera del rango de campaña. Si la OC estaba en
+`capturada`, la promueve a `en_transmision`.
+- **`POST /ordenes/estaciones/{id}/programados`** (`ordenes:editar`) — 2.1→2.2. Body:
+  `dias` (**solo excepciones** — los días no listados quedan `spots_programados =
+  spots_asignados`), `reporte_programados_ref`. 409 si la OE no está en `asignada`.
+- **`POST /ordenes/estaciones/{id}/reales`** (`ordenes:editar`) — 2.2→2.3. Body: `dias`
+  (solo excepciones respecto al programado EFECTIVO), `testigos_url`,
+  `testigos_ubicacion_alterna`, `notas_transmision`, `reporte_reales_ref`. Crea **una
+  `Verificacion` por CADA día** de la OE (spec — no solo los listados); genera una
+  `Incidencia` automática (`faltante`/`excedente`, `monto_ajuste = diferencia ×
+  precio_spot`, `resolucion="pendiente"`) por cada día con diferencia. 409 si la OE no
+  está en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la OC pasa de
+  `en_transmision` a `en_verificacion` automáticamente.
+
+**Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
+deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo
+"Órdenes" en la matriz, así que un permiso `editar` la dejaría fuera por completo. La
+autorización REAL (solo Dirección o Admin) se valida DENTRO del servicio — separación
+intencional entre "quién puede llegar al endpoint" (RBAC de módulo) y "quién puede
+ejecutar la acción sensible" (chequeo de área específico de esta entidad).
+
+**Errores posibles (todo el módulo):** 401 (sin auth), 403 (área sin permiso, o sin
+autorización sensible en `/comisiones`), 404 (no encontrado), 409 (`transicion_invalida`
+— máquina de estados), 422 (validación de payload/filtros), 400 (`error_dominio` —
+reglas de negocio: balances, tarifas, pertenencia contrato/marca-anunciante).

@@ -1,11 +1,15 @@
-/** Header del patrón: hamburguesa (menú global) · logo · tag de fase · menú de usuario.
+/** Header del patrón: hamburguesa (menú global) · logo · tag de fase · slot · menú de usuario.
  *
  * El menú de usuario (F5-00) muestra quién está dentro y ofrece "Cerrar sesión". Se apoya
  * en `cerrarSesionActual()` del shim `currentUser` en vez de `useSession()` a propósito:
  * así este componente COMPARTIDO no depende de un módulo de negocio (`modules/auth`), y
  * las 14 pantallas de F0 que lo montan no necesitaron cambiar.
+ *
+ * `beforeUser` (F1) es un slot opcional para que una fase inserte su propio control justo
+ * a la izquierda del chip de usuario, sin que este componente sepa nada de esa fase.
  */
 
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { cerrarSesionActual } from "@/shared/lib/currentUser";
@@ -16,6 +20,8 @@ import { AppNavDrawer } from "./AppNavDrawer";
 interface AppHeaderProps {
   faseLabel: string;
   user: { username: string; area: string };
+  /** Slot opcional antes del chip de usuario (p.ej. un control propio de una fase). */
+  beforeUser?: ReactNode;
 }
 
 function iniciales(username: string): string {
@@ -24,7 +30,7 @@ function iniciales(username: string): string {
   return partes.map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
 }
 
-export function AppHeader({ faseLabel, user }: AppHeaderProps) {
+export function AppHeader({ faseLabel, user, beforeUser }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,7 @@ export function AppHeader({ faseLabel, user }: AppHeaderProps) {
         <div className="fase-tag">{faseLabel}</div>
         <div className="header-spacer" />
 
+        {beforeUser}
         <div className="user-menu" ref={userMenuRef}>
           <button
             type="button"

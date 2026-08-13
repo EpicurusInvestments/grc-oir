@@ -38,7 +38,6 @@ from app.modules.catalogos.anunciante import (
     Marca,
     MarcaRepository,
 )
-from app.modules.catalogos.base_repository import BaseRepository
 from app.modules.catalogos.contrato import (
     Contrato,
     ContratoCreate,
@@ -49,6 +48,7 @@ from app.modules.catalogos.contrato import (
     ContratoUpdate,
     EstadoContrato,
 )
+from app.shared.base_repository import BaseRepository
 
 ADMIN = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
 VENTAS = CurrentUser(username="vendedor", area=Area.VENTAS, ip="127.0.0.1")

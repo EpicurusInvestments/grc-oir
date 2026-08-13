@@ -1,4 +1,4 @@
-"""Selección del proveedor de autenticación por configuración (ADR-028).
+"""Selección del proveedor de autenticación por configuración (ADR-041).
 
 `get_auth_provider()` es el ÚNICO punto donde se decide qué proveedor se usa, según
 `AUTH_PROVIDER`. Es el espejo exacto de `get_almacenamiento()` (ADR-027): el resto del

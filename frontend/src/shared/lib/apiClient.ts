@@ -22,10 +22,25 @@ export const apiClient = axios.create({ baseURL });
  *  distinguiera, un intento fallido dispararía el cierre de sesión y la redirección. */
 const RUTA_LOGIN = "/auth/login";
 
+// Identidad de desarrollo. Mutable a propósito (F1): el selector de usuario/área de la
+// demo la cambia en caliente. La lee el INTERCEPTOR, no `defaults.headers.common` — si
+// viviera en los defaults, el interceptor la pisaría en cada petición.
+let devUser: string | undefined = import.meta.env.VITE_DEV_USER;
+let devArea: string | undefined = import.meta.env.VITE_DEV_AREA;
+
+/** Cambia la identidad de desarrollo en caliente (selector de la demo de F1) — sin esto,
+ *  `X-Dev-User`/`X-Dev-Area` quedaban fijos al valor de `.env` desde la carga del módulo
+ *  y no había forma de probar por UI un área distinta a la del arranque.
+ *
+ *  Solo tiene efecto con `VITE_AUTH_PROVIDER=dev_headers`: con login real (F5-00) el área
+ *  sale del token y el cliente NO puede elegirla. */
+export function setDevAuthHeaders(username?: string, area?: string): void {
+  if (username) devUser = username;
+  if (area) devArea = area;
+}
+
 apiClient.interceptors.request.use((config) => {
   if (esModoDevHeaders) {
-    const devUser = import.meta.env.VITE_DEV_USER;
-    const devArea = import.meta.env.VITE_DEV_AREA;
     if (devUser) config.headers.set("X-Dev-User", devUser);
     if (devArea) config.headers.set("X-Dev-Area", devArea);
     return config;

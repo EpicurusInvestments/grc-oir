@@ -36,10 +36,10 @@ from app.core.db import Base, datetime2, get_db
 from app.core.errors import ConflictError, DependenciasActivasError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
-from app.modules.catalogos.base_repository import BaseRepository
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.crud_router import build_crud_router
-from app.modules.catalogos.schemas import CatalogoReadBase, ListParams, Page
+from app.shared.base_repository import BaseRepository
+from app.shared.base_service import BaseService
+from app.shared.crud_router import build_crud_router
+from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 # Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo.
 CAMPO_COMISION = "porcentaje_comision_agencia_default"
@@ -142,9 +142,7 @@ class AgenciaRead(CatalogoReadBase):
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class AgenciaRepository(BaseRepository[Agencia]):
-    def get_by_nombre(
-        self, nombre: str, excluir_id: uuid.UUID | None = None
-    ) -> Agencia | None:
+    def get_by_nombre(self, nombre: str, excluir_id: uuid.UUID | None = None) -> Agencia | None:
         # Comparación case-insensitive portable (SQL Server LOWER / SQLite lower); coincide
         # con el comportamiento del índice único bajo collation CI de SQL Server (ver nota
         # de la tanda 1). `nombre` ya llega normalizado en espacios.
@@ -166,14 +164,10 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
 
     # ── enriquecimiento (anunciantes_count) ─────────────────────────────────────
     def _read(self, obj: Agencia, count: int) -> AgenciaRead:
-        return AgenciaRead.model_validate(obj).model_copy(
-            update={"anunciantes_count": count}
-        )
+        return AgenciaRead.model_validate(obj).model_copy(update={"anunciantes_count": count})
 
     def _to_read(self, obj: Agencia) -> AgenciaRead:
-        count = self._anunciante_repo.contar_por_agencias([obj.agencia_id]).get(
-            obj.agencia_id, 0
-        )
+        count = self._anunciante_repo.contar_por_agencias([obj.agencia_id]).get(obj.agencia_id, 0)
         return self._read(obj, count)
 
     def list(self, params: ListParams) -> Page[AgenciaRead]:
@@ -205,16 +199,12 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
             requiere_motivo=False,  # en el alta no se exige motivo (es la captura inicial)
         )
 
-    def _pre_update(
-        self, obj: Agencia, payload: dict[str, Any], usuario: CurrentUser
-    ) -> None:
+    def _pre_update(self, obj: Agencia, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
 
         if "nombre_agencia" in payload:
             payload["nombre_agencia"] = _normaliza_nombre(payload["nombre_agencia"])
-            self._verificar_nombre_unico(
-                payload["nombre_agencia"], excluir_id=obj.agencia_id
-            )
+            self._verificar_nombre_unico(payload["nombre_agencia"], excluir_id=obj.agencia_id)
 
         if (
             CAMPO_COMISION in payload
@@ -262,9 +252,7 @@ def get_agencia_service(db: Session = Depends(get_db)) -> AgenciaService:
         Agencia,
         search_columns=[Agencia.nombre_agencia, Agencia.rfc_agencia],
     )
-    return AgenciaService(
-        repo, anunciante_repo=AnuncianteRepository(db, Anunciante)
-    )
+    return AgenciaService(repo, anunciante_repo=AnuncianteRepository(db, Anunciante))
 
 
 router = build_crud_router(

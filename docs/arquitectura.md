@@ -242,6 +242,24 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   cada entidad sensible solo declara su campo y llama al orquestador. La atomicidad garantiza
   que no haya cambios sin su traza (ni trazas de cambios revertidos). En el frontend, estos
   campos llevan el tag «Audit log» y piden "Motivo del cambio".
+- **Actualización (2026-07, F1):** `audit.registrar_cambio_sensible(...)` llama
+  internamente a `field_permissions.verificar(...)`, que sigue **hardcodeado a "solo
+  Admin"** (punto 4 arriba, placeholder de F0 pendiente de `PermisoCampo` real en F5).
+  El canal de comisiones de F1 (ADR-029, `PATCH /ordenes/clientes/{id}/comisiones`) es
+  Dirección/Admin — Ventas también pasa por `_pre_create` al dar de alta la OC (alta
+  libre, sin motivo). Usar el orquestador genérico ahí habría bloqueado a AMBAS áreas
+  con un 403 falso (el placeholder no conoce "Dirección"). **Corrección:** los 2 puntos
+  de F1 que tocan comisión (`create()` y `actualizar_comisiones()` en
+  `orden_cliente.py`) llaman **directo** a `audit.log_cambio_parametro(...)` (la
+  función de más bajo nivel, sin chequeo de permiso), porque cada uno YA implementa su
+  propia autorización correcta por área antes de llegar ahí. **Lección para módulos
+  futuros:** el orquestador `registrar_cambio_sensible` solo es seguro de reusar
+  mientras el placeholder de `field_permissions` siga siendo "Admin-only" — cualquier
+  campo sensible cuya autorización real involucre un área distinta de Admin debe
+  auditar con `log_cambio_parametro` directo (con su propio chequeo de área en el
+  servicio) hasta que F5 implemente `PermisoCampo` de verdad, momento en el que
+  `field_permissions.verificar` pasa a resolver el permiso real y el orquestador vuelve
+  a ser seguro para todos los casos.
 
 ### ADR-017 — Collation de la BD `GRC-OIR` (RDS) confirmada case-insensitive (F0-03)
 - **Estado:** aceptada · **Fecha:** 2026-07 (F0-03, tanda 1)
@@ -502,7 +520,477 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   local (filesystem) para servicio/router y un **cliente boto3 falso en memoria** para el
   adaptador S3.
 
-### ADR-028 — Proveedor de autenticación intercambiable + sesión JWT (F5-00)
+### ADR-028 — SQLite local para desarrollo de F1, nunca AWS RDS (F1, tanda 1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1, tanda 1)
+- **Contexto:** F1 (Órdenes) es el primer módulo desarrollado con acceso directo a un
+  agente de código en este entorno. El equipo decidió que ningún desarrollo de F1
+  tocara la instancia RDS compartida (`devapps.../GRC-OIR`) mientras se itera rápido
+  con datos sintéticos — el riesgo de un `alembic upgrade`/seed accidental contra la
+  base compartida no se considera aceptable para este flujo de trabajo.
+- **Decisión:** `Settings.database_url` (vacío por defecto) permite anular por completo
+  la construcción de la URL `mssql+pyodbc` de siempre: si viene seteada (p.ej.
+  `sqlite:///./dev_ordenes.db`), `settings.sqlalchemy_url` la usa tal cual y el engine
+  perezoso de `core/db.py` la reconoce (`check_same_thread=False`, sin `pool_pre_ping`).
+  `backend/scripts/seed_dev.py` (idempotente, `Session.merge()` + UUIDs deterministas
+  `uuid5`) **aborta explícitamente** si `DATABASE_URL` no apunta a SQLite, para que un
+  olvido de variable de entorno no siembre contra RDS por accidente. La base SQLite es
+  **desechable por diseño**: se recrea con `alembic upgrade head` + `seed_dev.py`.
+  Los MODELOS (`Base.metadata`) son los mismos en ambos motores — el switch solo cambia
+  qué motor los materializa.
+- **Consecuencias:** iteración local rápida y sin red, con datos deterministas y
+  reproducibles; ningún comando de este flujo (migraciones, seed, servidor de
+  desarrollo, pruebas E2E manuales) toca RDS mientras `DATABASE_URL` no se setee a
+  ella explícitamente. RDS sigue siendo la única base de qa/producción — este switch es
+  exclusivamente para desarrollo/pruebas locales de F1 (y módulos futuros que lo
+  necesiten). Guardarraíl transversal para cualquier agente/persona que opere este
+  repo: **nunca ejecutar un comando de BD sin verificar primero que `DATABASE_URL`
+  apunta a SQLite.**
+
+### ADR-029 — Comisiones snapshot en OrdenCliente: extensión aditiva, alta libre + canal dedicado de edición (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1)
+- **Contexto:** la spec BD v2 no modela un "% de comisión efectivo" por orden — solo los
+  defaults de catálogo (`Vendedor.porcentaje_comision_default`,
+  `Agencia.porcentaje_comision_agencia_default`). La propuesta comercial, sin embargo,
+  es explícita: *"el porcentaje de comisión de un vendedor puede editarse solo por
+  Dirección, aunque Ventas tenga captura sobre el resto de la orden"* — lo que exige un
+  valor propio por OC que no cambie si el catálogo cambia después, y una autorización
+  distinta a la del resto de campos de la orden.
+- **Decisión:** 3 columnas aditivas en `OrdenCliente`
+  (`porcentaje_comision_vendedor_principal_snap`/`_vendedor_secundario_snap`/
+  `_agencia_snap`), PARÁMETRO SENSIBLE (auditadas en `LogCambioParametro`). Se capturan
+  **libres al vender** (Ventas, sin motivo — es un alta, no una edición) y, una vez
+  creada la OC, **solo se editan** por el canal dedicado
+  `PATCH /ordenes/clientes/{id}/comisiones` (Dirección/Admin, `motivo_cambio` siempre
+  requerido), **sin importar si la OC está congelada o no** — más simple y más fiel a
+  la cita de la propuesta que una regla condicionada al estado. Al cerrar la orden
+  (`cerrar()`), cualquier % que siga `null` se rellena con el default vigente del
+  catálogo (Vendedor/Agencia) **sin auditar** (es completar un vacío, no una edición).
+- **Consecuencias:** el valor de comisión de una OC queda inmune a cambios posteriores
+  del catálogo; la autorización del canal de comisiones vive en el servicio
+  (`Area.DIRECCION`/`Area.ADMIN`), separada del permiso de router (`ordenes:leer`) que
+  solo decide quién puede *llegar* al endpoint — ver nota de permisos en
+  `docs/API-CONTRACT.md`. Ver también la excepción de auditoría de este canal en la
+  actualización de 2026-07 de ADR-016.
+
+### ADR-030 — Granularidad por día (`OrdenEstacionDia`) y tres capas de captura asignado/programado/verificado (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1)
+- **Contexto:** la spec BD v2 modela `fecha_transmision`/`hora_inicio`/`hora_fin`/
+  `spots_solicitados`/`spots_asignados`/`spots_faltantes` como columnas PLANAS de
+  `OrdenEstacion` (una fila = un día), pero la propia spec autoriza la alternativa:
+  *"Si la orden cubre un rango de fechas, se puede crear una OrdenEstacion por fecha o
+  AGRUPAR POR RANGO."* El prototipo aprobado, además, distingue tres momentos de
+  captura por día (lo asignado al inicio, lo programado que confirma el afiliado, lo
+  verificado que realmente se transmitió) que la spec no separa explícitamente.
+- **Decisión:**
+  1. **Agrupar por rango**: esos 6 campos se mueven a la tabla hija `OrdenEstacionDia`
+     (una fila por día de la OE), tal como la spec autoriza.
+  2. **Tres capas de captura por día**: `OrdenEstacionDia.spots_asignados` (spec, NOT
+     NULL, 2.1) → `OrdenEstacionDia.spots_programados` (NUEVO, nullable, 2.2: `NULL` =
+     el afiliado no lo ha confirmado todavía; al confirmarse se llena con el valor
+     EFECTIVO de ese día, no con un delta) → `Verificacion.spots_verificados` (spec,
+     2.3, **siempre** una fila por día, tenga o no diferencia). "Programado efectivo" =
+     `spots_programados ?? spots_asignados`.
+  3. **`spots_faltantes` deja de persistirse**: pasa a ser un agregado calculado por el
+     servicio al leer (`SUM(spots_solicitados) − SUM(spots_asignados)` de los días de
+     la OE), igual que `importe_estacion` y los importes/IVA/totales que dependen de él.
+  4. **Campos de lote fuera de `OrdenEstacionDia`**: `testigos_url`/
+     `testigos_ubicacion_alterna`/`notas_transmision`/`reporte_programados_ref`/
+     `reporte_reales_ref` (tampoco en la spec) se capturan UNA VEZ por lote al avanzar
+     2.1→2.2 o 2.2→2.3 (no por día) — viven en `OrdenEstacion`, coherente con cómo ya
+     los captura el prototipo de frontend.
+  5. **`Verificacion` se ancla a `orden_estacion_dia_id`**, no a `orden_estacion_id`
+     (la spec la ancla a la OE; se ancla al día porque la propia spec autoriza esa
+     granularidad) — es una tabla REAL persistida, revierte una decisión previa del
+     frontend-only (E.1, tomada sin acceso a la spec) que la modelaba como vista
+     derivada.
+- **Consecuencias:** el ciclo 2.1→2.2→2.3 queda modelado exactamente como el prototipo
+  aprobado lo captura, sin perder fidelidad a la spec (que autoriza el agrupamiento).
+  `OrdenEstacion.estatus` es un ciclo de vida PROPIO e independiente del de
+  `OrdenCliente`: cada OE cierra por su cuenta cuando sus días quedan reconciliados;
+  `OrdenCliente.estatus_orden = orden_cerrada` es una transición aparte, gatillada
+  cuando TODAS las OE de la OC ya están `cerrada` (se valida en el servicio).
+
+### ADR-031 — Incidencia: modelo híbrido automático/manual (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1)
+- **Contexto:** la spec define 5 tipos de `Incidencia` (`faltante`, `excedente`,
+  `cambio_horario`, `cambio_fecha`, `spot_no_emitido`) y un flujo de `resolucion`
+  completo. La generación automática al capturar una `Verificacion` (comparar
+  verificado vs. programado efectivo) solo puede inferir matemáticamente
+  `faltante`/`excedente` (una diferencia de spots); los otros 3 tipos requieren
+  contexto que nadie captura todavía en el flujo automático (un cambio de horario o de
+  fecha, o un spot que simplemente no salió al aire pese a coincidir el conteo).
+- **Decisión:** modelo híbrido. La tabla `incidencia` implementa los 11 campos de la
+  spec completos, incluida `resolucion` (default `pendiente`), pero:
+  1. **Generación automática** (`avanzar_reales`, un evento por día con diferencia):
+     solo produce `faltante`/`excedente`, calculando `diferencia_spots =
+     spots_verificados − spots_programados_efectivo` y `monto_ajuste = diferencia_spots
+     × precio_spot` de la OE. Se crea una `Verificacion` por CADA día de la OE (spec),
+     pero solo se genera `Incidencia` en los días con diferencia distinta de cero.
+  2. **Alta manual de los otros 3 tipos y edición de `resolucion`: diferida** — el
+     frontend no tiene pantalla que las consuma hoy; se retoma cuando exista ese
+     consumidor (ver "Diferido, sin consumidor hoy" en la ficha del módulo).
+- **Consecuencias:** el modelo queda completo respecto a la spec desde ahora (sin
+  migración futura para agregar campos), pero el ALCANCE funcional de esta tanda cubre
+  solo la porción automática, la que el flujo operativo de F1 necesita hoy.
+
+### ADR-032 — Infra CRUD genérica reubicada a `app/shared/` (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1, tanda 1)
+- **Contexto:** `BaseRepository`/`BaseService`/`build_crud_router`/los schemas
+  compartidos y el enum `DuracionSpot` vivían en `app/modules/catalogos/` (ADR-007),
+  pensados en su momento solo para F0. F1 (`OrdenCliente`/`OrdenEstacion`) necesita la
+  misma infraestructura genérica (paginación, filtros, `historial()` sobre
+  `LogCambioParametro`) y el mismo enum de duración de spot que ya define F0.
+- **Decisión:** mover `BaseRepository`/`BaseService`/`build_crud_router`/schemas
+  compartidos y `DuracionSpot` de `app/modules/catalogos/` a `app/shared/` — un solo
+  lugar neutral que cualquier módulo de negocio puede importar, sin que F1 (ni módulos
+  futuros) tengan que depender de `catalogos/` para infraestructura genérica.
+  `catalogos/__init__.py` y los módulos que ya la usaban se actualizan a importar desde
+  la nueva ubicación; el comportamiento no cambia, solo la ubicación.
+- **Consecuencias:** `app/shared/` queda establecido como el lugar de lo verdaderamente
+  transversal entre módulos de negocio (regla de CLAUDE.md: "no crear dependencias
+  directas entre módulos; lo compartido va a `app/shared/`"), evitando que F1 (o F2+)
+  importen de `catalogos/` por conveniencia. F0 no tuvo que reescribir su lógica, solo
+  el import.
+
+### ADR-033 — Checklist de Vo.Bo. como tabla hija, no JSON (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1)
+- **Contexto:** el prototipo de frontend modela el checklist de revisión previo al
+  Vo.Bo. (10 ítems fijos, PO §2) como un objeto JSON embebido en la OC
+  (`revision_checklist: Record<string, boolean>`). La spec no define esta entidad (es
+  una extensión aditiva aprobada), y había que decidir cómo persistirla en el backend
+  real: JSON embebido (más simple, replica el frontend) vs. tabla hija relacional.
+- **Decisión:** tabla hija `orden_cliente_vobo_item` (`OrdenClienteVoBoItem`), NO JSON:
+  una fila por ítem fijo (`ITEMS_VOBO`, 10 valores) por cada OC, con
+  `completado`/`usuario_id`/`fecha_completado` propios por ítem. Se siembran las 10
+  filas al crear la OC (`_pre_create`/override de `create()`); cada ítem se marca
+  individualmente vía `PATCH /ordenes/clientes/{id}/vobo/{item_clave}`.
+- **Consecuencias:** cada marca de checklist queda con su propio usuario y fecha
+  (trazabilidad que un JSON plano no da gratis), a costa de una tabla más y un join
+  extra al leer una OC completa (`OrdenClienteRead` arma el checklist reconstruyendo el
+  `Record<string, boolean>` que el frontend espera, para que `fromApi.ts` no tenga que
+  cambiar). El endpoint de alta de la OC (`dar_vobo: bool`) permite crear directo con el
+  checklist completo cuando la demo/flujo así lo capture, sin forzar 10 PATCH previos.
+
+### ADR-034 — Campos de cierre: snapshot de lo que faltaba al momento del cierre (F1)
+- **Estado:** aceptada · **Fecha:** 2026-07 (F1)
+- **Contexto:** el flujo de cierre de una OC (PO, estado 3) pide referencias a 2
+  documentos (la orden de compra cerrada del cliente, la carta de conciliación) que
+  pueden no existir todavía en el momento de cerrar — el negocio permite cerrar
+  igualmente y dejar constancia de qué faltó, sin bloquear el avance a facturación.
+  Ninguno de estos campos está en la spec BD v2 (extensión aditiva aprobada).
+- **Decisión:** 5 columnas aditivas en `OrdenCliente`: `odc_cerrada_ref`,
+  `carta_conciliacion_ref` (texto libre, sin endpoint de upload todavía — ver
+  limitación conocida en la ficha del módulo), `cierre_sin_odc_cerrada`/
+  `cierre_sin_carta_conciliacion` (booleanos, calculados por el servicio en `cerrar()`
+  a partir de si cada ref llegó `None`) y `fecha_cierre` (fecha del día en que se
+  cerró). Son un **snapshot al momento del cierre**: no se recalculan después si se
+  suben las referencias más tarde.
+- **Consecuencias:** el negocio puede cerrar sin ambos documentos y el sistema deja
+  constancia auditable de qué faltaba, sin inventar un estado adicional en
+  `estatus_orden`. Si el negocio necesitara "resolver" un cierre incompleto después
+  (marcar que el documento faltante ya llegó), hoy no hay endpoint para eso — quedaría
+  como una extensión futura de F1 o de F2 (Facturación), que es quien primero
+  necesitaría verificarlo.
+
+### ADR-035 — Por qué las 6 tablas de F1 no llevan `activo` (y el hueco real que esto expone)
+- **Estado:** aceptada, CON un hueco de implementación documentado abajo · **Fecha:** 2026-08-10
+- **Contexto:** CLAUDE.md establece baja lógica (`activo`, nunca `DELETE` físico) como regla
+  transversal; los 11 catálogos de F0 la cumplen. Ninguna de las 6 tablas de F1
+  (`OrdenCliente`, `OrdenClienteVoBoItem`, `OrdenEstacion`, `OrdenEstacionDia`, `Verificacion`,
+  `Incidencia`) la tiene — decisión tomada en la Tanda 3, documentada solo con un comentario
+  dentro de `OrdenClienteListParams`/`OrdenEstacionListParams`, insuficiente para que F2/F3/F4
+  sepan por qué al construir sobre estas tablas. Se revisó primero contra la spec BD v2: **la
+  spec NO define `activo` en ninguna de las 4 entidades de F1** (`OrdenCliente` 36 campos,
+  `OrdenEstacion` 33, `Verificacion` 10, `Incidencia` 11 — ninguna lista incluye ese campo). Si
+  la spec lo hubiera pedido y se hubiera omitido, sería una desviación que cambiaría esta
+  conversación; no es el caso.
+- **¿El razonamiento es que `estatus_orden`/`estatus` cubre la función de la baja lógica?**
+  Sí, así de claro — pero con una precisión importante: la spec modela `OrdenCliente` y
+  `OrdenEstacion` como entidades con **ciclo de vida propio** (`estatus_orden`/`estatus`, cada
+  uno con un valor terminal `cancelada`), a diferencia de los catálogos de F0, que son listas
+  planas sin estado de negocio — ahí `activo` es la ÚNICA señal de "esto ya no aplica" posible.
+  Para una entidad que YA tiene un estado de negocio explícito, agregar `activo` encima crearía
+  DOS señales redundantes de lo mismo ("¿ya no aplica por `cancelada` o por `activo=false`?"),
+  lo que es peor que no tener ninguna: quien lea el dato no sabría cuál consultar. El criterio
+  aplica a `OrdenCliente` y `OrdenEstacion` (tienen ciclo propio) y también a `Incidencia`
+  (tiene `resolucion`, que cierra su ciclo: `aceptada`/`credito_cliente`/`descuento_afiliado`/
+  `sin_resolucion`). **NO aplica** — porque el concepto ni siquiera tiene sentido ahí — a
+  `OrdenClienteVoBoItem`, `OrdenEstacionDia` y `Verificacion`: son registros hijos sin
+  existencia independiente de su padre (un ítem de checklist, un día de periodo, una
+  evidencia) — nunca son "activos" o "inactivos" por sí mismos, viven y mueren con el padre.
+- **¿Cómo se retira del sistema una orden capturada por error que nunca se confirmó?**
+  **Hoy, literalmente no se puede.** Verifiqué el código (grep de `cancelada`/`CANCELADA` y de cada método de `OrdenClienteService`/`OrdenEstacionService`), no fue una suposición:
+  `cancelada` existe en el `StrEnum` y en el `CHECK` de ambas tablas, pero **ningún método de
+  servicio ni endpoint la asigna jamás** — ni `OrdenClienteService` ni `OrdenEstacionService`
+  tienen un método `cancelar`, y `estatus_orden`/`estatus` no son campos editables vía los
+  `Update` schemas genéricos. Una orden mal capturada hoy se queda visible para siempre en
+  `recibida`/`capturada`, sin forma de ocultarla ni marcarla. Esto es un hueco real de
+  implementación, no una decisión de diseño: el ESQUEMA está listo para soportar la
+  cancelación (el valor existe, el `CHECK` lo permite), pero el CÓDIGO nunca construyó el
+  camino para llegar ahí. No se corrige en esta tanda (no fue lo que se pidió y toca lógica de
+  negocio, no el esquema) — queda anotado como pendiente en la ficha del módulo.
+- **Decisión final:** se mantiene sin `activo` en las 6 tablas — el diseño (estado propio en
+  vez de una bandera genérica) es correcto y no se revierte. Lo que SÍ hace falta, como tarea
+  aparte y futura, es construir el endpoint de cancelación que el esquema ya permite.
+- **Consecuencias:** F2/F3/F4, al construir sobre `OrdenCliente`/`OrdenEstacion`, deben saber
+  que "está cancelada" se consulta por `estatus_orden`/`estatus`, nunca por un campo `activo`
+  que no existe — y que, hasta que se implemente el endpoint de cancelación, ninguna orden en
+  este sistema puede pasar realmente a `cancelada` por ningún camino soportado.
+- **Confirmación tras la primera aplicación real a RDS (2026-08-10):** el hueco dejó de ser
+  teórico — las órdenes de prueba que se capturen en RDS (base compartida, sin re-siembra)
+  no se pueden retirar por ningún camino existente. Se reconsideró explícitamente si esto
+  cambia la decisión de esquema: **no la cambia**. Agregar `activo` ahora tampoco resolvería
+  el problema por sí solo — el hueco real es la AUSENCIA DE UN ENDPOINT que asigne
+  `cancelada` (o que apague `activo`, si existiera); ninguna de las dos columnas tiene hoy un
+  camino de código para llegar a "esto ya no cuenta". La decisión de diseño (estado propio,
+  no una bandera redundante) se mantiene; lo que se degradó de "pendiente, futuro" a
+  "urgente" es construir el endpoint mínimo de cancelación — recomendado ANTES de capturar
+  datos de prueba en RDS, no después.
+
+### ADR-036 — Tipos explícitos vía `with_variant` para fecha/hora/texto largo en `mssql` (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-10 (F1, revisión del informe de migración a RDS)
+- **Contexto:** al leer el DDL real generado para el dialecto `mssql` (Tanda 3 de la
+  auditoría de migración a RDS), aparecieron dos comportamientos del dialecto de
+  SQLAlchemy que nadie había pedido ni decidido:
+  1. `sa.Date()`/`sa.Time()` a secas SOLO compilan a `DATE`/`TIME` nativos cuando el
+     dialecto puede detectar la versión real del servidor (`server_version_info`,
+     poblado al conectarse). En modo **offline** (`alembic ... --sql`, sin conexión —
+     exactamente el modo con el que se generó la evidencia de esta auditoría) esa
+     detección no existe, y el dialecto cae a `DATETIME` legado (compatible con SQL
+     Server pre-2008). Confirmado con una prueba aislada del compilador.
+  2. `sa.UnicodeText()` a secas compila a `NTEXT` (deprecado por Microsoft) de forma
+     **incondicional** — a diferencia del punto 1, esto pasa igual en modo online.
+- **Decisión:** no depender de la detección implícita del dialecto para ningún tipo de
+  columna. Tres helpers nuevos en `core/db.py`, mismo patrón que el `datetime2()` ya
+  existente (que ya forzaba `DATETIME2` explícito, sin que nadie lo hubiera visto como
+  un problema hasta ahora):
+  - `fecha_sql()` → `Date().with_variant(mssql.DATE(), 'mssql')`
+  - `hora_sql()` → `Time().with_variant(mssql.TIME(), 'mssql')`
+  - `texto_largo()` → `UnicodeText().with_variant(mssql.NVARCHAR(None), 'mssql')`
+  Aplicados a las 9 columnas de fecha/hora y las 7 de texto largo de F1
+  (`orden_cliente`, `orden_estacion`, `orden_estacion_dia`, `verificacion`,
+  `incidencia`). Verificado con el SQL offline regenerado: 0 `NTEXT`, 0 `DATETIME`
+  espurio, 7 `NVARCHAR(max)`, 7 `DATE`, 2 `TIME` — exactamente las columnas esperadas.
+- **Por qué importa más allá de esta migración:** el punto 1 es la misma clase de
+  bug que ADR-014 (`.is_(True)` sobre `BIT`) — un comportamiento que funciona bajo un
+  supuesto implícito (ahí, el dialecto de pruebas; aquí, que siempre habrá una conexión
+  viva al generar SQL) y que se rompe silenciosamente cuando ese supuesto deja de
+  cumplirse. Con este ADR, el SQL offline generado por CUALQUIER migración futura del
+  proyecto es un preview fiel de lo que se va a crear, sin depender de si quien lo
+  generó tenía una conexión abierta.
+- **F0 NO se toca en esta tanda.** `Categoria.descripcion_categoria` y
+  `EmpresaFacturadora.direccion_empresa` usan `UnicodeText()` a secas — el mismo bug de
+  `NTEXT` (sus propios comentarios de código incluso afirman, incorrectamente, que ya
+  compilan a `NVARCHAR(MAX)`; confirmado que no es así). Si esas migraciones ya
+  corrieron contra RDS, esas 2 columnas ya son `NTEXT` ahí — corregirlas requeriría un
+  `ALTER TABLE` sobre una base compartida, fuera del alcance de esta migración de F1.
+  **Queda como ticket aparte.** El proyecto queda temporalmente con dos formas de
+  modelar texto largo (F0 sin corregir, F1 con `texto_largo()`) — se anota aquí
+  explícitamente para que se lea como decisión de alcance, no como descuido.
+- **Consecuencias:** módulos futuros (F2+) deben usar `fecha_sql()`/`hora_sql()`/
+  `texto_largo()` de `core/db.py` para cualquier columna nueva de ese tipo, igual que ya
+  se usa `datetime2()` — no `sa.Date()`/`sa.Time()`/`sa.UnicodeText()` a secas.
+
+### ADR-037 — `Incidencia`: dos FK al mismo padre, consistencia garantizada por el único punto de creación (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-10 (F1, revisión del informe de migración a RDS)
+- **Contexto:** `Incidencia` tiene `verificacion_id` (FK a `Verificacion`) Y
+  `orden_estacion_id` (FK a `OrdenEstacion`, denormalizada — la spec la pide así, "permite
+  filtrar incidencias por OE sin pasar por Verificacion"). Pero la cadena real es
+  `Incidencia.verificacion_id → Verificacion.orden_estacion_dia_id →
+  OrdenEstacionDia.orden_estacion_id`: nada en el ESQUEMA obliga a que el
+  `orden_estacion_id` denormalizado de una `Incidencia` coincida con el que resulta de
+  seguir esa cadena — SQL Server no tiene una forma nativa de expresar esa validación
+  cruzada entre tablas (un `CHECK` no puede referenciar otra tabla; requeriría un
+  trigger, que este proyecto no usa).
+- **Decisión: NO se cambia el modelo.** La desnormalización se justifica por consulta
+  (evita un `JOIN` de 3 tablas para algo tan común como "incidencias de esta OE") y el
+  costo de un trigger no se justifica hoy. En cambio, se documenta la garantía real y
+  dónde vive:
+  - **Hoy la consistencia SÍ está garantizada — pero por el servicio, no por el
+    esquema.** El único punto de creación de `Incidencia` es
+    `OrdenEstacionService.avanzar_reales` (`orden_estacion.py`): dentro de un mismo
+    `for dia in dias` (donde `dias = self._repo.listar_dias(orden_estacion_id)`, es
+    decir, SOLO días de la OE que se está procesando), la `Verificacion` se crea con
+    `orden_estacion_dia_id=dia.orden_estacion_dia_id` y, si hay diferencia, la
+    `Incidencia` se crea con `orden_estacion_id=obj.orden_estacion_id` (el mismo `obj`
+    de toda la llamada) y `verificacion_id=verificacion.verificacion_id` (la que se
+    acaba de crear, en la misma iteración). Ambos valores derivan de la MISMA OE por
+    construcción — no hay forma de que diverjan mientras este sea el único punto de
+    alta.
+  - **Invariante a verificar si esto cambia**: la alta manual de `Incidencia` (ADR-031,
+    diferida — hoy sin endpoint) DEBE revalidar esta misma cadena antes de insertar
+    (que `Verificacion.orden_estacion_dia_id` resuelto a través de
+    `OrdenEstacionDia.orden_estacion_id` coincida con el `orden_estacion_id` recibido),
+    porque ya no habría una única función controlando ambos valores a la vez.
+  - **Invariante a verificar en cualquier carga de datos futura** (migración de datos
+    históricos, importación masiva): la misma revalidación aplica — una carga que
+    escriba las dos FK de forma independiente podría romper la consistencia en
+    silencio, sin que el esquema lo detecte.
+- **Consecuencias:** ningún cambio de código. Este ADR es el registro de una garantía
+  que hoy es real pero implícita, para que quien construya la alta manual de
+  `Incidencia` o una carga de datos sepa exactamente qué debe revalidar.
+
+### ADR-038 — `Verificacion.reconciliada` es hoy un campo muerto (F1)
+- **Estado:** aceptada, CON pregunta de negocio abierta · **Fecha:** 2026-08-10
+- **Contexto:** al confirmar cómo se asigna `reconciliada` (revisión externa del
+  informe de migración a RDS), se verificó en el código que el único lugar donde se
+  escribe es el `Verificacion(...)` que construye `OrdenEstacionService.avanzar_reales`
+  — siempre `reconciliada=True`, literal, nunca `False`. Ningún otro método la lee para
+  decidir nada (el cierre de la OE se basa en que existan las filas de `Verificacion`,
+  no en el valor de este campo). Un `BIT NOT NULL` que siempre vale `1` y que nadie
+  consulta no distingue nada — no cumple el propósito que le da la spec (habilitar el
+  cierre solo cuando la reconciliación se acepta).
+- **Por qué pasó esto:** la spec describe un flujo de 4 pasos (capturar realidad →
+  revisar diferencias → reconciliar → cerrar) con puntos de decisión intermedios. La
+  implementación de F1 comprime esos 4 pasos en una sola transacción atómica dentro de
+  `avanzar_reales`: se capturan los reales, se generan las incidencias, se marca
+  `reconciliada=True` y se cierra la OE, todo en el mismo commit. No existe hoy un
+  estado intermedio donde haya evidencia capturada pero la diferencia todavía no esté
+  aceptada — por diseño de la implementación actual, no por limitación técnica.
+- **Decisión:** NO se cambia el flujo de `avanzar_reales` (es una decisión de negocio,
+  no técnica — fuera del alcance de esta auditoría). SÍ se agrega `updated_at` nulable
+  a `Verificacion` (ver ADR-036 para el criterio de tipos explícitos) por el costo
+  asimétrico: el argumento de "registro inmutable, no necesita `updated_at`" solo se
+  sostiene mientras `reconciliada` siga siendo un campo muerto. Si el negocio pide un
+  flujo con verificaciones capturadas pero no reconciliadas, `reconciliada` pasaría a
+  ser mutable y la columna haría falta — agregarla ahora es una línea; agregarla
+  después de aplicar a RDS es un `ALTER TABLE` sobre una base compartida.
+- **Pregunta de negocio abierta (para el área usuaria):** *¿Existe un momento en que la
+  verificación queda capturada pero la diferencia todavía no se acepta (por ejemplo,
+  Ventas necesita revisar antes de reconciliar), o el reporte del afiliado siempre se
+  resuelve en el mismo acto — se captura y se reconcilia junto, sin un paso
+  intermedio?* La respuesta determina si `avanzar_reales` necesita partirse en dos
+  pasos (capturar → reconciliar) o si el diseño actual (todo en un acto) ya refleja
+  correctamente cómo trabaja el área.
+- **Consecuencias:** si la respuesta es "sí, hace falta un paso intermedio", esto
+  afecta el flujo de servicio de F1 (nuevo estado, nuevo endpoint de "reconciliar") y
+  probablemente el frontend (`RealesForm`) — trabajo futuro, no arrancado. Si la
+  respuesta es "no, siempre se resuelve junto", `reconciliada` se queda como está
+  (redundante pero inofensivo) y se puede considerar deprecarlo formalmente más
+  adelante.
+
+### ADR-039 — `ROUND(x, 2)` en CHECK de suma exacta: SQLite no tiene DECIMAL de punto fijo (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-10
+- **Contexto:** al agregar los primeros CHECK de IGUALDAD entre montos calculados
+  (`importe_oir + importe_emisora = importe_estacion`, `total_oir = importe_oir +
+  iva_oir`, `total_emisora = importe_emisora + iva_emisora` — Tanda 4c/4d de la
+  auditoría de migración a RDS), la re-siembra de la demo en SQLite falló para 1 de 18
+  `OrdenEstacion` (`oe8`): `44478.00 + 7116.48` da `51594.48` exacto en aritmética
+  `Decimal` de Python, pero SQLite almacena columnas `NUMERIC` como `float64` (no tiene
+  tipo decimal de punto fijo nativo). En `float64`, `44478.0 + 7116.48 =
+  51594.479999999996`, que no coincide bit a bit con el `float64` de `51594.48`
+  guardado por separado — el CHECK sin ajustar rechazaba una fila matemáticamente
+  correcta. Confirmado con un diagnóstico aislado (`sqlite3` en memoria) que el mismo
+  patrón se reproduce con cualquier suma de dos `NUMERIC` cuyo resultado no sea
+  exactamente representable en `float64`.
+- **Por qué SQL Server no tiene este problema:** `NUMERIC(14,2)`/`DECIMAL(14,2)` en
+  SQL Server es de punto fijo real (aritmética decimal, no floating point) — la misma
+  suma ahí da el resultado exacto siempre, sin importar los valores. Todos los CHECK de
+  rango (`>= 0`, `<= 100`) agregados en tandas anteriores nunca mostraron este problema
+  porque una desigualdad es robusta a 1 ULP de ruido de `float64`; una IGUALDAD entre
+  dos sumas calculadas por separado no lo es. Este es el primer CHECK de este tipo
+  (suma exacta) que entra a la migración — por eso el problema no había aparecido antes.
+- **Decisión:** envolver ambos lados de los 3 CHECK de suma exacta en `ROUND(x, 2)`:
+  `ROUND(importe_oir + importe_emisora, 2) = ROUND(importe_estacion, 2)`, y análogo
+  para `total_oir`/`total_emisora`. `ROUND` es una función estándar tanto en SQLite
+  como en T-SQL. En SQL Server es un no-op inofensivo (los valores ya son exactos); en
+  SQLite neutraliza el ruido de `float64` sin enmascarar una violación real — verificado
+  con el mismo diagnóstico aislado que una diferencia de 1 centavo completo (no de
+  redondeo) sigue siendo rechazada por el CHECK con `ROUND`.
+- **Alternativas descartadas:** (a) quitar los 3 CHECK — pierde la protección real en
+  RDS por una limitación que solo existe en el entorno de prueba local; (b) ajustar los
+  valores del mock de `seed_dev.py` para evitar la colisión de `float64` — no resuelve
+  el problema de fondo (cualquier combinación futura de datos podría volver a
+  coincidir con un límite de `float64`), solo lo pospone a la próxima coincidencia.
+- **Consecuencias / alcance del CHECK:** cualquier CHECK futuro que compare una
+  IGUALDAD entre dos expresiones de `NUMERIC` calculadas independientemente debe
+  envolverse en `ROUND(x, N)` con la misma escala de la columna — no es exclusivo de
+  `orden_estacion`. Los CHECK de desigualdad (`>=`, `<=`) no necesitan este tratamiento.
+- **Implicación mayor — el problema no es del CHECK, es de la BASE DE DESARROLLO
+  COMPLETA:** el hallazgo no es una curiosidad puntual de 3 constraints. **Toda columna
+  `Numeric`/`DECIMAL` del proyecto se guarda como `float64` en la SQLite de desarrollo**,
+  no solo las 3 que tienen CHECK de suma exacta. La regla del proyecto (`backend/CLAUDE.md`
+  §Convenciones, ADR-015) es *"montos como `NUMERIC`, nunca float — es un sistema
+  financiero"*; en la SQLite local, el MOTOR DE ALMACENAMIENTO viola esa regla por su
+  cuenta y en silencio, sin que el código Python haga nada mal. Consecuencia concreta:
+  **toda prueba que hoy lee un monto de la base (subtotal, IVA, total, importe_oir/
+  importe_emisora, y cualquier futuro monto de F2/F3) y lo compara con `==` NO está
+  validando aritmética decimal exacta** — está validando aritmética `float64`, que
+  coincide con la decimal exacta LA MAYORÍA de las veces pero no todas (como `oe8`
+  demostró). El cálculo en Python sigue siendo exacto (`Decimal`, ADR-015); lo que deja
+  de ser exacto es el viaje de ida y vuelta a través de SQLite. Una prueba que hoy pasa
+  comparando montos exactos está probando algo distinto de lo que va a pasar en
+  producción contra SQL Server (ahí sí sería exacto, siempre) — coincide por suerte de
+  los valores concretos, no por garantía del mecanismo.
+- **Misma familia que ADR-014:** ADR-014 (columnas `BIT`, `.is_(True)` compila distinto
+  en cada dialecto — pasaba en SQLite, fallaba en RDS) y este ADR-039 (`NUMERIC` se
+  almacena distinto en cada dialecto — puede fallar una IGUALDAD en SQLite que sería
+  exacta en RDS) son la MISMA clase de riesgo: **la SQLite local (ADR-028) no es un
+  sustituto fiel de SQL Server para todo lo que depende del dialecto** — solo para el
+  esquema/las migraciones (que sí se auditan offline contra `mssql`, tandas 2-4d) y para
+  la lógica de negocio que no toca tipos específicos del motor. ADR-014 lo demostró para
+  `BIT`; este ADR lo demuestra para `NUMERIC`. Cualquier prueba que dependa de un tipo de
+  dato con semántica distinta entre SQLite y SQL Server (BIT, NUMERIC, posiblemente
+  otros aún no encontrados) hereda el mismo riesgo.
+- **Advertencia para F2 (Facturación) y F3 (Cobranza/Pagos):** ambas fases van a tener
+  MUCHA más aritmética de dinero que F1 (subtotales/IVA/totales de factura, comisiones,
+  conciliación de pagos parciales, redondeos de requisiciones). Las pruebas en SQLite
+  local **no bastan** para certificar que esa aritmética es correcta en producción — solo
+  certifican que el CÓDIGO PYTHON (`Decimal`) es correcto, que ya lo garantiza ADR-015
+  independientemente de la base. Cualquier CHECK de igualdad sobre montos en F2/F3 debe
+  nacer ya con `ROUND(x, 2)` (no esperar a que la re-siembra lo descubra, como pasó aquí)
+  — y si en F2/F3 se agregan pruebas que verifiquen sumas o cuadres de montos LEYENDO DE
+  LA BASE (no solo comparando los `Decimal` en memoria antes de persistir), esas pruebas
+  necesitan corroborarse contra SQL Server real al menos una vez, no basta con que pasen
+  en SQLite.
+- **Qué verificar contra SQL Server real, una vez aplicada esta migración:** (1) que los
+  3 CHECK de suma exacta con `ROUND` compilan y se pueden crear sin error de sintaxis en
+  T-SQL (confirmado por lectura del DDL offline, sección 8 del informe — pendiente de
+  confirmación al aplicar); (2) insertar al menos una fila con montos que en SQLite
+  hubieran producido el mismo tipo de colisión de `float64` (p.ej. replicar los valores
+  de `oe8`) y confirmar que el CHECK pasa SIN necesitar `ROUND` — si alguna vez fallara
+  en SQL Server, sería señal de que la premisa de este ADR (NUMERIC es de punto fijo
+  real ahí) está mal, y habría que investigar de inmediato; (3) que ninguna de las
+  pruebas de F1 que comparan montos empieza a fallar contra RDS de forma distinta a como
+  pasa en SQLite (correr la suite de pruebas de integración, si existe, contra un
+  ambiente de QA con RDS antes de considerar F2/F3 "probado").
+
+### ADR-040 — Admin es superusuario (WRITE) en todos los módulos, no solo Catálogos (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-11
+- **Contexto:** la matriz RBAC de la propuesta Pointwise (§9 "Roles y matriz de
+  permisos") le da al área Admin captura (C) solo sobre Catálogos y Seguridad —
+  sobre Órdenes (F1), y por extensión sobre cualquier módulo futuro, la propuesta
+  original solo le da lectura (L). El equipo pidió explícitamente ampliar esto: que
+  el usuario `dev.admin`/área `admin` tenga todos los permisos de todas las pantallas,
+  sin excepción.
+- **Decisión:** `Area.ADMIN` es superusuario — siempre `Acceso.WRITE` — sobre CUALQUIER
+  módulo de la matriz `RBAC` (`app/core/security.py`), presente o futuro. Se implementó
+  centralizado en `_nivel()` (verifica `area is Area.ADMIN` ANTES de consultar el dict
+  `RBAC` por módulo), no repartido módulo por módulo — así un módulo nuevo (F2, F3...)
+  no necesita acordarse de agregar la entrada de Admin. Se retiraron las entradas
+  explícitas `Area.ADMIN: Acceso.WRITE` (en `catalogos`, quedaba redundante) y
+  `Area.ADMIN: Acceso.READ` (en `_LECTURA_ORDENES`, quedaba contradictoria con el nuevo
+  comportamiento) de la matriz de datos, para que no haya dos fuentes de verdad
+  describiendo el acceso de Admin.
+- **Es una desviación deliberada de la propuesta, no un descuido:** se preguntó
+  explícitamente al equipo antes de tocar el código (regla del proyecto: no
+  "mejorar" la matriz de permisos por cuenta propia) — se ofrecieron dos alcances
+  (bypass solo para el usuario de desarrollo `dev.admin`, o cambio real de la matriz
+  para el área `admin`) y el equipo eligió el segundo.
+- **Fuera de alcance de este ADR:** el canal de comisiones de F1
+  (`PATCH /clientes/{id}/comisiones`) no pasa por esta matriz — su autorización es un
+  chequeo de área explícito dentro del propio servicio (`Area.DIRECCION`/`Area.ADMIN`,
+  ver `orden_cliente.py`), que ya incluía a Admin desde la Tanda 5; no se tocó. Los
+  permisos a nivel de campo (`PermisoCampo`, F5) tampoco se tocan — son un mecanismo
+  distinto, pendiente de construirse como entidad real.
+- **Consecuencias:** cualquier módulo nuevo que agregue su propia entrada a `RBAC` NO
+  necesita (ni debe) listar a `Area.ADMIN` — ya la tiene garantizada por `_nivel()`. Si
+  en el futuro el equipo decide que Admin SÍ debe quedar limitado en algún módulo
+  específico (p.ej. por una regla de segregación de funciones en F3/Tesorería), ese caso
+  necesitaría una excepción explícita en `_nivel()` (hoy no existe ninguna) — no alcanza
+  con quitarlo de la matriz de datos, porque el superusuario ya no la consulta.
+
+### ADR-041 — Proveedor de autenticación intercambiable + sesión JWT (F5-00)
 - **Estado:** aceptada · **Fecha:** 2026-08-12 (F5-00, adelanto consciente de F5) ·
   **sustituye a ADR-008** en cuanto al proveedor por defecto (el modo por headers sobrevive
   como un adaptador más, con sus mismas restricciones).
@@ -557,9 +1045,11 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   8. **El RBAC no cambió de forma**: `requiere_permiso` y la matriz área × módulo siguen
      siendo los mismos datos en `core/security.py`; lo único que cambió es **de dónde sale
      el `CurrentUser`**. Por eso los 11 catálogos de F0 y sus pruebas **no se tocaron**
-     (el `conftest` fija `dev_headers` para ellas). Se añadió una entrada:
-     `"usuarios": {ADMIN: WRITE}` — exclusiva de Admin **incluso en lectura**, porque el
-     padrón de usuarios no es un catálogo consultable por las demás áreas.
+     (el `conftest` fija `dev_headers` para ellas). Se añadió la entrada `"usuarios"`,
+     exclusiva de Admin **incluso en lectura**, porque el padrón de usuarios no es un
+     catálogo consultable por las demás áreas. Al integrarse con F1 quedó como
+     `"usuarios": {}` (diccionario vacío) siguiendo el **ADR-040**: Admin obtiene WRITE de
+     `_nivel()` en todos los módulos, así que ninguna entrada nueva debe listarlo.
   9. **Frontend — la sesión es infraestructura compartida.** El token vive en
      `shared/lib/session.ts` (sin React, porque lo consumen tanto el `apiClient` como el
      provider) y el estado de sesión en `modules/auth/`. Tres decisiones que sostienen el
@@ -611,4 +1101,4 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   - **Sin política de rotación ni caducidad de contraseñas**, y sin "forzar cambio en el
     primer inicio de sesión".
 
-[[Agregar aquí cada nueva decisión: ADR-029, ...]]
+[[Agregar aquí cada nueva decisión: ADR-042, ...]]

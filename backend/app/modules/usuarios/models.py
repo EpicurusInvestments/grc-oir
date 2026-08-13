@@ -32,9 +32,7 @@ _AREAS_SQL = ", ".join(f"'{a.value}'" for a in Area)
 
 class Usuario(Base):
     __tablename__ = "usuario"
-    __table_args__ = (
-        CheckConstraint(f"area IN ({_AREAS_SQL})", name="ck_usuario_area"),
-    )
+    __table_args__ = (CheckConstraint(f"area IN ({_AREAS_SQL})", name="ck_usuario_area"),)
 
     usuario_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     nombre_usuario: Mapped[str] = mapped_column(Unicode(160))

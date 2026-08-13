@@ -1,8 +1,8 @@
 /** Explorador de la fase Seguridad (F5) — mismo patrón que el de Catálogos.
  *
- * `phaseClass="phase-f5"` tiñe la pantalla completa con el rojo de marca (botones, foco de
- * campos, tag de fase, item activo del sidebar) sin duplicar una sola regla de CSS ni
- * afectar a las demás fases.
+ * `rootClassName="phase-f5"` tiñe la pantalla completa con el rojo de marca (botones, foco
+ * de campos, tag de fase, item activo del sidebar) sin duplicar una sola regla de CSS ni
+ * afectar a las demás fases. Es el mismo mecanismo que usa F1 con `phase-f5`→`phase-f1`.
  */
 
 import { useState } from "react";
@@ -32,7 +32,7 @@ export function SeguridadExplorerPage() {
       groups={buildSeguridadGroups(seguridadRegistry)}
       activeKey={activeKey}
       onSelect={setActiveKey}
-      phaseClass="phase-f5"
+      rootClassName="phase-f5"
     >
       {entry?.render ? (
         entry.render()

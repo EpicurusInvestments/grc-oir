@@ -15,8 +15,8 @@ from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.modules.catalogos.base_service import BaseService
-from app.modules.catalogos.schemas import CatalogoReadBase
+from app.shared.base_service import BaseService
+from app.shared.schemas import CatalogoReadBase
 
 
 class CatalogoDemo(Base):

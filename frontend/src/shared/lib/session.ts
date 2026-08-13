@@ -4,7 +4,7 @@
  * de componentes) como el `SessionProvider`. Aquí no hay llamadas HTTP ni estado de UI.
  *
  * Dónde vive el token: `localStorage`. Es lo más simple para una SPA que habla con un
- * backend en otro origen, y es un **riesgo aceptado y documentado** (ADR-028): un XSS
+ * backend en otro origen, y es un **riesgo aceptado y documentado** (ADR-041): un XSS
  * podría leerlo. La alternativa (cookie httpOnly + CSRF) se evaluará en F5 pleno.
  */
 

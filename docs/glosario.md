@@ -109,7 +109,7 @@
 - **Proveedor de autenticación** — Mecanismo intercambiable con el que el sistema decide
   quién es el usuario. Se elige con `AUTH_PROVIDER` y hay uno solo activo por entorno:
   `local` (email + contraseña, el que usan las demos), `dev_headers` (solo desarrollo) y
-  `azure_ad` (preparado, sin implementar). Ver ADR-028.
+  `azure_ad` (preparado, sin implementar). Ver ADR-041.
 - **Token de sesión (JWT)** — Credencial firmada que el navegador manda en cada petición
   (`Authorization: Bearer …`). Lleva la identidad y el área, y **caduca a las 8 horas**
   (una jornada, configurable). No guarda contraseñas y el servidor no lo almacena.

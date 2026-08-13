@@ -32,12 +32,15 @@ describe("DashboardPage", () => {
     const inactivas = phaseRegistry.filter((p) => !p.enabled);
 
     // Las fases activas se renderizan como <button> (clicable); las inactivas como <div>.
-    // La aserción se deriva del registro, no de una lista fija de fases: así encender una
-    // fase nueva (F5-00 encendió Seguridad) no obliga a reescribir esta prueba.
+    // La aserción se deriva del registro y NO de un conteo fijo: encender una fase nueva
+    // (F1 encendió Órdenes, F5-00 encendió Seguridad) no debe obligar a tocar esta prueba.
     for (const fase of activas) {
       expect(grid.getByText(fase.name).closest("button")).not.toBeNull();
     }
     expect(grid.getAllByText("Próximamente")).toHaveLength(inactivas.length);
-    expect(activas.length).toBeGreaterThan(0);
+    // Coherencia del registro: habilitada ⇔ tiene ruta. Es lo que rompería una fase mal
+    // dada de alta, y no caduca al encender la siguiente.
+    expect(activas.every((p) => p.route !== null)).toBe(true);
+    expect(inactivas.every((p) => p.route === null)).toBe(true);
   });
 });
