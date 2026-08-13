@@ -16,8 +16,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.db import get_engine
 from app.core.errors import register_error_handlers
+from app.modules.auth.router import router as auth_router
 from app.modules.catalogos.router import router as catalogos_router
 from app.modules.ordenes.router import router as ordenes_router
+from app.modules.usuarios.router import router as usuarios_router
 
 app = FastAPI(
     title="Sistema GRC-OIR — API",
@@ -25,12 +27,16 @@ app = FastAPI(
     description="Backend del Sistema GRC-OIR (Grupo Radio Centro / OIR).",
     docs_url="/docs",
     openapi_url="/openapi.json",
+    # El token pegado en "Authorize" sobrevive a recargas de /docs: sin esto hay que
+    # volver a pegarlo en cada F5 mientras se prueba (F5-00).
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
 # CORS: el frontend (SPA) vive en otro origen. Los orígenes permitidos son CONFIGURABLES
 # (CORS_ORIGINS en el entorno), nunca hardcodeados: en producción se pone el dominio real.
-# Se permiten todos los métodos y headers para cubrir el preflight (OPTIONS) de POST/PUT y
-# los headers de auth de desarrollo (X-Dev-User / X-Dev-Area). Ver ADR-013.
+# Se permiten todos los métodos y headers para cubrir el preflight (OPTIONS) de POST/PUT,
+# el header `Authorization: Bearer` de la sesión (F5-00) y los headers de auth de
+# desarrollo (X-Dev-User / X-Dev-Area). Ver ADR-013.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -66,6 +72,8 @@ app.include_router(health)
 
 # ── API v1 ──────────────────────────────────────────────────────────────────────
 api_v1 = APIRouter(prefix="/api/v1")
+api_v1.include_router(auth_router)
+api_v1.include_router(usuarios_router)
 api_v1.include_router(catalogos_router)
 api_v1.include_router(ordenes_router)
 app.include_router(api_v1)

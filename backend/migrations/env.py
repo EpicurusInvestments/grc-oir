@@ -15,8 +15,8 @@ from logging.config import fileConfig
 from alembic import context
 
 # Importar los modelos para que Base.metadata conozca sus tablas (autogenerate).
-# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora ·
-# F0-04: facturación/finanzas + Usuario · F1: ordenes (ver ADR-028 y siguientes).
+# F0-01: operativos · F0-02: tarifa · F0-03: comerciales + bitácora
+# F0-04: facturación/finanzas + Usuario · F1: ordenes · F5-00: Usuario.password_hash
 from app.core import audit  # noqa: F401  (modelo LogCambioParametro)
 from app.core.config import settings
 from app.core.db import Base

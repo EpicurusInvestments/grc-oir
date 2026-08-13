@@ -16,7 +16,9 @@ interface ExplorerLayoutProps {
   children: ReactNode;
   /** Slot opcional en el header, antes del chip de usuario (ver `AppHeader.beforeUser`). */
   headerExtra?: ReactNode;
-  /** Clase extra en la raíz (p.ej. `phase-f1` para repintar `--phase*` de esta pantalla). */
+  /** Clase extra en la raíz para repintar los tokens `--phase*` de ESTA pantalla:
+   *  `phase-f1` (teal, Órdenes), `phase-f5` (rojo de marca, Seguridad)… Sin ella se usa el
+   *  color por defecto de `:root`, que es F0 morado — así los catálogos no cambian. */
   rootClassName?: string;
 }
 

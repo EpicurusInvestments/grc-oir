@@ -26,16 +26,21 @@ describe("DashboardPage", () => {
     }
   });
 
-  it("solo las fases habilitadas (hoy F0 y F1) son navegables; el resto aparece 'Próximamente'", () => {
+  it("las fases construidas son navegables; el resto aparece 'Próximamente'", () => {
     const grid = renderGrid();
     const activas = phaseRegistry.filter((p) => p.enabled);
     const inactivas = phaseRegistry.filter((p) => !p.enabled);
 
     // Las fases activas se renderizan como <button> (clicable); las inactivas como <div>.
+    // La aserción se deriva del registro y NO de un conteo fijo: encender una fase nueva
+    // (F1 encendió Órdenes, F5-00 encendió Seguridad) no debe obligar a tocar esta prueba.
     for (const fase of activas) {
       expect(grid.getByText(fase.name).closest("button")).not.toBeNull();
     }
     expect(grid.getAllByText("Próximamente")).toHaveLength(inactivas.length);
-    expect(activas).toHaveLength(2);
+    // Coherencia del registro: habilitada ⇔ tiene ruta. Es lo que rompería una fase mal
+    // dada de alta, y no caduca al encender la siguiente.
+    expect(activas.every((p) => p.route !== null)).toBe(true);
+    expect(inactivas.every((p) => p.route === null)).toBe(true);
   });
 });

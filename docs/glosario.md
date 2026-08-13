@@ -104,6 +104,30 @@
 - **Import parcial** — Las filas válidas se importan aunque otras sean inválidas; las
   rechazadas se reportan con su motivo. Las válidas se aplican de forma atómica (todo o nada).
 
+## Autenticación y sesión (F5-00)
+
+- **Proveedor de autenticación** — Mecanismo intercambiable con el que el sistema decide
+  quién es el usuario. Se elige con `AUTH_PROVIDER` y hay uno solo activo por entorno:
+  `local` (email + contraseña, el que usan las demos), `dev_headers` (solo desarrollo) y
+  `azure_ad` (preparado, sin implementar). Ver ADR-041.
+- **Token de sesión (JWT)** — Credencial firmada que el navegador manda en cada petición
+  (`Authorization: Bearer …`). Lleva la identidad y el área, y **caduca a las 8 horas**
+  (una jornada, configurable). No guarda contraseñas y el servidor no lo almacena.
+- **`dev_headers`** — Modo de desarrollo que conserva los headers `X-Dev-User`/`X-Dev-Area`
+  para que el equipo pruebe cualquier área sin loguearse. **Solo funciona con
+  `APP_ENV=development`**; fuera de ahí el sistema rechaza (ADR-008).
+- **Hash de contraseña** — Huella irreversible de la contraseña (bcrypt) que es lo ÚNICO
+  que se guarda: la contraseña en claro no se persiste, no se registra en logs y no se
+  devuelve nunca por la API. En la UI solo se informa `tiene_password` (sí/no).
+- **Área** — Único atributo que decide los permisos de un usuario: ventas │ facturacion │
+  tesoreria │ cxc │ cxp │ direccion │ nominas │ admin. Un usuario tiene exactamente una.
+- **Guardarraíl anti-auto-bloqueo** — Regla que impide que alguien se desactive o se cambie
+  de área a sí mismo: el último Admin podría dejar al sistema sin quien administre usuarios.
+- **Log de seguridad** — Registro de acciones sensibles que no son "cambios de parámetro"
+  (hoy: el reseteo de contraseña — quién, a quién, desde qué IP y cuándo, **sin** la
+  contraseña ni el hash). Escribe al log de la aplicación; la bitácora formal, con tabla y
+  pantalla, es de F5 pleno. Distinto de [LogCambioParametro](#sistema).
+
 ## Sistema
 
 - **Parámetro sensible** — Campo cuyo cambio requiere permiso por campo y queda

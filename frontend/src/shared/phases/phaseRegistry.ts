@@ -114,11 +114,14 @@ export const phaseRegistry: PhaseEntry[] = [
     code: "F5",
     name: "Seguridad",
     description:
-      "Permisos por área y por campo, bitácora y auditoría de parámetros sensibles.",
+      "Usuarios y áreas de acceso. Permisos por campo y bitácora de auditoría llegan después.",
     accent: "red",
     imageWebp: seguridadWebp,
     imagePng: seguridadPng,
-    route: null,
-    enabled: false,
+    // F5-00 adelantó la autenticación y la gestión de usuarios: la fase se enciende para
+    // alojarlas. El resto de F5 (PermisoCampo, bitácora) se suma como entradas nuevas del
+    // `seguridadRegistry`, sin tocar esta ruta.
+    route: "/seguridad",
+    enabled: true,
   },
 ];

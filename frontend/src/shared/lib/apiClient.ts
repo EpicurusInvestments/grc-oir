@@ -1,32 +1,57 @@
 /** Cliente HTTP central contra /api/v1.
  *
  * - Base URL desde VITE_API_URL (el backend del compose en local).
- * - En desarrollo, envía los headers de auth dev (X-Dev-User/X-Dev-Area) si se
- *   configuran, para ejercitar el RBAC mientras el SSO está pendiente.
+ * - **Sesión (F5-00)**: adjunta `Authorization: Bearer <token>` en cada petición. En modo
+ *   `VITE_AUTH_PROVIDER=dev_headers` manda en su lugar los headers de desarrollo
+ *   (X-Dev-User / X-Dev-Area), que es como trabajaba el equipo antes del login real.
+ * - Un **401** del backend significa que la sesión ya no sirve (expirada, revocada o
+ *   inexistente): se limpia y se avisa al `SessionProvider`, que redirige a /login.
  * - Normaliza el sobre de error uniforme del backend a un Error con mensaje legible.
  */
 
 import axios, { AxiosError } from "axios";
 
+import { esModoDevHeaders, leerToken, notificarSesionExpirada } from "@/shared/lib/session";
 import type { ApiError } from "@/shared/types";
 
 const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
 export const apiClient = axios.create({ baseURL });
 
-/** Actualiza los headers de auth dev en caliente (p.ej. al cambiar de usuario en el
- * selector de la demo, modo `api`) — sin esto, `X-Dev-User`/`X-Dev-Area` quedaban
- * fijos al valor de `.env` desde la carga del módulo y no había forma de probar por
- * UI un área distinta a la del arranque. */
+/** Ruta de login: su 401 es "credenciales incorrectas", NO "sesión expirada". Si no se
+ *  distinguiera, un intento fallido dispararía el cierre de sesión y la redirección. */
+const RUTA_LOGIN = "/auth/login";
+
+// Identidad de desarrollo. Mutable a propósito (F1): el selector de usuario/área de la
+// demo la cambia en caliente. La lee el INTERCEPTOR, no `defaults.headers.common` — si
+// viviera en los defaults, el interceptor la pisaría en cada petición.
+let devUser: string | undefined = import.meta.env.VITE_DEV_USER;
+let devArea: string | undefined = import.meta.env.VITE_DEV_AREA;
+
+/** Cambia la identidad de desarrollo en caliente (selector de la demo de F1) — sin esto,
+ *  `X-Dev-User`/`X-Dev-Area` quedaban fijos al valor de `.env` desde la carga del módulo
+ *  y no había forma de probar por UI un área distinta a la del arranque.
+ *
+ *  Solo tiene efecto con `VITE_AUTH_PROVIDER=dev_headers`: con login real (F5-00) el área
+ *  sale del token y el cliente NO puede elegirla. */
 export function setDevAuthHeaders(username?: string, area?: string): void {
-  if (username) apiClient.defaults.headers.common["X-Dev-User"] = username;
-  if (area) apiClient.defaults.headers.common["X-Dev-Area"] = area;
+  if (username) devUser = username;
+  if (area) devArea = area;
 }
 
-// Auth de desarrollo (solo si Vite corre en modo dev y hay valores configurados).
-if (import.meta.env.DEV) {
-  setDevAuthHeaders(import.meta.env.VITE_DEV_USER, import.meta.env.VITE_DEV_AREA);
-}
+apiClient.interceptors.request.use((config) => {
+  if (esModoDevHeaders) {
+    if (devUser) config.headers.set("X-Dev-User", devUser);
+    if (devArea) config.headers.set("X-Dev-Area", devArea);
+    return config;
+  }
+
+  // Se lee en CADA petición (no una sola vez al cargar): así el token del login recién
+  // hecho se usa de inmediato, sin recargar la página.
+  const token = leerToken();
+  if (token) config.headers.set("Authorization", `Bearer ${token}`);
+  return config;
+});
 
 /** Error de API con el código del backend (sin_permiso, no_encontrado, ...). */
 export class ApiRequestError extends Error {
@@ -53,6 +78,11 @@ export async function postFormData<T>(url: string, formData: FormData): Promise<
 apiClient.interceptors.response.use(
   (res) => res,
   (error: AxiosError<ApiError>) => {
+    const esLogin = (error.config?.url ?? "").includes(RUTA_LOGIN);
+    if (error.response?.status === 401 && !esLogin && !esModoDevHeaders) {
+      notificarSesionExpirada();
+    }
+
     const sobre = error.response?.data?.error;
     if (sobre) {
       return Promise.reject(

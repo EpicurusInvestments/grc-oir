@@ -8,18 +8,26 @@
 ## Convenciones generales
 
 - Base: `/api/v1`. Formato: JSON. OpenAPI en `/docs` y `/openapi.json`.
-- **Autenticación:** el SSO corporativo está `[[POR LLENAR]]`. Mientras tanto, en
-  `APP_ENV=development` el usuario se resuelve por headers de desarrollo
-  `X-Dev-User` y `X-Dev-Area` (área ∈ ventas │ facturacion │ tesoreria │ cxc │ cxp │
-  direccion │ nominas │ admin; default admin desde `.env`). Fuera de `development` sin
-  SSO, la API responde **401** (falla cerrada). Ver ADR-008.
+- **Autenticación (desde F5-00):** la API espera `Authorization: Bearer <token>`, donde el
+  token lo emite `POST /api/v1/auth/login` y vive 8 h (configurable). El proveedor se elige
+  con `AUTH_PROVIDER` (ADR-041):
+  - `local` (**default**) — login con email + contraseña contra la tabla `usuario`.
+  - `dev_headers` — modo desarrollo: el usuario se resuelve por los headers `X-Dev-User` /
+    `X-Dev-Area` (área ∈ ventas │ facturacion │ tesoreria │ cxc │ cxp │ direccion │ nominas │
+    admin; default admin desde `.env`). **Solo con `APP_ENV=development`**; fuera de ahí
+    responde **401** (falla cerrada, ADR-008). Con este proveedor NO hay `/auth/login`.
+  - `azure_ad` — interfaz preparada, implementación diferida: responde **500**
+    `configuracion_invalida` con un mensaje claro.
+  Sin token (o con token expirado/alterado) cualquier endpoint protegido responde **401**
+  `no_autenticado`; `detalles.motivo` distingue `expirado` │ `invalido` │ `revocado`.
 - **RBAC por área:** cada endpoint exige `requiere_permiso("<modulo>:<accion>")` con
   `accion ∈ leer|crear|editar`. La matriz área×módulo vive como datos en
   `core/security.py`. En catálogos (F0): solo **admin** escribe; las demás áreas leen.
 - **Errores:** estructura uniforme `{ "error": { "codigo", "mensaje", "detalles" } }`.
   Códigos: `validacion` (422), `sin_permiso` (403), `no_autenticado` (401),
   `no_encontrado` (404), `transicion_invalida` (409), `conflicto` (409),
-  `dependencias_activas` (409), `error_dominio` (400).
+  `dependencias_activas` (409), `error_dominio` (400),
+  `configuracion_invalida` (500 — el servidor está mal configurado, no el request).
 - **Paginación de listas (catálogos):** por página con `?page` (≥1, default 1) y `?size`
   (1–100, default 20). Respuesta: `{ items, total, page, size, pages }`. Filtros:
   `?activo` (true|false|omitir=todos) y `?q` (búsqueda de texto).
@@ -57,6 +65,133 @@
 
 [[Esta sección se llena conforme se desarrollan los módulos. Mantener agrupado por
 módulo: Catálogos, Usuarios, Órdenes, Facturación, Cobranza, Pagos, Reportes, Seguridad.]]
+
+### Autenticación (F5-00) — login, sesión y cierre
+
+Base `/api/v1/auth`. Estos endpoints **no** pasan por la matriz RBAC: `login` es público
+(es lo que otorga la sesión) y `me` solo exige una sesión válida, sin permiso de módulo.
+
+| Método y ruta | Permiso | Qué hace |
+|---|---|---|
+| `POST /auth/login` | — (público) | Valida credenciales y emite el token de sesión |
+| `GET /auth/me` | sesión válida | Identidad y área del usuario en sesión |
+| `POST /auth/logout` | — | 204. El token es *stateless*: la sesión se cierra al descartarlo en el cliente |
+
+#### `POST /api/v1/auth/login`
+- **Módulo / Fase:** auth / F5-00 (adelanto de F5)
+- **Permiso requerido:** ninguno (público)
+- **Qué hace (negocio):** autentica con **email + contraseña** contra la tabla `usuario` y
+  devuelve un JWT con la identidad y el área. Solo disponible con `AUTH_PROVIDER=local`;
+  con otro proveedor responde 500 `configuracion_invalida`.
+- **Validaciones clave:** email 3–160 caracteres (se normaliza a minúsculas y sin espacios);
+  contraseña 1–200. El usuario debe estar `activo` y tener contraseña establecida.
+- **Efectos secundarios:** ninguno (no persiste sesión: el token es *stateless*).
+- **Request ejemplo:**
+```json
+{ "email": "dev.admin@grcoir.com", "password": "••••••••" }
+```
+- **Response ejemplo (200):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "bearer",
+  "expira_en": "2026-08-12T20:00:00Z",
+  "usuario": {
+    "usuario_id": "00000000-0000-0000-0000-000000000001",
+    "nombre_usuario": "dev.admin",
+    "email": "dev.admin@grcoir.com",
+    "area": "admin"
+  }
+}
+```
+- **Errores posibles:** **401** `no_autenticado` con el mensaje genérico
+  `"Usuario o contraseña incorrectos."` — es **el mismo** para usuario inexistente,
+  contraseña incorrecta, usuario inactivo y usuario sin contraseña (no se revela si un
+  correo está dado de alta); 422 (validación); 500 `configuracion_invalida` (proveedor sin
+  login local, o `SECRET_KEY` de ejemplo fuera de `development`).
+
+#### `GET /api/v1/auth/me`
+- **Permiso requerido:** sesión válida (`Authorization: Bearer <token>`)
+- **Qué hace (negocio):** devuelve la identidad vigente. El área y el estado `activo` se
+  **releen de la base en cada petición**, no del token: desactivar a un usuario o cambiarle
+  el área invalida su sesión de inmediato, sin esperar a que expire.
+- **Response ejemplo (200):**
+```json
+{ "usuario_id": "0000...0001", "nombre_usuario": "dev.admin",
+  "email": "dev.admin@grcoir.com", "area": "admin" }
+```
+- **Errores posibles:** 401 `no_autenticado` con `detalles.motivo` ∈ `expirado` │
+  `invalido` │ `revocado`. En modo `dev_headers`, `usuario_id` y `email` van en `null`
+  (ese proveedor no consulta la tabla `usuario`).
+
+### Gestión de usuarios (F5-00) — solo Admin
+
+Base `/api/v1/usuarios`. Permiso base `usuarios`, que en la matriz RBAC existe **solo para
+Admin, incluso en lectura**: el padrón de usuarios no es un catálogo consultable por las
+demás áreas. Cualquier otra área recibe **403** `sin_permiso` en todos los verbos.
+
+| Método y ruta | Permiso | Qué hace |
+|---|---|---|
+| `GET /usuarios` | `usuarios:leer` | Lista paginada (`?page&size&activo&q`) → `Page<UsuarioRead>` |
+| `GET /usuarios/{id}` | `usuarios:leer` | Un usuario |
+| `POST /usuarios` | `usuarios:crear` | Alta (contraseña opcional) |
+| `PUT /usuarios/{id}` | `usuarios:editar` | Edita nombre, email, área, roles |
+| `POST /usuarios/{id}/estado` | `usuarios:editar` | Activa / desactiva (baja lógica) |
+| `POST /usuarios/{id}/password` | `usuarios:editar` | (Re)establece la contraseña |
+
+**`UsuarioRead` nunca incluye `password_hash`.** En su lugar expone `tiene_password`
+(booleano) para que la UI marque a los usuarios que aún no pueden iniciar sesión.
+
+#### `POST /api/v1/usuarios`
+- **Validaciones clave:** `email` único **case-insensitive** (se normaliza a minúsculas) →
+  409 `conflicto`; `area` ∈ el ENUM de áreas → 422; `nombre_usuario` con espacios
+  normalizados. `password` es **opcional**: sin ella el usuario queda dado de alta pero
+  **no puede entrar** hasta que se le establezca una (fail-closed).
+- **Política de contraseñas:** mínimo **10 caracteres** y máximo **72 bytes**. El máximo se
+  cuenta en *bytes*, no en caracteres (cada acento o `ñ` cuenta 2 en UTF-8), porque bcrypt
+  ignora lo que exceda: se **rechaza** con 422 en vez de recortar en silencio.
+- **Request ejemplo:**
+```json
+{ "nombre_usuario": "Beto Cobranza", "email": "beto@grcoir.com",
+  "area": "cxc", "password": "••••••••••" }
+```
+- **Response ejemplo (201):**
+```json
+{ "usuario_id": "3f2a...", "nombre_usuario": "Beto Cobranza",
+  "email": "beto@grcoir.com", "area": "cxc", "roles_adicionales": null,
+  "activo": true, "created_at": "2026-08-12T10:00:00", "tiene_password": true }
+```
+
+#### `PUT /api/v1/usuarios/{id}` y `POST /api/v1/usuarios/{id}/estado`
+- **Efectos secundarios (auditoría):** cambiar `area` o `activo` escribe en
+  **`LogCambioParametro`** (entidad `Usuario`, con valor anterior/nuevo, quién y cuándo).
+  Son los dos campos que otorgan o quitan acceso al sistema. `activo` se audita en **ambos
+  sentidos**, no solo la baja. Si el valor no cambia, no se registra nada.
+- **Guardarraíl anti-auto-bloqueo:** un usuario **no puede desactivarse a sí mismo ni
+  cambiarse su propia área** → 400 `error_dominio`. Sin esto, el último Admin puede dejar
+  al sistema sin quien administre usuarios, y recuperarlo exigiría entrar a la base a mano.
+  Sí puede hacerlo sobre *otro* Admin.
+- **Efecto en las sesiones:** desactivar a un usuario **invalida su sesión en curso** de
+  inmediato (el estado se relee de la base en cada petición, ver ADR-041) y le impide
+  volver a iniciar sesión.
+
+#### `POST /api/v1/usuarios/{id}/password`
+- **Qué hace (negocio):** establece o reemplaza la contraseña. Endpoint separado de la
+  edición del perfil a propósito: cambiar una contraseña es un acto explícito, no un efecto
+  colateral de guardar un formulario.
+- **Validaciones clave:** misma política que en el alta (10 caracteres / 72 bytes).
+- **Efecto:** la contraseña anterior deja de funcionar de inmediato. Las **sesiones ya
+  emitidas siguen vivas** hasta expirar, porque el token es *stateless* (limitación
+  conocida documentada en ADR-041).
+- **Efectos secundarios (traza):** el reseteo **no** va a `LogCambioParametro` (esa tabla
+  guarda valor anterior/nuevo de parámetros de negocio; un reseteo no tiene valores que
+  mostrar ahí). Queda registrado en el **log de seguridad** (`core/security_log.py`,
+  logger `grcoir.seguridad`): quién reseteó, a quién, desde qué IP y cuándo — **nunca** la
+  contraseña ni el hash. La bitácora de seguridad formal (tabla + pantalla) es de F5 pleno.
+- **Request ejemplo:**
+```json
+{ "password": "••••••••••" }
+```
 
 ### Catálogos — patrón CRUD estándar (F0-00)
 
