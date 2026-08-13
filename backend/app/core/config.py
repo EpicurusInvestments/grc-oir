@@ -15,6 +15,11 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Valor de ejemplo de SECRET_KEY. Sirve para que la app arranque en local sin configurar
+# nada, pero `core/auth/tokens.py` RECHAZA firmar o validar sesiones con él fuera de
+# development: una llave que está en el repositorio no protege ninguna sesión.
+SECRET_KEY_INSEGURA = "dev-insecure-change-me"
+
 
 class Settings(BaseSettings):
     # El backend puede arrancar desde backend/ (uv run) o desde la raíz; buscamos en ambos.
@@ -40,7 +45,7 @@ class Settings(BaseSettings):
     # el acceso dev por headers SOLO se permite en development; en otros entornos sin SSO
     # la autenticación falla cerrada.
     app_env: str = "development"
-    secret_key: str = "dev-insecure-change-me"
+    secret_key: str = SECRET_KEY_INSEGURA
     iva_rate: float = 0.16
     # ── Importación masiva CSV (F0-05) ───────────────────────────────────────────
     # Límites del archivo de carga masiva de constantes. Configurables por entorno; si algún
@@ -52,7 +57,19 @@ class Settings(BaseSettings):
     # En qa/producción se pone el dominio real vía variable de entorno.
     cors_origins: str = "http://localhost:5173"
 
-    # ── Auth de desarrollo (mientras el SSO corporativo está [[POR LLENAR]]) ─────
+    # ── Autenticación (F5-00) ────────────────────────────────────────────────────
+    # Proveedor de autenticación. Un solo punto de selección: core/auth/get_auth_provider().
+    #   local       → login con email + contraseña contra la tabla `usuario` (DEFAULT:
+    #                 así las demos al cliente siempre pasan por la pantalla de login).
+    #   dev_headers → identidad por X-Dev-User / X-Dev-Area (ADR-008). Solo development.
+    #   azure_ad    → interfaz preparada, implementación diferida (falla con error claro).
+    auth_provider: str = "local"
+    # Sesión JWT firmada con SECRET_KEY. 8 h = una jornada laboral (decisión del equipo).
+    jwt_expira_horas: int = 8
+    jwt_algoritmo: str = "HS256"
+    jwt_issuer: str = "grc-oir"
+
+    # ── Auth de desarrollo (solo con AUTH_PROVIDER=dev_headers) ──────────────────
     # Usuario/área por defecto cuando no se envían los headers X-Dev-User / X-Dev-Area.
     dev_user: str = "dev.admin"
     dev_area: str = "admin"

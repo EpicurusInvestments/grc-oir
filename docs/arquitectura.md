@@ -502,4 +502,113 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   local (filesystem) para servicio/router y un **cliente boto3 falso en memoria** para el
   adaptador S3.
 
-[[Agregar aquí cada nueva decisión: ADR-028, ...]]
+### ADR-028 — Proveedor de autenticación intercambiable + sesión JWT (F5-00)
+- **Estado:** aceptada · **Fecha:** 2026-08-12 (F5-00, adelanto consciente de F5) ·
+  **sustituye a ADR-008** en cuanto al proveedor por defecto (el modo por headers sobrevive
+  como un adaptador más, con sus mismas restricciones).
+- **Contexto:** el sistema se identificaba con headers de desarrollo (`X-Dev-User`/
+  `X-Dev-Area`, ADR-008), lo cual (1) no sirve para demostrar el sistema al cliente y (2)
+  deja sin base el RBAC que F1 en adelante necesita. El SSO corporativo sigue
+  `[[POR LLENAR]]`: no se puede depender de Azure AD para avanzar, pero tampoco conviene
+  cablear un login local que después haya que arrancar de raíz.
+- **Decisión:**
+  1. **Puerto + adaptadores seleccionables por entorno**, replicando el patrón del
+     almacenamiento S3 (ADR-027): `app/core/auth/port.py` define `AuthProviderPort`
+     (`autenticar` / `resolver_usuario`) y `get_auth_provider()` es el ÚNICO punto de
+     decisión, según `AUTH_PROVIDER`. Tres adaptadores: `local` (implementado),
+     `dev_headers` (ADR-008 tal cual) y `azure_ad` (**interfaz preparada, implementación
+     diferida**: falla ruidosamente, nunca cae en silencio a otro proveedor).
+  2. **`local` es el DEFAULT** para que las demos al cliente siempre pasen por la pantalla
+     de login. `dev_headers` lo activa cada quien en su `.env` para no loguearse en cada
+     prueba local, y **solo funciona con `APP_ENV=development`** (401 fuera de ahí; la
+     comprobación vive en el adaptador para que el código de error siga siendo
+     `no_autenticado` y no un 500 de configuración).
+  3. **Ubicación en `core/auth/`, no en `integrations/`:** la identidad la consume *cada*
+     endpoint (como `security.py`, `audit.py`, `field_permissions.py`) y el adaptador local
+     necesita la tabla `usuario`; un paquete bajo `integrations/` importando un modelo de
+     `modules/` invertiría la dirección anti-corrupción. Cuando se implemente Azure AD, su
+     cliente OIDC sí irá a `integrations/azure_ad/` y el adaptador lo consumirá.
+  4. **Sesión JWT** (HS256, firmada con `SECRET_KEY` del entorno), con claims de identidad
+     y área, **8 h configurables** (`JWT_EXPIRA_HORAS`, una jornada laboral). El token dice
+     quién dice ser; el **estado del usuario (`activo`, `area`) se relee de la BD en cada
+     request**, de modo que desactivar a alguien o cambiarle el área surte efecto de
+     inmediato en lugar de esperar a que expire su token. Fuera de `development` se
+     RECHAZA firmar o validar con la `SECRET_KEY` de ejemplo del repositorio.
+  5. **Credencial = email** (único e indexado); `nombre_usuario` no lo es. Contraseñas con
+     **bcrypt** (`app/core/auth/passwords.py`, único lugar que conoce el algoritmo; migrar
+     a argon2id sería reescribir ese archivo). **Mensaje de error único** para usuario
+     inexistente / contraseña incorrecta / usuario inactivo / usuario sin contraseña, y
+     verificación señuelo cuando no hay hash, para que **ni el mensaje ni el tiempo**
+     revelen si un correo está dado de alta.
+  6. **Contraseña inicial del seed `dev.admin` por ENTORNO**, no versionada: la migración
+     lee `SEED_ADMIN_PASSWORD` / `SEED_ADMIN_PASSWORD_HASH` y, si no están, deja
+     `password_hash` en NULL (fail-closed, sin contraseñas por defecto). Un hash bcrypt
+     escrito en una migración es un secreto versionado y atacable offline; la skill
+     `migraciones-sqlserver` lo prohíbe.
+  7. **Dos destinos de traza, según la naturaleza del dato** (gestión de usuarios):
+     cambiar `area` o `activo` —los campos que otorgan o quitan acceso— se registra en
+     **`LogCambioParametro`** con valor anterior/nuevo, reutilizando el mecanismo de
+     F0-03. El **reseteo de contraseña** NO: no tiene "valores" que mostrar en el panel de
+     detalle de una entidad, así que va a un **log de seguridad** mínimo
+     (`core/security_log.py`, logger `grcoir.seguridad`) que registra quién, a quién,
+     desde qué IP y cuándo, **sin la contraseña ni el hash**. Ese módulo es la costura
+     para la bitácora de seguridad FORMAL (tabla consultable + pantalla) de F5 pleno: se
+     reescribe el cuerpo de una función, no los llamadores.
+  8. **El RBAC no cambió de forma**: `requiere_permiso` y la matriz área × módulo siguen
+     siendo los mismos datos en `core/security.py`; lo único que cambió es **de dónde sale
+     el `CurrentUser`**. Por eso los 11 catálogos de F0 y sus pruebas **no se tocaron**
+     (el `conftest` fija `dev_headers` para ellas). Se añadió una entrada:
+     `"usuarios": {ADMIN: WRITE}` — exclusiva de Admin **incluso en lectura**, porque el
+     padrón de usuarios no es un catálogo consultable por las demás áreas.
+  9. **Frontend — la sesión es infraestructura compartida.** El token vive en
+     `shared/lib/session.ts` (sin React, porque lo consumen tanto el `apiClient` como el
+     provider) y el estado de sesión en `modules/auth/`. Tres decisiones que sostienen el
+     resto:
+     - **Shim `currentUser`** (`shared/lib/currentUser.ts`): las 14 pantallas de F0 leen la
+       identidad de forma síncrona; en vez de migrarlas todas, el `SessionProvider` mantiene
+       ese objeto sincronizado. Cero churn y cero conflicto con la rama de F1 en curso. La
+       migración a `useSession()` es un PR aparte. El mismo módulo expone el cierre de
+       sesión, para que `shared/ui/AppHeader` no tenga que importar un módulo de negocio.
+     - **Al montar se llama `/auth/me`**, no se confía en datos guardados: valida el token y
+       trae el área fresca. De ahí el estado `cargando`, sin el cual recargar la página
+       rebotaría a /login antes de que la respuesta llegara.
+     - **El 401 de `/auth/login` NO cuenta como sesión expirada** (si no, escribir mal la
+       contraseña expulsaría al usuario de la propia pantalla de login).
+  10. **Destino después de iniciar sesión.** Se vuelve a la pantalla interrumpida **solo si
+     la sesión se perdió trabajando** (401 del backend). Un login desde cero —primera
+     visita, URL escrita a mano, logout explícito o token viejo en el navegador— entra al
+     **Dashboard**, que es el Home real del sistema.
+  11. **Color: el login usa el rojo de MARCA, no el color de fase.** Se añadió el token
+     `--grc-red: #D73347` (extraído del logo) en `theme.css`, distinto de `--red-bg`/
+     `--red-text`, que son semánticos de error. La aplicación es por **scope**: redefinir
+     los tokens `--phase-*` dentro de `.login-page` (y de `.phase-f5`) tiñe la pantalla
+     completa —botones, foco de campos, tag de fase, sidebar— **sin duplicar una sola
+     regla** ni afectar a las demás fases, que siguen con su color. `ExplorerLayout` acepta
+     `phaseClass` para eso. Esto generalizó `.btn-phase:hover`, que tenía el morado
+     hardcodeado, a un token `--phase-hover` (mismo valor en `:root`, cero cambio visual).
+  12. **`RequireArea` explica en vez de redirigir en silencio.** Es solo UX —el backend
+     valida el RBAC en cada endpoint—, pero un no-admin que abre `/seguridad` lee un mensaje
+     claro con salida al Inicio; una redirección muda se lee como que la app está rota.
+- **Consecuencias:** activar Azure AD será implementar un adaptador y cambiar una variable,
+  sin tocar routers ni servicios. `Area`/`CurrentUser` se movieron a `core/auth/identity.py`
+  para romper el ciclo `security ↔ auth`, pero **se re-exportan desde `core/security.py`**:
+  todos los imports existentes siguen funcionando. Nuevas dependencias formalizadas en
+  `pyproject.toml`: `pyjwt` y `bcrypt` (no `passlib`, sin releases desde 2020 y roto con
+  bcrypt ≥ 4). `CurrentUser` ganó `usuario_id`/`email` opcionales (en `dev_headers` van en
+  `None`: no hay registro detrás).
+- **Limitaciones conocidas y riesgos aceptados** (a revisitar en **F5 pleno**):
+  - **Sin control de intentos fallidos ni rate limiting** en el login. Un contador en
+    memoria sería inútil con varios workers; hacerlo bien exige almacén compartido. Riesgo:
+    fuerza bruta contra un correo conocido. Mitigación parcial: bcrypt con costo 12 encarece
+    cada intento.
+  - **Token en `localStorage` del navegador** (frontend, tanda 3): simple y suficiente para
+    una SPA en otro origen, pero **expuesto a XSS**. La alternativa (cookie `httpOnly` +
+    CSRF) es más segura y cambia CORS y el flujo completo.
+  - **Sin refresh token**: al expirar las 8 h se vuelve a iniciar sesión.
+  - **`logout` es un no-op de servidor**: el token es *stateless* y sigue siendo válido
+    hasta expirar aunque el cliente lo descarte. Si el negocio exige invalidación inmediata,
+    habrá que añadir una lista de revocación.
+  - **Sin política de rotación ni caducidad de contraseñas**, y sin "forzar cambio en el
+    primer inicio de sesión".
+
+[[Agregar aquí cada nueva decisión: ADR-029, ...]]

@@ -13,6 +13,9 @@ interface ExplorerLayoutProps {
   groups: SidebarGroup[];
   activeKey: string | null;
   onSelect: (key: string) => void;
+  /** Clase de color por fase (`phase-f5`, …). Sin ella se usa el color por defecto de
+   *  `:root`, que es F0 morado — así las pantallas de catálogos no cambian. */
+  phaseClass?: string;
   children: ReactNode;
 }
 
@@ -22,10 +25,11 @@ export function ExplorerLayout({
   groups,
   activeKey,
   onSelect,
+  phaseClass,
   children,
 }: ExplorerLayoutProps) {
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${phaseClass ?? ""}`}>
       <AppHeader faseLabel={faseLabel} user={user} />
       <div className="app-body">
         <Sidebar groups={groups} activeKey={activeKey} onSelect={onSelect} />

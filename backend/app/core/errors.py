@@ -46,6 +46,18 @@ class AuthenticationError(DomainError):
     status_code = 401
 
 
+class ConfiguracionError(DomainError):
+    """El servidor está mal configurado (no es culpa del cliente) → 500.
+
+    P.ej. `AUTH_PROVIDER` con un valor desconocido, `azure_ad` todavía no implementado, o
+    `SECRET_KEY` con la llave de ejemplo fuera de desarrollo. Se distingue de un 400
+    porque el operador debe arreglar el entorno, no el usuario su petición.
+    """
+
+    codigo = "configuracion_invalida"
+    status_code = 500
+
+
 class StateTransitionError(DomainError):
     """Transición de estado no permitida por la máquina de estados del servicio."""
 

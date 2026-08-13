@@ -2,37 +2,49 @@
 
 Dos piezas:
 
-1. `get_current_user`: resuelve el usuario y su ÁREA. Mientras el SSO corporativo está
-   `[[POR LLENAR]]`, en `APP_ENV=development` se usa un stub que lee los headers de
-   desarrollo `X-Dev-User` / `X-Dev-Area` (con un admin por defecto configurable en
-   `.env`). En CUALQUIER otro entorno sin SSO, la autenticación FALLA CERRADA: rechaza,
-   nunca asume admin.  # TODO(SSO): reemplazar este único punto por validación del token.
+1. `get_current_user`: resuelve el usuario y su ÁREA delegando en el **proveedor de
+   autenticación** configurado (`AUTH_PROVIDER` → `core/auth/get_auth_provider()`,
+   ADR-028). Desde F5-00 el caso normal es un **token JWT** emitido por `/auth/login`; el
+   modo `dev_headers` conserva los headers `X-Dev-User`/`X-Dev-Area` de ADR-008 para el
+   trabajo local, y falla cerrado fuera de `APP_ENV=development`.
 
 2. `requiere_permiso("<modulo>:<accion>")`: dependencia de FastAPI que valida el permiso
    contra la MATRIZ RBAC (datos, no ifs repartidos). El área se toma del usuario, jamás
    del cliente.
+
+`Area` y `CurrentUser` viven ahora en `core/auth/identity.py` (evita el ciclo
+`security ↔ auth`) y se **re-exportan** aquí: todo lo que ya importaba
+`from app.core.security import Area, CurrentUser` sigue igual, sin cambios.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.errors import AuthenticationError, PermissionDeniedError
+from app.core.auth import get_auth_provider
+from app.core.auth.identity import Area, CurrentUser
+from app.core.db import get_db
+from app.core.errors import PermissionDeniedError
 
-
-class Area(StrEnum):
-    VENTAS = "ventas"
-    FACTURACION = "facturacion"
-    TESORERIA = "tesoreria"
-    CXC = "cxc"
-    CXP = "cxp"
-    DIRECCION = "direccion"
-    NOMINAS = "nominas"
-    ADMIN = "admin"
+# Esquema de seguridad SOLO para documentación: hace que OpenAPI publique el token de
+# sesión y que `/docs` muestre el botón "Authorize" (sin esto, Swagger no ofrece dónde
+# pegar el token y los endpoints protegidos se ven como "No parameters").
+#
+# `auto_error=False` es deliberado: quien decide si falta la sesión —y con qué mensaje— es
+# el ADAPTADOR, no este esquema. Con `auto_error=True`, FastAPI respondería 403 con su
+# propio formato antes de llegar al proveedor, rompería el sobre de error uniforme y
+# dejaría inservible el modo `dev_headers` (que no usa Bearer).
+_esquema_bearer = HTTPBearer(
+    auto_error=False,
+    description=(
+        "Token de sesión emitido por POST /api/v1/auth/login. Pegue solo el valor de "
+        "`access_token` (sin el prefijo 'Bearer')."
+    ),
+)
 
 
 class Acceso(IntEnum):
@@ -65,41 +77,30 @@ _LECTURA_CATALOGOS = {
 
 RBAC: dict[str, dict[Area, Acceso]] = {
     "catalogos": {Area.ADMIN: Acceso.WRITE, **_LECTURA_CATALOGOS},
+    # F5-00: la gestión de usuarios es exclusiva de Admin, INCLUSO en lectura. El padrón
+    # de usuarios (quién existe, con qué área) no es un catálogo consultable por el resto
+    # de las áreas.
+    "usuarios": {Area.ADMIN: Acceso.WRITE},
 }
 
 
-@dataclass(frozen=True)
-class CurrentUser:
-    username: str
-    area: Area
-    ip: str | None = None
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    credenciales: HTTPAuthorizationCredentials | None = Depends(_esquema_bearer),
+) -> CurrentUser:
+    """Resuelve el usuario actual delegando en el proveedor de autenticación.
 
+    Este es el ÚNICO punto del sistema que pregunta "¿quién es?"; cambiar de login local
+    a Azure AD no toca esta función, solo la variable `AUTH_PROVIDER`.
 
-def get_current_user(request: Request) -> CurrentUser:
-    """Resuelve el usuario actual.
-
-    development → stub por headers (default admin de `.env`).
-    otro entorno sin SSO → falla cerrada (401).  # TODO(SSO)
+    `credenciales` NO se usa aquí a propósito: cada adaptador sabe de dónde sacar la
+    identidad (header Bearer en `local`, X-Dev-* en `dev_headers`, y una cookie o un
+    callback OIDC el día que exista `azure_ad`). Se declara para que el esquema aparezca
+    en OpenAPI y `/docs` ofrezca el botón "Authorize" — el `request` completo es lo que
+    viaja al proveedor.
     """
-    ip = request.client.host if request.client else None
-
-    if not settings.is_development:
-        # TODO(SSO): validar el token del proveedor corporativo y mapear a área.
-        raise AuthenticationError(
-            "Autenticación no configurada: el SSO corporativo está pendiente y el "
-            "acceso de desarrollo solo se permite con APP_ENV=development."
-        )
-
-    username = request.headers.get("X-Dev-User", settings.dev_user)
-    area_raw = request.headers.get("X-Dev-Area", settings.dev_area)
-    try:
-        area = Area(area_raw.strip().lower())
-    except ValueError as exc:
-        raise AuthenticationError(
-            f"Área de desarrollo inválida: '{area_raw}'.",
-            detalles={"areas_validas": [a.value for a in Area]},
-        ) from exc
-    return CurrentUser(username=username, area=area, ip=ip)
+    return get_auth_provider().resolver_usuario(request, db)
 
 
 def _nivel(modulo: str, area: Area) -> Acceso:
@@ -128,3 +129,13 @@ def requiere_permiso(permiso: str):  # type: ignore[no-untyped-def]
         return usuario
 
     return dependencia
+
+
+__all__ = [
+    "RBAC",
+    "Acceso",
+    "Area",
+    "CurrentUser",
+    "get_current_user",
+    "requiere_permiso",
+]

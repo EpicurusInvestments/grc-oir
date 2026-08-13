@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core import config
 from app.core.db import Base, get_db
 from app.core.errors import register_error_handlers
 from app.modules.catalogos.base_repository import BaseRepository
@@ -27,6 +28,20 @@ from app.tests._demo import (
     DemoService,
     DemoUpdate,
 )
+
+
+@pytest.fixture(autouse=True)
+def _auth_por_headers(monkeypatch):  # type: ignore[no-untyped-def]
+    """Proveedor de autenticación por defecto en las pruebas: `dev_headers`.
+
+    F5-00 cambió el default de la aplicación a `local` (login real, para las demos). Las
+    pruebas de F0 se escribieron contra los headers X-Dev-User/X-Dev-Area, y siguen siendo
+    la forma más barata de ejercitar el RBAC sin emitir tokens: se fija aquí para que NO
+    haya que tocarlas. Las pruebas de F5-00 sobrescriben este valor cuando necesitan el
+    proveedor `local` (monkeypatch es por-prueba, así que no se pisan entre sí).
+    """
+    monkeypatch.setattr(config.settings, "auth_provider", "dev_headers")
+    monkeypatch.setattr(config.settings, "app_env", "development")
 
 
 @pytest.fixture

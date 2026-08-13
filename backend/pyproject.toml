@@ -17,6 +17,11 @@ dependencies = [
     "pyodbc>=5.1",
     "python-multipart>=0.0.9",  # F0-05: carga de archivos (UploadFile/Form) para importación CSV
     "boto3>=1.34",  # Integración S3: adjuntos de contrato (bucket privado). Ver ADR-027.
+    # F5-00 (autenticación base). Ver ADR-028.
+    "pyjwt>=2.9",   # Token de sesión (JWT HS256). Mantenida, mínima y con tipos (py.typed).
+    "bcrypt>=4.2",  # Hash de contraseñas. API directa; NO se usa passlib (sin releases
+                    # desde 2020 y roto con bcrypt >= 4). Cambiar a argon2 sería reescribir
+                    # solo app/core/auth/passwords.py.
 ]
 
 [dependency-groups]

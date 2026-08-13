@@ -18,6 +18,16 @@
   --text2: #5c5c58;
   --text3: #9c9c96;
 
+  /* Rojo de MARCA de Grupo Radio Centro (extraído del logo). Distinto de --red-bg /
+     --red-text, que son semánticos (error, peligro) y no deben confundirse con la marca.
+     Se usa en la pantalla de login y queda disponible para la fase F5 (Seguridad), cuyo
+     color de fase es rojo. */
+  --grc-red: #d73347;
+  --grc-red-hover: #bd2a3c;
+  --grc-red-bg: #fdeef0;
+  --grc-red-text: #8f1f2e;
+  --grc-red-border: #f2b4bd;
+
   /* Paleta por fase */
   --purple: #534ab7;
   --purple-bg: #eeedfe;
@@ -37,11 +47,13 @@
   --gray-bg: #f1efe8;
   --gray-text: #444441;
 
-  /* Fase activa (F0). Cambiar estas 4 al reusar el patrón en otra fase. */
+  /* Fase activa (F0). Cambiar estas 5 al reusar el patrón en otra fase — se pueden
+     redefinir en un contenedor concreto para teñir solo esa pantalla (lo hace .login-page). */
   --phase: var(--purple);
   --phase-bg: var(--purple-bg);
   --phase-text: var(--purple-text);
   --phase-border: var(--purple-border);
+  --phase-hover: #4840a0;
 
   --r: 8px;
   --rl: 12px;
@@ -458,8 +470,8 @@ body {
   color: #fff;
 }
 .btn-phase:hover {
-  background: #4840a0;
-  border-color: #4840a0;
+  background: var(--phase-hover);
+  border-color: var(--phase-hover);
   color: #fff;
 }
 
@@ -799,10 +811,11 @@ body {
   --acc-bg: var(--gray-bg);
   --acc-text: var(--gray-text);
 }
+/* F5 Seguridad usa el rojo de MARCA (mismo del login), no un rojo genérico. */
 .pc-accent-red {
-  --acc: #a83b3b;
-  --acc-bg: var(--red-bg);
-  --acc-text: var(--red-text);
+  --acc: var(--grc-red);
+  --acc-bg: var(--grc-red-bg);
+  --acc-text: var(--grc-red-text);
 }
 
 /* ── Shell del dashboard ── */
@@ -1108,6 +1121,211 @@ body {
   font-size: 9px;
   padding: 1px 6px;
   flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Color por fase, aplicado a una pantalla concreta.
+ * El patrón (`.btn-phase`, `.fi:focus`, `.fase-tag`, `.side-item.active`…) lee los
+ * tokens --phase-*, que en :root valen F0 morado. Poner una de estas clases en el
+ * contenedor de la pantalla la tiñe COMPLETA sin duplicar una sola regla.
+ * ───────────────────────────────────────────────────────────────────────────── */
+.phase-f5 {
+  --phase: var(--grc-red);
+  --phase-hover: var(--grc-red-hover);
+  --phase-bg: var(--grc-red-bg);
+  --phase-text: var(--grc-red-text);
+  --phase-border: var(--grc-red-border);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Menú de usuario del header (F5-00): identidad + cerrar sesión.
+ * ───────────────────────────────────────────────────────────────────────────── */
+.user-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+/* `.user-chip` (arriba) define la apariencia; aquí se le da comportamiento de botón. */
+.user-chip {
+  border: 1px solid transparent;
+  background: none;
+  font-family: var(--font);
+  border-radius: 20px;
+  padding: 3px 8px 3px 3px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.user-chip:hover {
+  background: var(--surface2);
+  border-color: var(--border);
+}
+.user-chip:focus-visible {
+  outline: 2px solid var(--phase);
+  outline-offset: 1px;
+}
+.user-chip-caret {
+  font-size: 11px;
+  color: var(--text3);
+}
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 214px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  z-index: 60;
+}
+.user-dropdown-head {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.user-dropdown-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+.user-dropdown-area {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+  text-transform: capitalize;
+}
+.user-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: var(--r);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.user-dropdown-item:hover {
+  background: var(--surface2);
+}
+.user-dropdown-item .pi {
+  font-size: 13px;
+  color: var(--text2);
+}
+.user-dropdown-note {
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  color: var(--text3);
+}
+.user-dropdown-note .mono {
+  font-family: var(--mono);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Login (F5-00). Primera pantalla que ve el cliente: tarjeta centrada, sobria,
+ * con el logo de Grupo Radio Centro. Reutiliza los campos del patrón (.fl/.fi/.fe).
+ * ───────────────────────────────────────────────────────────────────────────── */
+.login-page {
+  /* El login se tiñe con el ROJO DE MARCA, no con el color de fase (F0 morado): es la
+     puerta al sistema completo, no a una fase. Redefinir los tokens --phase aquí hace que
+     el botón `.btn-phase` y el foco de los campos `.fi:focus` tomen el rojo SIN duplicar
+     reglas ni afectar al resto del sistema (dashboard y catálogos siguen morados). */
+  --phase: var(--grc-red);
+  --phase-hover: var(--grc-red-hover);
+  --phase-bg: var(--grc-red-bg);
+  --phase-text: var(--grc-red-text);
+  --phase-border: var(--grc-red-border);
+
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(1100px 420px at 50% -12%, var(--phase-bg) 0%, transparent 62%),
+    var(--bg);
+}
+.login-card {
+  width: 100%;
+  max-width: 384px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  padding: 34px 32px 26px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 10px 30px rgba(0, 0, 0, 0.07);
+}
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 188px;
+  height: auto;
+  margin: 0 auto 24px;
+}
+.login-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+.login-sub {
+  font-size: 12px;
+  color: var(--text3);
+  text-align: center;
+  margin: 3px 0 22px;
+}
+/* Los campos del patrón traen márgenes pensados para el panel de detalle; en una
+   tarjeta de login conviene un poco más de aire entre bloques. */
+.login-card .fl {
+  margin-top: 10px;
+}
+.login-card .fi {
+  height: 38px;
+}
+.login-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--red-bg);
+  color: var(--red-text);
+  border-radius: var(--r);
+  padding: 9px 11px;
+  font-size: 12px;
+  margin: 2px 0 4px;
+}
+.login-error .pi {
+  font-size: 13px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+.login-submit {
+  width: 100%;
+  height: 40px;
+  justify-content: center;
+  margin-top: 14px;
+  font-size: 13px;
+}
+.login-submit:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+.login-footer {
+  margin-top: 22px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text3);
 }
 
 /* Respeta la preferencia de menos movimiento. */
