@@ -68,7 +68,7 @@ export const catalogRegistry: CatalogEntry[] = [
   { key: "plaza", label: "Plazas", group: "Operación", render: () => <PlazaCatalogPage /> },
   {
     key: "tarifa",
-    label: "Tarifas por plaza",
+    label: "Tarifas por estación",
     group: "Operación",
     render: () => <TarifaCatalogPage />,
   },
