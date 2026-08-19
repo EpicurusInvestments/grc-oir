@@ -29,7 +29,6 @@ export function PhaseCard({ phase, index }: PhaseCardProps) {
       </div>
       <div className="pc-body">
         <div className="pc-head">
-          <span className="pc-code">{phase.code}</span>
           <span className="pc-name">{phase.name}</span>
           {!active && <span className="badge b-gray pc-badge">Próximamente</span>}
         </div>

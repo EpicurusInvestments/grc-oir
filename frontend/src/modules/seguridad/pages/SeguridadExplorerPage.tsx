@@ -16,7 +16,7 @@ import {
   type SeguridadEntry,
 } from "../seguridadRegistry";
 
-const FASE_LABEL = "FASE 5 · SEGURIDAD";
+const FASE_LABEL = "SEGURIDAD";
 
 export function SeguridadExplorerPage() {
   const [activeKey, setActiveKey] = useState<string | null>(

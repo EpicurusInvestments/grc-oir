@@ -27,7 +27,7 @@ import { useTarifas } from "@/modules/catalogos/tarifa/hooks";
 import { currentUser } from "@/shared/lib/currentUser";
 import { ExplorerLayout } from "@/shared/ui";
 
-const FASE_LABEL = "FASE 0 · CATÁLOGOS";
+const FASE_LABEL = "CATÁLOGOS";
 
 export function CatalogosExplorerPage() {
   // Conteos reales solo de los catálogos ya implementados (F0-01/F0-02): una consulta

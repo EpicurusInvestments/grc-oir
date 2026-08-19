@@ -96,10 +96,7 @@ export function AppNavDrawer({ open, onClose }: AppNavDrawerProps) {
                   <img src={phase.imagePng} alt="" className="nav-phase-img" loading="lazy" />
                 </picture>
                 <span className="nav-phase-text">
-                  <span className="nav-phase-name">
-                    <span className="nav-phase-code">{phase.code}</span>
-                    {phase.name}
-                  </span>
+                  <span className="nav-phase-name">{phase.name}</span>
                 </span>
                 {!active && <span className="badge b-gray nav-phase-badge">Próximamente</span>}
               </button>

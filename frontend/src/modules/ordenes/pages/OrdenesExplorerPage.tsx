@@ -21,7 +21,7 @@ import { OrdenesProvider, useOrdenes, type OrdenesState } from "../state/Ordenes
 import { calcularContadores, type FiltroOrdenCliente } from "../state/selectors";
 import { VerificacionListPage } from "../verificacion/pages/VerificacionListPage";
 
-const FASE_LABEL = "FASE 1 · ÓRDENES";
+const FASE_LABEL = "ÓRDENES";
 
 type ViewKey = "orden_cliente" | "orden_estacion" | "verificacion" | "incidencia";
 

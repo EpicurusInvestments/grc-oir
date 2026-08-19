@@ -995,15 +995,6 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-.pc-code {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--acc-text);
-  background: var(--acc-bg);
-  padding: 2px 7px;
-  border-radius: 6px;
-}
 .pc-name {
   font-size: 15px;
   font-weight: 600;
@@ -1180,15 +1171,6 @@ body {
   font-size: 13.5px;
   font-weight: 500;
   color: var(--text);
-}
-.nav-phase-code {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--acc-text);
-  background: var(--acc-bg);
-  padding: 1px 5px;
-  border-radius: 5px;
 }
 .nav-phase-badge {
   font-size: 9px;
