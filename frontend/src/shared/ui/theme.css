@@ -1497,3 +1497,13 @@ body {
   color: var(--purple-text);
   font-weight: 600;
 }
+
+/* Estado deshabilitado, para TODAS las variantes de color (.btn-teal, .btn-phase, etc.):
+ * al final del archivo a propósito, para ganar en la cascada sobre esos `background`
+ * puntuales sin recurrir a !important. */
+.btn:disabled {
+  background: var(--surface3);
+  border-color: var(--border-med);
+  color: var(--text3);
+  cursor: not-allowed;
+}
