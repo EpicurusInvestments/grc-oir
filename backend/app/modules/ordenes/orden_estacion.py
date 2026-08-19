@@ -702,6 +702,12 @@ class OrdenEstacionService(
                 created_by=usuario_id,
             )
             db.add(verificacion)
+            # Sin `relationship()` entre Verificacion e Incidencia (este módulo no las usa),
+            # el unit-of-work de SQLAlchemy no conoce la dependencia entre ambas tablas y
+            # puede intentar insertar la Incidencia ANTES que su Verificacion en el mismo
+            # flush → viola fk_incidencia_verificacion. flush() fuerza el INSERT de
+            # Verificacion primero, dentro de la misma transacción (no hace commit).
+            db.flush()
 
             diferencia = verificado - programado_efectivo
             if diferencia != 0:
