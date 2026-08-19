@@ -8,6 +8,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import type { Plaza } from "@/modules/catalogos/plaza/types";
+import { SavingOverlay } from "@/shared/ui";
 
 import type { AfiliadoCreate } from "../types";
 
@@ -83,6 +84,7 @@ export function AfiliadoForm({
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="dh">
         <div className="dh-name">{title}</div>
       </div>

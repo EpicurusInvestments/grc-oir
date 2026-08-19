@@ -10,7 +10,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { SensitiveField } from "@/shared/ui";
+import { SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import type { AnuncianteCreate } from "../types";
 
@@ -145,6 +145,7 @@ export function AnuncianteForm({
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="dh">
         <div className="dh-name">{title}</div>
       </div>

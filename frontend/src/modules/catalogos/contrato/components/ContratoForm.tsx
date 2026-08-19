@@ -11,7 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { MoneyInput, SensitiveField } from "@/shared/ui";
+import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import type { ContratoCreate } from "../types";
 
@@ -130,6 +130,7 @@ export function ContratoForm({
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="dh">
         <div className="dh-name">{title}</div>
       </div>

@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { MoneyInput, SensitiveField } from "@/shared/ui";
+import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { ChecklistVoBo } from "../../components/ChecklistVoBo";
 import { FROZEN_STATES, IVA_RATE, isChecklistComplete, OBS_PREDEFINIDAS } from "../../constants";
@@ -320,6 +320,7 @@ export function OrdenClienteForm({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div className="cat-title">{title}</div>
       </div>

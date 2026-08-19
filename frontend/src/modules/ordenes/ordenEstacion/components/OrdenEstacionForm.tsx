@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from "react";
 
-import { MoneyInput } from "@/shared/ui";
+import { MoneyInput, SavingOverlay } from "@/shared/ui";
 
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
@@ -103,6 +103,7 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div className="cat-title">Nueva orden interna</div>
       </div>
