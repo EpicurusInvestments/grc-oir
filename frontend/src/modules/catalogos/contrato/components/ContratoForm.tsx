@@ -8,10 +8,10 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { SensitiveField } from "@/shared/ui";
+import { MoneyInput, SensitiveField } from "@/shared/ui";
 
 import type { ContratoCreate } from "../types";
 
@@ -86,6 +86,7 @@ export function ContratoForm({
 }: ContratoFormProps) {
   const {
     register,
+    control,
     handleSubmit,
     watch,
     formState: { errors },
@@ -179,12 +180,12 @@ export function ContratoForm({
         </div>
 
         <div className="fl">Monto del contrato (MXN)</div>
-        <input
-          className="fi"
-          inputMode="decimal"
-          placeholder="0.00"
-          style={{ fontFamily: "var(--mono)" }}
-          {...register("monto_contrato")}
+        <Controller
+          control={control}
+          name="monto_contrato"
+          render={({ field }) => (
+            <MoneyInput value={field.value ?? ""} onChange={field.onChange} onBlur={field.onBlur} placeholder="0.00" />
+          )}
         />
         <div className="fe">{errors.monto_contrato?.message}</div>
 
