@@ -98,7 +98,7 @@ export interface OrdenEstacion {
   testigos_url?: string | null;
   testigos_ubicacion_alterna?: string | null;
   notas_transmision?: string | null;
-  /** Nombre de archivo simulado (no se sube ni se lee el contenido). */
+  /** Clave real del adjunto en el almacenamiento (ver `adapters/adjuntosApi.ts`). */
   reporte_programados_ref?: string | null;
   reporte_reales_ref?: string | null;
   observaciones_estacion?: string;

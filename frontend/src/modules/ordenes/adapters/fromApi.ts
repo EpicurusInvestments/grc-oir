@@ -69,8 +69,8 @@ export function ordenClienteFromApi(
     estatus_orden: estatusOCDesdeApi(dto.estatus_orden),
     estatus_pago_afiliado: dto.estatus_pago_afiliado as OrdenCliente["estatus_pago_afiliado"],
     estatus_pago_agencia: dto.estatus_pago_agencia as OrdenCliente["estatus_pago_agencia"],
-    // Sin equivalente real todavía (no están en la spec BD v2 ni en el schema Tanda 3):
-    odc_pdf_ref: null,
+    odc_pdf_ref: dto.archivo_orden_original_path,
+    // Sin equivalente real todavía (no está en la spec BD v2 ni en el schema Tanda 3):
     audio_spot_ref: null,
     odc_cerrada_ref: dto.odc_cerrada_ref,
     carta_conciliacion_ref: dto.carta_conciliacion_ref,

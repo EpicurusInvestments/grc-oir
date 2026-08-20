@@ -1,6 +1,6 @@
 /** Cierre de la OrdenCliente (estado 2 → 3): resumen de lo transmitido vs. lo vendido,
  * ajuste neto por incidencias, montos de comisión (con auto-fill visible si algún % de
- * comisión seguía vacío) y carga simulada de dos documentos. Se permite cerrar sin ellos,
+ * comisión seguía vacío) y carga (real) de dos documentos. Se permite cerrar sin ellos,
  * con advertencia ámbar y registro de qué faltó — nunca bloqueado por los documentos, solo
  * por la casilla de confirmación.
  *
@@ -12,6 +12,7 @@ import { useState } from "react";
 
 import { SavingOverlay } from "@/shared/ui";
 
+import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { IVA_RATE } from "../../constants";
 import { fmtMonto } from "../../format";
@@ -129,22 +130,12 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
         )}
 
         <div className="sec">Documentos de cierre</div>
-        <div className="fl">ODC cerrada del cliente (simulado)</div>
-        <input type="file" style={{ fontSize: 12 }} onChange={(e) => setOdcCerradaRef(e.target.files?.[0]?.name ?? null)} />
-        {odcCerradaRef && (
-          <div className="fv mono" style={{ fontSize: 12, marginTop: 4, marginBottom: 10 }}>
-            📎 {odcCerradaRef}
-          </div>
-        )}
+        <div className="fl">ODC cerrada del cliente</div>
+        <AdjuntoOrdenInput tipo="cierre_odc" value={odcCerradaRef} onChange={setOdcCerradaRef} />
         <div className="fl" style={{ marginTop: 8 }}>
-          Carta de Conciliación firmada (simulado)
+          Carta de Conciliación firmada
         </div>
-        <input type="file" style={{ fontSize: 12 }} onChange={(e) => setCartaRef(e.target.files?.[0]?.name ?? null)} />
-        {cartaRef && (
-          <div className="fv mono" style={{ fontSize: 12, marginTop: 4 }}>
-            📎 {cartaRef}
-          </div>
-        )}
+        <AdjuntoOrdenInput tipo="cierre_carta" value={cartaRef} onChange={setCartaRef} />
 
         {faltantes.length > 0 && (
           <div style={{ background: "var(--amber-bg)", color: "var(--amber-text)", borderRadius: "var(--r)", padding: "8px 11px", fontSize: 12, marginTop: 12 }}>

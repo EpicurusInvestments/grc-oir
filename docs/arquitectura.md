@@ -1101,4 +1101,46 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   - **Sin política de rotación ni caducidad de contraseñas**, y sin "forzar cambio en el
     primer inicio de sesión".
 
-[[Agregar aquí cada nueva decisión: ADR-042, ...]]
+### ADR-042 — Adjuntos de Órdenes: endpoint genérico + lista blanca de extensiones (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-20 (F1).
+- **Contexto:** 5 campos de "adjuntar archivo" en Órdenes (`OrdenCliente.
+  archivo_orden_original_path`/`odc_cerrada_ref`/`carta_conciliacion_ref`,
+  `OrdenEstacion.reporte_programados_ref`/`reporte_reales_ref`) eran "simulados": el input
+  de tipo `file` solo capturaba `nombre del archivo`, nunca se leía ni subía nada. El
+  almacenamiento S3 real ya existe (ADR-027), pero atado 1:1 a Contrato (subida/lista/
+  descarga/borrado por `numero_contrato`, solo PDF).
+- **Decisión:**
+  1. **Un solo endpoint genérico** (`POST`/`GET /api/v1/ordenes/adjuntos?tipo=...`,
+     `app/modules/ordenes/adjuntos.py`) para los 5 campos, en vez de replicar el CRUD
+     completo de Contrato por entidad: son referencias de UN archivo por campo (no listas),
+     así que no hace falta listar/borrar — subir uno nuevo simplemente reemplaza la
+     referencia. `tipo` (enum `TipoAdjuntoOrden`) decide el prefijo del bucket
+     (`ordenes/odc/`, `ordenes/cierre/odc/`, `ordenes/cierre/carta/`,
+     `orden_estacion/reportes/reales|programados/`) — mismo bucket que Contrato
+     (`S3_BUCKET_CONTRATOS`), prefijos distintos para no mezclarlos. La clave incluye un
+     UUID (`<uuid_hex>_<nombre>`) porque, a diferencia de Contrato, no siempre hay un
+     "número" estable para agrupar antes de que la orden exista (alta de OC).
+  2. **Lista blanca de extensiones ampliada** (`leer_adjunto` en
+     `integrations/almacenamiento/documentos.py`, junto a `leer_pdf` que sigue intacto para
+     Contrato): `pdf, doc, docx, xls, xlsx, jpg, jpeg, png` — documentos + imágenes,
+     deliberadamente SIN ejecutables/scripts. Cada extensión valida su propia firma de
+     contenido (*magic bytes*: `%PDF-`, `\xFF\xD8\xFF`, `\x89PNG...`, `PK\x03\x04` para
+     OOXML, OLE2 para legacy) — no basta con renombrar un `.exe` a `.pdf` para subirlo.
+  3. **`archivo_orden_original_path` es un campo REAL de la spec BD v2** ("PDF/imagen de la
+     orden original recibida del cliente", VARCHAR(500)) que ya existía en el modelo y en
+     `OrdenClienteRead`, pero nunca se expuso en `OrdenClienteCreate`/`Update` — por eso el
+     campo "Adjuntar ODC" del formulario no tenía dónde persistir. Se agregó a ambos
+     schemas; **sin migración** (la columna ya existía). El frontend conserva el nombre
+     interno `odc_pdf_ref` (usado en `register`/`watch` de `OrdenClienteForm`) y lo traduce
+     en `adapters/toApi.ts`/`fromApi.ts` — único lugar que conoce ambos nombres.
+  4. **Descarga solo por prefijos conocidos** (`_PREFIJOS_DESCARGABLES`): el endpoint de
+     descarga rechaza con 404 cualquier `ref` que no empiece con uno de los 5 prefijos de
+     Órdenes, aunque compartan bucket con Contrato — no debe poder usarse para leer
+     `contratos/...` sin pasar por el RBAC de Catálogos.
+- **Consecuencias:** los 5 campos ahora suben y persisten de verdad; la descarga sigue
+  sirviéndose por el backend (bucket privado), nunca por URL pública, mismo criterio que
+  Contrato. `odc_cerrada_ref`/`carta_conciliacion_ref`/`reporte_*_ref` ya eran columnas
+  reales (ADR-030/034): solo les faltaba un mecanismo de subida real, no un cambio de
+  esquema.
+
+[[Agregar aquí cada nueva decisión: ADR-043, ...]]

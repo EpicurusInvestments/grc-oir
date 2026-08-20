@@ -25,6 +25,10 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput, darVobo: boole
     direccion_facturacion: input.direccion_facturacion || null,
     facturacion_directa_cliente: input.facturacion_directa_cliente,
     afiliado_factura_directo_al_cliente: input.afiliado_factura_directo_al_cliente,
+    // El backend la llama `archivo_orden_original_path` (nombre de la spec BD v2); el
+    // front sigue usando `odc_pdf_ref` internamente (ver types.ts) — este es el único
+    // lugar que traduce entre ambos.
+    archivo_orden_original_path: input.odc_pdf_ref || null,
     fecha_inicio_campania: input.fecha_inicio_campania,
     fecha_fin_campania: input.fecha_fin_campania,
     duracion_spot: input.duracion_spot,
@@ -42,8 +46,9 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput, darVobo: boole
 
 // ── OrdenCliente: edición normal (PUT) ─────────────────────────────────────────
 // Lista blanca deliberada (no "omitir los que no van"): los 3 % de comisión, el
-// checklist, `estatus_orden` y los refs simulados NO se mandan aquí — cada uno tiene su
-// propio canal (comisiones, vobo/dar-vobo, cierre) o no existe en el backend real.
+// checklist y `estatus_orden` NO se mandan aquí — cada uno tiene su propio canal
+// (comisiones, vobo/dar-vobo). `odc_pdf_ref` tampoco está en la lista porque su nombre
+// en el backend es distinto (`archivo_orden_original_path`) — se agrega aparte, abajo.
 const CAMPOS_ACTUALIZABLES = [
   "numero_orden_cliente",
   "fecha_venta",
@@ -73,6 +78,7 @@ export function ordenClienteUpdateToApi(patch: Partial<OrdenCliente>): Record<st
   for (const campo of CAMPOS_ACTUALIZABLES) {
     if (campo in patch) body[campo] = patch[campo];
   }
+  if ("odc_pdf_ref" in patch) body.archivo_orden_original_path = patch.odc_pdf_ref;
   return body;
 }
 

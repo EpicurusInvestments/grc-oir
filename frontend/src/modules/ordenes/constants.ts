@@ -11,6 +11,16 @@ export const IVA_RATE = 0.16;
 
 export const DURACIONES_SPOT = ["10s", "15s", "20s", "30s", "40s", "45s", "60s", "90s"] as const;
 
+/** Lista blanca de extensiones para los adjuntos de órdenes (ODC, carta de
+ * conciliación, reportes de afiliado) — debe coincidir con `EXTENSIONES_ADJUNTO_ORDENES`
+ * en `backend/app/integrations/almacenamiento/documentos.py`. Documentos + imágenes;
+ * deliberadamente SIN ejecutables/scripts (.exe, .bat, .sh, .js...). */
+export const EXTENSIONES_ADJUNTO_ORDENES = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"] as const;
+export const ADJUNTO_ORDEN_ACCEPT = EXTENSIONES_ADJUNTO_ORDENES.map((ext) => `.${ext}`).join(",");
+/** Igual que `S3_MAX_PDF_BYTES` del backend (10 MB) — validación en el front es solo UX;
+ * el backend revalida siempre. */
+export const ADJUNTO_ORDEN_MAX_BYTES = 10 * 1024 * 1024;
+
 export const OBS_PREDEFINIDAS = [
   "Sujeto a disponibilidad de horarios prime",
   "No combinable con otros descuentos",

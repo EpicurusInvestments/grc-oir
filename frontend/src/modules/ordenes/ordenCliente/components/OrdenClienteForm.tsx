@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
+import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { ChecklistVoBo } from "../../components/ChecklistVoBo";
 import { FROZEN_STATES, IVA_RATE, isChecklistComplete, OBS_PREDEFINIDAS } from "../../constants";
 import { fmtMonto } from "../../format";
@@ -258,7 +259,7 @@ export function OrdenClienteForm({
     );
   };
 
-  // ── adjunto simulado (solo el nombre del archivo, no se lee ni se sube nada) ──
+  // ── adjunto ODC (subida real; ver AdjuntoOrdenInput) ──
   const odcPdfRef = watch("odc_pdf_ref");
 
   // handleSubmit necesita un callback (data)=>void; envolvemos para exponer 2 acciones
@@ -524,19 +525,13 @@ export function OrdenClienteForm({
             al cliente
           </label>
 
-          <div className="fl">Adjuntar ODC (PDF) — simulado</div>
-          <input
-            type="file"
-            accept="application/pdf"
+          <div className="fl">Adjuntar ODC</div>
+          <AdjuntoOrdenInput
+            tipo="odc"
+            value={odcPdfRef}
+            onChange={(ref) => setValue("odc_pdf_ref", ref)}
             disabled={congelado}
-            onChange={(e) => setValue("odc_pdf_ref", e.target.files?.[0]?.name ?? "")}
-            style={{ fontSize: 12, marginBottom: 4 }}
           />
-          {odcPdfRef && (
-            <div className="fv mono" style={{ fontSize: 12 }}>
-              📎 {odcPdfRef}
-            </div>
-          )}
 
           <div className="sec">Equipo comercial y comisiones</div>
           <div className="r2">

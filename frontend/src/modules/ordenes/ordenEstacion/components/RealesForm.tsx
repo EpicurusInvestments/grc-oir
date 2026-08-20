@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { SavingOverlay } from "@/shared/ui";
 
+import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { diaDeSemana, fmtMonto } from "../../format";
 import { programadoEfectivo } from "../../state/selectors";
 import type { OrdenEstacion, PeriodoTransmisionRow } from "../../types";
@@ -230,14 +231,9 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
           <textarea className="ftxt" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} />
 
           <div className="fl" style={{ marginTop: 10 }}>
-            Reporte del afiliado (simulado)
+            Reporte del afiliado
           </div>
-          <input type="file" style={{ fontSize: 12 }} onChange={(e) => setReporteRef(e.target.files?.[0]?.name ?? null)} />
-          {reporteRef && (
-            <div className="fv mono" style={{ fontSize: 12, marginTop: 4 }}>
-              📎 {reporteRef}
-            </div>
-          )}
+          <AdjuntoOrdenInput tipo="reporte_reales" value={reporteRef} onChange={setReporteRef} />
         </div>
 
         <div className="info-panel">

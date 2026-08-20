@@ -441,6 +441,10 @@ class OrdenClienteCreate(BaseModel):
     direccion_facturacion: str | None = Field(default=None, max_length=2000)
     facturacion_directa_cliente: bool = False
     afiliado_factura_directo_al_cliente: bool = False
+    # PDF/imagen de la orden original recibida del cliente (spec BD v2) — clave del
+    # almacenamiento (ver `app/modules/ordenes/adjuntos.py`), no una ruta de disco pese
+    # al nombre heredado de la spec.
+    archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date
     fecha_fin_campania: date
     duracion_spot: DuracionSpot
@@ -498,6 +502,7 @@ class OrdenClienteUpdate(BaseModel):
     direccion_facturacion: str | None = Field(default=None, max_length=2000)
     facturacion_directa_cliente: bool | None = None
     afiliado_factura_directo_al_cliente: bool | None = None
+    archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date | None = None
     fecha_fin_campania: date | None = None
     duracion_spot: DuracionSpot | None = None

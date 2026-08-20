@@ -177,7 +177,7 @@ verde, descuento = negativo en rojo).
   2. Clic en "Cerrar orden →".
   3. Revisa "Transmitido vs. vendido" y "Ajuste por incidencias" (una de sus OI tiene una
      bonificación).
-  4. Adjunta los 2 documentos simulados, marca "Confirmo…" y clic en "Cerrar orden →
+  4. Adjunta los 2 documentos, marca "Confirmo…" y clic en "Cerrar orden →
      Estado 3".
 **Resultado esperado:** La OC pasa a "3 · Orden cerrada"; ya no ofrece "+ Asignar
 estaciones" ni "Cerrar orden" de nuevo.
