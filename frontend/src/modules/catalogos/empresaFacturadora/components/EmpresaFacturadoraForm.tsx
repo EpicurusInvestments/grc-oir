@@ -85,12 +85,7 @@ export function EmpresaFacturadoraForm({
         <div className="fe">{errors.rfc_empresa?.message}</div>
 
         <div className="fl">Dirección</div>
-        <textarea
-          className="fi"
-          rows={3}
-          style={{ height: "auto", minHeight: 62, paddingTop: 8, resize: "vertical" }}
-          {...register("direccion_empresa")}
-        />
+        <textarea className="ftxt" rows={2} {...register("direccion_empresa")} />
         <div className="fe">{errors.direccion_empresa?.message}</div>
       </div>
 
@@ -104,7 +99,7 @@ export function EmpresaFacturadoraForm({
           <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-sm btn-phase" disabled={submitting}>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
             {submitting ? "Guardando…" : "Guardar"}
           </button>
         </div>

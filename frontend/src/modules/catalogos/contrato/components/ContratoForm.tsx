@@ -206,21 +206,11 @@ export function ContratoForm({
 
         <div className="sec">Condiciones y observaciones</div>
         <div className="fl">Condiciones comerciales</div>
-        <textarea
-          className="fi"
-          rows={3}
-          style={{ height: "auto", minHeight: 62, paddingTop: 8, resize: "vertical" }}
-          {...register("condiciones_comerciales")}
-        />
+        <textarea className="ftxt" rows={2} {...register("condiciones_comerciales")} />
         <div className="fe">{errors.condiciones_comerciales?.message}</div>
 
         <div className="fl">Observaciones</div>
-        <textarea
-          className="fi"
-          rows={2}
-          style={{ height: "auto", minHeight: 48, paddingTop: 8, resize: "vertical" }}
-          {...register("observaciones_contrato")}
-        />
+        <textarea className="ftxt" rows={2} {...register("observaciones_contrato")} />
         <div className="fe">{errors.observaciones_contrato?.message}</div>
       </div>
 
@@ -234,7 +224,7 @@ export function ContratoForm({
           <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-sm btn-phase" disabled={submitting}>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
             {submitting ? "Guardando…" : "Guardar"}
           </button>
         </div>

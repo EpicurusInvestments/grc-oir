@@ -42,8 +42,13 @@ const numeroOpcionalPct = () =>
     .optional()
     .refine((v) => v == null || v === "" || (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100), "El % debe estar entre 0 y 100.");
 
-const schema = z
-  .object({
+/** `isEdit` decide si aplica la regla de "fecha de inicio no puede ser pasada": es SOLO de
+ * alta (ver `OrdenClienteCreate._valida_fechas` en el backend) — al editar, la campaña de
+ * una orden ya en curso por definición ya "empezó" y no debe bloquearse por el simple paso
+ * del calendario. */
+function buildSchema(isEdit: boolean) {
+  return z
+    .object({
     numero_orden_cliente: z.string().trim().min(1, "El no. de orden del cliente es obligatorio.").max(60),
     fecha_venta: z.string().min(1, "La fecha de venta es obligatoria."),
     empresa_facturadora_id: z.string().min(1, "Selecciona la empresa facturadora."),
@@ -78,13 +83,18 @@ const schema = z
     observaciones_libres: z.string().trim().max(1000).optional(),
     odc_pdf_ref: z.string().optional(),
     motivo_cambio_comision: z.string().trim().max(500).optional(),
-  })
-  .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
-    path: ["fecha_fin_campania"],
-    message: "La fecha de fin debe ser mayor o igual que la de inicio.",
-  });
+    })
+    .refine((d) => isEdit || d.fecha_inicio_campania >= new Date().toISOString().slice(0, 10), {
+      path: ["fecha_inicio_campania"],
+      message: "La fecha de inicio no puede ser una fecha pasada.",
+    })
+    .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
+      path: ["fecha_fin_campania"],
+      message: "La fecha de fin debe ser mayor o igual que la de inicio.",
+    });
+}
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<ReturnType<typeof buildSchema>>;
 
 const CAMPOS_SNAP = [
   "porcentaje_comision_vendedor_principal_snap",
@@ -133,7 +143,7 @@ export function OrdenClienteForm({
     setError,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(buildSchema(isEdit)),
     defaultValues: {
       numero_orden_cliente: defaultValues?.numero_orden_cliente ?? "",
       fecha_venta: defaultValues?.fecha_venta ?? new Date().toISOString().slice(0, 10),
@@ -444,7 +454,13 @@ export function OrdenClienteForm({
           <div className="r2">
             <div>
               <div className="fl fl-required">Inicio de campaña</div>
-              <input className="fi" type="date" disabled={congelado} {...register("fecha_inicio_campania")} />
+              <input
+                className="fi"
+                type="date"
+                disabled={congelado}
+                min={isEdit ? undefined : new Date().toISOString().slice(0, 10)}
+                {...register("fecha_inicio_campania")}
+              />
               <div className="fe">{errors.fecha_inicio_campania?.message}</div>
             </div>
             <div>
@@ -612,7 +628,7 @@ export function OrdenClienteForm({
             ))}
           </select>
           <div className="fl">Observaciones libres</div>
-          <textarea className="ftxt" rows={3} disabled={congelado} {...register("observaciones_libres")} />
+          <textarea className="ftxt" rows={2} disabled={congelado} {...register("observaciones_libres")} />
         </div>
 
         {/* ── Columna de resumen ── */}
@@ -659,7 +675,7 @@ export function OrdenClienteForm({
           <button type="button" className="btn btn-sm" onClick={onCancelar} disabled={submitting}>
             Cancelar
           </button>
-          <button type="button" className="btn btn-sm" onClick={guardar} disabled={submitting}>
+          <button type="button" className="btn btn-sm btn-teal" onClick={guardar} disabled={submitting}>
             {isEdit ? "Guardar cambios" : "Guardar como recibida"}
           </button>
           {puedeMostrarChecklist && (

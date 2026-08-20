@@ -171,7 +171,7 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
           </button>
           <button
             type="button"
-            className="btn btn-sm btn-amber"
+            className="btn btn-sm btn-teal"
             onClick={confirmar}
             disabled={submitting || !confirmado}
             title={confirmado ? undefined : "Marca la confirmación para habilitar el cierre."}

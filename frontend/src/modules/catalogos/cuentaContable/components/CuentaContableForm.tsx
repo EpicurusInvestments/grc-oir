@@ -98,7 +98,7 @@ export function CuentaContableForm({
           <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-sm btn-phase" disabled={submitting}>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
             {submitting ? "Guardando…" : "Guardar"}
           </button>
         </div>

@@ -63,12 +63,7 @@ export function CategoriaForm({
         <div className="fe">{errors.nombre_categoria?.message}</div>
 
         <div className="fl">Descripción</div>
-        <textarea
-          className="fi"
-          rows={3}
-          style={{ height: "auto", minHeight: 62, paddingTop: 8, resize: "vertical" }}
-          {...register("descripcion_categoria")}
-        />
+        <textarea className="ftxt" rows={2} {...register("descripcion_categoria")} />
         <div className="fe">{errors.descripcion_categoria?.message}</div>
       </div>
 
@@ -82,7 +77,7 @@ export function CategoriaForm({
           <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-sm btn-phase" disabled={submitting}>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
             {submitting ? "Guardando…" : "Guardar"}
           </button>
         </div>

@@ -469,6 +469,8 @@ class OrdenClienteCreate(BaseModel):
 
     @model_validator(mode="after")
     def _valida_fechas(self) -> OrdenClienteCreate:
+        if self.fecha_inicio_campania < date.today():
+            raise ValueError("fecha_inicio_campania no puede ser una fecha pasada.")
         if self.fecha_fin_campania < self.fecha_inicio_campania:
             raise ValueError("fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.")
         return self

@@ -226,3 +226,30 @@ describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
     expect(fieldByLabelText<HTMLSelectElement>(container, "Anunciante").disabled).toBe(true);
   });
 });
+
+describe("Validación: fecha de inicio de campaña no puede ser pasada (solo al crear)", () => {
+  it("al crear, una fecha de inicio pasada muestra error y no llama a onGuardar", async () => {
+    const { container, onGuardar } = renderForm();
+    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
+      target: { value: ayer },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+
+    expect(await screen.findByText("La fecha de inicio no puede ser una fecha pasada.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("al editar, una OC cuya campaña ya inició/pasó no se bloquea por esta regla", () => {
+    const { container } = renderForm({
+      isEdit: true,
+      estatusActual: "orden_interna",
+      defaultValues: makeOCInput(),
+    });
+    // makeOCInput() usa fechas de 2025-06 (ya pasadas) — no debe mostrar el error de fecha
+    // pasada en modo edición, ni aplicarse el `min` del date-picker.
+    const input = fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña");
+    expect(input.min).toBe("");
+    expect(screen.queryByText("La fecha de inicio no puede ser una fecha pasada.")).toBeNull();
+  });
+});
