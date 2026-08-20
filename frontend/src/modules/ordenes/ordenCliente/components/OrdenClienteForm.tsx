@@ -10,10 +10,10 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { SensitiveField } from "@/shared/ui";
+import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { ChecklistVoBo } from "../../components/ChecklistVoBo";
 import { FROZEN_STATES, IVA_RATE, isChecklistComplete, OBS_PREDEFINIDAS } from "../../constants";
@@ -126,6 +126,7 @@ export function OrdenClienteForm({
 
   const {
     register,
+    control,
     handleSubmit,
     watch,
     setValue,
@@ -319,6 +320,7 @@ export function OrdenClienteForm({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div className="cat-title">{title}</div>
       </div>
@@ -475,12 +477,17 @@ export function OrdenClienteForm({
             </div>
           </div>
           <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
-          <input
-            className="fi"
-            style={{ fontFamily: "var(--mono)" }}
-            inputMode="decimal"
-            disabled={congelado}
-            {...register("precio_unitario")}
+          <Controller
+            control={control}
+            name="precio_unitario"
+            render={({ field }) => (
+              <MoneyInput
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                disabled={congelado}
+              />
+            )}
           />
           <div className="fe">{errors.precio_unitario?.message}</div>
 

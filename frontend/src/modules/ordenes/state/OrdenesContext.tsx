@@ -28,6 +28,7 @@ import {
 import { incidenciaFromApi } from "../adapters/fromApi";
 import { listarHistorialComisionesApi } from "../adapters/ordenesApi";
 import { refrescarOrdenCliente, refrescarOrdenEstacion } from "../adapters/refrescar";
+import { FROZEN_STATES } from "../constants";
 import {
   cerrarToApi,
   ordenClienteCreateToApi,
@@ -170,10 +171,16 @@ export function OrdenesProvider({
         return oc;
       },
       actualizarOC: async (id, patch, opts) => {
+        // OC congelada (ADR-029): el backend rechaza CUALQUIER PUT general con
+        // StateTransitionError sin importar el contenido — solo el canal dedicado de
+        // comisiones (paso 4) puede tocarla. Sin este atajo, el paso 2 de abajo siempre
+        // truena primero y el cambio de % de comisión nunca llega a guardarse.
+        const actual = state.ordenesCliente.find((o) => o.id === id);
+        const congelada = actual ? FROZEN_STATES.includes(actual.estatus_orden) : false;
+
         // 1. Checklist: solo los ítems que de verdad cambiaron (canal propio, un PATCH por
         // ítem — no hay "PUT masivo" de checklist en el backend real).
         if (patch.revision_checklist) {
-          const actual = state.ordenesCliente.find((o) => o.id === id);
           const anteriorChecklist = actual?.revision_checklist ?? {};
           for (const [item, completado] of Object.entries(patch.revision_checklist)) {
             if (anteriorChecklist[item] !== completado) {
@@ -182,9 +189,12 @@ export function OrdenesProvider({
           }
         }
         // 2. Campos normales (PUT) — nunca incluye comisión ni checklist (ver toApi.ts).
-        const bodyPut = ordenClienteUpdateToApi(patch);
-        if (Object.keys(bodyPut).length > 0) {
-          await actualizarOrdenClienteApi(id, bodyPut);
+        // Se omite por completo si la OC está congelada.
+        if (!congelada) {
+          const bodyPut = ordenClienteUpdateToApi(patch);
+          if (Object.keys(bodyPut).length > 0) {
+            await actualizarOrdenClienteApi(id, bodyPut);
+          }
         }
         // 3. Dar Vo.Bo., si el patch lo pide (mismo atajo que usa el formulario).
         if (patch.estatus_orden === "orden_cliente_con_vobo") {

@@ -6,6 +6,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { SavingOverlay } from "@/shared/ui";
+
 import type { PlazaCreate } from "../types";
 
 const schema = z.object({
@@ -39,6 +41,7 @@ export function PlazaForm({ title, defaultValues, submitting, onSubmit, onCancel
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="dh">
         <div className="dh-name">{title}</div>
       </div>

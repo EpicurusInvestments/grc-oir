@@ -8,11 +8,11 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import type { Plaza } from "@/modules/catalogos/plaza/types";
-import { FieldTag } from "@/shared/ui";
+import { FieldTag, MoneyInput, SavingOverlay } from "@/shared/ui";
 
 import { calcularNetaPreview, fmtMoneda } from "../format";
 import {
@@ -71,6 +71,7 @@ export function TarifaForm({
 }: TarifaFormProps) {
   const {
     register,
+    control,
     handleSubmit,
     watch,
     formState: { errors },
@@ -107,6 +108,7 @@ export function TarifaForm({
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="dh">
         <div className="dh-name">{title}</div>
       </div>
@@ -154,12 +156,12 @@ export function TarifaForm({
         <div className="r2">
           <div>
             <div className="fl fl-required">Tarifa bruta (MXN)</div>
-            <input
-              className="fi"
-              inputMode="decimal"
-              placeholder="0.00"
-              style={{ fontFamily: "var(--mono)" }}
-              {...register("tarifa_bruta")}
+            <Controller
+              control={control}
+              name="tarifa_bruta"
+              render={({ field }) => (
+                <MoneyInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} placeholder="0.00" />
+              )}
             />
             <div className="fe">{errors.tarifa_bruta?.message}</div>
           </div>

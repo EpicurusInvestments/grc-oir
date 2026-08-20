@@ -6,6 +6,8 @@
 
 import { useState } from "react";
 
+import { SavingOverlay } from "@/shared/ui";
+
 import { diaDeSemana, fmtMonto } from "../../format";
 import { programadoEfectivo } from "../../state/selectors";
 import type { OrdenEstacion, PeriodoTransmisionRow } from "../../types";
@@ -103,6 +105,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div>
           <div className="cat-title">Capturar reales — {oe.folio_orden_interna}</div>

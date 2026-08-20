@@ -6,6 +6,10 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  // Un solo .env para todo el repo (raíz): evita mantener copias sincronizadas entre
+  // backend/ y frontend/. El backend ya hace lo equivalente (ver Settings.model_config,
+  // env_file=(".env", "../.env")).
+  envDir: "..",
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

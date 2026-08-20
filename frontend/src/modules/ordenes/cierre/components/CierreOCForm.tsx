@@ -10,6 +10,8 @@
 
 import { useState } from "react";
 
+import { SavingOverlay } from "@/shared/ui";
+
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { IVA_RATE } from "../../constants";
 import { fmtMonto } from "../../format";
@@ -71,6 +73,7 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div className="cat-title">Cerrar orden — {oc.folio_orden}</div>
       </div>

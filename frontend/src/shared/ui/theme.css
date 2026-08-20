@@ -748,6 +748,24 @@ body {
   color: var(--text2);
   cursor: not-allowed;
 }
+.money-wrap {
+  position: relative;
+}
+.money-wrap .money-prefix {
+  position: absolute;
+  left: 11px;
+  top: 17px;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text2);
+  pointer-events: none;
+}
+.money-wrap .money-fi {
+  padding-left: 22px;
+  text-align: right;
+  font-family: var(--mono);
+}
 .fsel {
   width: 100%;
   height: 34px;
@@ -995,15 +1013,6 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-.pc-code {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--acc-text);
-  background: var(--acc-bg);
-  padding: 2px 7px;
-  border-radius: 6px;
-}
 .pc-name {
   font-size: 15px;
   font-weight: 600;
@@ -1180,15 +1189,6 @@ body {
   font-size: 13.5px;
   font-weight: 500;
   color: var(--text);
-}
-.nav-phase-code {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--acc-text);
-  background: var(--acc-bg);
-  padding: 1px 5px;
-  border-radius: 5px;
 }
 .nav-phase-badge {
   font-size: 9px;
@@ -1496,4 +1496,14 @@ body {
 .tl-step.current .tl-lbl {
   color: var(--purple-text);
   font-weight: 600;
+}
+
+/* Estado deshabilitado, para TODAS las variantes de color (.btn-teal, .btn-phase, etc.):
+ * al final del archivo a propósito, para ganar en la cascada sobre esos `background`
+ * puntuales sin recurrir a !important. */
+.btn:disabled {
+  background: var(--surface3);
+  border-color: var(--border-med);
+  color: var(--text3);
+  cursor: not-allowed;
 }

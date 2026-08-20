@@ -14,5 +14,11 @@ export function fieldByLabelText<T extends Element = HTMLElement>(container: Par
   if (!labelDiv) throw new Error(`No se encontró la etiqueta "${labelText}"`);
   const campo = labelDiv.nextElementSibling;
   if (!campo) throw new Error(`"${labelText}" no tiene un campo inmediatamente después`);
-  return campo as T;
+  // Algunos campos (p.ej. MoneyInput) envuelven el <input> real en un <div> de
+  // presentación (prefijo "$"); si el elemento inmediato no es el propio control,
+  // se busca el control real dentro de él.
+  if (campo.matches("input, select, textarea")) return campo as T;
+  const controlInterno = campo.querySelector("input, select, textarea");
+  if (!controlInterno) throw new Error(`"${labelText}" no contiene un campo de formulario`);
+  return controlInterno as T;
 }

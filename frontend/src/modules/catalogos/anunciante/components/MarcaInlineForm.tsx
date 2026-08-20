@@ -7,6 +7,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { SavingOverlay } from "@/shared/ui";
+
 const schema = z.object({
   nombre_marca: z.string().trim().min(1, "El nombre de la marca es obligatorio.").max(160),
 });
@@ -45,6 +47,7 @@ export function MarcaInlineForm({
 
   return (
     <form className="inline-form" onSubmit={submit}>
+      <SavingOverlay visible={submitting} />
       <div className="if-title">{title}</div>
 
       <div className="fl fl-required">Nombre de la marca</div>

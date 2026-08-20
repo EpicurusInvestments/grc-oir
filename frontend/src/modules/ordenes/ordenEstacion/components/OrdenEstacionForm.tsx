@@ -9,6 +9,8 @@
 
 import { useMemo, useState } from "react";
 
+import { MoneyInput, SavingOverlay } from "@/shared/ui";
+
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { fmtMonto, fmtPct } from "../../format";
@@ -101,6 +103,7 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div className="cat-title">Nueva orden interna</div>
       </div>
@@ -157,12 +160,10 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
               )}
 
               <div className="fl fl-required">Tarifa por spot (MXN)</div>
-              <input
-                className="fi"
-                style={{ fontFamily: "var(--mono)", maxWidth: 200 }}
-                inputMode="decimal"
+              <MoneyInput
+                style={{ maxWidth: 200 }}
                 value={precioSpot}
-                onChange={(e) => setPrecioSpot(e.target.value)}
+                onChange={setPrecioSpot}
               />
               {tarifaEstMayorQueCliente && (
                 <div className="fe">La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.</div>

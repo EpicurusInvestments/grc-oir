@@ -6,6 +6,8 @@
 
 import { useState } from "react";
 
+import { SavingOverlay } from "@/shared/ui";
+
 import { diaDeSemana } from "../../format";
 import type { OrdenEstacion, PeriodoTransmisionRow } from "../../types";
 
@@ -76,6 +78,7 @@ export function ProgramadosForm({ oe, submitting, submitError, onAvanzar, onCanc
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div>
           <div className="cat-title">Capturar programados — {oe.folio_orden_interna}</div>
