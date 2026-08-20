@@ -42,11 +42,12 @@ const numeroOpcionalPct = () =>
     .optional()
     .refine((v) => v == null || v === "" || (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100), "El % debe estar entre 0 y 100.");
 
-/** `isEdit` decide si aplica la regla de "fecha de inicio no puede ser pasada": es SOLO de
- * alta (ver `OrdenClienteCreate._valida_fechas` en el backend) — al editar, la campaña de
- * una orden ya en curso por definición ya "empezó" y no debe bloquearse por el simple paso
- * del calendario. */
-function buildSchema(isEdit: boolean) {
+/** `fechaInicioOriginal` es el valor YA GUARDADO de `fecha_inicio_campania` (vacío al
+ * crear). La regla de "no puede ser fecha pasada" solo se aplica si el valor CAMBIÓ: una
+ * orden ya en curso legítimamente tiene esa fecha en el pasado, y dejarla intacta (editar
+ * otro campo) no debe bloquearse por el simple paso del calendario — pero si alguien la
+ * MODIFICA, el nuevo valor sí debe ser hoy o futuro. */
+function buildSchema(fechaInicioOriginal: string) {
   return z
     .object({
     numero_orden_cliente: z.string().trim().min(1, "El no. de orden del cliente es obligatorio.").max(60),
@@ -84,10 +85,15 @@ function buildSchema(isEdit: boolean) {
     odc_pdf_ref: z.string().optional(),
     motivo_cambio_comision: z.string().trim().max(500).optional(),
     })
-    .refine((d) => isEdit || d.fecha_inicio_campania >= new Date().toISOString().slice(0, 10), {
-      path: ["fecha_inicio_campania"],
-      message: "La fecha de inicio no puede ser una fecha pasada.",
-    })
+    .refine(
+      (d) =>
+        d.fecha_inicio_campania === fechaInicioOriginal ||
+        d.fecha_inicio_campania >= new Date().toISOString().slice(0, 10),
+      {
+        path: ["fecha_inicio_campania"],
+        message: "La fecha de inicio no puede ser una fecha pasada.",
+      },
+    )
     .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
       path: ["fecha_fin_campania"],
       message: "La fecha de fin debe ser mayor o igual que la de inicio.",
@@ -143,7 +149,7 @@ export function OrdenClienteForm({
     setError,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(isEdit)),
+    resolver: zodResolver(buildSchema(defaultValues?.fecha_inicio_campania ?? "")),
     defaultValues: {
       numero_orden_cliente: defaultValues?.numero_orden_cliente ?? "",
       fecha_venta: defaultValues?.fecha_venta ?? new Date().toISOString().slice(0, 10),
@@ -458,7 +464,7 @@ export function OrdenClienteForm({
                 className="fi"
                 type="date"
                 disabled={congelado}
-                min={isEdit ? undefined : new Date().toISOString().slice(0, 10)}
+                min={new Date().toISOString().slice(0, 10)}
                 {...register("fecha_inicio_campania")}
               />
               <div className="fe">{errors.fecha_inicio_campania?.message}</div>

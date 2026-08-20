@@ -372,10 +372,10 @@ def test_editar_oc_recalcula_totales(
 def test_editar_oc_con_campania_ya_pasada_no_se_bloquea(
     db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
-    """La regla de 'fecha_inicio_campania no puede ser pasada' es SOLO de alta (ver
-    OrdenClienteCreate._valida_fechas): una orden ya en curso, cuya campaña por
-    definición ya empezó, debe poder seguir editándose sin que el simple paso del
-    calendario la bloquee."""
+    """La regla de 'fecha_inicio_campania no puede ser pasada' solo aplica si el valor
+    REALMENTE cambia (ver `_pre_update`): una orden ya en curso, cuya campaña por
+    definición ya empezó, debe poder seguir editándose (aquí, otro campo) sin que el
+    simple paso del calendario la bloquee."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
     obj = db.get(OrdenCliente, oc.orden_id)
     assert obj is not None
@@ -385,6 +385,31 @@ def test_editar_oc_con_campania_ya_pasada_no_se_bloquea(
 
     editada = oc_svc.update(oc.orden_id, OrdenClienteUpdate(total_spots=50), VENTAS)
     assert editada.total_spots == 50
+
+
+def test_editar_oc_rechaza_cambiar_fecha_inicio_a_pasada(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia del caso anterior, aquí sí se intenta CAMBIAR fecha_inicio_campania
+    a un valor nuevo — ese nuevo valor no puede ser una fecha pasada."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            OrdenClienteUpdate(fecha_inicio_campania=date.today() - timedelta(days=1)),
+            VENTAS,
+        )
+
+
+def test_editar_oc_permite_cambiar_fecha_inicio_a_futura(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    nueva_fecha = date.today() + timedelta(days=45)
+    editada = oc_svc.update(
+        oc.orden_id, OrdenClienteUpdate(fecha_inicio_campania=nueva_fecha), VENTAS
+    )
+    assert editada.fecha_inicio_campania == nueva_fecha
 
 
 def test_editar_oc_congelada_409(

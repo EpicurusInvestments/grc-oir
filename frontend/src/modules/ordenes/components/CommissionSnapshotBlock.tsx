@@ -106,6 +106,14 @@ export function CommissionSnapshotBlock({ oc, total }: { oc: OrdenCliente; total
                 </tr>
               );
             })}
+            <tr style={{ borderTop: "1px solid var(--border)" }}>
+              <td colSpan={3} style={{ padding: "5px 0", fontWeight: 600, color: "var(--text)" }}>
+                Monto total
+              </td>
+              <td style={{ padding: "5px 0", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700, color: "var(--purple-text)" }}>
+                {fmtMonto(filas.reduce((suma, f) => suma + (f.monto ?? 0), 0))}
+              </td>
+            </tr>
           </tbody>
         </table>
         {filas.some((f) => esComisionOverride(f.snap, f.defaultCatalogo)) && (

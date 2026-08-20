@@ -151,6 +151,9 @@ export interface VerificacionDerivada {
   /** OrdenEstacion de origen (no hay id propio: es una proyección). */
   ordenEstacionId: string;
   folioOrdenInterna: string;
+  /** Primer día de transmisión (ISO `YYYY-MM-DD`); la OI puede abarcar varios días —
+   * ver `dias` para el detalle completo. */
+  fechaInicio: string;
   dias: VerificacionDiaRow[];
   totalProgramado: number;
   totalReal: number;

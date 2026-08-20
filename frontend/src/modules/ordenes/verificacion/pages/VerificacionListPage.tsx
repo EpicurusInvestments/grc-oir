@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
+import { oGuion } from "../../format";
 import { findAfiliado, findEstacion } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { verificacionesDerivadas } from "../../state/selectors";
@@ -84,16 +85,17 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "14%" }}>Folio OI</th>
-                <th style={{ width: "23%" }}>Estación</th>
-                <th style={{ width: "21%" }}>Afiliado</th>
-                <th className="td-center" style={{ width: "13%" }}>
+                <th style={{ width: "12%" }}>Folio OI</th>
+                <th style={{ width: "10%" }}>Fecha</th>
+                <th style={{ width: "20%" }}>Estación</th>
+                <th style={{ width: "19%" }}>Afiliado</th>
+                <th className="td-center" style={{ width: "12%" }}>
                   Programado
                 </th>
-                <th className="td-center" style={{ width: "11%" }}>
+                <th className="td-center" style={{ width: "10%" }}>
                   Real
                 </th>
-                <th className="td-center" style={{ width: "9%" }}>
+                <th className="td-center" style={{ width: "8%" }}>
                   Inc.
                 </th>
                 <th className="td-center" style={{ width: "9%" }}>
@@ -110,6 +112,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
                 return (
                   <tr key={v.ordenEstacionId} className={selectedId === v.ordenEstacionId ? "sel" : ""} onClick={() => setSelectedId(v.ordenEstacionId)}>
                     <td className="td-mono">{v.folioOrdenInterna}</td>
+                    <td className="td-mono">{oGuion(v.fechaInicio)}</td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-2">{afiliado?.nombre_afiliado ?? "—"}</td>
                     <td className="td-center td-mono">{v.totalProgramado}</td>
@@ -125,7 +128,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="state-msg">
+                  <td colSpan={8} className="state-msg">
                     No hay verificaciones para los filtros seleccionados.
                   </td>
                 </tr>

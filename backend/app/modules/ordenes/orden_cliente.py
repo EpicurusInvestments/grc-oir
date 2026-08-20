@@ -758,6 +758,15 @@ class OrdenClienteService(
         if "fecha_inicio_campania" in payload or "fecha_fin_campania" in payload:
             f_ini = payload.get("fecha_inicio_campania", obj.fecha_inicio_campania)
             f_fin = payload.get("fecha_fin_campania", obj.fecha_fin_campania)
+            # Solo si el valor REALMENTE cambia respecto al guardado: una orden ya en
+            # curso legítimamente tiene su fecha de inicio en el pasado, y editar otro
+            # campo (el front siempre reenvía el valor tal cual) no debe bloquearse por
+            # eso — pero si alguien la MODIFICA, el nuevo valor sí debe ser hoy o futuro.
+            if f_ini != obj.fecha_inicio_campania and f_ini < date.today():
+                raise DomainError(
+                    "fecha_inicio_campania no puede ser una fecha pasada.",
+                    detalles={"fecha_inicio_campania": str(f_ini)},
+                )
             if f_fin < f_ini:
                 raise DomainError(
                     "fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.",
