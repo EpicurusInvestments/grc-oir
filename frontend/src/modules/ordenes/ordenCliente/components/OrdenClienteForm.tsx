@@ -216,10 +216,12 @@ export function OrdenClienteForm({
 
   const onAgenciaChange = (id: string) => {
     setValue("agencia_id", id);
-    if (!watch("porcentaje_comision_agencia_snap")) {
-      const agencia = findAgencia(id);
-      if (agencia) setValue("porcentaje_comision_agencia_snap", String(agencia.porcentaje_comision_agencia_default));
-    }
+    // A diferencia de vendedor (que respeta un % ya capturado a mano al cambiar de
+    // vendedor), aquí SIEMPRE se sigue a la agencia recién elegida: un % que quedó de
+    // la agencia anterior (autollenado o no) ya no aplica a la nueva selección. "Sin
+    // agencia" limpia el campo.
+    const agencia = findAgencia(id);
+    setValue("porcentaje_comision_agencia_snap", agencia ? String(agencia.porcentaje_comision_agencia_default) : "");
   };
 
   // ── cálculos en vivo ────────────────────────────────────────────────────────

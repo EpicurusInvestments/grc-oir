@@ -45,7 +45,15 @@ export function OrdenEstacionListPage({
 }: OrdenEstacionListPageProps) {
   const { state, crearOE, avanzarAProgramados, avanzarAReales } = useOrdenes();
   const [filtro, setFiltro] = useState<FiltroOI>(filtroInicial ?? "todas");
-  const [search, setSearch] = useState("");
+  // Al llegar con una OI preseleccionada (p.ej. "Ver orden interna →" desde Verificaciones
+  // o Incidencias), el buscador arranca filtrado por su folio: así la tabla muestra SOLO
+  // esa fila en vez de las 12 (o las que haya) — antes solo se resaltaba en el detalle,
+  // sin filtrar la lista.
+  const [search, setSearch] = useState(() => {
+    if (!oeIdPreseleccionada) return "";
+    const oe = state.ordenesEstacion.find((o) => o.id === oeIdPreseleccionada);
+    return oe?.folio_orden_interna ?? "";
+  });
   const [selectedId, setSelectedId] = useState<string | null>(oeIdPreseleccionada ?? null);
   const [modo, setModo] = useState<Modo>(ocIdParaNueva ? "new" : "view");
   const [submitError, setSubmitError] = useState<string | null>(null);

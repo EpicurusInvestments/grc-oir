@@ -135,6 +135,28 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").value).toBe("5");
   });
 
+  it("elegir una agencia sugiere su % de comisión default del catálogo", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } }); // default 10
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("10");
+  });
+
+  it("fix: cambiar de una agencia a otra SÍ actualiza el % (a diferencia de vendedor, no se respeta el valor anterior)", () => {
+    const { container } = renderForm();
+    const agenciaSelect = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
+    fireEvent.change(agenciaSelect, { target: { value: "ag1" } }); // default 10
+    fireEvent.change(agenciaSelect, { target: { value: "ag2" } }); // default 12
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("12");
+  });
+
+  it("volver a 'Sin agencia' limpia el % de comisión agencia", () => {
+    const { container } = renderForm();
+    const agenciaSelect = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
+    fireEvent.change(agenciaSelect, { target: { value: "ag1" } });
+    fireEvent.change(agenciaSelect, { target: { value: "" } });
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("");
+  });
+
   it("si el % ya se capturó a mano, cambiar de vendedor no lo sobrescribe", () => {
     const { container } = renderForm();
     const vendedorSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");

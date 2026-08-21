@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from "react";
 
-import { MoneyInput, SavingOverlay } from "@/shared/ui";
+import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
@@ -115,14 +115,11 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
             <div className="fv mono">{oc?.folio_orden}</div>
           ) : (
             <>
-              <select className="fsel" value={ocId} onChange={(e) => setOcId(e.target.value)}>
-                <option value="">Selecciona…</option>
-                {ocsElegibles.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.folio_orden} — {o.numero_orden_cliente}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={ocId}
+                onChange={setOcId}
+                options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
+              />
               {ocsElegibles.length === 0 && (
                 <div className="fv muted" style={{ fontSize: 12 }}>
                   No hay órdenes del cliente elegibles (necesitan Vo.Bo. y no estar congeladas).
