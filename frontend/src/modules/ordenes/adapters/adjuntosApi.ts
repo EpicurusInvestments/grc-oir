@@ -27,14 +27,22 @@ export function subirAdjuntoOrden(tipo: TipoAdjuntoOrden, archivo: File): Promis
   return postFormData<AdjuntoOrdenSubido>(`/ordenes/adjuntos?tipo=${tipo}`, fd);
 }
 
-/** Abre el adjunto en una pestaña nueva (blob servido por el backend, con auth). */
+/** Descarga el adjunto (blob servido por el backend, con auth) forzando el nombre
+ * original del archivo. Un `window.open` sobre una blob: URL no sirve para esto: esas
+ * URLs no llevan metadatos de nombre, así que "Guardar como" propone uno genérico; un
+ * `<a download="...">` sí fuerza el nombre en todos los navegadores. */
 export async function verAdjuntoOrden(ref: string): Promise<void> {
   const { data } = await apiClient.get<Blob>("/ordenes/adjuntos", {
     params: { ref },
     responseType: "blob",
   });
   const url = URL.createObjectURL(data);
-  window.open(url, "_blank", "noopener");
+  const enlace = document.createElement("a");
+  enlace.href = url;
+  enlace.download = nombreDeAdjuntoRef(ref);
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 

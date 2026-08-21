@@ -3,12 +3,18 @@
  * comisión" en `OrdenClienteDetailPanel.tsx` (mismo patrón que `ContratoDetailPanel` en F0).
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { verAdjuntoOrden } from "../adapters/adjuntosApi";
 import { OrdenClienteDetailPanel } from "../ordenCliente/components/OrdenClienteDetailPanel";
 import type { HistorialComision } from "../state/OrdenesContext";
 import { makeOC } from "./fixtures";
+
+vi.mock("../adapters/adjuntosApi", () => ({
+  nombreDeAdjuntoRef: (ref: string) => ref.split("/").pop()!.split("_").slice(1).join("_"),
+  verAdjuntoOrden: vi.fn().mockResolvedValue(undefined),
+}));
 
 function renderPanel(oc: ReturnType<typeof makeOC>, historialComisiones: HistorialComision[] = []) {
   return render(
@@ -69,5 +75,27 @@ describe("Historial de cambios de comisión (fix del hallazgo #12)", () => {
 
     // El de la otra OC no debe aparecer.
     expect(screen.queryByText(/alguien\.mas/)).toBeNull();
+  });
+});
+
+describe("Fix: sección Documentos muestra el nombre original, sin el UUID de la clave", () => {
+  it("sin documentos de cierre, muestra el estado vacío", () => {
+    renderPanel(makeOC());
+    expect(screen.getByText("Sin documentos de cierre todavía.")).toBeInTheDocument();
+  });
+
+  it("con documentos, muestra el nombre original (no la clave completa con el UUID) y al hacer clic descarga esa ref", () => {
+    const oc = makeOC({
+      odc_cerrada_ref: "ordenes/cierre/odc/fc25aecb3cac48a7af3ee656d3228522_PRUEBA-DE-ARCHIVO.docx",
+      carta_conciliacion_ref: "ordenes/cierre/carta/9a750cdfba0945f2a82faf3fe1ee2e49_PRUEBA-DE-ARCHIVO_PDF.pdf",
+    });
+    renderPanel(oc);
+
+    expect(screen.getByText(/PRUEBA-DE-ARCHIVO\.docx/)).toBeInTheDocument();
+    expect(screen.getByText(/PRUEBA-DE-ARCHIVO_PDF\.pdf/)).toBeInTheDocument();
+    expect(screen.queryByText(/fc25aecb3cac48a7af3ee656d3228522/)).toBeNull();
+
+    fireEvent.click(screen.getByText(/PRUEBA-DE-ARCHIVO\.docx/));
+    expect(verAdjuntoOrden).toHaveBeenCalledWith(oc.odc_cerrada_ref);
   });
 });

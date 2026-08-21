@@ -3,6 +3,9 @@
  * documentos y botonera contextual (Editar, Dar Vo.Bo., Asignar estaciones, Cerrar orden).
  */
 
+import { useState } from "react";
+
+import { nombreDeAdjuntoRef, verAdjuntoOrden } from "../../adapters/adjuntosApi";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { CommissionSnapshotBlock } from "../../components/CommissionSnapshotBlock";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
@@ -285,10 +288,16 @@ export function OrdenClienteDetailPanel({
         )}
 
         <div className="sec">Documentos</div>
-        <div className="fv muted" style={{ fontSize: 12 }}>
-          {oGuion(oc.odc_cerrada_ref)} {oc.carta_conciliacion_ref ? `· ${oc.carta_conciliacion_ref}` : ""}
-          {!oc.odc_cerrada_ref && !oc.carta_conciliacion_ref && "Sin documentos de cierre todavía."}
-        </div>
+        {oc.odc_cerrada_ref || oc.carta_conciliacion_ref ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {oc.odc_cerrada_ref && <AdjuntoOrdenDescargaLink refAdjunto={oc.odc_cerrada_ref} />}
+            {oc.carta_conciliacion_ref && <AdjuntoOrdenDescargaLink refAdjunto={oc.carta_conciliacion_ref} />}
+          </div>
+        ) : (
+          <div className="fv muted" style={{ fontSize: 12 }}>
+            Sin documentos de cierre todavía.
+          </div>
+        )}
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>
@@ -314,6 +323,27 @@ export function OrdenClienteDetailPanel({
         )}
       </div>
     </>
+  );
+}
+
+/** Botón de descarga para un adjunto ya subido: muestra el nombre original (sin el
+ * prefijo UUID de la clave de almacenamiento) y descarga conservando ese mismo nombre. */
+function AdjuntoOrdenDescargaLink({ refAdjunto }: { refAdjunto: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <button
+        type="button"
+        className="btn btn-sm"
+        onClick={() => {
+          setError(null);
+          verAdjuntoOrden(refAdjunto).catch(() => setError("No se pudo descargar el documento."));
+        }}
+      >
+        ⬇ {nombreDeAdjuntoRef(refAdjunto)}
+      </button>
+      {error && <div className="fe">{error}</div>}
+    </div>
   );
 }
 

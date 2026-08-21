@@ -87,7 +87,7 @@ export function AdjuntoOrdenInput({ tipo, value, onChange, disabled }: AdjuntoOr
       {!subiendo && value && (
         <div style={{ marginTop: 4 }}>
           <button type="button" className="btn btn-sm" onClick={() => void onVer()}>
-            Ver: {nombreDeAdjuntoRef(value)}
+            Descargar: {nombreDeAdjuntoRef(value)}
           </button>
         </div>
       )}

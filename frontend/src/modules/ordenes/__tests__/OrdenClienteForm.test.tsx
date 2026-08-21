@@ -291,3 +291,46 @@ describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
     expect(onGuardar).not.toHaveBeenCalled();
   });
 });
+
+describe("Validación: fecha de venta no puede ser pasada", () => {
+  it("al crear, una fecha de venta pasada muestra error y no llama a onGuardar", async () => {
+    const { container, onGuardar } = renderForm();
+    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
+      target: { value: ayer },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+
+    expect(await screen.findByText("La fecha de venta no puede ser una fecha pasada.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("al editar sin tocar la fecha, una OC cuya venta ya se registró en el pasado no se bloquea", () => {
+    const defaultValues = makeOCInput();
+    renderForm({
+      isEdit: true,
+      estatusActual: "orden_interna",
+      defaultValues,
+    });
+    // makeOCInput() usa fecha_venta de 2025-05 (ya pasada): al dejarla intacta no debe
+    // mostrarse el error, aunque el `min` del date-picker ya apunte a hoy.
+    expect(screen.queryByText("La fecha de venta no puede ser una fecha pasada.")).toBeNull();
+  });
+
+  it("al editar y CAMBIAR la fecha de venta a una pasada, sí se bloquea", async () => {
+    const defaultValues = makeOCInput();
+    const { container, onGuardar } = renderForm({
+      isEdit: true,
+      estatusActual: "orden_interna",
+      defaultValues,
+    });
+    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
+      target: { value: ayer },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar cambios/ }));
+
+    expect(await screen.findByText("La fecha de venta no puede ser una fecha pasada.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+});
