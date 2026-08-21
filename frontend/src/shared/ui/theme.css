@@ -822,6 +822,11 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+.r3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
 /* Mensaje de error de validación de campo */
 .fe {
   font-size: 11px;

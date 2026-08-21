@@ -1,4 +1,4 @@
-/** Pantalla del catálogo Tarifas por estación: lista + panel de detalle (patrón F0).
+/** Pantalla del catálogo Tarifas: lista + panel de detalle (patrón F0).
  *
  * Filtros: Todas / Vigentes / Expiradas / Activas / Inactivas (selección única). Vigentes
  * y Expiradas son derivados en el servidor (vigencia_hasta vs hoy); Activas/Inactivas usan
@@ -346,7 +346,7 @@ export function TarifaCatalogPage() {
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Tarifas por estación</div>
+          <div className="cat-title">Tarifas</div>
           <div className="cat-sub">
             Tarifas de referencia por estación (definidas por plaza, tipo de señal y duración).
             Se sugieren al capturar órdenes; el precio final puede sobreescribirse.

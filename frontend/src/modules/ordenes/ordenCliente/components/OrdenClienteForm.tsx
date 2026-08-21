@@ -476,7 +476,7 @@ export function OrdenClienteForm({
               <div className="fe">{errors.fecha_fin_campania?.message}</div>
             </div>
           </div>
-          <div className="r2">
+          <div className="r3">
             <div>
               <div className="fl">Duración del spot</div>
               <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
@@ -498,21 +498,23 @@ export function OrdenClienteForm({
               />
               <div className="fe">{errors.total_spots?.message}</div>
             </div>
-          </div>
-          <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
-          <Controller
-            control={control}
-            name="precio_unitario"
-            render={({ field }) => (
-              <MoneyInput
-                value={field.value}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                disabled={congelado}
+            <div>
+              <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
+              <Controller
+                control={control}
+                name="precio_unitario"
+                render={({ field }) => (
+                  <MoneyInput
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    disabled={congelado}
+                  />
+                )}
               />
-            )}
-          />
-          <div className="fe">{errors.precio_unitario?.message}</div>
+              <div className="fe">{errors.precio_unitario?.message}</div>
+            </div>
+          </div>
 
           <div className="sec">Facturación</div>
           <div className="fl">Dirección de facturación</div>
@@ -534,41 +536,6 @@ export function OrdenClienteForm({
           />
 
           <div className="sec">Equipo comercial y comisiones</div>
-          <div className="r2">
-            <div>
-              <div className="fl fl-required">Vendedor principal</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vpId}
-                onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
-              >
-                <option value="">Selecciona…</option>
-                {vendedores.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-              <div className="fe">{errors.vendedor_principal_id?.message}</div>
-            </div>
-            <div>
-              <div className="fl">Vendedor secundario</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vsId}
-                onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
-              >
-                <option value="">Sin vendedor secundario</option>
-                {vendedores.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
 
           {congelado && (
             <div
@@ -588,18 +555,60 @@ export function OrdenClienteForm({
             </div>
           )}
 
-          <SensitiveField
-            label="% comisión vendedor principal"
-            register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
-            error={errors.porcentaje_comision_vendedor_principal_snap?.message}
-            badge={badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
-          />
-          <SensitiveField
-            label="% comisión vendedor secundario"
-            register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
-            error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
-            badge={vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
-          />
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Vendedor principal</div>
+              <select
+                className="fsel"
+                disabled={congelado}
+                value={vpId}
+                onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
+              >
+                <option value="">Selecciona…</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.nombre_vendedor}
+                  </option>
+                ))}
+              </select>
+              <div className="fe">{errors.vendedor_principal_id?.message}</div>
+            </div>
+            <div>
+              <SensitiveField
+                label="% comisión vendedor principal"
+                register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
+                error={errors.porcentaje_comision_vendedor_principal_snap?.message}
+                badge={badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
+              />
+            </div>
+          </div>
+          <div className="r2">
+            <div>
+              <div className="fl">Vendedor secundario</div>
+              <select
+                className="fsel"
+                disabled={congelado}
+                value={vsId}
+                onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
+              >
+                <option value="">Sin vendedor secundario</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.nombre_vendedor}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <SensitiveField
+                label="% comisión vendedor secundario"
+                register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
+                error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
+                badge={vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
+              />
+            </div>
+          </div>
+
           <SensitiveField
             label="% comisión agencia"
             register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones })}
