@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -234,8 +235,9 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
         marca_id=cat["marca"],
         categoria_id=cat["categoria"],
         producto="Producto de prueba",
-        fecha_inicio_campania=date(2026, 2, 1),
-        fecha_fin_campania=date(2026, 2, 28),
+        # Relativas a hoy (no fijas): OrdenClienteCreate rechaza fecha_inicio_campania pasada.
+        fecha_inicio_campania=date.today() + timedelta(days=30),
+        fecha_fin_campania=date.today() + timedelta(days=57),
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,
@@ -290,6 +292,15 @@ def test_crear_oc_fk_inexistente_404(
 ) -> None:
     with pytest.raises(NotFoundError):
         oc_svc.create(_oc_payload(cat, anunciante_id=uuid.uuid4()), VENTAS)
+
+
+def test_crear_oc_rechaza_fecha_inicio_pasada(cat: dict[str, uuid.UUID]) -> None:
+    with pytest.raises(ValidationError):
+        _oc_payload(
+            cat,
+            fecha_inicio_campania=date.today() - timedelta(days=1),
+            fecha_fin_campania=date.today() + timedelta(days=10),
+        )
 
 
 def test_crear_oc_contrato_de_otro_anunciante_400(
@@ -356,6 +367,49 @@ def test_editar_oc_recalcula_totales(
     editada = oc_svc.update(oc.orden_id, OrdenClienteUpdate(total_spots=50), VENTAS)
     assert editada.subtotal == Decimal("50000.00")
     assert editada.total == Decimal("58000.00")
+
+
+def test_editar_oc_con_campania_ya_pasada_no_se_bloquea(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """La regla de 'fecha_inicio_campania no puede ser pasada' solo aplica si el valor
+    REALMENTE cambia (ver `_pre_update`): una orden ya en curso, cuya campaña por
+    definición ya empezó, debe poder seguir editándose (aquí, otro campo) sin que el
+    simple paso del calendario la bloquee."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    obj = db.get(OrdenCliente, oc.orden_id)
+    assert obj is not None
+    obj.fecha_inicio_campania = date.today() - timedelta(days=5)
+    obj.fecha_fin_campania = date.today() + timedelta(days=5)
+    db.commit()
+
+    editada = oc_svc.update(oc.orden_id, OrdenClienteUpdate(total_spots=50), VENTAS)
+    assert editada.total_spots == 50
+
+
+def test_editar_oc_rechaza_cambiar_fecha_inicio_a_pasada(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia del caso anterior, aquí sí se intenta CAMBIAR fecha_inicio_campania
+    a un valor nuevo — ese nuevo valor no puede ser una fecha pasada."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            OrdenClienteUpdate(fecha_inicio_campania=date.today() - timedelta(days=1)),
+            VENTAS,
+        )
+
+
+def test_editar_oc_permite_cambiar_fecha_inicio_a_futura(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    nueva_fecha = date.today() + timedelta(days=45)
+    editada = oc_svc.update(
+        oc.orden_id, OrdenClienteUpdate(fecha_inicio_campania=nueva_fecha), VENTAS
+    )
+    assert editada.fecha_inicio_campania == nueva_fecha
 
 
 def test_editar_oc_congelada_409(
@@ -448,15 +502,16 @@ def _oe_payload(
         estacion_id=cat["estacion"],
         precio_spot=Decimal("800.00"),
         observaciones_estacion=None,
+        # Mismo rango relativo que la campaña de `_oc_payload` (hoy+30 .. hoy+57).
         dias=[
             OrdenEstacionDiaCreate(
-                fecha_transmision=date(2026, 2, 3),
+                fecha_transmision=date.today() + timedelta(days=32),
                 hora_inicio=time(7, 0),
                 hora_fin=time(9, 0),
                 spots_asignados=10,
             ),
             OrdenEstacionDiaCreate(
-                fecha_transmision=date(2026, 2, 10),
+                fecha_transmision=date.today() + timedelta(days=39),
                 hora_inicio=time(7, 0),
                 hora_fin=time(9, 0),
                 spots_asignados=10,
@@ -524,7 +579,7 @@ def test_crear_oe_fecha_fuera_de_campania_400(
                 oc.orden_id,
                 dias=[
                     OrdenEstacionDiaCreate(
-                        fecha_transmision=date(2026, 3, 15),  # fuera de feb-2026
+                        fecha_transmision=date.today() + timedelta(days=100),  # fuera de la campaña
                         hora_inicio=time(7, 0),
                         hora_fin=time(9, 0),
                         spots_asignados=10,
@@ -546,13 +601,13 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
     _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
 
-    # 2.1 -> 2.2: confirma un día distinto (2026-02-03 -> 8, en vez de 10).
+    # 2.1 -> 2.2: confirma un día distinto (el primer día, hoy+32 -> 8, en vez de 10).
     programada = oe_svc.avanzar_programados(
         oe.orden_estacion_id,
         OrdenEstacionProgramadosIn(
             dias=[
                 OrdenEstacionDiaProgramadoIn(
-                    fecha_transmision=date(2026, 2, 3), spots_programados=8
+                    fecha_transmision=date.today() + timedelta(days=32), spots_programados=8
                 )
             ],
             reporte_programados_ref="reporte_prog.pdf",
@@ -561,12 +616,16 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
     )
     assert programada.estatus == EstatusOrdenEstacion.EN_TRANSMISION
 
-    # 2.2 -> 2.3: el día 02-03 se transmite con 6 (faltante de 2 vs programado=8);
-    # el día 02-10 se transmite tal cual programado (10, sin override -> sin incidencia).
+    # 2.2 -> 2.3: el primer día (hoy+32) se transmite con 6 (faltante de 2 vs programado=8);
+    # el segundo día (hoy+39) se transmite tal cual programado (10, sin override -> sin incidencia).
     cerrada = oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
-            dias=[OrdenEstacionDiaRealIn(fecha_transmision=date(2026, 2, 3), spots_verificados=6)],
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=6
+                )
+            ],
             testigos_url="https://ejemplo.com/testigo.mp3",
             notas_transmision="Corte de programación.",
         ),
@@ -681,8 +740,8 @@ def test_http_nominas_no_puede_crear_orden(client: TestClient, cat: dict[str, uu
             "empresa_facturadora_id": str(cat["empresa"]),
             "vendedor_principal_id": str(cat["vendedor"]),
             "anunciante_id": str(cat["anunciante"]),
-            "fecha_inicio_campania": "2026-02-01",
-            "fecha_fin_campania": "2026-02-28",
+            "fecha_inicio_campania": str(date.today() + timedelta(days=30)),
+            "fecha_fin_campania": str(date.today() + timedelta(days=57)),
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,
@@ -696,6 +755,8 @@ def test_http_nominas_no_puede_crear_orden(client: TestClient, cat: dict[str, uu
 def test_http_direccion_no_puede_crear_pero_si_editar_comisiones(
     client: TestClient, cat: dict[str, uuid.UUID]
 ) -> None:
+    fecha_inicio = str(date.today() + timedelta(days=30))
+    fecha_fin = str(date.today() + timedelta(days=57))
     r_crear = client.post(
         "/api/v1/ordenes/clientes",
         json={
@@ -704,8 +765,8 @@ def test_http_direccion_no_puede_crear_pero_si_editar_comisiones(
             "empresa_facturadora_id": str(cat["empresa"]),
             "vendedor_principal_id": str(cat["vendedor"]),
             "anunciante_id": str(cat["anunciante"]),
-            "fecha_inicio_campania": "2026-02-01",
-            "fecha_fin_campania": "2026-02-28",
+            "fecha_inicio_campania": fecha_inicio,
+            "fecha_fin_campania": fecha_fin,
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,
@@ -722,8 +783,8 @@ def test_http_direccion_no_puede_crear_pero_si_editar_comisiones(
             "empresa_facturadora_id": str(cat["empresa"]),
             "vendedor_principal_id": str(cat["vendedor"]),
             "anunciante_id": str(cat["anunciante"]),
-            "fecha_inicio_campania": "2026-02-01",
-            "fecha_fin_campania": "2026-02-28",
+            "fecha_inicio_campania": fecha_inicio,
+            "fecha_fin_campania": fecha_fin,
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,

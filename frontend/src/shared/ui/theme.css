@@ -748,6 +748,34 @@ body {
   color: var(--text2);
   cursor: not-allowed;
 }
+/* Textarea de comentarios/notas/observaciones: tamaño FIJO (ancho completo del
+ * formulario, alto ~2 líneas) en todas las pantallas — antes cada una traía su propio
+ * inline style (algunas sin ninguno, con el resize-both por default del navegador). */
+.ftxt {
+  width: 100%;
+  height: 54px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-med);
+  background: var(--surface2);
+  padding: 8px 11px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  margin-bottom: 4px;
+  transition: border-color 0.15s;
+  resize: none;
+}
+.ftxt:focus {
+  border-color: var(--phase);
+  background: var(--surface);
+}
+.ftxt:read-only,
+.ftxt:disabled {
+  background: var(--surface3);
+  color: var(--text2);
+  cursor: not-allowed;
+}
 .money-wrap {
   position: relative;
 }

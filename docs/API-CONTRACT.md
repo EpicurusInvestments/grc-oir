@@ -668,6 +668,24 @@ tarifa cliente de la OC, si el balance de spots (esta OE + hermanas) excede
   está en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la OC pasa de
   `en_transmision` a `en_verificacion` automáticamente.
 
+**Adjuntos de Órdenes (ADR-042)** — antes "simulados" (solo se capturaba el nombre del
+archivo). Un endpoint genérico para los 5 campos de documento
+(`archivo_orden_original_path`, `odc_cerrada_ref`, `carta_conciliacion_ref`,
+`reporte_programados_ref`, `reporte_reales_ref`):
+- **`POST /ordenes/adjuntos?tipo={odc|cierre_odc|cierre_carta|reporte_reales|
+  reporte_programados}`** (`ordenes:editar`, `multipart/form-data`, campo `archivo`) —
+  valida extensión (lista blanca: `pdf, doc, docx, xls, xlsx, jpg, jpeg, png` — **sin**
+  ejecutables/scripts), *magic bytes* acordes a la extensión, y tamaño máximo
+  (`S3_MAX_PDF_BYTES`). Sube al mismo bucket que Contrato (`S3_BUCKET_CONTRATOS`) bajo un
+  prefijo propio por `tipo`. Devuelve `{ref, nombre_archivo}` — `ref` es la clave real a
+  guardar en el campo `_ref` correspondiente (vía el alta/edición normal de la orden, o el
+  body de `/cerrar`, `/programados`, `/reales`, según el campo). **400**
+  (`archivo_no_permitido`) si la extensión no está en la lista o el contenido no coincide
+  con la extensión declarada; **413** si excede el tamaño.
+- **`GET /ordenes/adjuntos?ref=...`** (`ordenes:leer`) — descarga/sirve el archivo a
+  través del backend (bucket privado, nunca URL pública). **404** si `ref` no empieza con
+  uno de los prefijos de Órdenes (guardarraíl: no sirve para leer `contratos/...`).
+
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo
 "Órdenes" en la matriz, así que un permiso `editar` la dejaría fuera por completo. La

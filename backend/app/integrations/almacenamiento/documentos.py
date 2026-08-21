@@ -7,9 +7,13 @@ servicio y el router usen una sola fuente de verdad:
 - `sanear_nombre_archivo`: normaliza el nombre a un segmento de clave S3 seguro (basename,
   charset acotado, fuerza `.pdf`, tope de longitud, bloquea rutas / `..`).
 - `leer_pdf`: lee un `UploadFile` validando que sea un PDF real (extensión + *magic bytes*)
-  y que no exceda el tamaño máximo; devuelve los bytes crudos.
+  y que no exceda el tamaño máximo; devuelve los bytes crudos. Usado por adjuntos de
+  Contrato (ADR-027).
+- `leer_adjunto`: igual que `leer_pdf`, pero contra una LISTA BLANCA de extensiones
+  (documentos + imágenes) para los adjuntos "simulados" de Órdenes (ver
+  `app/modules/ordenes/adjuntos.py`).
 - Errores de dominio del almacenamiento (`AlmacenamientoError`, `ArchivoNoPdfError`,
-  `ArchivoDemasiadoGrandeError`).
+  `ArchivoNoPermitidoError`, `ArchivoDemasiadoGrandeError`).
 """
 
 from __future__ import annotations
@@ -55,6 +59,14 @@ class ArchivoDemasiadoGrandeError(DomainError):
 
     codigo = "archivo_muy_grande"
     status_code = 413
+
+
+class ArchivoNoPermitidoError(DomainError):
+    """La extensión no está en la lista blanca, o el contenido no corresponde a la
+    extensión declarada (magic bytes)."""
+
+    codigo = "archivo_no_permitido"
+    status_code = 400
 
 
 # ── Value object ──────────────────────────────────────────────────────────────────
@@ -122,3 +134,80 @@ def leer_pdf(archivo: UploadFile, *, max_bytes: int) -> bytes:
     if not contenido.startswith(_PDF_MAGIC):
         raise ArchivoNoPdfError("El contenido del archivo no corresponde a un PDF válido.")
     return contenido
+
+
+# ── Adjuntos de órdenes (lista blanca ampliada: documentos + imágenes) ─────────────
+# Lista blanca deliberada (NO lista negra): cubre los formatos reales de estos adjuntos
+# (documentos firmados/escaneados y reportes) sin abrir la puerta a ejecutables/scripts
+# (.exe, .bat, .sh, .js, ...). Cada extensión valida además su firma de contenido (magic
+# bytes) — no basta con renombrar un archivo para hacerlo pasar por otro tipo.
+_MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
+    "pdf": (b"%PDF-",),
+    "jpg": (b"\xff\xd8\xff",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    # DOCX/XLSX son ZIP (formato OOXML): misma firma de contenedor para ambos; la
+    # extensión declarada decide cuál es. DOC/XLS legacy son OLE2 (mismo contenedor).
+    "docx": (b"PK\x03\x04",),
+    "xlsx": (b"PK\x03\x04",),
+    "doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+    "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+}
+
+EXTENSIONES_ADJUNTO_ORDENES = frozenset(_MAGIC_POR_EXTENSION)
+
+_CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def content_type_de_extension(extension: str) -> str:
+    return _CONTENT_TYPE_POR_EXTENSION.get(extension.lower(), "application/octet-stream")
+
+
+def leer_adjunto(
+    archivo: UploadFile, *, max_bytes: int, extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES
+) -> tuple[bytes, str, str]:
+    """Lee y valida un `UploadFile` contra una lista blanca de extensiones.
+
+    Valida (en este orden): extensión en la lista blanca, tamaño máximo, archivo no
+    vacío, y firma de contenido (*magic bytes*) acorde a la extensión declarada — igual
+    de estricto que `leer_pdf`, pero para varios tipos de archivo.
+
+    Devuelve `(contenido, nombre_sano_con_extension, extension)`.
+    """
+    nombre_original = (archivo.filename or "").strip()
+    base = re.split(r"[\\/]", nombre_original)[-1]
+    raiz, _, ext = base.rpartition(".")
+    extension = ext.lower()
+    if not raiz or extension not in extensiones_permitidas:
+        raise ArchivoNoPermitidoError(
+            f"Extensión no permitida. Usa: {', '.join(sorted(extensiones_permitidas))}.",
+            detalles={"archivo": archivo.filename},
+        )
+
+    contenido = archivo.file.read(max_bytes + 1)
+    if len(contenido) > max_bytes:
+        raise ArchivoDemasiadoGrandeError(
+            f"El archivo supera el tamaño máximo permitido ({max_bytes} bytes).",
+            detalles={"max_bytes": max_bytes},
+        )
+    if not contenido:
+        raise ArchivoNoPermitidoError("El archivo está vacío.")
+
+    firmas = _MAGIC_POR_EXTENSION[extension]
+    if not any(contenido.startswith(firma) for firma in firmas):
+        raise ArchivoNoPermitidoError(
+            "El contenido del archivo no corresponde a la extensión declarada.",
+            detalles={"extension": extension},
+        )
+
+    nombre_sano = _CHARS_INVALIDOS.sub("-", raiz).strip("-. ")[:_MAX_NOMBRE] or "documento"
+    return contenido, f"{nombre_sano}.{extension}", extension

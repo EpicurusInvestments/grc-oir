@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
+import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { ChecklistVoBo } from "../../components/ChecklistVoBo";
 import { FROZEN_STATES, IVA_RATE, isChecklistComplete, OBS_PREDEFINIDAS } from "../../constants";
 import { fmtMonto } from "../../format";
@@ -42,8 +43,14 @@ const numeroOpcionalPct = () =>
     .optional()
     .refine((v) => v == null || v === "" || (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100), "El % debe estar entre 0 y 100.");
 
-const schema = z
-  .object({
+/** `fechaInicioOriginal` es el valor YA GUARDADO de `fecha_inicio_campania` (vacío al
+ * crear). La regla de "no puede ser fecha pasada" solo se aplica si el valor CAMBIÓ: una
+ * orden ya en curso legítimamente tiene esa fecha en el pasado, y dejarla intacta (editar
+ * otro campo) no debe bloquearse por el simple paso del calendario — pero si alguien la
+ * MODIFICA, el nuevo valor sí debe ser hoy o futuro. */
+function buildSchema(fechaInicioOriginal: string) {
+  return z
+    .object({
     numero_orden_cliente: z.string().trim().min(1, "El no. de orden del cliente es obligatorio.").max(60),
     fecha_venta: z.string().min(1, "La fecha de venta es obligatoria."),
     empresa_facturadora_id: z.string().min(1, "Selecciona la empresa facturadora."),
@@ -78,13 +85,23 @@ const schema = z
     observaciones_libres: z.string().trim().max(1000).optional(),
     odc_pdf_ref: z.string().optional(),
     motivo_cambio_comision: z.string().trim().max(500).optional(),
-  })
-  .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
-    path: ["fecha_fin_campania"],
-    message: "La fecha de fin debe ser mayor o igual que la de inicio.",
-  });
+    })
+    .refine(
+      (d) =>
+        d.fecha_inicio_campania === fechaInicioOriginal ||
+        d.fecha_inicio_campania >= new Date().toISOString().slice(0, 10),
+      {
+        path: ["fecha_inicio_campania"],
+        message: "La fecha de inicio no puede ser una fecha pasada.",
+      },
+    )
+    .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
+      path: ["fecha_fin_campania"],
+      message: "La fecha de fin debe ser mayor o igual que la de inicio.",
+    });
+}
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<ReturnType<typeof buildSchema>>;
 
 const CAMPOS_SNAP = [
   "porcentaje_comision_vendedor_principal_snap",
@@ -133,7 +150,7 @@ export function OrdenClienteForm({
     setError,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(buildSchema(defaultValues?.fecha_inicio_campania ?? "")),
     defaultValues: {
       numero_orden_cliente: defaultValues?.numero_orden_cliente ?? "",
       fecha_venta: defaultValues?.fecha_venta ?? new Date().toISOString().slice(0, 10),
@@ -242,7 +259,7 @@ export function OrdenClienteForm({
     );
   };
 
-  // ── adjunto simulado (solo el nombre del archivo, no se lee ni se sube nada) ──
+  // ── adjunto ODC (subida real; ver AdjuntoOrdenInput) ──
   const odcPdfRef = watch("odc_pdf_ref");
 
   // handleSubmit necesita un callback (data)=>void; envolvemos para exponer 2 acciones
@@ -444,7 +461,13 @@ export function OrdenClienteForm({
           <div className="r2">
             <div>
               <div className="fl fl-required">Inicio de campaña</div>
-              <input className="fi" type="date" disabled={congelado} {...register("fecha_inicio_campania")} />
+              <input
+                className="fi"
+                type="date"
+                disabled={congelado}
+                min={new Date().toISOString().slice(0, 10)}
+                {...register("fecha_inicio_campania")}
+              />
               <div className="fe">{errors.fecha_inicio_campania?.message}</div>
             </div>
             <div>
@@ -502,19 +525,13 @@ export function OrdenClienteForm({
             al cliente
           </label>
 
-          <div className="fl">Adjuntar ODC (PDF) — simulado</div>
-          <input
-            type="file"
-            accept="application/pdf"
+          <div className="fl">Adjuntar ODC</div>
+          <AdjuntoOrdenInput
+            tipo="odc"
+            value={odcPdfRef}
+            onChange={(ref) => setValue("odc_pdf_ref", ref)}
             disabled={congelado}
-            onChange={(e) => setValue("odc_pdf_ref", e.target.files?.[0]?.name ?? "")}
-            style={{ fontSize: 12, marginBottom: 4 }}
           />
-          {odcPdfRef && (
-            <div className="fv mono" style={{ fontSize: 12 }}>
-              📎 {odcPdfRef}
-            </div>
-          )}
 
           <div className="sec">Equipo comercial y comisiones</div>
           <div className="r2">
@@ -612,7 +629,7 @@ export function OrdenClienteForm({
             ))}
           </select>
           <div className="fl">Observaciones libres</div>
-          <textarea className="ftxt" rows={3} disabled={congelado} {...register("observaciones_libres")} />
+          <textarea className="ftxt" rows={2} disabled={congelado} {...register("observaciones_libres")} />
         </div>
 
         {/* ── Columna de resumen ── */}
@@ -659,7 +676,7 @@ export function OrdenClienteForm({
           <button type="button" className="btn btn-sm" onClick={onCancelar} disabled={submitting}>
             Cancelar
           </button>
-          <button type="button" className="btn btn-sm" onClick={guardar} disabled={submitting}>
+          <button type="button" className="btn btn-sm btn-teal" onClick={guardar} disabled={submitting}>
             {isEdit ? "Guardar cambios" : "Guardar como recibida"}
           </button>
           {puedeMostrarChecklist && (

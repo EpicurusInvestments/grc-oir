@@ -128,6 +128,7 @@ export function verificacionDerivada(oe: OrdenEstacion): VerificacionDerivada {
   return {
     ordenEstacionId: oe.id,
     folioOrdenInterna: oe.folio_orden_interna,
+    fechaInicio: oiPrimeraFecha(oe),
     dias,
     totalProgramado: dias.reduce((s, d) => s + d.programado.spots_diarios, 0),
     totalReal: dias.reduce((s, d) => s + d.real.spots_diarios, 0),

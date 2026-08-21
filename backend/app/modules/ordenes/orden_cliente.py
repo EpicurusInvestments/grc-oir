@@ -441,6 +441,10 @@ class OrdenClienteCreate(BaseModel):
     direccion_facturacion: str | None = Field(default=None, max_length=2000)
     facturacion_directa_cliente: bool = False
     afiliado_factura_directo_al_cliente: bool = False
+    # PDF/imagen de la orden original recibida del cliente (spec BD v2) — clave del
+    # almacenamiento (ver `app/modules/ordenes/adjuntos.py`), no una ruta de disco pese
+    # al nombre heredado de la spec.
+    archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date
     fecha_fin_campania: date
     duracion_spot: DuracionSpot
@@ -469,6 +473,8 @@ class OrdenClienteCreate(BaseModel):
 
     @model_validator(mode="after")
     def _valida_fechas(self) -> OrdenClienteCreate:
+        if self.fecha_inicio_campania < date.today():
+            raise ValueError("fecha_inicio_campania no puede ser una fecha pasada.")
         if self.fecha_fin_campania < self.fecha_inicio_campania:
             raise ValueError("fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.")
         return self
@@ -496,6 +502,7 @@ class OrdenClienteUpdate(BaseModel):
     direccion_facturacion: str | None = Field(default=None, max_length=2000)
     facturacion_directa_cliente: bool | None = None
     afiliado_factura_directo_al_cliente: bool | None = None
+    archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date | None = None
     fecha_fin_campania: date | None = None
     duracion_spot: DuracionSpot | None = None
@@ -756,6 +763,15 @@ class OrdenClienteService(
         if "fecha_inicio_campania" in payload or "fecha_fin_campania" in payload:
             f_ini = payload.get("fecha_inicio_campania", obj.fecha_inicio_campania)
             f_fin = payload.get("fecha_fin_campania", obj.fecha_fin_campania)
+            # Solo si el valor REALMENTE cambia respecto al guardado: una orden ya en
+            # curso legítimamente tiene su fecha de inicio en el pasado, y editar otro
+            # campo (el front siempre reenvía el valor tal cual) no debe bloquearse por
+            # eso — pero si alguien la MODIFICA, el nuevo valor sí debe ser hoy o futuro.
+            if f_ini != obj.fecha_inicio_campania and f_ini < date.today():
+                raise DomainError(
+                    "fecha_inicio_campania no puede ser una fecha pasada.",
+                    detalles={"fecha_inicio_campania": str(f_ini)},
+                )
             if f_fin < f_ini:
                 raise DomainError(
                     "fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.",

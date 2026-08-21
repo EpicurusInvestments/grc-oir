@@ -30,6 +30,10 @@ Calculados (servicio, `Decimal`): `anio_venta`/`mes_venta` (de `fecha_venta`),
 - **Campos de cierre** (`odc_cerrada_ref`, `carta_conciliacion_ref`,
   `cierre_sin_odc_cerrada`, `cierre_sin_carta_conciliacion`, `fecha_cierre` — ADR-034):
   snapshot de lo que faltaba AL MOMENTO del cierre.
+- **Adjuntos reales** (`archivo_orden_original_path`, `odc_cerrada_ref`,
+  `carta_conciliacion_ref`, `reporte_programados_ref`, `reporte_reales_ref` — ADR-042): se
+  suben de verdad vía `POST /ordenes/adjuntos` (lista blanca de extensiones + magic bytes),
+  no solo se captura el nombre del archivo.
 
 **Checklist de Vo.Bo.** — tabla hija `OrdenClienteVoBoItem` (ADR-033), NO JSON: 10 ítems
 fijos (`ITEMS_VOBO`), cada uno con `completado`/`usuario_id`/`fecha_completado`.

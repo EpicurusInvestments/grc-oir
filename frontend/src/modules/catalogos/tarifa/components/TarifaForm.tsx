@@ -204,12 +204,7 @@ export function TarifaForm({
         </div>
 
         <div className="fl">Notas</div>
-        <textarea
-          className="fi"
-          rows={3}
-          style={{ height: "auto", minHeight: 62, paddingTop: 8, resize: "vertical" }}
-          {...register("notas")}
-        />
+        <textarea className="ftxt" rows={2} {...register("notas")} />
         <div className="fe">{errors.notas?.message}</div>
       </div>
 
@@ -223,7 +218,7 @@ export function TarifaForm({
           <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-sm btn-phase" disabled={submitting}>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
             {submitting ? "Guardando…" : "Guardar"}
           </button>
         </div>

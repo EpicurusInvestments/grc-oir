@@ -101,7 +101,7 @@ export function EstacionInlineForm({
         <button type="button" className="btn btn-xs" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>
-        <button type="submit" className="btn btn-xs btn-phase" disabled={submitting}>
+        <button type="submit" className="btn btn-xs btn-teal" disabled={submitting}>
           {submitting ? "Guardando…" : "Guardar"}
         </button>
       </div>

@@ -1,13 +1,14 @@
 /** Captura de programados (2.1 → 2.2): parrilla "por excepción" — cada día se muestra
  * como lo asignado hasta que el usuario lo edita; solo las filas que de verdad terminan
  * distintas quedan como override en `horarios_programados`. Contador de "N modificaciones"
- * y adjunto simulado del reporte del afiliado.
+ * y adjunto (subida real) del reporte del afiliado.
  */
 
 import { useState } from "react";
 
 import { SavingOverlay } from "@/shared/ui";
 
+import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { diaDeSemana } from "../../format";
 import type { OrdenEstacion, PeriodoTransmisionRow } from "../../types";
 
@@ -179,14 +180,9 @@ export function ProgramadosForm({ oe, submitting, submitError, onAvanzar, onCanc
         </div>
 
         <div className="fl" style={{ marginTop: 14 }}>
-          Reporte del afiliado (simulado)
+          Reporte del afiliado
         </div>
-        <input type="file" style={{ fontSize: 12 }} onChange={(e) => setReporteRef(e.target.files?.[0]?.name ?? null)} />
-        {reporteRef && (
-          <div className="fv mono" style={{ fontSize: 12, marginTop: 4 }}>
-            📎 {reporteRef}
-          </div>
-        )}
+        <AdjuntoOrdenInput tipo="reporte_programados" value={reporteRef} onChange={setReporteRef} />
       </div>
 
       <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
