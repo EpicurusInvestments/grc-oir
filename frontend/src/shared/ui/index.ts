@@ -10,6 +10,7 @@ export { DetailEmpty, ListDetailLayout } from "./ListDetailLayout";
 export { MoneyInput } from "./MoneyInput";
 export { Paginator } from "./Paginator";
 export { SavingOverlay } from "./SavingOverlay";
+export { SearchableSelect, type OpcionBuscable } from "./SearchableSelect";
 export { SensitiveField } from "./SensitiveField";
 export { Sidebar, type SidebarGroup, type SidebarItem } from "./Sidebar";
 export { StatusBadge } from "./StatusBadge";

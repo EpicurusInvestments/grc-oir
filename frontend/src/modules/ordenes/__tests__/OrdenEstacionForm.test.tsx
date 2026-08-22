@@ -130,3 +130,39 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
     expect(input.periodo_transmision[0].spots_diarios).toBe(50);
   });
 });
+
+describe("Selector de OC de origen con filtro de búsqueda — abierta suelta (sin ocIdFijo)", () => {
+  function renderSuelto() {
+    const oc1 = makeOC({ folio_orden: "OC-2026-0041", numero_orden_cliente: "PO-cliente-001", estatus_orden: "orden_interna" });
+    const oc2 = makeOC({ folio_orden: "OC-2026-0043", numero_orden_cliente: "PO-CLIENTE-V02", estatus_orden: "orden_interna" });
+    const onGuardar = vi.fn();
+    const onCancelar = vi.fn();
+    const utils = render(
+      <OrdenesProvider initialState={{ ordenesCliente: [oc1, oc2], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+        <OrdenEstacionForm onGuardar={onGuardar} onCancelar={onCancelar} />
+      </OrdenesProvider>,
+    );
+    return { ...utils, oc1, oc2 };
+  }
+
+  it("escribir en el buscador filtra la lista por folio o número de orden", () => {
+    const { container, oc1, oc2 } = renderSuelto();
+    const buscador = fieldByLabelText<HTMLInputElement>(container, "Orden del cliente de origen");
+    fireEvent.change(buscador, { target: { value: "0043" } });
+
+    expect(screen.getByText(`${oc2.folio_orden} — ${oc2.numero_orden_cliente}`)).toBeInTheDocument();
+    expect(screen.queryByText(`${oc1.folio_orden} — ${oc1.numero_orden_cliente}`)).toBeNull();
+  });
+
+  it("elegir una opción de la lista selecciona esa OC (aparece la sección 'Estación')", () => {
+    const { container, oc2 } = renderSuelto();
+    const buscador = fieldByLabelText<HTMLInputElement>(container, "Orden del cliente de origen");
+    fireEvent.change(buscador, { target: { value: "V02" } });
+    fireEvent.mouseDown(screen.getByText(`${oc2.folio_orden} — ${oc2.numero_orden_cliente}`));
+
+    expect(screen.getByText("Estación")).toBeInTheDocument();
+    expect((fieldByLabelText<HTMLInputElement>(container, "Orden del cliente de origen")).value).toBe(
+      `${oc2.folio_orden} — ${oc2.numero_orden_cliente}`,
+    );
+  });
+});

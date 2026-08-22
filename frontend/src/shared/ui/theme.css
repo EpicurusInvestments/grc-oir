@@ -776,6 +776,38 @@ body {
   color: var(--text2);
   cursor: not-allowed;
 }
+/* SearchableSelect: selector con filtro de búsqueda (listas largas). */
+.ssel-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-med);
+  border-radius: var(--r);
+  box-shadow: 0 10px 24px rgba(24, 24, 22, 0.12);
+}
+.ssel-item {
+  padding: 8px 11px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.ssel-item:hover {
+  background: var(--surface2);
+}
+.ssel-item-muted {
+  color: var(--text3);
+  border-bottom: 1px solid var(--border-med);
+}
+.ssel-empty {
+  padding: 8px 11px;
+  font-size: 12px;
+  color: var(--text3);
+}
 .money-wrap {
   position: relative;
 }
@@ -820,6 +852,11 @@ body {
 .r2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.r3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
 }
 /* Mensaje de error de validación de campo */

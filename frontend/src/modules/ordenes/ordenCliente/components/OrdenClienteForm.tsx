@@ -43,12 +43,12 @@ const numeroOpcionalPct = () =>
     .optional()
     .refine((v) => v == null || v === "" || (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100), "El % debe estar entre 0 y 100.");
 
-/** `fechaInicioOriginal` es el valor YA GUARDADO de `fecha_inicio_campania` (vacío al
+/** `fechaInicioOriginal`/`fechaVentaOriginal` son los valores YA GUARDADOS (vacíos al
  * crear). La regla de "no puede ser fecha pasada" solo se aplica si el valor CAMBIÓ: una
- * orden ya en curso legítimamente tiene esa fecha en el pasado, y dejarla intacta (editar
- * otro campo) no debe bloquearse por el simple paso del calendario — pero si alguien la
- * MODIFICA, el nuevo valor sí debe ser hoy o futuro. */
-function buildSchema(fechaInicioOriginal: string) {
+ * orden ya en curso legítimamente tiene esas fechas en el pasado, y dejarlas intactas
+ * (editar otro campo) no debe bloquearse por el simple paso del calendario — pero si
+ * alguien las MODIFICA, el nuevo valor sí debe ser hoy o futuro. */
+function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
   return z
     .object({
     numero_orden_cliente: z.string().trim().min(1, "El no. de orden del cliente es obligatorio.").max(60),
@@ -86,6 +86,15 @@ function buildSchema(fechaInicioOriginal: string) {
     odc_pdf_ref: z.string().optional(),
     motivo_cambio_comision: z.string().trim().max(500).optional(),
     })
+    .refine(
+      (d) =>
+        d.fecha_venta === fechaVentaOriginal ||
+        d.fecha_venta >= new Date().toISOString().slice(0, 10),
+      {
+        path: ["fecha_venta"],
+        message: "La fecha de venta no puede ser una fecha pasada.",
+      },
+    )
     .refine(
       (d) =>
         d.fecha_inicio_campania === fechaInicioOriginal ||
@@ -150,7 +159,7 @@ export function OrdenClienteForm({
     setError,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(defaultValues?.fecha_inicio_campania ?? "")),
+    resolver: zodResolver(buildSchema(defaultValues?.fecha_inicio_campania ?? "", defaultValues?.fecha_venta ?? "")),
     defaultValues: {
       numero_orden_cliente: defaultValues?.numero_orden_cliente ?? "",
       fecha_venta: defaultValues?.fecha_venta ?? new Date().toISOString().slice(0, 10),
@@ -216,10 +225,12 @@ export function OrdenClienteForm({
 
   const onAgenciaChange = (id: string) => {
     setValue("agencia_id", id);
-    if (!watch("porcentaje_comision_agencia_snap")) {
-      const agencia = findAgencia(id);
-      if (agencia) setValue("porcentaje_comision_agencia_snap", String(agencia.porcentaje_comision_agencia_default));
-    }
+    // A diferencia de vendedor (que respeta un % ya capturado a mano al cambiar de
+    // vendedor), aquí SIEMPRE se sigue a la agencia recién elegida: un % que quedó de
+    // la agencia anterior (autollenado o no) ya no aplica a la nueva selección. "Sin
+    // agencia" limpia el campo.
+    const agencia = findAgencia(id);
+    setValue("porcentaje_comision_agencia_snap", agencia ? String(agencia.porcentaje_comision_agencia_default) : "");
   };
 
   // ── cálculos en vivo ────────────────────────────────────────────────────────
@@ -360,7 +371,13 @@ export function OrdenClienteForm({
             </div>
             <div>
               <div className="fl fl-required">Fecha de venta</div>
-              <input className="fi" type="date" disabled={congelado} {...register("fecha_venta")} />
+              <input
+                className="fi"
+                type="date"
+                disabled={congelado}
+                min={new Date().toISOString().slice(0, 10)}
+                {...register("fecha_venta")}
+              />
               <div className="fe">{errors.fecha_venta?.message}</div>
             </div>
           </div>
@@ -476,7 +493,7 @@ export function OrdenClienteForm({
               <div className="fe">{errors.fecha_fin_campania?.message}</div>
             </div>
           </div>
-          <div className="r2">
+          <div className="r3">
             <div>
               <div className="fl">Duración del spot</div>
               <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
@@ -498,21 +515,23 @@ export function OrdenClienteForm({
               />
               <div className="fe">{errors.total_spots?.message}</div>
             </div>
-          </div>
-          <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
-          <Controller
-            control={control}
-            name="precio_unitario"
-            render={({ field }) => (
-              <MoneyInput
-                value={field.value}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                disabled={congelado}
+            <div>
+              <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
+              <Controller
+                control={control}
+                name="precio_unitario"
+                render={({ field }) => (
+                  <MoneyInput
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    disabled={congelado}
+                  />
+                )}
               />
-            )}
-          />
-          <div className="fe">{errors.precio_unitario?.message}</div>
+              <div className="fe">{errors.precio_unitario?.message}</div>
+            </div>
+          </div>
 
           <div className="sec">Facturación</div>
           <div className="fl">Dirección de facturación</div>
@@ -534,41 +553,6 @@ export function OrdenClienteForm({
           />
 
           <div className="sec">Equipo comercial y comisiones</div>
-          <div className="r2">
-            <div>
-              <div className="fl fl-required">Vendedor principal</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vpId}
-                onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
-              >
-                <option value="">Selecciona…</option>
-                {vendedores.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-              <div className="fe">{errors.vendedor_principal_id?.message}</div>
-            </div>
-            <div>
-              <div className="fl">Vendedor secundario</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vsId}
-                onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
-              >
-                <option value="">Sin vendedor secundario</option>
-                {vendedores.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
 
           {congelado && (
             <div
@@ -588,18 +572,60 @@ export function OrdenClienteForm({
             </div>
           )}
 
-          <SensitiveField
-            label="% comisión vendedor principal"
-            register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
-            error={errors.porcentaje_comision_vendedor_principal_snap?.message}
-            badge={badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
-          />
-          <SensitiveField
-            label="% comisión vendedor secundario"
-            register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
-            error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
-            badge={vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
-          />
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Vendedor principal</div>
+              <select
+                className="fsel"
+                disabled={congelado}
+                value={vpId}
+                onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
+              >
+                <option value="">Selecciona…</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.nombre_vendedor}
+                  </option>
+                ))}
+              </select>
+              <div className="fe">{errors.vendedor_principal_id?.message}</div>
+            </div>
+            <div>
+              <SensitiveField
+                label="% comisión vendedor principal"
+                register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
+                error={errors.porcentaje_comision_vendedor_principal_snap?.message}
+                badge={badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
+              />
+            </div>
+          </div>
+          <div className="r2">
+            <div>
+              <div className="fl">Vendedor secundario</div>
+              <select
+                className="fsel"
+                disabled={congelado}
+                value={vsId}
+                onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
+              >
+                <option value="">Sin vendedor secundario</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.nombre_vendedor}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <SensitiveField
+                label="% comisión vendedor secundario"
+                register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
+                error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
+                badge={vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
+              />
+            </div>
+          </div>
+
           <SensitiveField
             label="% comisión agencia"
             register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones })}
