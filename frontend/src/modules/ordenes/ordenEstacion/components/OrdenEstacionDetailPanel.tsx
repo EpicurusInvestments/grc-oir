@@ -3,6 +3,11 @@
  * de `precio_spot` contra la tarifa de referencia vigente.
  */
 
+import { useState } from "react";
+
+import { ApiRequestError } from "@/shared/lib/apiClient";
+
+import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../adapters/pdfsApi";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { IVA_RATE } from "../../constants";
 import { diaDeSemana, fmtMonto, fmtPct, oGuion } from "../../format";
@@ -194,9 +199,17 @@ export function OrdenEstacionDetailPanel({
             ))}
           </>
         )}
+
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, marginRight: "auto", flexWrap: "wrap" }}>
+          <BotonPdf oe={oe} tipo="servicio" etiqueta="PDF #1 · Orden de servicio" />
+          {oe.estatus !== "asignada_afiliado" && (
+            <BotonPdf oe={oe} tipo="programados" etiqueta="PDF #2 · Programados" />
+          )}
+          {oe.estatus === "reales_conciliados" && <BotonPdf oe={oe} tipo="reales" etiqueta="PDF #3 · Reales" />}
+        </div>
         {oe.estatus === "asignada_afiliado" && (
           <button type="button" className="btn btn-sm btn-teal" onClick={onCapturarProgramados}>
             → Capturar programados (2.2)
@@ -214,6 +227,30 @@ export function OrdenEstacionDetailPanel({
         )}
       </div>
     </>
+  );
+}
+
+/** Botón que abre el visor del PDF (pestaña nueva, PDF incrustado + barra de
+ * imprimir/guardar) — generado al vuelo por el backend con los datos más recientes,
+ * no es un archivo guardado. */
+function BotonPdf({ oe, tipo, etiqueta }: { oe: OrdenEstacion; tipo: TipoPdfOrdenEstacion; etiqueta: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <button
+        type="button"
+        className="btn btn-sm"
+        onClick={() => {
+          setError(null);
+          previsualizarPdfOrdenEstacion(oe.id, tipo, oe.folio_orden_interna).catch((e) =>
+            setError(e instanceof ApiRequestError ? e.message : "No se pudo abrir el PDF."),
+          );
+        }}
+      >
+        📄 {etiqueta}
+      </button>
+      {error && <div className="fe">{error}</div>}
+    </div>
   );
 }
 

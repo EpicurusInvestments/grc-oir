@@ -686,6 +686,23 @@ archivo). Un endpoint genérico para los 5 campos de documento
   través del backend (bucket privado, nunca URL pública). **404** si `ref` no empieza con
   uno de los prefijos de Órdenes (guardarraíl: no sirve para leer `contratos/...`).
 
+**PDFs de Orden interna (ADR-043)** — 3 documentos generados AL VUELO (no se guarda
+ningún archivo; cada descarga refleja el estado más reciente), sin spec previa:
+- **`GET /ordenes/estaciones/{id}/pdf/servicio`** (`ordenes:leer`) — "Orden de
+  servicio": tarifa, periodo asignado (2.1), importe/IVA/total. Siempre disponible desde
+  que la OE existe.
+- **`GET /ordenes/estaciones/{id}/pdf/programados`** (`ordenes:leer`) — "Horarios
+  programados": pedidos vs. confirmados por día (2.2). **400** (`error_dominio`) si la OE
+  sigue en `asignada` (2.2 no capturado).
+- **`GET /ordenes/estaciones/{id}/pdf/reales`** (`ordenes:leer`) — "Horarios reales de
+  transmisión": lo verificado por día (2.3). **400** (`error_dominio`) si la OE no llegó
+  a `cerrada` (2.3 no capturado).
+
+Los 3 devuelven `application/pdf`. El nombre de empresa/domicilio del encabezado y pie
+sale de `EmpresaFacturadora` (vía `OrdenCliente.empresa_facturadora_id`), no es un texto
+fijo. El encabezado incluye los logos de OIR y Grupo Radio Centro, leídos de
+`backend/app/assets/logos/` (sustituibles sin tocar código — ver ADR-044).
+
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo
 "Órdenes" en la matriz, así que un permiso `editar` la dejaría fuera por completo. La

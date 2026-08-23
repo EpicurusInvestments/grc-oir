@@ -58,6 +58,18 @@ una vez por lote, no por día).
 `OrdenCliente` (confirmado en la spec): cada OE cierra por su cuenta; `OrdenCliente`
 pasa a `orden_cerrada` cuando TODAS sus OE están `cerrada` (se valida en el servicio).
 
+**PDFs de Orden interna (ADR-043/044, sin spec previa — nueva funcionalidad):** 3 PDFs
+previsualizables desde el detalle de "Órdenes internas" — "Orden de servicio" (2.1),
+"Horarios programados" (2.2) y "Horarios reales de transmisión" (2.3) —, generados AL
+VUELO (`GET /ordenes/estaciones/{id}/pdf/servicio|programados|reales`, sin guardar
+archivo) con `reportlab`. El de servicio siempre está disponible; los de
+programados/reales devuelven 400 si la OE no llegó todavía a esa etapa. El nombre de
+empresa/domicilio que aparece en cada PDF sale de `EmpresaFacturadora` (catálogo F0), no
+de un texto fijo. Encabezado con logos de OIR y Grupo Radio Centro (`app/assets/logos/`
+— sustituibles sin tocar código, ver README ahí). En el frontend, los 3 botones viven en
+la barra de acciones del footer (NO en una sección "Documentos") y abren un visor de PDF
+en una pestaña nueva con barra de imprimir/guardar, en vez de forzar la descarga.
+
 ### Verificacion (spec, 10 campos)
 PK `verificacion_id`. FK **adaptada** a `orden_estacion_dia_id` (la spec la ancla a
 `orden_estacion_id`; se ancla al día porque la propia spec autoriza esa granularidad —
