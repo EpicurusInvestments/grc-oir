@@ -158,6 +158,11 @@ export interface VerificacionDerivada {
   totalProgramado: number;
   totalReal: number;
   reconciliada: true;
+  /** `updated_at` (o `created_at` si no hay) de la OI de origen — no es la "Fecha" que se
+   * muestra (esa es `fechaInicio`, de transmisión), es el momento en que la OI llegó a
+   * 2.3/reales_conciliados; sirve para ordenar la lista de más reciente a más antigua por
+   * cuándo se dio de alta la verificación, no por cuándo se transmitió. */
+  actualizadaEn: string;
 }
 
 /** Badge de estado raíz (1–5) o "cancel" para `cancelada`. */

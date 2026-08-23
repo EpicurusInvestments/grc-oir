@@ -304,6 +304,14 @@ describe("Verificaciones derivadas — 1.9", () => {
     expect(dia2?.diferenciaSpots).toBe(0);
   });
 
+  it("fix (orden más reciente primero): `actualizadaEn` toma `updated_at`, y cae a `created_at` si no hay `updated_at`", () => {
+    const conUpdated = verificacionDerivada(makeOE({ estatus: "reales_conciliados", created_at: "2025-01-01", updated_at: "2025-06-15" }));
+    expect(conUpdated.actualizadaEn).toBe("2025-06-15");
+
+    const sinUpdated = verificacionDerivada(makeOE({ estatus: "reales_conciliados", created_at: "2025-01-01", updated_at: null }));
+    expect(sinUpdated.actualizadaEn).toBe("2025-01-01");
+  });
+
   it("una OI en 2.1 o 2.2 no aparece en la lista, aunque se le pida directamente su proyección individual (documenta que la función no valida el estatus por sí sola)", () => {
     const oe21 = makeOE({ estatus: "asignada_afiliado" });
     expect(verificacionesDerivadas([oe21])).toHaveLength(0);
