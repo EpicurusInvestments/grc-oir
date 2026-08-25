@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     app_env: str = "development"
     secret_key: str = SECRET_KEY_INSEGURA
     iva_rate: float = 0.16
+
+    # ── Timbrado (PAC) ──────────────────────────────────────────────────────────
+    # Codificación del archivo plano del PAC. Los layouts de los PAC mexicanos suelen
+    # ser CP1252/Latin-1; el ejemplo de referencia llegó ya corrupto en sus acentos, así
+    # que el valor real está PENDIENTE de confirmar con el proveedor. Se deja como
+    # variable para poder cambiarlo sin tocar código.
+    timbrado_encoding: str = "cp1252"
     # ── Importación masiva CSV (F0-05) ───────────────────────────────────────────
     # Límites del archivo de carga masiva de constantes. Configurables por entorno; si algún
     # día se necesita cargar un catálogo SAT completo (p.ej. c_ClaveProdServ ~52k filas) se

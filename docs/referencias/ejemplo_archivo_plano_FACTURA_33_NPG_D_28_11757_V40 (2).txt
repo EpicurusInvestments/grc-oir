@@ -1,0 +1,225 @@
+XXXINICIO
+================ IdDoc
+NumeroInterno    11757
+NroAprob         000000
+AnoAprob         2021
+Tipo             33
+Serie            D
+Folio            11757
+Estado           ORIGINAL
+FechaEmis        2026-06-04 15:06:48
+FormaPago        PPD
+MedioPago        
+CondPago         
+TermPagoCdg      1
+TermPagoDias     
+FechaVenc        2026-06-04 15:06:48
+Exportacion      01
+================ ExEmisor
+RFCEmisor        RPX200812C8A
+NmbEmisor        RADIO PUBLICIDAD XHMEXICO
+CdgGLNEmisor     0000000000000
+TpoCdgIntEmisor1 
+CdgIntEmisor1    
+TpoCdgIntEmisor2 
+CdgIntEmisor2    
+CdgSucursal      
+Sucursal         
+CdgVendedor	     
+================ ExEmisorDomFiscal
+Calle            AV. CONSTITUYENTES 
+NroExterior      1154
+NroInterior      PISO 10
+Colonia          COL. LOMAS ALTAS
+Localidad        CIUDAD DE MEXICO
+Referencia       ENTRE CALLE: AV. PASEO DE LA REFORMA Y CALLE: AV. PASEO LOMAS ALTAS
+Municipio        ALCALDIA MIGUEL HIDALGO
+Estado           CDMX
+Pais             MEX
+CodigoPostal     11950
+GLN              0000000000000
+================ ExEmisorLugarExped
+Calle            AV. CONSTITUYENTES 
+NroExterior      1154
+NroInterior      PISO 10
+Colonia          COL. LOMAS ALTAS
+Localidad        CIUDAD DE MEXICO
+Referencia       ENTRE CALLE: AV. PASEO DE LA REFORMA Y CALLE: AV. PASEO LOMAS ALTAS
+Municipio        ALCALDIA MIGUEL HIDALGO
+Estado           CDMX
+Pais             MEX
+CodigoPostal     11950
+GLN              00000000000000
+================ ExReceptor
+RFCRecep         TME16062728A
+NmbRecep         TULOTERO MEXICO
+RegimenFiscal    601
+CdgGLNRecep      
+TpoCdgIntRecep1  
+CdgIntRecep1     
+CdgSucursal      
+Sucursal         
+Contacto         
+================ ExReceptorDomFiscal
+Calle            IGNACIO RAMIREZ
+NroExterior      20
+NroInterior      101 A
+Colonia          TABACALERA
+Localidad        CIUDAD DE MEXICO
+Referencia       
+Municipio        CUAUHTEMOC
+Estado           CIUDAD DE MEXICO
+Pais             MEXICO
+CodigoPostal     06030
+GLN		      	
+================ ExReceptorLugarRecep
+Calle            
+NroExterior      
+NroInterior      
+Colonia          
+Localidad        
+Referencia       
+Municipio        
+Estado           
+Pais             
+CodigoPostal     
+GLN			     
+
+
+================ Detalle
+                    CONCEPTO                     CANT      U.MED          COSTO         IMPORTE                   ClaveProdServ  ClaveUnidad    Impuesto2      TipoFact2      TasaOCuot2     Importe2       BaseImp2       ObjetoImp      RfcCuentaTerceros         NombreACuentaterceros            RegFisACuentaTerc       DomFisCuentaTer               
+( MENCI�N TULOTERO )                               1        E48            101209.10      101209.10               82101601       E48            002            Tasa           0.160000       16193.46       101209.10      02                                                                                                                              
+
+XXXFINDETA
+================ Totales
+Moneda           MXN
+FctConv          1
+Indlista         
+TipoLista        
+SubTotal         101209.10
+MntDcto          
+PctDcto          
+MntRcgo          
+PctRcgo          
+MntBase          101209.10
+MntImp           16193.46
+MntRet           
+VlrPagar         117402.56
+VlrPalabras      ( CIENTO DIECISIETE MIL CUATROCIENTOS DOS PESOS  56/100 M.N. )
+
+================ ExImpuestos
+TipoImp1         
+TasaImp1         
+MontoImp1        
+TipoImp2         002
+TasaImp2         0.160000
+MontoImp2        16193.46
+TipoFact1        
+TipoFact2        Tasa
+Baseiva1         101209.10
+Baseiva2         
+================ ExRetenciones
+TipoRet1         
+TasaRet1         
+MontoRet1        
+TipoRet2         
+TasaRet2         
+MontoRet2		  
+TipoFact1        
+TipoFact2        
+================ DscRcgGlobal
+TpoMov1          
+CodigoDR1        
+GlosaDR1         
+TpoValor1        0.00
+ValorDR1         0.00
+TpoMov2          
+CodigoDR2        
+GlosaDR2         
+TpoValor2        
+ValorDR2			  
+================ Addendas
+IdAreaOld        
+IdArea           
+IdRevision       
+Banderas         
+ReceiverIDs      
+SenderIDGeneric  
+SenderID         
+SenderIDCorvi    
+EmisorRI         
+Addendas1        
+Addendas2        
+Addendas3        
+Addendas4        
+Addendas5        
+Addendas6        
+================ Personalizados
+Conducto         
+Campa�a          ( MENCI�N TULOTERO )
+Solicitud        298231
+TipoMovimiento   FE
+TipoFactura      NN
+PeriodoTrans     14/04/2026  Al  30/04/2026
+Descripcion1     MENCIONES 40" Y HONORARIOS  PAUTAS PUBLICITARIAS EN RADIO DEL DEL 14 AL 30 DE ABRIL 2026  EN LAS EMI
+Descripcion2     SORAS ALFA 91.3 FM Y JOYA 93.7 FM
+Descripcion3     
+Descripcion4     
+Descripcion5     
+DomConducto      
+ColConducto      
+EdoConducto      
+DelConducto      
+CpConducto       
+Convenio         
+Orden            ABRIL  2026
+Email            
+TelEmisor        57284800
+PorcAgencia      
+ImpAgencia       
+================ ContactoEmisor
+Tipo1            
+Nombre1          
+Descripcion1     
+eMail1           
+Telefono1        
+Extension1       
+Fax1             
+Tipo2            
+Nombre2          
+Descripcion2     
+eMail2           
+Telefono2        
+Extension2       
+Fax2             
+================ ContactoReceptor
+Tipo1            
+Nombre1          
+Descripcion1     
+eMail1           
+Telefono1        
+Extension1       
+Fax1			     
+================ AGREGADOS
+Regimen            601
+MedioPago          99
+NumCtaPago         NO IDENTIFICADO
+LugarExpedicion    11950
+Confirmacion       
+Residencia Fiscal  
+NumRegIDTrib       
+UsoCFDI      G03
+================ Documentos Relacionados
+TipoRelacion     UUID                                
+04               71c9ab6e-0018-4010-9f6f-5b1c80aa8540
+
+xxxFinRelaciones
+================ FINAGREGADOS
+
+================ Referencia
+
+XXXFINDO
+
+
+
+

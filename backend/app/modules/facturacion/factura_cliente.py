@@ -31,6 +31,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     Unicode,
+    Uuid,
     func,
     select,
     text,
@@ -41,7 +42,7 @@ from app.core.config import settings
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
 from app.core.errors import ConflictError, DomainError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
-from app.integrations.timbrado import get_timbrado_export
+from app.integrations.timbrado import DatosTimbrado, get_timbrado_export
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
@@ -133,10 +134,12 @@ class FacturaCliente(Base):
     referencia_adicional: Mapped[str | None] = mapped_column(Unicode(150), default=None)
 
     orden_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("orden_cliente.orden_id", name="fk_factura_cliente_orden", ondelete="NO ACTION")
     )
     # Self-FK (spec): nota de crédito / complemento de una factura previa.
     factura_relacionada_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
         ForeignKey(
             "factura_cliente.factura_id",
             name="fk_factura_cliente_relacionada",
@@ -147,6 +150,7 @@ class FacturaCliente(Base):
 
     # Heredados de la OrdenCliente al preparar (spec: origen "Derivado").
     empresa_facturadora_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "empresa_facturadora.empresa_facturadora_id",
             name="fk_factura_cliente_empresa",
@@ -154,11 +158,13 @@ class FacturaCliente(Base):
         )
     )
     anunciante_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "anunciante.anunciante_id", name="fk_factura_cliente_anunciante", ondelete="NO ACTION"
         )
     )
     agencia_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
         ForeignKey("agencia.agencia_id", name="fk_factura_cliente_agencia", ondelete="NO ACTION"),
         default=None,
     )
@@ -181,6 +187,7 @@ class FacturaCliente(Base):
     total_factura: Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
     cuenta_contable_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "cuenta_contable.cuenta_contable_id",
             name="fk_factura_cliente_cuenta",
@@ -205,6 +212,7 @@ class FacturaCliente(Base):
     pdf_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("usuario.usuario_id", name="fk_factura_cliente_created_by", ondelete="NO ACTION")
     )
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
@@ -517,17 +525,101 @@ class FacturaClienteService(
             )
         return True
 
-    def archivo_plano(self, factura_id: uuid.UUID) -> tuple[bytes, str]:
-        """Exporta la factura vía el PUERTO de timbrado (contenido, nombre de archivo).
+    def _constante_unica(self, grupo: str) -> str | None:
+        """Clave del grupo de `ConstantesSistema` **solo si hay exactamente una activa**.
 
-        OJO: el adaptador de hoy es un PLACEHOLDER — el formato real del PAC sigue sin
-        especificarse. Ver `app/integrations/timbrado/adapter_placeholder.py`.
+        Con varias, elegir cuál es una decision FISCAL que nadie ha tomado (que UsoCFDI?
+        que ClaveProdServ?), y adivinarla produciria un CFDI que timbra pero esta mal.
+        Con cero, sencillamente no hay dato. En ambos casos se devuelve `None` y el campo
+        acaba reportado como faltante.
+        """
+        from app.modules.catalogos.constantes_sistema import ConstanteSistema
+
+        claves = list(
+            self._repo.db.scalars(
+                select(ConstanteSistema.clave).where(
+                    ConstanteSistema.grupo == grupo,
+                    ConstanteSistema.activo == True,  # noqa: E712 - BIT en SQL Server (ADR-014)
+                )
+            ).all()
+        )
+        return claves[0] if len(claves) == 1 else None
+
+    def _datos_timbrado(self, obj: FacturaCliente) -> DatosTimbrado:
+        """Resuelve TODO lo que el layout necesita. La integracion no consulta la base."""
+        from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+
+        db = self._repo.db
+        emisor = db.get(EmpresaFacturadora, obj.empresa_facturadora_id)
+        orden = db.get(OrdenCliente, obj.orden_id)
+
+        # Folio fiscal de la factura sustituida (self-FK): al PAC va el UUID del CFDI
+        # previo, no nuestro identificador interno.
+        folio_relacionado = None
+        if obj.factura_relacionada_id is not None:
+            previa = db.get(FacturaCliente, obj.factura_relacionada_id)
+            folio_relacionado = previa.folio_fiscal_sat if previa else None
+
+        return DatosTimbrado(
+            numero_factura=obj.numero_factura,
+            # El layout pide fecha Y hora; el modelo guarda solo la fecha de emision, asi
+            # que se combina con la hora de creacion del registro.
+            fecha_emision=datetime.combine(obj.fecha_factura, obj.created_at.time()),
+            fecha_factura=obj.fecha_factura,
+            periodo_inicio=obj.fecha_inicio_transmision,
+            periodo_fin=obj.fecha_fin_transmision,
+            descripcion=obj.descripcion_factura,
+            observaciones=obj.observaciones_factura,
+            subtotal=Decimal(obj.subtotal_factura),
+            iva=Decimal(obj.iva_factura),
+            total=Decimal(obj.total_factura),
+            tasa_iva=IVA_RATE,
+            emisor_nombre=emisor.nombre_empresa if emisor else "",
+            emisor_rfc=emisor.rfc_empresa if emisor else "",
+            emisor_direccion=emisor.direccion_empresa if emisor else None,
+            receptor_nombre=obj.razon_social_facturacion,
+            receptor_rfc=obj.rfc_facturacion,
+            receptor_direccion=obj.direccion_facturacion,
+            orden_folio=orden.folio_orden if orden else None,
+            orden_numero_cliente=orden.numero_orden_cliente if orden else None,
+            orden_producto=orden.producto if orden else None,
+            porcentaje_comision_agencia=(
+                Decimal(orden.porcentaje_comision_agencia_snap)
+                if orden and orden.porcentaje_comision_agencia_snap is not None
+                else None
+            ),
+            info_cuenta_pago=obj.info_cuenta_pago,
+            metodo_pago_clave=obj.metodo_pago_clave,
+            folio_fiscal_relacionado=folio_relacionado,
+            # Constantes fiscales: solo si el catalogo no deja lugar a dudas.
+            serie=self._constante_unica("Serie"),
+            regimen_fiscal_emisor=self._constante_unica("RegimenFiscal"),
+            regimen_fiscal_receptor=self._constante_unica("RegimenFiscal"),
+            uso_cfdi=self._constante_unica("UsoCFDI"),
+            clave_prod_serv=self._constante_unica("ClaveProdServ"),
+            clave_unidad=self._constante_unica("ClaveUnidad"),
+            forma_pago_clave=self._constante_unica("FormaPago"),
+        )
+
+    def archivo_plano(self, factura_id: uuid.UUID) -> tuple[bytes, str, list[str]]:
+        """Exporta la factura al layout del PAC via el PUERTO.
+
+        Devuelve `(contenido, nombre_archivo, campos_faltantes)`. El archivo se genera
+        AUNQUE falten campos -para poder revisarlo- pero con campos faltantes el PAC lo
+        rechazaria: quien lo descarga tiene que enterarse, y por eso la lista viaja de
+        vuelta hasta la pantalla.
         """
         obj = self._get_or_404(factura_id)
         if obj.estado_facturacion == EstadoFacturacion.CANCELADA.value:
             raise ConflictError("Una factura cancelada no se exporta a timbrado.")
         exportador = get_timbrado_export()
-        return exportador.exportar(obj), exportador.nombre_archivo(obj)
+        datos = self._datos_timbrado(obj)
+        return (
+            exportador.exportar(datos),
+            exportador.nombre_archivo(datos),
+            exportador.campos_faltantes(datos),
+        )
 
     def enviar_a_timbrado(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
         obj = self._get_or_404(factura_id)
@@ -693,17 +785,25 @@ def descargar_archivo_plano(
     usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
     svc: FacturaClienteService = Depends(get_factura_cliente_service),
 ) -> Response:
-    """Exporta la factura al formato del timbrador externo.
+    """Exporta la factura al layout real del PAC (V40).
 
-    **ADVERTENCIA:** el adaptador actual es un PLACEHOLDER — el layout real del PAC sigue
-    sin especificarse y el archivo lleva esa marca en su primera línea. No enviarlo a un
-    PAC real.
+    Devuelve además la cabecera `X-Campos-Faltantes` con los campos que el PAC exige y que
+    el modelo todavía no puede llenar (régimen fiscal, ClaveProdServ, UsoCFDI, domicilios
+    desglosados…). Si viene vacía, el archivo está completo.
     """
-    contenido, nombre = svc.archivo_plano(item_id)
+    contenido, nombre, faltantes = svc.archivo_plano(item_id)
+    cabeceras = {
+        "Content-Disposition": f'attachment; filename="{nombre}"',
+        # La pantalla lee esta cabecera para advertir ANTES de que alguien envíe el
+        # archivo. `Access-Control-Expose-Headers` es indispensable: sin ella el navegador
+        # no deja que el frontend vea cabeceras propias en una respuesta con CORS.
+        "X-Campos-Faltantes": "; ".join(faltantes),
+        "Access-Control-Expose-Headers": "Content-Disposition, X-Campos-Faltantes",
+    }
     return Response(
         content=contenido,
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+        media_type=f"text/plain; charset={settings.timbrado_encoding}",
+        headers=cabeceras,
     )
 
 

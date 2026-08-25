@@ -222,6 +222,25 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     igual que el canal de comisiones de F1. Lo encontró una prueba parametrizada.
   - **XML agregado a la lista blanca de adjuntos** (capa de integración compartida), sin
     ampliar en silencio lo que acepta F1: las listas por módulo ahora son explícitas.
+- **Tanda 5 (layout real del PAC) — COMPLETA.** Llegó el ejemplo de producción del
+  archivo plano y se implementó el adaptador real (**ADR-048**), eliminando el placeholder.
+  - Estructura MEDIDA sobre el archivo: 20 secciones, CRLF, valor en la columna 17 (19 en
+    `AGREGADOS`), detalle posicional de 17 columnas. Una prueba **regenera la fila de
+    detalle del ejemplo byte a byte**; otra compara las 20 secciones y sus campos. Con una
+    sola muestra, esa es la única evidencia dura de que el layout está bien.
+  - Lo que el modelo no puede llenar se emite VACÍO y se reporta en la cabecera
+    `X-Campos-Faltantes`, que la pantalla pinta como advertencia al descargar. **No se
+    inventan valores fiscales**: un `ClaveProdServ` equivocado produce un CFDI que timbra
+    y está mal, peor que uno que no timbra.
+  - **Hallazgo (ADR-049):** al generar el primer archivo contra la base REAL, el export
+    reventó — 16 columnas FK de F2 habían quedado en `NullType` porque una `ForeignKey`
+    sin tipo explícito hereda el tipo de la columna referida, y esa tabla aún no estaba
+    importada. Devolvían `str` en vez de `uuid.UUID`. **Las pruebas no lo veían** porque
+    escriben y leen en la misma sesión, sin pasar por la base. Corregido con tipo explícito
+    en las 16 y una prueba que falla si alguna columna queda sin tipo.
+  - Verificado: **376/376 pytest** (11 nuevas del layout), archivo real generado desde la
+    demo (5 407 bytes, 9 campos faltantes listados).
+
 - **Tanda 4 (reversión del handoff al cancelar) — COMPLETA.** Decisión de negocio del
   equipo, documentada en **ADR-047**. Cancelar una factura devuelve la `OrdenCliente` de
   `facturada` a `orden_cerrada`, y el 1:1 pasa de `UNIQUE` a **índice único FILTRADO**
@@ -302,9 +321,19 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 
 ## Pendientes / dudas
 
-- **Formato real del archivo plano del PAC** — el adaptador de la Tanda 2 es un
-  placeholder explícitamente marcado como borrador. Crítico antes de producción, no antes
-  de seguir desarrollando.
+- ~~Formato real del archivo plano del PAC~~ **RESUELTO** en la Tanda 5 (ADR-048): el
+  layout V40 está implementado y verificado contra el ejemplo de producción. Lo que sigue
+  abierto es OTRA cosa, ver los dos puntos siguientes.
+- **Codificación del archivo plano.** Se asume CP1252 (`TIMBRADO_ENCODING`), pero el
+  ejemplo llegó con sus acentos ya corruptos, así que no se pudo deducir del archivo.
+  **Confirmar con el PAC antes de producción.**
+- **Campos fiscales que el modelo no captura y el PAC exige.** El archivo se genera pero
+  saldría rechazado hasta que existan: régimen fiscal del emisor y del receptor,
+  `ClaveProdServ`, `ClaveUnidad`, `UsoCFDI`, serie, código postal de expedición, forma de
+  pago SAT y los domicilios DESGLOSADOS (hoy `EmpresaFacturadora.direccion_empresa` es
+  texto libre y el layout los pide campo por campo). Las que ya existen como catálogo se
+  resuelven solas en cuanto el grupo de `ConstantesSistema` tenga UNA constante activa;
+  el resto necesita columnas nuevas. La pantalla los lista al descargar.
 - **Catálogo `LayoutFactura` real**, si el negocio termina necesitando más de una
   plantilla (hoy `layout_factura` es texto libre).
 - **Deriva de índices en tablas de F0** (ver hallazgo colateral arriba): decidir si se

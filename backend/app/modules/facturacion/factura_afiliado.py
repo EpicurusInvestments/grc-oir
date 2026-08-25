@@ -34,6 +34,7 @@ from sqlalchemy import (
     Numeric,
     Unicode,
     UniqueConstraint,
+    Uuid,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -94,6 +95,7 @@ class FacturaAfiliado(Base):
 
     factura_afiliado_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     afiliado_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "afiliado.afiliado_id", name="fk_factura_afiliado_afiliado", ondelete="NO ACTION"
         )
@@ -117,6 +119,7 @@ class FacturaAfiliado(Base):
     )
 
     created_by: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "usuario.usuario_id", name="fk_factura_afiliado_created_by", ondelete="NO ACTION"
         )
@@ -146,6 +149,7 @@ class FacturaAfiliadoOrden(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     factura_afiliado_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "factura_afiliado.factura_afiliado_id",
             name="fk_factura_afiliado_orden_factura",
@@ -153,6 +157,7 @@ class FacturaAfiliadoOrden(Base):
         )
     )
     orden_estacion_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey(
             "orden_estacion.orden_estacion_id",
             name="fk_factura_afiliado_orden_oe",

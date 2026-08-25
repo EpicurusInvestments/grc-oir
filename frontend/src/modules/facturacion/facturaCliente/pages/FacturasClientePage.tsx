@@ -55,6 +55,7 @@ export function FacturasClientePage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [dialogoTimbrar, setDialogoTimbrar] = useState(false);
+  const [faltantes, setFaltantes] = useState<string[] | null>(null);
 
   const filtros = {
     page,
@@ -90,6 +91,18 @@ export function FacturasClientePage() {
     setErrorAccion(null);
     try {
       setSelected(await accion());
+    } catch (e) {
+      setErrorAccion(mensajeDeError(e));
+    }
+  };
+
+  const descargarArchivo = async (f: FacturaCliente) => {
+    setErrorAccion(null);
+    setFaltantes(null);
+    try {
+      // El backend genera el archivo aunque falten campos fiscales: sirve para revisarlo.
+      // Lo que NO puede pasar es que alguien lo mande al PAC sin saber que está incompleto.
+      setFaltantes(await facturaClienteApi.descargarArchivoPlano(f.factura_id, f.numero_factura));
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
     }
@@ -184,19 +197,26 @@ export function FacturasClientePage() {
               {errorAccion}
             </div>
           )}
+          {faltantes !== null &&
+            (faltantes.length === 0 ? (
+              <div className="state-msg" style={{ margin: 0, textAlign: "left" }}>
+                Archivo generado y completo.
+              </div>
+            ) : (
+              <div className="state-msg error" style={{ margin: 0, textAlign: "left" }}>
+                <strong>Archivo generado, pero INCOMPLETO.</strong> El PAC lo rechazaría:
+                faltan {faltantes.length} campos que el sistema todavía no captura (
+                {faltantes.join(", ")}).
+              </div>
+            ))}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() =>
-                facturaClienteApi.descargarArchivoPlano(
-                  selected.factura_id,
-                  selected.numero_factura,
-                )
-              }
-              title="Formato BORRADOR — el layout real del PAC está pendiente de especificación"
+              onClick={() => descargarArchivo(selected)}
+              title="Genera el archivo en el layout del PAC (V40)"
             >
-              <i className="pi pi-download" aria-hidden="true" /> Archivo plano (borrador)
+              <i className="pi pi-download" aria-hidden="true" /> Archivo plano
             </button>
             {puedeEnviar && (
               <button

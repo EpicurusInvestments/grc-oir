@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2, get_db
@@ -77,6 +77,7 @@ class CostoAdicional(Base):
     tipo_costo: Mapped[str] = mapped_column(Unicode(20))
     # NULL = costo general, no ligado a una venta (spec).
     orden_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
         ForeignKey("orden_cliente.orden_id", name="fk_costo_adicional_orden", ondelete="NO ACTION"),
         default=None,
     )
@@ -89,6 +90,7 @@ class CostoAdicional(Base):
     archivo_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("usuario.usuario_id", name="fk_costo_adicional_created_by", ondelete="NO ACTION")
     )
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)

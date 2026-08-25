@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2, fecha_sql, get_db
@@ -71,10 +71,12 @@ class FacturaAgencia(Base):
 
     factura_agencia_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     agencia_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("agencia.agencia_id", name="fk_factura_agencia_agencia", ondelete="NO ACTION")
     )
     # 1:N (a diferencia de FacturaCliente): SIN UniqueConstraint sobre orden_id.
     orden_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("orden_cliente.orden_id", name="fk_factura_agencia_orden", ondelete="NO ACTION")
     )
     folio_factura_agencia: Mapped[str | None] = mapped_column(Unicode(50), default=None)
@@ -101,6 +103,7 @@ class FacturaAgencia(Base):
     )
 
     created_by: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
         ForeignKey("usuario.usuario_id", name="fk_factura_agencia_created_by", ondelete="NO ACTION")
     )
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)

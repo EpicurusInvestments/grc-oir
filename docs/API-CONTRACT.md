@@ -786,9 +786,14 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 - **`PUT /facturacion/clientes/{id}`** (`facturacion:editar`) — edición de los campos
   capturables. **409** una vez `timbrada`: el contenido ya salió al SAT.
 - **`GET /facturacion/clientes/{id}/archivo-plano`** (`facturacion:leer`) — exporta la
-  factura al timbrador vía el puerto `TimbradoExportPort`. **El adaptador actual es un
-  PLACEHOLDER**: el layout real del PAC sigue `[[POR LLENAR]]` y el archivo lleva la
-  advertencia en su primera línea. No enviarlo a un PAC real.
+  factura al **layout real del PAC (V40)** vía el puerto `TimbradoExportPort`. Texto plano
+  con CRLF, codificado según `TIMBRADO_ENCODING` (hoy `cp1252`). **409** si la factura está
+  cancelada.
+
+  Devuelve la cabecera **`X-Campos-Faltantes`** (expuesta por CORS) con los campos que el
+  PAC exige y que el modelo todavía no captura, separados por `;`. Vacía = archivo
+  completo. Con contenido, el archivo se genera igual —para poder revisarlo— pero el PAC
+  lo rechazaría, y la pantalla lo advierte. Ver ADR-048 y la ficha del módulo.
 - **`POST /facturacion/clientes/{id}/enviar-a-timbrado`** (`facturacion:editar`).
 - **`POST /facturacion/clientes/{id}/timbrar`** (`facturacion:editar`) — body:
   `folio_fiscal_sat`, `fecha_timbrado`, y opcionalmente `xml_path`/`pdf_path` (claves de

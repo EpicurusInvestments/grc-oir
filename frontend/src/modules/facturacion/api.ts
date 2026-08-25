@@ -66,23 +66,43 @@ export const facturaClienteApi = {
     const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`);
     return data;
   },
-  /** Descarga el archivo para el timbrador. OJO: hoy es un BORRADOR, no el layout real. */
-  async descargarArchivoPlano(id: string, numeroFactura: string) {
-    const { data } = await apiClient.get(`${BASE}/clientes/${id}/archivo-plano`, {
+  /** Descarga el archivo plano del PAC (layout real V40).
+   *
+   * Devuelve los campos que el PAC exige y que el sistema todavía no puede llenar, para
+   * que la pantalla avise: el archivo se genera igual, pero incompleto el PAC lo
+   * rechazaría. Vienen en la cabecera `X-Campos-Faltantes`.
+   */
+  async descargarArchivoPlano(id: string, numeroFactura: string): Promise<string[]> {
+    const respuesta = await apiClient.get(`${BASE}/clientes/${id}/archivo-plano`, {
       responseType: "blob",
     });
+    const data = respuesta.data;
     // `<a download>` y no `window.open`: una blob URL no lleva nombre de archivo y el
     // navegador propondría uno genérico (mismo motivo que en los adjuntos de F1).
     const url = URL.createObjectURL(data as Blob);
     const enlace = document.createElement("a");
     enlace.href = url;
-    enlace.download = `BORRADOR_${numeroFactura}.txt`;
+    // El nombre lo decide el backend (lo arma con serie y folio); el `Content-Disposition`
+    // no se puede leer de una descarga por blob, así que se reconstruye con el mismo
+    // criterio y `numeroFactura` como respaldo.
+    enlace.download =
+      leerNombreDeContentDisposition(respuesta.headers) ?? `FACTURA_${numeroFactura}.txt`;
     document.body.appendChild(enlace);
     enlace.click();
     enlace.remove();
     URL.revokeObjectURL(url);
+
+    const faltantes = String(respuesta.headers["x-campos-faltantes"] ?? "").trim();
+    return faltantes ? faltantes.split(";").map((f) => f.trim()) : [];
   },
 };
+
+/** Extrae `filename="..."` de la cabecera, si el navegador la expone. */
+function leerNombreDeContentDisposition(cabeceras: unknown): string | null {
+  const valor = (cabeceras as Record<string, string> | undefined)?.["content-disposition"];
+  const m = valor?.match(/filename="([^"]+)"/);
+  return m ? m[1] : null;
+}
 
 // ── FacturaAfiliado ───────────────────────────────────────────────────────────
 export interface FiltrosFacturaAfiliado extends ListParams {

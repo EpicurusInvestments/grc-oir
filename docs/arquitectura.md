@@ -1271,4 +1271,70 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   SQLite no soporta sin `batch_alter_table`. **Esa ventana se cierra en cuanto la
   revisión se aplique a RDS.**
 
-[[Agregar aquí cada nueva decisión: ADR-048, ...]]
+### ADR-048 — Layout real del PAC (V40) reconstruido desde un ejemplo, no desde una spec
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 5).
+- **Contexto:** llegó por fin el formato del archivo plano del timbrador, pero como un
+  **ejemplo de producción** (`docs/referencias/ejemplo_archivo_plano_FACTURA_33_NPG_D_28_
+  11757_V40 (2).txt`), no como una especificación. Un ejemplo dice cómo se ve UN caso; no
+  dice qué campos son obligatorios, qué anchos tolera el parser ni en qué codificación va.
+- **Qué se midió (dato duro, verificable en el archivo):** `XXXINICIO` / `XXXFINDO` como
+  delimitadores, 20 secciones `================ Nombre`, `XXXFINDETA` cerrando el detalle,
+  `xxxFinRelaciones` cerrando los documentos relacionados, **CRLF** en todo el archivo, y
+  el valor arrancando en la **columna 17** (163 líneas) salvo en `AGREGADOS`, que usa la
+  **19** (6 líneas). El detalle es posicional, con 17 columnas de anchos fijos.
+- **La gramática real del separador:** el ejemplo tiene un campo llamado
+  `Residencia Fiscal` —con espacio DENTRO del nombre— y un `UsoCFDI` cuyo valor cae en la
+  columna 13 en vez de la 19. Ninguna de las dos cosas encaja con "clave hasta el primer
+  espacio" ni con "columna fija estricta", pero **ambas encajan con: clave, dos o más
+  espacios, valor**. Se emite en la columna canónica (17/19, la del generador del PAC) y
+  se asume que el parser tolera el resto.
+- **Decisión de verificación:** una prueba **regenera la fila de detalle del ejemplo byte a
+  byte** desde sus valores, y otra compara las 20 secciones y sus campos contra el archivo
+  de referencia. Con una sola muestra, esa comparación es la única evidencia dura de que
+  el layout está bien; si alguien toca los anchos, falla.
+- **Codificación — punto abierto:** el ejemplo llegó **ya corrupto**: contiene 3 veces
+  U+FFFD donde iban `Ó` y `ñ` («MENCI?N», «Campa?a»), señal de que el original no era UTF-8
+  y alguien lo convirtió mal. Se asume **CP1252** (lo habitual en los PAC mexicanos),
+  configurable con `TIMBRADO_ENCODING`. Si un carácter no cabe, el adaptador **falla con un
+  error claro** en vez de escribir basura: mejor no exportar que mandar un nombre fiscal
+  mutilado. **Confirmar con el proveedor antes de producción.**
+- **Lo que el modelo todavía no puede llenar** (régimen fiscal del emisor y del receptor,
+  ClaveProdServ, ClaveUnidad, UsoCFDI, serie, código postal de expedición, forma de pago
+  SAT y los domicilios desglosados) se emite **vacío** y se reporta en
+  `campos_faltantes()`, que viaja al frontend en la cabecera `X-Campos-Faltantes` y se
+  pinta como advertencia. **No se inventan valores plausibles:** un ClaveProdServ
+  equivocado produce un CFDI que timbra y está mal, que es peor que uno que no timbra.
+  Las constantes que sí existen como catálogo (`ConstantesSistema`) se resuelven **solo si
+  el grupo tiene UNA activa**: con varias, elegir es una decisión fiscal que nadie tomó.
+- **Consecuencias:** el adaptador placeholder se **eliminó** — mantener un generador falso
+  junto al real solo invita a exportar el equivocado. El formato queda cerrado en cuanto a
+  estructura; lo que falta para timbrar de verdad son **campos del modelo de datos**, no
+  del layout, y está listado en la ficha del módulo.
+
+### ADR-049 — Una FK sin tipo explícito puede quedarse en `NullType` y devolver `str`
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 5).
+- **Contexto:** al generar el primer archivo contra la base REAL (no la de pruebas), el
+  export reventó con `'str' object has no attribute 'hex'` al hacer
+  `db.get(EmpresaFacturadora, factura.empresa_facturadora_id)`. La columna estaba declarada
+  `Mapped[uuid.UUID]`, pero al inspeccionarla su tipo era **`NullType()`**: sin tipo, no hay
+  procesador de resultado, y el valor vuelve de la base como `str` hexadecimal en vez de
+  `uuid.UUID`.
+- **Causa:** cuando una columna lleva `ForeignKey(...)`, SQLAlchemy **toma el tipo de la
+  columna referida** en vez de la anotación. Si el módulo de esa tabla todavía no se
+  importó cuando se define la clase, la resolución queda pendiente y el tipo se queda en
+  `NullType`. F1 no lo sufre porque `orden_cliente.py` importa sus catálogos al inicio del
+  módulo; los de F2 se importan DENTRO de las funciones (para evitar ciclos), así que al
+  definir la clase las tablas referidas no existían todavía en el `MetaData`.
+- **Por qué las pruebas no lo vieron:** insertan y leen en la MISMA sesión, así que los
+  objetos salen del identity map con los `uuid.UUID` de Python que se les pasó — nunca
+  hacen el viaje de ida y vuelta por la base. El bug solo aparece al leer una fila que
+  escribió otro proceso, que es exactamente lo que hace producción.
+- **Decisión:** **tipo EXPLÍCITO en toda columna con `ForeignKey`** (`mapped_column(Uuid(),
+  ForeignKey(...))`), en las 16 FK de F2. Y una prueba que recorre las tablas del módulo y
+  falla si alguna columna quedó en `NullType`, para que no vuelva a colarse.
+- **Regla para módulos futuros:** es la misma familia que ADR-014, ADR-036 y ADR-045 —algo
+  que funciona bajo un supuesto implícito (aquí, el orden de importación) y se rompe en
+  silencio cuando ese supuesto cambia. Si una prueba solo escribe y lee en la misma sesión,
+  **no está probando la serialización**: hay que forzar al menos una lectura desde la base.
+
+[[Agregar aquí cada nueva decisión: ADR-050, ...]]

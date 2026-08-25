@@ -112,7 +112,7 @@ describe("FacturasClientePage", () => {
     renderCon({ ...base, estado_facturacion: "cancelada" });
     (await screen.findByText("A-1041")).click();
     await waitFor(() =>
-      expect(screen.getByText("Archivo plano (borrador)")).toBeInTheDocument(),
+      expect(screen.getByText(/Archivo plano/)).toBeInTheDocument(),
     );
     for (const accion of [
       "Enviar a timbrado",
@@ -124,10 +124,28 @@ describe("FacturasClientePage", () => {
     }
   });
 
-  it("el botón de exportación advierte que el formato es un borrador", async () => {
+  it("al exportar avisa si el archivo salió incompleto para el PAC", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.descargarArchivoPlano).mockResolvedValue([
+      "Detalle.ClaveProdServ",
+      "AGREGADOS.UsoCFDI",
+    ]);
     renderCon(base);
     (await screen.findByText("A-1041")).click();
-    const boton = await screen.findByTitle(/BORRADOR/i);
-    expect(boton).toBeInTheDocument();
+    (await screen.findByText(/Archivo plano/)).click();
+
+    // El aviso es explícito: un archivo incompleto que se envíe al PAC será rechazado.
+    expect(await screen.findByText(/INCOMPLETO/)).toBeInTheDocument();
+    expect(screen.getByText(/Detalle.ClaveProdServ/)).toBeInTheDocument();
+  });
+
+  it("si el archivo está completo lo dice, sin alarmar", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.descargarArchivoPlano).mockResolvedValue([]);
+    renderCon(base);
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText(/Archivo plano/)).click();
+
+    expect(await screen.findByText(/Archivo generado y completo/)).toBeInTheDocument();
   });
 });

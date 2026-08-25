@@ -22,8 +22,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.db import Base, get_db
 from app.core.errors import register_error_handlers
-from app.integrations.timbrado import get_timbrado_export
-from app.integrations.timbrado.adapter_placeholder import ADVERTENCIA
 from app.modules.catalogos.afiliado import Afiliado
 from app.modules.catalogos.agencia import Agencia
 from app.modules.catalogos.anunciante import Anunciante
@@ -414,47 +412,50 @@ def test_no_se_edita_una_factura_timbrada(
     assert r.status_code == 409
 
 
-# ── Puerto de exportación (placeholder) ───────────────────────────────────────
-def test_archivo_plano_lleva_la_advertencia_de_borrador(
+# ── Exportación al PAC (layout real V40) ──────────────────────────────────────
+def test_el_archivo_plano_sale_en_el_layout_del_pac(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Si alguien escribe el adaptador real reutilizando el placeholder, esto falla."""
+    """El endpoint entrega el layout real. Los detalles del formato se prueban aparte, en
+    `test_f2_03_timbrado_pac_v40.py` (incluida la fila regenerada byte a byte)."""
     factura_id, _ = _crear_factura(client, db, cat)
     r = client.get(
         f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
     assert r.status_code == 200
-    texto = r.text
-    assert texto.splitlines()[0] == ADVERTENCIA
-    assert "NUMERO_FACTURA|F-0001" in texto
-    assert "TOTAL|11600.00" in texto
-    assert 'filename="BORRADOR_F-0001.txt"' in r.headers["content-disposition"]
+    texto = r.content.decode("cp1252")
+    assert texto.startswith("XXXINICIO\r\n")
+    assert "XXXFINDO" in texto
+    assert "RFCRecep         AGU900101AB1" in texto  # receptor = agencia de la OC
+    assert "VlrPagar         11600.00" in texto
+    assert 'filename="FACTURA_33_SN_F-0001.txt"' in r.headers["content-disposition"]
 
 
-def test_el_exportador_es_determinista(db: Session, cat: dict[str, uuid.UUID]) -> None:
-    orden_id = _orden(db, cat, "orden_cerrada", "OC-DET")
-    factura = FacturaCliente(
-        factura_id=uuid.uuid4(),
-        numero_factura="F-DET",
-        orden_id=orden_id,
-        empresa_facturadora_id=cat["empresa_id"],
-        anunciante_id=cat["anunciante_id"],
-        razon_social_facturacion="X",
-        rfc_facturacion="ANU900101AB1",
-        descripcion_factura="D",
-        fecha_inicio_transmision=date(2026, 2, 1),
-        fecha_fin_transmision=date(2026, 2, 28),
-        fecha_factura=date(2026, 3, 1),
-        subtotal_factura=Decimal("100.00"),
-        iva_factura=Decimal("16.00"),
-        total_factura=Decimal("116.00"),
-        cuenta_contable_id=cat["cuenta_id"],
-        metodo_pago_clave="PUE",
-        created_by=ADMIN_ID,
+def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Sin constantes fiscales en el catálogo el archivo sale, pero incompleto: la
+    cabecera lo dice para que nadie lo mande al PAC creyéndolo listo."""
+    factura_id, _ = _crear_factura(client, db, cat)
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
-    exportador = get_timbrado_export()
-    assert exportador.exportar(factura) == exportador.exportar(factura)
-    assert exportador.nombre_formato == "borrador-v0"
+    faltantes = r.headers["x-campos-faltantes"]
+    assert "Detalle.ClaveProdServ" in faltantes
+    assert "AGREGADOS.UsoCFDI" in faltantes
+    # La cabecera debe ser visible para el navegador, o la pantalla no podría avisar.
+    assert "X-Campos-Faltantes" in r.headers["access-control-expose-headers"]
+
+
+def test_una_factura_cancelada_no_se_exporta(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_factura(client, db, cat)
+    client.post(f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion"))
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 409
 
 
 # ── Facturas de proveedor: autorización de Dirección/Admin ────────────────────

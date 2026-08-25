@@ -1,24 +1,37 @@
 """Integración con el timbrador externo (PAC).
 
 Un solo punto de selección del adaptador, igual que `get_almacenamiento()` en la
-integración de almacenamiento. HOY solo existe el placeholder (el formato real del PAC
-sigue [[POR LLENAR]]); cuando llegue la especificación se agrega el adaptador real y se
-elige aquí por configuración, sin tocar nada del dominio.
+integración de almacenamiento.
+
+Desde que llegó el layout real (`docs/referencias/ejemplo_archivo_plano_*.txt`) existe un
+único adaptador: `TimbradoExportPacV40`. El placeholder que se usó mientras el formato
+estaba `[[POR LLENAR]]` se ELIMINÓ en vez de conservarse — mantener un generador falso
+junto al real solo invita a exportar el equivocado.
 """
 
 from __future__ import annotations
 
-from app.integrations.timbrado.adapter_placeholder import TimbradoExportPlaceholder
-from app.integrations.timbrado.port import TimbradoExportPort
+from app.core.config import settings
+from app.integrations.timbrado.adapter_pac_v40 import (
+    ErrorCodificacionTimbrado,
+    TimbradoExportPacV40,
+)
+from app.integrations.timbrado.port import DatosTimbrado, TimbradoExportPort
 
-__all__ = ["TimbradoExportPlaceholder", "TimbradoExportPort", "get_timbrado_export"]
+__all__ = [
+    "DatosTimbrado",
+    "ErrorCodificacionTimbrado",
+    "TimbradoExportPacV40",
+    "TimbradoExportPort",
+    "get_timbrado_export",
+]
 
 
 def get_timbrado_export() -> TimbradoExportPort:
     """Devuelve el adaptador de exportación configurado.
 
-    Sin `if` por ahora: hay un único adaptador. Se deja como función (y no como una
-    constante) para que el día que exista el formato real el cambio sea de UNA línea aquí
-    y los servicios no se enteren.
+    Sin `if` por ahora: hay un único formato. La codificación sí es configurable
+    (`TIMBRADO_ENCODING`) porque es el punto abierto del layout — ver el docstring del
+    adaptador.
     """
-    return TimbradoExportPlaceholder()
+    return TimbradoExportPacV40(encoding=settings.timbrado_encoding)
