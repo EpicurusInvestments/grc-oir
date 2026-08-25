@@ -34,6 +34,9 @@ const schema = z.object({
 type Valores = z.infer<typeof schema>;
 
 interface Props {
+  /** Cuando la orden ya viene decidida (alta desde la bandeja "Listas para facturar"):
+   *  se prellena y se muestra fija, sin selector — elegir otra ahí no tendría sentido. */
+  ordenFija?: { orden_id: string; folio: string } | null;
   submitting?: boolean;
   submitError?: string | null;
   onSubmit: (data: FacturaClienteCreate) => void;
@@ -42,7 +45,14 @@ interface Props {
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
-export function FacturaClienteForm({ submitting, submitError, onSubmit, onCancel }: Props) {
+export function FacturaClienteForm({
+  ordenFija = null,
+  submitting,
+  submitError,
+  onSubmit,
+  onCancel,
+}: Props) {
+  // Con la orden ya fijada no hace falta traer el catálogo de órdenes facturables.
   const ordenes = useOrdenesFacturables();
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
@@ -55,7 +65,7 @@ export function FacturaClienteForm({ submitting, submitError, onSubmit, onCancel
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
-    defaultValues: { fecha_factura: hoy() },
+    defaultValues: { fecha_factura: hoy(), orden_id: ordenFija?.orden_id ?? "" },
   });
 
   const ordenId = watch("orden_id");
@@ -73,20 +83,27 @@ export function FacturaClienteForm({ submitting, submitError, onSubmit, onCancel
       <div className="fg">
         <label className="fl">
           Orden a facturar <span className="req">*</span>
+          {ordenFija && <FieldTag origin="heredado" />}
         </label>
-        <SearchableSelect
-          value={ordenId ?? ""}
-          onChange={(v) => setValue("orden_id", v, { shouldValidate: true })}
-          placeholder={ordenes.isLoading ? "Cargando órdenes…" : "Busca por folio o número…"}
-          options={(ordenes.data ?? []).map((o) => ({
-            value: o.orden_id,
-            label: `${o.folio_orden} · ${o.numero_orden_cliente}`,
-          }))}
-        />
-        {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
-        {!ordenes.isLoading && (ordenes.data?.length ?? 0) === 0 && (
-          <div className="fe">No hay órdenes cerradas pendientes de facturar.</div>
+        {ordenFija ? (
+          <div className="fv mono strong">{ordenFija.folio}</div>
+        ) : (
+          <>
+            <SearchableSelect
+              value={ordenId ?? ""}
+              onChange={(v) => setValue("orden_id", v, { shouldValidate: true })}
+              placeholder={ordenes.isLoading ? "Cargando órdenes…" : "Busca por folio o número…"}
+              options={(ordenes.data ?? []).map((o) => ({
+                value: o.orden_id,
+                label: `${o.folio_orden} · ${o.numero_orden_cliente}`,
+              }))}
+            />
+            {!ordenes.isLoading && (ordenes.data?.length ?? 0) === 0 && (
+              <div className="fe">No hay órdenes cerradas pendientes de facturar.</div>
+            )}
+          </>
         )}
+        {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
       </div>
 
       <div className="fg">

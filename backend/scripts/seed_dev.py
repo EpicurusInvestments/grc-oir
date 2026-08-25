@@ -1,7 +1,8 @@
 """Siembra de datos de desarrollo (F1 — Órdenes) contra SQLite local.
 
 Reproduce los datos de `frontend/src/modules/ordenes/mocks/*.ts`: los catálogos que F1
-consume, las 10 OrdenCliente (una por estado), sus OrdenEstacion con periodo por día, las
+consume, las 10 OrdenCliente (una por estado) más una 11.ª cerrada y SIN factura que
+alimenta la bandeja "Listas para facturar" de F2, sus OrdenEstacion con periodo por día, las
 Verificacion y las Incidencia. El ESQUEMA no sale de aquí (sale de la spec — Tanda 1); esto
 solo son los VALORES.
 
@@ -499,7 +500,7 @@ def resolver_estatus_oc(estatus_v5: str, estatus_oes_de_la_oc: list[str]) -> str
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# OrdenCliente (10, una por estado — mismos datos que mocks/ordenesCliente.ts)
+# OrdenCliente (10 del mock, una por estado + 1 extra para la bandeja de F2)
 # ═══════════════════════════════════════════════════════════════════════════════
 def _totales(total_spots: int, precio_unitario: Decimal) -> tuple[Decimal, Decimal, Decimal]:
     subtotal = (Decimal(total_spots) * precio_unitario).quantize(Decimal("0.01"))
@@ -827,6 +828,40 @@ OC_MOCKS: list[dict[str, Any]] = [
         checklist={"razon_social", "plaza"},
         estatus_v5="cancelada",
         created_by="ve1",
+    ),
+    # 11.ª orden, a propósito FUERA del "una por estado": existe para alimentar la bandeja
+    # "Listas para facturar" de F2 (órdenes en `orden_cerrada` que todavía NO tienen
+    # FacturaCliente). Sin ella la pantalla saldría siempre vacía en la demo, porque la
+    # otra orden cerrada (oc6) sí tiene factura sembrada. No lleva OrdenEstacion, igual que
+    # oc1/oc2/oc10.
+    dict(
+        clave="oc11",
+        folio="OC-2025-0051",
+        numero="LALA-YOG-11",
+        fecha_venta=date(2025, 5, 12),
+        empresa="ef1",
+        vp="ve3",
+        vs=None,
+        anunciante="an3",
+        agencia=None,
+        contrato=None,
+        marca=None,
+        producto="Yoghurt Lala Bebible 900ml",
+        categoria="cat2",
+        direccion="CDMX, Insurgentes Sur 800",
+        fact_directa=True,
+        af_directo=False,
+        f_ini=date(2025, 6, 1),
+        f_fin=date(2025, 6, 30),
+        total_spots=60,
+        precio_unitario=Decimal("8400"),
+        comision_vp=Decimal("4"),
+        comision_vs=None,
+        comision_ag=None,
+        obs_libres="Cerrada y pendiente de facturar: alimenta la bandeja de F2.",
+        checklist=set(ITEMS_VOBO),
+        estatus_v5="orden_cerrada",
+        created_by="ve3",
     ),
 ]
 

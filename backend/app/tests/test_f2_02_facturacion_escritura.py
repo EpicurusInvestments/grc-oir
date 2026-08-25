@@ -686,3 +686,67 @@ def test_costo_general_sin_orden_y_periodo_invalido(
             headers=_hdr("cxp"),
         )
         assert r.status_code == 422, periodo
+
+
+# ── Bandeja "Listas para facturar" ────────────────────────────────────────────
+def test_bandeja_lista_ordenes_cerradas_sin_factura(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El corazón de la bandeja: `LEFT JOIN` + `IS NULL`."""
+    cerrada_sin_factura = _orden(db, cat, "orden_cerrada", "OC-SIN-FACTURA")
+    _orden(db, cat, "en_verificacion", "OC-NO-CERRADA")  # no cerrada: no debe aparecer
+    db.commit()
+
+    r = client.get("/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion"))
+    assert r.status_code == 200
+    cuerpo = r.json()
+    assert cuerpo["total"] == 1
+    fila = cuerpo["items"][0]
+    assert fila["orden_id"] == str(cerrada_sin_factura)
+    assert fila["folio_orden"] == "OC-SIN-FACTURA"
+    # Los nombres vienen resueltos por el JOIN, no como IDs.
+    assert fila["anunciante"] == "Anunciante Uno"
+    assert fila["agencia"] == "Agencia Uno"
+    assert fila["vendedor"] == "Vendedor Uno"
+    assert fila["total"] == "11600.00"
+
+
+def test_al_facturar_la_orden_sale_de_la_bandeja(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    _crear_factura(client, db, cat, "F-BANDEJA")
+    r = client.get("/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion"))
+    assert r.json()["total"] == 0
+
+
+def test_una_orden_sin_agencia_aparece_con_agencia_nula(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Trato directo: el `outerjoin` no debe eliminar la fila (sería un INNER silencioso)."""
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-DIRECTA")
+    oc = db.get(OrdenCliente, orden_id)
+    assert oc is not None
+    oc.agencia_id = None
+    db.commit()
+
+    r = client.get("/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion"))
+    filas = [f for f in r.json()["items"] if f["orden_id"] == str(orden_id)]
+    assert len(filas) == 1
+    assert filas[0]["agencia"] is None
+
+
+def test_la_bandeja_exige_permiso_de_facturacion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    assert (
+        client.get("/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("ventas")).status_code
+        == 200  # Ventas LEE facturación (matriz de la ficha)
+    )
+    assert (
+        client.get(
+            "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("marketing")
+        ).status_code
+        in (401, 403, 422)
+    )

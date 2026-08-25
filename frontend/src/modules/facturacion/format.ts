@@ -48,7 +48,11 @@ export function badgeEstadoFactura(estado: string): string {
     case "entregada":
       return "b-blue";
     case "cobrada":
-      return "b-teal";
+      // Badge OSCURO, no verde (mockup `Fase_2_-_Facturacion.html`: `.st-cobrada` es
+      // `background:#181816; color:#fff`). `.b-dark` ya es exactamente esa combinación
+      // —`var(--text)` vale #181816— y F1 ya lo usa para su propio estado `cobrada`
+      // (`modules/ordenes/constants.ts`), así que se reutiliza en vez de crear una clase.
+      return "b-dark";
     case "cancelada":
       return "b-red";
     default:

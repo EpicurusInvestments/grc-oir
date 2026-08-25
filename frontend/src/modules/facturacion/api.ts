@@ -25,6 +25,7 @@ import type {
   FacturaClienteCreate,
   OpcionCatalogo,
   OrdenFacturable,
+  OrdenPorFacturar,
   TimbrarInput,
 } from "./types";
 
@@ -159,6 +160,17 @@ export const costoApi = {
     return data;
   },
 };
+
+// ── Bandeja "Listas para facturar" ────────────────────────────────────────────
+/** Órdenes en `orden_cerrada` SIN FacturaCliente. El `total` alimenta el contador del
+ *  sidebar. Cuelga de su propio prefijo, no de `/clientes/...`: ahí `{item_id}` capturaría
+ *  el segmento literal e intentaría leerlo como UUID. */
+export async function ordenesPorFacturar(params?: ListParams) {
+  const { data } = await apiClient.get<Page<OrdenPorFacturar>>(`${BASE}/ordenes-por-facturar`, {
+    params,
+  });
+  return data;
+}
 
 // ── Apoyo para los combos (leen de F1 y F0 por la API, sin importar sus módulos) ──
 /** Órdenes que se pueden facturar: solo las `orden_cerrada` (precondición del backend). */

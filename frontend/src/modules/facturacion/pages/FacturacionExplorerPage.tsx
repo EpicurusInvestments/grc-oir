@@ -15,6 +15,7 @@ import {
   facturacionRegistry,
   type FacturacionEntry,
 } from "../facturacionRegistry";
+import { useOrdenesPorFacturar } from "../hooks";
 
 const FASE_LABEL = "FACTURACIÓN";
 
@@ -23,11 +24,19 @@ export function FacturacionExplorerPage() {
 
   const entry: FacturacionEntry | undefined = facturacionRegistry.find((e) => e.key === activeKey);
 
+  // Solo se pide el TOTAL: `size: 1` evita traer filas de una lista que aquí no se pinta.
+  // Su clave comparte PREFIJO con la de la bandeja, así que al crear una factura (que
+  // invalida ese prefijo) el contador baja solo.
+  const porFacturar = useOrdenesPorFacturar({ page: 1, size: 1 });
+  const contadores = {
+    listas_para_facturar: { count: porFacturar.data?.total ?? 0, urgent: true },
+  };
+
   return (
     <ExplorerLayout
       faseLabel={FASE_LABEL}
       user={currentUser}
-      groups={buildFacturacionGroups(facturacionRegistry)}
+      groups={buildFacturacionGroups(facturacionRegistry, contadores)}
       activeKey={activeKey}
       onSelect={setActiveKey}
       rootClassName="phase-f2"

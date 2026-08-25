@@ -21,6 +21,7 @@ import {
   facturaClienteApi,
   metodosDePago,
   ordenesFacturables,
+  ordenesPorFacturar,
   type FiltrosCosto,
   type FiltrosFacturaAfiliado,
   type FiltrosFacturaAgencia,
@@ -164,6 +165,19 @@ export function useCostos(filtros: FiltrosCosto) {
     onSuccess: () => qc.invalidateQueries({ queryKey: [K_COSTOS] }),
   });
   return { list, crear };
+}
+
+// ── Bandeja "Listas para facturar" ────────────────────────────────────────────
+/** Se invalida sola cuando se crea una factura: `crear` invalida la clave del módulo de
+ *  clientes, y esta bandeja usa su propia clave, así que se invalida explícitamente
+ *  desde la pantalla que crea (ver `ListasParaFacturarPage`). */
+export const K_POR_FACTURAR = "facturacion:por-facturar";
+
+export function useOrdenesPorFacturar(params: { page?: number; size?: number; q?: string }) {
+  return useQuery({
+    queryKey: [K_POR_FACTURAR, "list", params],
+    queryFn: () => ordenesPorFacturar(params),
+  });
 }
 
 // ── Combos ────────────────────────────────────────────────────────────────────

@@ -805,6 +805,30 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 Todas las transiciones son **idempotentes** (repetir el destino actual devuelve 200 sin
 efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
 
+#### Bandeja "Listas para facturar"
+
+- **`GET /facturacion/ordenes-por-facturar`** (`facturacion:leer`) — órdenes en
+  `estatus_orden = orden_cerrada` que **todavía no tienen `FacturaCliente`**
+  (`LEFT JOIN factura_cliente ... WHERE factura_id IS NULL`). Es el atajo operativo del
+  día a día de Facturación. Acepta `page`, `size` y `q` (folio, número de orden y
+  anunciante); el `total` de la respuesta es el contador que la pantalla pinta en el
+  sidebar.
+
+  Devuelve los NOMBRES ya resueltos (`anunciante`, `agencia`, `vendedor`) además de los
+  datos de la orden, para que la vista no dispare tres consultas de catálogo por renglón.
+  `agencia: null` significa trato directo con el anunciante.
+
+  **Vive en F2, no en `ordenes`**, aunque la entidad principal sea `OrdenCliente`: la
+  pregunta que responde es de Facturación y el criterio que la define (la ausencia de una
+  fila en `factura_cliente`) es un concepto de F2. Solo LEE el modelo de F1; no toca su
+  servicio ni su router. Cuelga de su propio prefijo y no de `/clientes/...` porque ahí
+  `{item_id}` capturaría el segmento literal e intentaría leerlo como UUID (422).
+
+  **Límite conocido:** una factura CANCELADA sigue siendo una fila, así que su orden no
+  reaparece en la bandeja. Es coherente con el `UNIQUE` 1:1 (esa orden no admite otra
+  factura de todos modos), pero si el negocio quiere re-facturar tras una cancelación,
+  hace falta decidir antes qué pasa con la factura cancelada.
+
 #### FacturaAfiliado / FacturaAgencia
 
 - **`POST /facturacion/afiliados`**, **`POST /facturacion/agencias`** (`costos:crear`) —

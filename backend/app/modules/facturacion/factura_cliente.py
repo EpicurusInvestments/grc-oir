@@ -22,12 +22,21 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from math import ceil
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, UniqueConstraint, select
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Numeric,
+    Unicode,
+    UniqueConstraint,
+    func,
+    select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.config import settings
@@ -694,3 +703,138 @@ def cancelar_factura(
     svc: FacturaClienteService = Depends(get_factura_cliente_service),
 ) -> FacturaClienteRead:
     return svc.cancelar(item_id, usuario)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Bandeja "Listas para facturar" (pantalla aprobada `Fase_2_-_Facturacion.html`)
+# ══════════════════════════════════════════════════════════════════════════════
+# Órdenes en `orden_cerrada` que TODAVÍA no tienen FacturaCliente. Es el atajo operativo
+# del día a día de Facturación: saber qué falta por facturar sin ir a rebuscar en la
+# bandeja de Órdenes (F1).
+#
+# Vive en F2 y no en `ordenes`, aunque la entidad principal sea `OrdenCliente`: la
+# pregunta que responde ("¿a qué le falta factura?") es de Facturación, y el criterio que
+# la define (la AUSENCIA de una fila en `factura_cliente`) es un concepto de F2. `ordenes`
+# no se toca: solo se LEE su modelo, sin importar nada de su servicio ni de su router.
+#
+# Cuelga de su propio prefijo y no de `/clientes/...` a propósito: `/clientes/{item_id}`
+# ya está registrado antes en este archivo y capturaría cualquier segmento literal,
+# devolviendo un 422 al intentar leerlo como UUID.
+
+
+class OrdenPorFacturarRead(BaseModel):
+    """Los datos que la tarjeta de la bandeja necesita, ya resueltos.
+
+    Se devuelven los NOMBRES (anunciante, agencia, vendedor) y no solo sus IDs para que
+    la pantalla no tenga que hacer tres consultas de catálogo por tarjeta.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_id: uuid.UUID
+    folio_orden: str
+    numero_orden_cliente: str
+    anunciante: str
+    #: `None` = trato directo con el anunciante, sin agencia de por medio.
+    agencia: str | None = None
+    vendedor: str | None = None
+    producto: str | None = None
+    fecha_inicio_campania: date
+    fecha_fin_campania: date
+    subtotal: Decimal
+    total: Decimal
+
+
+class OrdenesPorFacturarRepository:
+    """Repositorio propio: la consulta cruza `orden_cliente` con `factura_cliente` y tres
+    catálogos, así que no encaja en `BaseRepository` (que opera sobre un solo modelo)."""
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def listar(self, page: int, size: int, q: str | None) -> tuple[list[Any], int]:
+        from app.modules.catalogos.agencia import Agencia
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.catalogos.vendedor import Vendedor
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        base = (
+            select(
+                OrdenCliente.orden_id,
+                OrdenCliente.folio_orden,
+                OrdenCliente.numero_orden_cliente,
+                Anunciante.nombre_comercial.label("anunciante"),
+                Agencia.nombre_agencia.label("agencia"),
+                Vendedor.nombre_vendedor.label("vendedor"),
+                OrdenCliente.producto,
+                OrdenCliente.fecha_inicio_campania,
+                OrdenCliente.fecha_fin_campania,
+                OrdenCliente.subtotal,
+                OrdenCliente.total,
+            )
+            .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
+            .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
+            .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
+            # El corazón de la bandeja: LEFT JOIN + IS NULL = "sin factura todavía".
+            .outerjoin(FacturaCliente, FacturaCliente.orden_id == OrdenCliente.orden_id)
+            .where(
+                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+                FacturaCliente.factura_id.is_(None),
+            )
+        )
+        if q:
+            patron = f"%{q.strip()}%"
+            base = base.where(
+                OrdenCliente.folio_orden.ilike(patron)
+                | OrdenCliente.numero_orden_cliente.ilike(patron)
+                | Anunciante.nombre_comercial.ilike(patron)
+            )
+
+        total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
+        filas = self.db.execute(
+            base.order_by(OrdenCliente.folio_orden).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(filas), int(total)
+
+
+class OrdenesPorFacturarService:
+    """Solo lectura. No muta nada: el alta de la factura sigue siendo `POST /clientes`."""
+
+    def __init__(self, repo: OrdenesPorFacturarRepository) -> None:
+        self._repo = repo
+
+    def listar(self, page: int, size: int, q: str | None) -> Page[OrdenPorFacturarRead]:
+        filas, total = self._repo.listar(page, size, q)
+        return Page[OrdenPorFacturarRead](
+            items=[OrdenPorFacturarRead.model_validate(f._mapping) for f in filas],
+            total=total,
+            page=page,
+            size=size,
+            pages=ceil(total / size) if size else 0,
+        )
+
+
+def get_ordenes_por_facturar_service(
+    db: Session = Depends(get_db),
+) -> OrdenesPorFacturarService:
+    return OrdenesPorFacturarService(OrdenesPorFacturarRepository(db))
+
+
+router_por_facturar = APIRouter(
+    prefix="/ordenes-por-facturar", tags=["facturacion:por-facturar"]
+)
+
+
+@router_por_facturar.get("", response_model=Page[OrdenPorFacturarRead])
+def listar_ordenes_por_facturar(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    q: str | None = Query(None, description="Busca en folio, número de orden y anunciante"),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
+) -> Page[OrdenPorFacturarRead]:
+    """Órdenes en `orden_cerrada` que aún no tienen `FacturaCliente`.
+
+    El `total` de la respuesta es el contador que la pantalla muestra en el sidebar.
+    """
+    return svc.listar(page, size, q)

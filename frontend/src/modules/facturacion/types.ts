@@ -205,3 +205,23 @@ export interface OpcionCatalogo {
   id: string;
   etiqueta: string;
 }
+
+/** Fila de la bandeja "Listas para facturar": OC cerrada que aún no tiene factura.
+ *
+ * El backend devuelve los NOMBRES ya resueltos (anunciante, agencia, vendedor) para que
+ * la tarjeta no dispare tres consultas de catálogo por renglón.
+ */
+export interface OrdenPorFacturar {
+  orden_id: string;
+  folio_orden: string;
+  numero_orden_cliente: string;
+  anunciante: string;
+  /** `null` = trato directo con el anunciante, sin agencia. */
+  agencia: string | null;
+  vendedor: string | null;
+  producto: string | null;
+  fecha_inicio_campania: string;
+  fecha_fin_campania: string;
+  subtotal: string;
+  total: string;
+}

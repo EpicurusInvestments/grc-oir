@@ -222,6 +222,24 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     igual que el canal de comisiones de F1. Lo encontró una prueba parametrizada.
   - **XML agregado a la lista blanca de adjuntos** (capa de integración compartida), sin
     ampliar en silencio lo que acepta F1: las listas por módulo ahora son explícitas.
+- **Ajustes contra la pantalla aprobada** (revisión de `Fase_2_-_Facturacion.html` con
+  capturas reales, 2026-08-24):
+  1. **Bandeja "Listas para facturar"** (faltaba): ítem propio en el sidebar de Ingresos
+     con contador en rojo (`urgent`), endpoint
+     `GET /facturacion/ordenes-por-facturar` y pantalla de tarjetas —malla, no tabla, como
+     el mockup: cada renglón es una decisión ("¿facturo esta?"), no un dato que se compare
+     en columnas. «Generar factura →» REUTILIZA `FacturaClienteForm` con la orden fija (se
+     muestra el folio, sin selector), no un segundo formulario en paralelo. El endpoint
+     vive en F2 y solo LEE el modelo de F1.
+     Para que la bandeja sea demostrable se agregó una **11.ª OrdenCliente** a la siembra,
+     cerrada y sin factura: la única otra orden cerrada (`oc6`) ya tiene factura sembrada,
+     así que la pantalla habría salido siempre vacía.
+  2. **Badge «Cobrada»**: era teal y debía ser oscuro. **No hizo falta tocar
+     `theme.css`**: la clase `.b-dark` ya es exactamente `background: var(--text)` con
+     `--text: #181816` —el mismo valor del mockup— y F1 ya la usa para su propio estado
+     `cobrada`. El error estaba en el mapeo de `format.ts`; se corrigió ahí, sin tocar
+     ningún otro badge.
+
 - **Tanda 3 (frontend + siembra de demo) — COMPLETA.** Módulo
   `frontend/src/modules/facturacion/` con el patrón de pantalla del proyecto (explorador
   con sidebar + lista y panel de detalle), ruta `/facturacion` y **F2 habilitada** en

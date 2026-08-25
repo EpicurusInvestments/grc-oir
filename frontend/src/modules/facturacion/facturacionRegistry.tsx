@@ -18,6 +18,7 @@ import { CostosPage } from "./costoAdicional/pages/CostosPage";
 import { FacturasAfiliadoPage } from "./facturaAfiliado/pages/FacturasAfiliadoPage";
 import { FacturasAgenciaPage } from "./facturaAgencia/pages/FacturasAgenciaPage";
 import { FacturasClientePage } from "./facturaCliente/pages/FacturasClientePage";
+import { ListasParaFacturarPage } from "./facturaCliente/pages/ListasParaFacturarPage";
 
 export interface FacturacionEntry {
   key: string;
@@ -34,6 +35,14 @@ export const facturacionRegistry: FacturacionEntry[] = [
     label: "Facturas al cliente",
     group: "Ingresos",
     render: () => <FacturasClientePage />,
+  },
+  {
+    // Bandeja operativa, no un CRUD: órdenes cerradas que aún no tienen factura. Va con
+    // Ingresos porque es el paso PREVIO a emitir la factura al cliente.
+    key: "listas_para_facturar",
+    label: "Listas para facturar",
+    group: "Ingresos",
+    render: () => <ListasParaFacturarPage />,
   },
   {
     key: "facturas_afiliado",
@@ -55,9 +64,25 @@ export const facturacionRegistry: FacturacionEntry[] = [
   },
 ];
 
-export function buildFacturacionGroups(entries: FacturacionEntry[]): SidebarGroup[] {
+/** Contadores por sección (los que el explorador sabe calcular). `urgent` los pinta en
+ *  rojo: "Listas para facturar" es trabajo PENDIENTE, no un inventario. */
+export interface ContadoresFacturacion {
+  [key: string]: { count: number; urgent?: boolean } | undefined;
+}
+
+export function buildFacturacionGroups(
+  entries: FacturacionEntry[],
+  contadores: ContadoresFacturacion = {},
+): SidebarGroup[] {
   return FACTURACION_GROUPS.map((titulo) => ({
     title: titulo,
-    items: entries.filter((e) => e.group === titulo).map((e) => ({ key: e.key, label: e.label })),
+    items: entries
+      .filter((e) => e.group === titulo)
+      .map((e) => ({
+        key: e.key,
+        label: e.label,
+        count: contadores[e.key]?.count,
+        urgent: contadores[e.key]?.urgent,
+      })),
   })).filter((g) => g.items.length > 0);
 }

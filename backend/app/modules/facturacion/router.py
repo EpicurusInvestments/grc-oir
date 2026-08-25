@@ -19,11 +19,12 @@ from app.modules.facturacion.adjuntos import router as adjuntos_router
 from app.modules.facturacion.costo_adicional import router_costos
 from app.modules.facturacion.factura_afiliado import router_afiliados
 from app.modules.facturacion.factura_agencia import router_agencias
-from app.modules.facturacion.factura_cliente import router_clientes
+from app.modules.facturacion.factura_cliente import router_clientes, router_por_facturar
 
 router = APIRouter(prefix="/facturacion", tags=["facturacion"])
 
 router.include_router(router_clientes)
+router.include_router(router_por_facturar)
 router.include_router(router_afiliados)
 router.include_router(router_agencias)
 router.include_router(router_costos)
