@@ -37,8 +37,10 @@
   --teal-bg: #e1f5ee;
   --teal-text: #085041;
   --teal-border: #5dcaa5;
+  --blue: #12599c;
   --blue-bg: #e6f1fb;
   --blue-text: #0c447c;
+  --blue-border: #8fbde8;
   --amber-bg: #faeeda;
   --amber-text: #633806;
   --red-bg: #fcebeb;
@@ -1483,6 +1485,13 @@ body {
  * pantalla de la fase para repintar `--phase*` SOLO dentro de ese subárbol, sin tocar los
  * valores globales de `:root` (que siguen sirviendo a F0).
  * ───────────────────────────────────────────────────────────────────────────── */
+.phase-f2 {
+  --phase: var(--blue);
+  --phase-bg: var(--blue-bg);
+  --phase-text: var(--blue-text);
+  --phase-border: var(--blue-border);
+}
+
 .phase-f1 {
   --phase: var(--teal);
   --phase-bg: var(--teal-bg);

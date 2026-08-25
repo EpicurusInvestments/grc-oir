@@ -222,7 +222,35 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     igual que el canal de comisiones de F1. Lo encontró una prueba parametrizada.
   - **XML agregado a la lista blanca de adjuntos** (capa de integración compartida), sin
     ampliar en silencio lo que acepta F1: las listas por módulo ahora son explícitas.
-- **Tanda 3 (frontend + siembra de demo):** pendiente.
+- **Tanda 3 (frontend + siembra de demo) — COMPLETA.** Módulo
+  `frontend/src/modules/facturacion/` con el patrón de pantalla del proyecto (explorador
+  con sidebar + lista y panel de detalle), ruta `/facturacion` y **F2 habilitada** en
+  `phaseRegistry.ts` con su acento azul (`.phase-f2`, tokens `--blue`/`--blue-border`
+  nuevos en `theme.css`). 4 pantallas: Facturas al cliente, de afiliado, de agencia y
+  Costos adicionales.
+  - **Las acciones se ofrecen solo cuando la transición es válida** desde el estado
+    actual: la UI no muestra un botón que el backend rechazaría con 409. Es UX — el
+    servidor valida siempre. Hay pruebas por estado que lo verifican.
+  - **El botón «Autorizar» NO se oculta por área.** El front no conoce la matriz RBAC; si
+    el área no alcanza, el backend responde 403 y el mensaje se pinta tal cual. Ocultarlo
+    daría la falsa impresión de que la acción no existe.
+  - El sidebar agrupa en **«Ingresos»** y **«Costos»**, que no es cosmética: refleja las
+    dos claves de RBAC del ADR-044 (Facturación captura lo primero, CxP lo segundo).
+  - El diálogo de timbrado **avisa explícitamente que la orden pasará a `facturada`**,
+    porque el handoff ocurre fuera de la vista de esta pantalla.
+  - `hooks.ts`: timbrar invalida ADEMÁS la caché de órdenes (`ordenes`), o la pantalla de
+    F1 quedaría mostrando un estado viejo tras el handoff.
+  - **Siembra de demo** en `scripts/seed_dev.py`: 4 FacturaCliente (una por estado del
+    ciclo), 2 de afiliado con su reparto entre OE cerradas, 2 de agencia y 3 costos, más
+    las 3 CuentaContable y las 4 ConstantesSistema que F2 necesita y que la siembra no
+    cubría. **Los montos no se inventan**: se derivan de la OC/OE ya sembradas, así que
+    los CHECK de suma exacta se cumplen por construcción. Los estados se eligieron para
+    respetar la invariante del handoff (una OC está en `facturada` si y solo si su factura
+    llegó al menos a `timbrada`) — verificado con una consulta sobre la base sembrada.
+  - Verificado: `tsc --noEmit` limpio, `eslint` limpio sobre el módulo, **141 pruebas de
+    frontend pasan** (136 + 5 nuevas). Los 19 fallos que quedan son preexistentes y ajenos
+    a F2 (`window.localStorage` indefinido con Node 26 frente al Node 20 que fija el
+    proyecto), en los mismos 4 archivos de siempre.
 
 ## Pendientes / dudas
 

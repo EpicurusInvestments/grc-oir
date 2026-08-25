@@ -38,12 +38,18 @@ from app.modules.catalogos.afiliado import Afiliado
 from app.modules.catalogos.agencia import Agencia
 from app.modules.catalogos.anunciante import Anunciante, Marca
 from app.modules.catalogos.categoria import Categoria
+from app.modules.catalogos.constantes_sistema import ConstanteSistema
 from app.modules.catalogos.contrato import Contrato
+from app.modules.catalogos.cuenta_contable import CuentaContable
 from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.tarifa import TarifaPlaza
 from app.modules.catalogos.vendedor import Vendedor
+from app.modules.facturacion.costo_adicional import CostoAdicional
+from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfiliadoOrden
+from app.modules.facturacion.factura_agencia import FacturaAgencia
+from app.modules.facturacion.factura_cliente import FacturaCliente
 from app.modules.ordenes.incidencia import Incidencia
 from app.modules.ordenes.orden_cliente import ITEMS_VOBO, OrdenCliente, OrdenClienteVoBoItem
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
@@ -52,6 +58,8 @@ from app.modules.usuarios.models import Usuario
 from sqlalchemy.orm import Session
 
 IVA_RATE = Decimal(str(settings.iva_rate))
+#: Dinero cuantizado a centavos (igual que los servicios de F1/F2).
+CENTAVOS = Decimal("0.01")
 
 # Mismo UUID que siembra la migración F0-04 (`_SEED_ADMIN_ID`) — se reutiliza, no se duplica.
 ADMIN_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -1444,6 +1452,237 @@ def _verificar_solo_sqlite() -> None:
         )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# F2 — Facturación
+# ══════════════════════════════════════════════════════════════════════════════
+# Los estados de las facturas se eligieron para que sean COHERENTES con el handoff
+# (ADR de la tanda 2 de F2): una `OrdenCliente` está en `facturada` si y solo si su
+# `FacturaCliente` llegó al menos a `timbrada`. Por eso:
+#   oc6 (orden_cerrada) → factura `preparada`   (todavía no timbrada, la OC no avanza)
+#   oc7 (facturada)     → factura `timbrada`
+#   oc8 (facturada)     → factura `entregada`
+#   oc9 (cobrada)       → factura `cobrada`
+# Sembrar, por ejemplo, una OC `facturada` con su factura en `preparada` produciría un
+# estado que el sistema real nunca podría generar.
+
+#: Cuentas contables mínimas para que `FacturaCliente.cuenta_contable_id` tenga a qué
+#: apuntar. F0-05 construyó la entidad pero `seed_dev` no la sembraba.
+CUENTAS_CONTABLES = [
+    ("cc1", "4100-001", "Ingresos por transmisión", "ingreso"),
+    ("cc2", "5100-001", "Costo de transmisión (afiliados)", "costo"),
+    ("cc3", "6100-001", "Gastos de operación", "gasto"),
+]
+
+#: Claves SAT que el frontend sugiere para `metodo_pago_clave` (no hay FK: ADR de F2).
+CONSTANTES_F2 = [
+    ("MetodoPago", "PUE", "Pago en una sola exhibición"),
+    ("MetodoPago", "PPD", "Pago en parcialidades o diferido"),
+    ("FormaPago", "03", "Transferencia electrónica de fondos"),
+    ("FormaPago", "99", "Por definir"),
+]
+
+#: (clave, oc, numero, estado, folio_fiscal, fecha_factura, fecha_entrega)
+FACTURAS_CLIENTE_MOCK = [
+    ("fc1", "oc6", "A-1041", "preparada", None, date(2025, 4, 1), None),
+    ("fc2", "oc7", "A-1042", "timbrada", "9F2A1C7E-0001-4B3D-9E11-AA0102030405",
+     date(2025, 4, 2), None),
+    ("fc3", "oc8", "A-1043", "entregada", "9F2A1C7E-0002-4B3D-9E11-AA0102030406",
+     date(2025, 4, 3), date(2025, 4, 8)),
+    ("fc4", "oc9", "A-1044", "cobrada", "9F2A1C7E-0003-4B3D-9E11-AA0102030407",
+     date(2025, 4, 4), date(2025, 4, 9)),
+]
+
+#: (clave, oe_claves a las que se reparte, folio de la emisora, estatus)
+FACTURAS_AFILIADO_MOCK = [
+    ("fa1", ["oe12", "oe13"], "EMI-2025-118", "autorizada"),
+    ("fa2", ["oe16"], "EMI-2025-204", "en_revision"),
+]
+
+#: (clave, oc, folio, porcentaje, estatus)
+FACTURAS_AGENCIA_MOCK = [
+    ("fag1", "oc7", "AG-5521", Decimal("12.00"), "autorizada"),
+    ("fag2", "oc9", "AG-5588", Decimal("10.00"), "pagada"),
+]
+
+#: (clave, tipo, oc | None, descripcion, periodo, monto). El tipo se anota explícitamente:
+#: la tercera posición mezcla `None` y `str`, y sin anotación mypy la unifica mal.
+COSTOS_MOCK: list[tuple[str, str, str | None, str, str, Decimal]] = [
+    ("co1", "nomina", None, "Nómina operativa OIR", "2025-03", Decimal("184500.00")),
+    ("co2", "overhead", None, "Renta y servicios de oficina", "2025-03", Decimal("62300.00")),
+    ("co3", "overhead", "oc9", "Producción de spot (proveedor externo)", "2025-04",
+     Decimal("18000.00")),
+]
+
+
+def seed_facturacion(
+    db: Session, cat: dict[str, dict[str, uuid.UUID]], oc_ids: dict[str, uuid.UUID]
+) -> tuple[int, int]:
+    """Siembra las 5 entidades de F2. Devuelve (facturas de cliente, facturas de proveedor).
+
+    Los montos NO se inventan: se derivan de la OrdenCliente / OrdenEstacion ya sembradas,
+    igual que lo haría el servicio real. Así los CHECK de suma exacta (`ROUND(x, 2)`) se
+    cumplen por construcción y la demo es aritméticamente consistente con F1.
+    """
+    for clave, codigo, nombre, tipo in CUENTAS_CONTABLES:
+        u = uid(f"cuenta_contable:{clave}")
+        db.merge(
+            CuentaContable(
+                cuenta_contable_id=u, codigo_cuenta=codigo, nombre_cuenta=nombre, tipo_cuenta=tipo
+            )
+        )
+        cat.setdefault("cuenta_contable", {})[clave] = u
+
+    for grupo, clave_c, descripcion in CONSTANTES_F2:
+        db.merge(
+            ConstanteSistema(
+                constante_sistema_id=uid(f"constante:{grupo}:{clave_c}"),
+                grupo=grupo,
+                clave=clave_c,
+                descripcion=descripcion,
+            )
+        )
+    db.flush()
+
+    # ── FacturaCliente ────────────────────────────────────────────────────────
+    for clave, oc_clave, numero, estado, folio_fiscal, f_factura, f_entrega in (
+        FACTURAS_CLIENTE_MOCK
+    ):
+        oc = db.get(OrdenCliente, oc_ids[oc_clave])
+        if oc is None:  # pragma: no cover — la OC siempre se sembró antes
+            continue
+        # Receptor: agencia si la hay y no es facturación directa (misma regla del servicio).
+        if oc.facturacion_directa_cliente or oc.agencia_id is None:
+            receptor = db.get(Anunciante, oc.anunciante_id)
+            razon_social = receptor.nombre_fiscal if receptor else "Sin anunciante"
+            rfc = receptor.rfc_anunciante if receptor else "XAXX010101000"
+        else:
+            agencia = db.get(Agencia, oc.agencia_id)
+            razon_social = agencia.nombre_agencia if agencia else "Sin agencia"
+            rfc = agencia.rfc_agencia if agencia else "XAXX010101000"
+
+        subtotal = Decimal(oc.subtotal).quantize(CENTAVOS)
+        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+        db.merge(
+            FacturaCliente(
+                factura_id=uid(f"factura_cliente:{clave}"),
+                numero_factura=numero,
+                numero_pedido=oc.numero_orden_cliente,
+                orden_id=oc.orden_id,
+                empresa_facturadora_id=oc.empresa_facturadora_id,
+                anunciante_id=oc.anunciante_id,
+                agencia_id=oc.agencia_id,
+                razon_social_facturacion=razon_social,
+                rfc_facturacion=rfc,
+                direccion_facturacion=oc.direccion_facturacion,
+                descripcion_factura=(
+                    f"Servicios de transmisión del {oc.fecha_inicio_campania:%d/%m/%Y} "
+                    f"al {oc.fecha_fin_campania:%d/%m/%Y}"
+                ),
+                fecha_inicio_transmision=oc.fecha_inicio_campania,
+                fecha_fin_transmision=oc.fecha_fin_campania,
+                fecha_factura=f_factura,
+                fecha_entrega_factura=f_entrega,
+                subtotal_factura=subtotal,
+                iva_factura=iva,
+                total_factura=(subtotal + iva).quantize(CENTAVOS),
+                cuenta_contable_id=cat["cuenta_contable"]["cc1"],
+                metodo_pago_clave="PUE",
+                info_cuenta_pago="BBVA · CLABE 012180001234567895 · Grupo Radio Centro",
+                estado_facturacion=estado,
+                folio_fiscal_sat=folio_fiscal,
+                fecha_timbrado=f_factura if folio_fiscal else None,
+                created_by=ADMIN_ID,
+            )
+        )
+
+    # ── FacturaAfiliado + su reparto entre OrdenEstacion cerradas ─────────────
+    for clave, oe_claves, folio_emisora, estatus in FACTURAS_AFILIADO_MOCK:
+        # Se filtra en UNA expresión (y no reasignando la lista) para que el tipo quede
+        # `list[OrdenEstacion]` y no `list[OrdenEstacion | None]`.
+        oes: list[OrdenEstacion] = [
+            oe
+            for oe in (db.get(OrdenEstacion, uid(f"orden_estacion:{k}")) for k in oe_claves)
+            if oe is not None
+        ]
+        if not oes:  # pragma: no cover
+            continue
+        # El costo del afiliado es lo que le toca a la emisora en esas OE (F1 ya lo calculó).
+        monto = sum((Decimal(oe.importe_emisora) for oe in oes), Decimal("0")).quantize(CENTAVOS)
+        iva = (monto * IVA_RATE).quantize(CENTAVOS)
+        estacion = db.get(Estacion, oes[0].estacion_id)
+        afiliado = db.get(Afiliado, estacion.afiliado_id) if estacion else None
+        if afiliado is None:  # pragma: no cover — la FK de la estación lo garantiza
+            continue
+        factura_id = uid(f"factura_afiliado:{clave}")
+        db.merge(
+            FacturaAfiliado(
+                factura_afiliado_id=factura_id,
+                afiliado_id=afiliado.afiliado_id,
+                razon_social_afiliada=afiliado.razon_social_afiliado,
+                factura_emisora=folio_emisora,
+                fecha_factura_afiliado=date(2025, 4, 10),
+                monto_factura_afiliado=monto,
+                iva_factura_afiliado=iva,
+                total_factura_afiliado=(monto + iva).quantize(CENTAVOS),
+                estatus_factura_afiliado=estatus,
+                created_by=ADMIN_ID,
+            )
+        )
+        for oe in oes:
+            db.merge(
+                FacturaAfiliadoOrden(
+                    id=uid(f"factura_afiliado_orden:{clave}:{oe.folio_orden_estacion}"),
+                    factura_afiliado_id=factura_id,
+                    orden_estacion_id=oe.orden_estacion_id,
+                    monto_asignado=Decimal(oe.importe_emisora).quantize(CENTAVOS),
+                    notas_asignacion=f"Importe emisora de {oe.folio_orden_estacion}",
+                )
+            )
+
+    # ── FacturaAgencia ────────────────────────────────────────────────────────
+    for clave, oc_clave, folio, porcentaje, estatus in FACTURAS_AGENCIA_MOCK:
+        oc = db.get(OrdenCliente, oc_ids[oc_clave])
+        if oc is None or oc.agencia_id is None:  # pragma: no cover
+            continue
+        comision = (Decimal(oc.total) * porcentaje / Decimal(100)).quantize(CENTAVOS)
+        # La agencia factura su comisión: el subtotal ES la comisión.
+        iva = (comision * IVA_RATE).quantize(CENTAVOS)
+        db.merge(
+            FacturaAgencia(
+                factura_agencia_id=uid(f"factura_agencia:{clave}"),
+                agencia_id=oc.agencia_id,
+                orden_id=oc.orden_id,
+                folio_factura_agencia=folio,
+                fecha_factura_agencia=date(2025, 4, 12),
+                monto_factura_agencia=comision,
+                iva_factura_agencia=iva,
+                total_factura_agencia=(comision + iva).quantize(CENTAVOS),
+                porcentaje_comision_agencia=porcentaje,
+                comision_agencia=comision,
+                estatus_factura_agencia=estatus,
+                created_by=ADMIN_ID,
+            )
+        )
+
+    # ── CostoAdicional ────────────────────────────────────────────────────────
+    # Nombres propios (sufijo `_c`): reutilizar `clave`/`monto` chocaría con los enlaces
+    # que ya tienen esas variables más arriba en la misma función.
+    for clave_c, tipo_c, oc_c, descripcion_c, periodo_c, monto_c in COSTOS_MOCK:
+        db.merge(
+            CostoAdicional(
+                costo_id=uid(f"costo_adicional:{clave_c}"),
+                tipo_costo=tipo_c,
+                orden_id=oc_ids[oc_c] if oc_c else None,
+                descripcion_costo=descripcion_c,
+                periodo_contable=periodo_c,
+                monto_costo=monto_c,
+                created_by=ADMIN_ID,
+            )
+        )
+
+    return len(FACTURAS_CLIENTE_MOCK), len(FACTURAS_AFILIADO_MOCK) + len(FACTURAS_AGENCIA_MOCK)
+
+
 def main() -> None:
     _verificar_solo_sqlite()
 
@@ -1469,10 +1708,12 @@ def main() -> None:
         oe_ids = seed_ordenes_estacion(db, cat, oc_ids)
         seed_verificaciones_e_incidencias(db, oe_ids)
         seed_historial_comisiones(db, oc_ids)
+        n_fc, n_prov = seed_facturacion(db, cat, oc_ids)
         db.commit()
 
     print(
-        f"OK — {len(OC_MOCKS)} OrdenCliente, {len(OE_MOCKS)} OrdenEstacion sembradas/actualizadas."
+        f"OK — {len(OC_MOCKS)} OrdenCliente, {len(OE_MOCKS)} OrdenEstacion, "
+        f"{n_fc} FacturaCliente y {n_prov} facturas de proveedor sembradas/actualizadas."
     )
     print("\n── Hallazgos (datos del mock que no calzan 1:1 con el modelo real) ──")
     for i, h in enumerate(HALLAZGOS, 1):
