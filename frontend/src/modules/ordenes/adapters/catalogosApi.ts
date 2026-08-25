@@ -87,6 +87,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       nombre_agencia: a.nombre_agencia,
       rfc_agencia: a.rfc_agencia,
       porcentaje_comision_agencia_default: Number(a.porcentaje_comision_agencia_default),
+      activo: a.activo,
     })),
   );
 
@@ -102,12 +103,18 @@ export async function cargarCatalogosReales(): Promise<void> {
       // `categoria_id` no existe en el Anunciante real (vive en OrdenCliente, por venta) y
       // ningún componente de esta demo lo lee desde AnuncianteRef — placeholder inerte.
       categoria_id: "",
+      activo: a.activo,
     })),
   );
 
   reemplazar(
     marcas,
-    marcasReales.map((m) => ({ id: m.marca_id, anunciante_id: m.anunciante_id, nombre_marca: m.nombre_marca })),
+    marcasReales.map((m) => ({
+      id: m.marca_id,
+      anunciante_id: m.anunciante_id,
+      nombre_marca: m.nombre_marca,
+      activo: m.activo,
+    })),
   );
 
   reemplazar(
@@ -118,6 +125,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       numero_contrato: c.numero_contrato,
       nombre_contrato: c.nombre_contrato,
       estado_contrato: estadoContratoRef(c.estado_contrato),
+      activo: c.activo,
     })),
   );
 
@@ -127,12 +135,13 @@ export async function cargarCatalogosReales(): Promise<void> {
       id: v.vendedor_id,
       nombre_vendedor: v.nombre_vendedor,
       porcentaje_comision_default: Number(v.porcentaje_comision_default),
+      activo: v.activo,
     })),
   );
 
   reemplazar(
     categorias,
-    categoriasReales.map((c) => ({ id: c.categoria_id, nombre_categoria: c.nombre_categoria })),
+    categoriasReales.map((c) => ({ id: c.categoria_id, nombre_categoria: c.nombre_categoria, activo: c.activo })),
   );
 
   reemplazar(
@@ -145,6 +154,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       // desde EmpresaFacturadoraRef — placeholder de mejor esfuerzo, nunca se muestra.
       razon_social_empresa: e.direccion_empresa ?? e.nombre_empresa,
       rfc_empresa: e.rfc_empresa,
+      activo: e.activo,
     })),
   );
 
@@ -174,6 +184,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       nombre_estacion: e.nombre_estacion,
       frecuencia: e.frecuencia ?? "",
       tipo_senal: e.tipo_senal,
+      activo: e.activo,
     })),
   );
 

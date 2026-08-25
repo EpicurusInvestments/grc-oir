@@ -36,7 +36,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return todas.filter((v) => {
+    const filtradas = todas.filter((v) => {
       const incDeV = state.incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
       if (filtro === "con_incidencias" && incDeV.length === 0) return false;
       if (filtro === "sin_incidencias" && incDeV.length > 0) return false;
@@ -49,6 +49,10 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
       }
       return true;
     });
+    // Más reciente primero: por cuándo la OI llegó a 2.3 (reales conciliados), no por la
+    // fecha de transmisión que muestra la columna "Fecha" — así una verificación recién
+    // dada de alta siempre aparece al principio.
+    return [...filtradas].sort((a, b) => b.actualizadaEn.localeCompare(a.actualizadaEn));
   }, [todas, state.incidencias, state.ordenesEstacion, filtro, search]);
 
   const selected = selectedId ? (todas.find((v) => v.ordenEstacionId === selectedId) ?? null) : null;

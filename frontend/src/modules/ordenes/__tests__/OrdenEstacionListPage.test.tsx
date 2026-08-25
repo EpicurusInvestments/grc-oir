@@ -42,3 +42,23 @@ describe("Fix: OI preseleccionada filtra la tabla (no solo resalta la fila)", ()
     expect(screen.getByText("1 de 2")).toBeInTheDocument();
   });
 });
+
+describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la más antigua", () => {
+  it("una OI dada de alta después aparece primero, sin importar el orden en que llegaron los datos", () => {
+    const oc = makeOC({ id: "oc-1" });
+    const vieja = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0041A", orden_id: oc.id, created_at: "2026-01-01" });
+    const nueva = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0050A", orden_id: oc.id, created_at: "2026-06-15" });
+    const utils = render(
+      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [vieja, nueva], incidencias: [], historialComisiones: [] }}>
+        <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+      </OrdenesProvider>,
+    );
+    const tabla = utils.container.querySelector("table") as HTMLTableElement;
+
+    expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
+    const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
+    expect(within(filas[0]).getByText("OE-2026-0050A")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("2026-06-15")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OE-2026-0041A")).toBeInTheDocument();
+  });
+});

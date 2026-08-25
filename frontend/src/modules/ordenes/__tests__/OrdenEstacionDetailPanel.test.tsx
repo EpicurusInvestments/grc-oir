@@ -4,12 +4,17 @@
  * Componente puramente presentacional: no necesita ningún Provider.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { previsualizarPdfOrdenEstacion } from "../adapters/pdfsApi";
 import { OrdenEstacionDetailPanel } from "../ordenEstacion/components/OrdenEstacionDetailPanel";
 import { estaciones, tarifas } from "../state/catalogosCache";
 import { makeOC, makeOE, makeRow } from "./fixtures";
+
+vi.mock("../adapters/pdfsApi", () => ({
+  previsualizarPdfOrdenEstacion: vi.fn().mockResolvedValue(undefined),
+}));
 
 // `state/catalogosCache.ts` nace vacío; el componente resuelve `estacion`/`tarifaReferencia`
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
@@ -77,5 +82,37 @@ describe("Desvío contra tarifa de referencia — 1.4", () => {
     const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1" });
     expect(() => renderPanel(oe, undefined)).not.toThrow();
     expect(screen.getByText("La orden del cliente ya no existe.")).toBeInTheDocument();
+  });
+});
+
+describe("PDFs de la orden interna — botones de descarga por etapa", () => {
+  it("en 'asignada_afiliado', solo aparece el PDF de servicio", () => {
+    const oe = makeOE({ estatus: "asignada_afiliado" });
+    renderPanel(oe, makeOC());
+
+    expect(screen.getByText(/PDF #1 · Orden de servicio/)).toBeInTheDocument();
+    expect(screen.queryByText(/PDF #2 · Programados/)).toBeNull();
+    expect(screen.queryByText(/PDF #3 · Reales/)).toBeNull();
+  });
+
+  it("en 'programados_conciliados', aparecen servicio y programados, no reales", () => {
+    const oe = makeOE({ estatus: "programados_conciliados" });
+    renderPanel(oe, makeOC());
+
+    expect(screen.getByText(/PDF #1 · Orden de servicio/)).toBeInTheDocument();
+    expect(screen.getByText(/PDF #2 · Programados/)).toBeInTheDocument();
+    expect(screen.queryByText(/PDF #3 · Reales/)).toBeNull();
+  });
+
+  it("en 'reales_conciliados', aparecen los 3 y cada uno abre el visor con su propio tipo", () => {
+    const oe = makeOE({ estatus: "reales_conciliados" });
+    renderPanel(oe, makeOC());
+
+    expect(screen.getByText(/PDF #1 · Orden de servicio/)).toBeInTheDocument();
+    expect(screen.getByText(/PDF #2 · Programados/)).toBeInTheDocument();
+    expect(screen.getByText(/PDF #3 · Reales/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/PDF #3 · Reales/));
+    expect(previsualizarPdfOrdenEstacion).toHaveBeenCalledWith(oe.id, "reales", oe.folio_orden_interna);
   });
 });

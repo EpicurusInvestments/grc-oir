@@ -22,6 +22,9 @@ dependencies = [
     "bcrypt>=4.2",  # Hash de contraseñas. API directa; NO se usa passlib (sin releases
                     # desde 2020 y roto con bcrypt >= 4). Cambiar a argon2 sería reescribir
                     # solo app/core/auth/passwords.py.
+    "reportlab>=4.2",  # PDFs de Orden interna (servicio/programados/reales), generados al
+                       # vuelo. Puro Python, sin dependencias de sistema (a diferencia de
+                       # WeasyPrint, que requiere Pango/GObject — probado y descartado por eso).
 ]
 
 [dependency-groups]

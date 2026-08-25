@@ -8,7 +8,7 @@
  * `crearOC`/`crearOE` (que en Tanda 5b llaman al backend real vía HTTP).
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionForm } from "../ordenEstacion/components/OrdenEstacionForm";
@@ -21,6 +21,8 @@ import { makeOC, makeOE } from "./fixtures";
 // `es1` (plaza pl2): la estación que usan las pruebas de este archivo — el formulario la
 // resuelve contra `state/catalogosCache.ts`, que nace vacío.
 estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900 AM", tipo_senal: "am" });
+// Fix: una estación dada de baja no debe aparecer en el select de "Estación".
+estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1 FM", tipo_senal: "fm", activo: false });
 
 function renderForm(opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[] } = {}) {
   const onGuardar = vi.fn();
@@ -164,5 +166,14 @@ describe("Selector de OC de origen con filtro de búsqueda — abierta suelta (s
     expect((fieldByLabelText<HTMLInputElement>(container, "Orden del cliente de origen")).value).toBe(
       `${oc2.folio_orden} — ${oc2.numero_orden_cliente}`,
     );
+  });
+});
+
+describe("Fix: estaciones inactivas no aparecen en el select", () => {
+  it("la estación activa aparece en el select, la dada de baja no", () => {
+    const { container } = renderForm({ oc: { total_spots: 120 } });
+    const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
+    expect(within(select).getByText("XEW-AM (900 AM)")).toBeInTheDocument();
+    expect(within(select).queryByText(/XEW-FM \(baja\)/)).toBeNull();
   });
 });

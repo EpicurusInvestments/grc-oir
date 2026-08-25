@@ -133,6 +133,7 @@ export function verificacionDerivada(oe: OrdenEstacion): VerificacionDerivada {
     totalProgramado: dias.reduce((s, d) => s + d.programado.spots_diarios, 0),
     totalReal: dias.reduce((s, d) => s + d.real.spots_diarios, 0),
     reconciliada: true,
+    actualizadaEn: oe.updated_at ?? oe.created_at,
   };
 }
 

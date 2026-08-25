@@ -4,7 +4,7 @@
  * el catálogo como parámetro) no tienen nada que filtrar hasta que se siembra aquí abajo.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -64,6 +64,23 @@ vendedores.push(
   { id: "ve1", nombre_vendedor: "Renata Aguilar", porcentaje_comision_default: 5 },
   { id: "ve2", nombre_vendedor: "Roberto López", porcentaje_comision_default: 4 },
 );
+
+// Sembrado aparte (fix: catálogos inactivos no deben aparecer en el formulario de alta):
+// una agencia, un anunciante y un vendedor con `activo: false`, además de un anunciante
+// EXPLÍCITAMENTE `activo: true` para probar que el default `undefined = activo` de los
+// demás fixtures no es lo único que hace pasar la prueba.
+agencias.push({ id: "ag-inactiva", nombre_agencia: "Agencia Dada de Baja", rfc_agencia: "AGB900101XX1", porcentaje_comision_agencia_default: 5, activo: false });
+anunciantes.push({
+  id: "an-inactivo",
+  agencia_id: null,
+  nombre_comercial: "Anunciante Dado de Baja",
+  nombre_fiscal: "Anunciante Dado de Baja SA de CV",
+  rfc_anunciante: "ADB900101XX1",
+  dias_credito_default: 30,
+  categoria_id: "",
+  activo: false,
+});
+vendedores.push({ id: "ve-inactivo", nombre_vendedor: "Vendedor Dado de Baja", porcentaje_comision_default: 3, activo: false });
 
 function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}) {
   const onGuardar = vi.fn();
@@ -332,5 +349,31 @@ describe("Validación: fecha de venta no puede ser pasada", () => {
 
     expect(await screen.findByText("La fecha de venta no puede ser una fecha pasada.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
+  });
+});
+
+describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edición", () => {
+  it("agencia inactiva no aparece en el select, la activa sí", () => {
+    const { container } = renderForm();
+    const select = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
+    expect(within(select).getByText("Agencia Uno")).toBeInTheDocument();
+    expect(within(select).queryByText("Agencia Dada de Baja")).toBeNull();
+  });
+
+  it("anunciante inactivo no aparece en el select, el activo sí", () => {
+    const { container } = renderForm();
+    const select = fieldByLabelText<HTMLSelectElement>(container, "Anunciante");
+    expect(within(select).getByText("Televisa Publicidad")).toBeInTheDocument();
+    expect(within(select).queryByText("Anunciante Dado de Baja")).toBeNull();
+  });
+
+  it("vendedor inactivo no aparece en el select de vendedor principal ni secundario, el activo sí", () => {
+    const { container } = renderForm();
+    const selectPrincipal = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");
+    const selectSecundario = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
+    expect(within(selectPrincipal).getByText("Renata Aguilar")).toBeInTheDocument();
+    expect(within(selectPrincipal).queryByText("Vendedor Dado de Baja")).toBeNull();
+    expect(within(selectSecundario).getByText("Renata Aguilar")).toBeInTheDocument();
+    expect(within(selectSecundario).queryByText("Vendedor Dado de Baja")).toBeNull();
   });
 });
