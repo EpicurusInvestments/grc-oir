@@ -64,9 +64,9 @@ export function ListasParaFacturarPage() {
             ← Volver a la bandeja
           </button>
         </div>
-        <div style={{ maxWidth: 640, padding: "0 24px 24px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "20px 24px" }}>
           <FacturaClienteForm
-            ordenFija={{ orden_id: orden.orden_id, folio: orden.folio_orden }}
+            orden={orden}
             submitting={crear.isPending}
             submitError={submitError}
             onSubmit={onCrear}

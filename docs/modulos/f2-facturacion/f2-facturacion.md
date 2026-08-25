@@ -270,6 +270,36 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   - Verificado: **364/364 pytest** (6 nuevas), `ruff`/`mypy` limpios, DDL comprobado en
     los dos dialectos.
 
+- **Segunda revisión contra la pantalla aprobada** (capturas comparadas, 2026-08-25). Se
+  alinearon las diferencias de formato que quedaban:
+  - **Sidebar:** grupos y etiquetas del prototipo — «Facturación al cliente», «Facturas
+    recibidas» (De afiliados / De agencias) y «Costos».
+  - **Facturas al cliente:** botón «+ Generar factura desde orden cerrada» (no «Nueva
+    factura»), subtítulo del prototipo, buscador por número/pedido/razón social, **4
+    filtros** (Todas · Pendientes timbrar · Timbradas · Cobradas) en vez de uno por estado,
+    y la tabla de **8 columnas** (número, pedido, razón social receptor, empresa emisora,
+    fecha, total, folio fiscal —con «— sin timbrar —» cuando falta— y estado).
+  - **Panel de detalle:** dejó de ser una lista plana. Abre con los badges de estado y
+    receptor, el **timeline** del ciclo de vida (Prep. → Enviada → Timbrada → Entregada →
+    Cobrada) y las **tres tarjetas** de Subtotal / IVA / Total, y luego las secciones con
+    sus tags de origen. Las acciones usan los textos del prototipo («Marcar enviada a
+    timbrado →», «Registrar respuesta del timbrado →», «Marcar entregada →», y el
+    «Pasa a CxC (Fase 3)» deshabilitado en `entregada`).
+  - **Generar factura:** era un formulario plano; ahora es el *form full-screen* por
+    secciones del prototipo — bloque ámbar de **datos heredados de la orden**, y tarjetas
+    de Identificación, Receptor (con el aviso de «vía agencia» o «facturación directa»),
+    Concepto (con la **descripción pre-cargada**), Montos (Subtotal heredado · IVA y Total
+    calculados) , Configuración contable y Fechas.
+  - Para que el formulario pueda pre-cargar, la bandeja devuelve además empresa emisora,
+    spots, duración y el receptor ya resuelto; y la lista de facturas devuelve el **nombre**
+    de la empresa emisora, resuelto en una sola consulta por página (sin N+1).
+  - **Una diferencia deliberada con el prototipo:** ahí el **Subtotal** es un input
+    editable; aquí es de solo lectura con su tag «Heredado». Es la base de los importes
+    calculados y viene de lo que F1 cerró: editarlo rompería la correspondencia entre la
+    factura y su orden. El receptor SÍ quedó editable, como el prototipo lo marca.
+  - Se agregaron al tema los estilos que faltaban (`.mc-*`, `.heredado-*`, `.form-card`,
+    `.receptor-nota`, el token `--amber-border`), portados del prototipo.
+
 - **Ajustes contra la pantalla aprobada** (revisión de `Fase_2_-_Facturacion.html` con
   capturas reales, 2026-08-24):
   1. **Bandeja "Listas para facturar"** (faltaba): ítem propio en el sidebar de Ingresos

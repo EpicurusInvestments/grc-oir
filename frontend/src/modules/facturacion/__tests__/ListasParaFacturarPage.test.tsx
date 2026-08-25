@@ -47,6 +47,13 @@ const orden: OrdenPorFacturar = {
   fecha_fin_campania: "2025-06-30",
   subtotal: "504000.00",
   total: "584640.00",
+  empresa_emisora: "OIR Comercial",
+  total_spots: 60,
+  duracion_spot: "30s",
+  facturacion_directa_cliente: true,
+  receptor_razon_social: "Cadena Comercial OXXO SA de CV",
+  receptor_rfc: "CCO8605231N4",
+  receptor_direccion: "CDMX, Insurgentes Sur 800",
 };
 
 function renderCon(items: OrdenPorFacturar[]) {
@@ -94,8 +101,12 @@ describe("ListasParaFacturarPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/Nueva factura · OC-2025-0051/)).toBeInTheDocument(),
     );
-    // El folio se muestra como valor fijo y el campo de búsqueda de órdenes no existe.
-    expect(screen.getByText("Folio interno")).toBeInTheDocument();
+    // El formulario abre con el bloque de datos heredados y SIN selector de orden: la
+    // orden ya está decidida por la tarjeta desde la que se entró.
+    expect(screen.getByText("Datos heredados de la orden")).toBeInTheDocument();
+    expect(screen.getByText("OC-2025-0051")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Busca por folio o número/)).not.toBeInTheDocument();
+    // Y la descripción viene pre-cargada, como en la pantalla aprobada.
+    expect(screen.getByDisplayValue(/Servicios de transmisión publicitaria/)).toBeInTheDocument();
   });
 });

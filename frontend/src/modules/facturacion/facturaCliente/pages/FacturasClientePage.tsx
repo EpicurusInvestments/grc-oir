@@ -1,23 +1,23 @@
-/** Facturas al cliente (F2) — lista + panel de detalle, patrón de F0/F1.
+/** Facturas al cliente (F2) — lista + panel de detalle.
  *
- * Las acciones del panel son las transiciones de la máquina de estados del backend, y se
- * muestran SOLO cuando son válidas desde el estado actual: la UI no ofrece un botón que
- * el servidor va a rechazar con 409. Aun así el backend valida siempre — esto es UX.
+ * Estructura tomada de la pantalla aprobada `Fase_2_-_Facturacion.html`: la tabla lleva
+ * 8 columnas (número, pedido, receptor, emisora, fecha, total, folio fiscal y estado), los
+ * filtros son 4 (no uno por estado) y el panel abre con el timeline del ciclo de vida y
+ * las tres tarjetas de importes ANTES de cualquier otro dato.
  *
- * Timbrar es la acción con efecto colateral: promueve la `OrdenCliente` a `facturada`
- * (el handoff de F2). El diálogo lo dice explícitamente, porque desde esta pantalla no se
- * ve la orden que se está moviendo.
+ * Las acciones se muestran SOLO cuando la transición es válida desde el estado actual: la
+ * UI no ofrece un botón que el servidor rechazaría con 409. El backend valida siempre —
+ * esto es UX.
  *
- * Cancelar es su espejo (ADR-047): si la orden quedó en `facturada`, vuelve a
- * `orden_cerrada` y reaparece en «Listas para facturar». El botón lo advierte en su
- * tooltip, por el mismo motivo. Si la orden ya está `cobrada`, el backend rechaza la
- * cancelación con 400 y el mensaje se pinta tal cual.
+ * Timbrar y cancelar tienen efecto colateral sobre la `OrdenCliente` (el handoff de F2 y
+ * su reversión, ADR-047). Ambos lo advierten, porque desde esta pantalla no se ve la orden
+ * que se está moviendo.
  */
 
 import { useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
+import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { FacturaClienteForm } from "../components/FacturaClienteForm";
 import { TimbrarDialog } from "../components/TimbrarDialog";
@@ -26,24 +26,53 @@ import { badgeEstadoFactura, fmtFecha, fmtMoneda, oGuion } from "../../format";
 import { useFacturasCliente } from "../../hooks";
 import {
   ESTADO_FACTURACION_LABEL,
+  FLUJO_FACTURACION,
   type EstadoFacturacion,
   type FacturaCliente,
   type FacturaClienteCreate,
   type TimbrarInput,
 } from "../../types";
 
-type Filtro = "todas" | EstadoFacturacion;
-type Modo = "view" | "new";
+/** Los 4 filtros de la pantalla aprobada: no hay uno por cada estado. */
+type Filtro = "todas" | "pendientes_timbrar" | "timbradas" | "cobradas";
 
 const FILTROS: { key: Filtro; label: string }[] = [
   { key: "todas", label: "Todas" },
-  { key: "preparada", label: "Preparadas" },
-  { key: "enviada_a_timbrado", label: "En timbrado" },
-  { key: "timbrada", label: "Timbradas" },
-  { key: "entregada", label: "Entregadas" },
-  { key: "cobrada", label: "Cobradas" },
-  { key: "cancelada", label: "Canceladas" },
+  { key: "pendientes_timbrar", label: "Pendientes timbrar" },
+  { key: "timbradas", label: "Timbradas" },
+  { key: "cobradas", label: "Cobradas" },
 ];
+
+/** Etiquetas del timeline; el prototipo abrevia el primer paso a "Prep.". */
+const PASO_LABEL: Record<(typeof FLUJO_FACTURACION)[number], string> = {
+  preparada: "Prep.",
+  enviada_a_timbrado: "Enviada",
+  timbrada: "Timbrada",
+  entregada: "Entregada",
+  cobrada: "Cobrada",
+};
+
+/** Ciclo de vida de la factura, gemelo del timeline de F1. */
+function Timeline({ estado }: { estado: EstadoFacturacion }) {
+  if (estado === "cancelada") {
+    return (
+      <div className="state-msg" style={{ margin: "8px 0 14px" }}>
+        Factura cancelada
+      </div>
+    );
+  }
+  const actual = FLUJO_FACTURACION.indexOf(estado as (typeof FLUJO_FACTURACION)[number]);
+  return (
+    <div className="timeline">
+      {FLUJO_FACTURACION.map((paso, i) => (
+        <div key={paso} className={`tl-step ${i < actual ? "done" : i === actual ? "current" : ""}`}>
+          <div className="tl-dot">{i < actual ? "✓" : i + 1}</div>
+          <div className="tl-lbl">{PASO_LABEL[paso]}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function FacturasClientePage() {
   const [filtro, setFiltro] = useState<Filtro>("todas");
@@ -51,36 +80,37 @@ export function FacturasClientePage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [selected, setSelected] = useState<FacturaCliente | null>(null);
-  const [modo, setModo] = useState<Modo>("view");
+  const [modo, setModo] = useState<"view" | "new">("view");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [dialogoTimbrar, setDialogoTimbrar] = useState(false);
   const [faltantes, setFaltantes] = useState<string[] | null>(null);
 
+  // "Pendientes timbrar" agrupa los DOS estados previos al folio fiscal; el backend filtra
+  // por un solo estado, así que ese filtro se resuelve sobre la página ya cargada.
   const filtros = {
     page,
     size,
     q: q || undefined,
-    estado_facturacion: filtro === "todas" ? undefined : filtro,
+    estado_facturacion:
+      filtro === "timbradas" ? "timbrada" : filtro === "cobradas" ? "cobrada" : undefined,
   };
   const { list, crear, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
 
-  const mensajeDeError = (e: unknown): string => {
-    if (e instanceof ApiRequestError) return e.message;
-    return "Ocurrió un error inesperado.";
-  };
+  const mensajeDeError = (e: unknown): string =>
+    e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
 
   const seleccionar = (f: FacturaCliente) => {
     setSelected(f);
     setModo("view");
     setErrorAccion(null);
+    setFaltantes(null);
   };
 
   const onCrear = async (data: FacturaClienteCreate) => {
     setSubmitError(null);
     try {
-      const nueva = await crear.mutateAsync(data);
-      setSelected(nueva);
+      setSelected(await crear.mutateAsync(data));
       setModo("view");
     } catch (e) {
       setSubmitError(mensajeDeError(e));
@@ -101,7 +131,7 @@ export function FacturasClientePage() {
     setFaltantes(null);
     try {
       // El backend genera el archivo aunque falten campos fiscales: sirve para revisarlo.
-      // Lo que NO puede pasar es que alguien lo mande al PAC sin saber que está incompleto.
+      // Lo que NO puede pasar es que alguien lo mande al PAC sin saber que va incompleto.
       setFaltantes(await facturaClienteApi.descargarArchivoPlano(f.factura_id, f.numero_factura));
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
@@ -113,9 +143,9 @@ export function FacturasClientePage() {
     setErrorAccion(null);
     try {
       setSelected(await timbrar.mutateAsync({ id: selected.factura_id, data }));
-      setDialogoTimbrar(false);
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
+    } finally {
       setDialogoTimbrar(false);
     }
   };
@@ -136,59 +166,162 @@ export function FacturasClientePage() {
     );
   } else if (selected) {
     const estado = selected.estado_facturacion;
-    const puedeEnviar = estado === "preparada";
-    const puedeTimbrar = estado === "enviada_a_timbrado";
-    const puedeEntregar = estado === "timbrada";
-    const puedeCancelar = ["preparada", "enviada_a_timbrado", "timbrada", "entregada"].includes(
-      estado,
-    );
-
+    const timbrada = ["timbrada", "entregada", "cobrada"].includes(estado);
     detail = (
       <>
         <div className="dh">
           <div className="dh-row">
             <div>
               <div className="dh-name">{selected.numero_factura}</div>
-              <div className="dh-sub">{selected.razon_social_facturacion}</div>
+              <div className="dh-sub" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <span className={`badge ${badgeEstadoFactura(estado)}`}>
+                  {ESTADO_FACTURACION_LABEL[estado]}
+                </span>
+                <span className="badge b-blue">{selected.razon_social_facturacion}</span>
+              </div>
             </div>
-            <span className={`badge ${badgeEstadoFactura(estado)}`}>
-              {ESTADO_FACTURACION_LABEL[estado]}
-            </span>
           </div>
         </div>
 
-        <div className="dg">
-          <div className="sec">Receptor</div>
-          <div className="fl">Razón social</div>
-          <div className="fv">{selected.razon_social_facturacion}</div>
-          <div className="fl">RFC</div>
-          <div className="fv mono">{selected.rfc_facturacion}</div>
+        <div className="db">
+          <Timeline estado={estado} />
 
-          <div className="sec">Importes</div>
-          <div className="fl">Subtotal</div>
-          <div className="fv">{fmtMoneda(selected.subtotal_factura)}</div>
-          <div className="fl">IVA</div>
-          <div className="fv">{fmtMoneda(selected.iva_factura)}</div>
-          <div className="fl">Total</div>
-          <div className="fv strong">{fmtMoneda(selected.total_factura)}</div>
-
-          <div className="sec">Periodo y fechas</div>
-          <div className="fl">Transmisión</div>
-          <div className="fv">
-            {fmtFecha(selected.fecha_inicio_transmision)} — {fmtFecha(selected.fecha_fin_transmision)}
+          <div className="mc-row">
+            <div className="mc">
+              <div className="mc-lbl">Subtotal</div>
+              <div className="mc-val">{fmtMoneda(selected.subtotal_factura)}</div>
+            </div>
+            <div className="mc">
+              <div className="mc-lbl">IVA</div>
+              <div className="mc-val">{fmtMoneda(selected.iva_factura)}</div>
+            </div>
+            <div className="mc">
+              <div className="mc-lbl">Total</div>
+              <div className="mc-val total">{fmtMoneda(selected.total_factura)}</div>
+            </div>
           </div>
-          <div className="fl">Factura</div>
-          <div className="fv">{fmtFecha(selected.fecha_factura)}</div>
-          <div className="fl">Entrega</div>
-          <div className="fv muted">{fmtFecha(selected.fecha_entrega_factura)}</div>
 
-          <div className="sec">Timbrado</div>
-          <div className="fl">Folio fiscal</div>
-          <div className="fv mono">{oGuion(selected.folio_fiscal_sat)}</div>
-          <div className="fl">Fecha de timbrado</div>
-          <div className="fv muted">{fmtFecha(selected.fecha_timbrado)}</div>
-          <div className="fl">Método de pago</div>
-          <div className="fv mono">{selected.metodo_pago_clave}</div>
+          <div className="sec">Identificación</div>
+          <div className="r2">
+            <div>
+              <div className="fl">No. factura</div>
+              <div className="fv mono">{selected.numero_factura}</div>
+            </div>
+            <div>
+              <div className="fl">No. pedido</div>
+              <div className="fv mono">{oGuion(selected.numero_pedido)}</div>
+            </div>
+          </div>
+          <div className="fl">Referencia adicional</div>
+          <div className="fv">{oGuion(selected.referencia_adicional)}</div>
+
+          <div className="sec">
+            Receptor <FieldTag origin="heredado" />
+          </div>
+          <div className="fl">Razón social facturación</div>
+          <div className="fv">{selected.razon_social_facturacion}</div>
+          <div className="r2">
+            <div>
+              <div className="fl">RFC</div>
+              <div className="fv mono">{selected.rfc_facturacion}</div>
+            </div>
+            <div>
+              <div className="fl">Dirección</div>
+              <div className="fv" style={{ fontSize: 12 }}>
+                {oGuion(selected.direccion_facturacion)}
+              </div>
+            </div>
+          </div>
+
+          <div className="sec">Concepto</div>
+          <div className="fl">Descripción</div>
+          <div className="fv muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+            {selected.descripcion_factura}
+          </div>
+          {selected.observaciones_factura && (
+            <>
+              <div className="fl">Observaciones</div>
+              <div className="fv muted">{selected.observaciones_factura}</div>
+            </>
+          )}
+
+          <div className="sec">
+            Período de transmisión <FieldTag origin="heredado" />
+          </div>
+          <div className="r2">
+            <div>
+              <div className="fl">Inicio</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_inicio_transmision)}</div>
+            </div>
+            <div>
+              <div className="fl">Fin</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_fin_transmision)}</div>
+            </div>
+          </div>
+
+          <div className="sec">Configuración contable</div>
+          <div className="r2">
+            <div>
+              <div className="fl">Método de pago</div>
+              <div className="fv mono">{selected.metodo_pago_clave}</div>
+            </div>
+            <div>
+              <div className="fl">Layout</div>
+              <div className="fv">{oGuion(selected.layout_factura)}</div>
+            </div>
+          </div>
+          <div className="fl">Información cuenta de pago</div>
+          <div className="fv muted" style={{ fontSize: 12 }}>
+            {oGuion(selected.info_cuenta_pago)}
+          </div>
+
+          <div className="sec">Fechas</div>
+          <div className="r2">
+            <div>
+              <div className="fl">Fecha factura</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_factura)}</div>
+            </div>
+            <div>
+              <div className="fl">Fecha entrega</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_entrega_factura)}</div>
+            </div>
+          </div>
+
+          {timbrada && (
+            <>
+              <div className="sec">
+                Datos del timbrado <FieldTag origin="timbrado" />
+              </div>
+              <div className="fl">Folio fiscal SAT (UUID)</div>
+              <div
+                className="fv mono"
+                style={{
+                  fontSize: 11,
+                  background: "var(--purple-bg)",
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                  display: "inline-block",
+                }}
+              >
+                {oGuion(selected.folio_fiscal_sat)}
+              </div>
+              <div className="fl">Fecha timbrado</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_timbrado)}</div>
+            </>
+          )}
+
+          {estado === "preparada" && (
+            <div className="state-msg" style={{ textAlign: "left" }}>
+              <strong>Lista para enviar a timbrado.</strong> Descarga el archivo plano,
+              envíalo al timbrador externo y regresa a registrar el folio fiscal.
+            </div>
+          )}
+          {estado === "enviada_a_timbrado" && (
+            <div className="state-msg" style={{ textAlign: "left" }}>
+              <strong>Esperando respuesta del timbrado.</strong> Cuando la recibas, captura el
+              folio fiscal.
+            </div>
+          )}
         </div>
 
         <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
@@ -218,32 +351,41 @@ export function FacturasClientePage() {
             >
               <i className="pi pi-download" aria-hidden="true" /> Archivo plano
             </button>
-            {puedeEnviar && (
+            {estado === "preparada" && (
               <button
                 type="button"
                 className="btn btn-sm"
                 disabled={enviarATimbrado.isPending}
                 onClick={() => ejecutar(() => enviarATimbrado.mutateAsync(selected.factura_id))}
               >
-                Enviar a timbrado
+                Marcar enviada a timbrado →
               </button>
             )}
-            {puedeTimbrar && (
-              <button type="button" className="btn btn-sm" onClick={() => setDialogoTimbrar(true)}>
-                Registrar timbrado
+            {estado === "enviada_a_timbrado" && (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => setDialogoTimbrar(true)}
+              >
+                Registrar respuesta del timbrado →
               </button>
             )}
-            {puedeEntregar && (
+            {estado === "timbrada" && (
               <button
                 type="button"
                 className="btn btn-sm"
                 disabled={entregar.isPending}
                 onClick={() => ejecutar(() => entregar.mutateAsync({ id: selected.factura_id }))}
               >
-                Marcar entregada
+                Marcar entregada →
               </button>
             )}
-            {puedeCancelar && (
+            {estado === "entregada" && (
+              <button type="button" className="btn btn-sm btn-dark" disabled>
+                Pasa a CxC (Fase 3)
+              </button>
+            )}
+            {["preparada", "enviada_a_timbrado", "timbrada", "entregada"].includes(estado) && (
               <button
                 type="button"
                 className="btn btn-sm btn-danger"
@@ -263,22 +405,32 @@ export function FacturasClientePage() {
       </>
     );
   } else {
-    detail = <DetailEmpty message="Selecciona una factura para ver el detalle." />;
+    detail = (
+      <DetailEmpty message="Selecciona una factura para ver el detalle o generar el envío a timbrado." />
+    );
   }
 
   // ── lista ───────────────────────────────────────────────────────────────────
-  const items = list.data?.items ?? [];
+  const items = (list.data?.items ?? []).filter((f) =>
+    filtro === "pendientes_timbrar"
+      ? ["preparada", "enviada_a_timbrado"].includes(f.estado_facturacion)
+      : true,
+  );
   const listNode = (
     <>
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: "16%" }}>Factura</th>
-            <th>Receptor</th>
-            <th style={{ width: "18%" }} className="td-right">
+            <th style={{ width: "11%" }}>No. factura</th>
+            <th style={{ width: "11%" }}>Pedido</th>
+            <th style={{ width: "18%" }}>Razón social receptor</th>
+            <th style={{ width: "12%" }}>Empresa emisora</th>
+            <th style={{ width: "11%" }}>Fecha</th>
+            <th style={{ width: "11%" }} className="td-right">
               Total
             </th>
-            <th className="td-center" style={{ width: 150 }}>
+            <th style={{ width: "14%" }}>Folio fiscal</th>
+            <th style={{ width: "12%" }} className="td-center">
               Estado
             </th>
           </tr>
@@ -291,8 +443,24 @@ export function FacturasClientePage() {
               onClick={() => seleccionar(f)}
             >
               <td className="td-main mono">{f.numero_factura}</td>
+              <td className="td-2 mono" style={{ fontSize: 11 }}>
+                {oGuion(f.numero_pedido)}
+              </td>
               <td className="td-2">{f.razon_social_facturacion}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura)}</td>
+              <td className="td-2" style={{ fontSize: 12 }}>
+                {oGuion(f.empresa_facturadora)}
+              </td>
+              <td className="td-2 mono" style={{ fontSize: 11 }}>
+                {fmtFecha(f.fecha_factura)}
+              </td>
+              <td className="td-2 td-right mono">{fmtMoneda(f.total_factura)}</td>
+              <td className="td-2 mono" style={{ fontSize: 10 }}>
+                {f.folio_fiscal_sat ? (
+                  `${f.folio_fiscal_sat.slice(0, 13)}…`
+                ) : (
+                  <span style={{ color: "var(--amber-text)" }}>— sin timbrar —</span>
+                )}
+              </td>
               <td className="td-center">
                 <span className={`badge ${badgeEstadoFactura(f.estado_facturacion)}`}>
                   {ESTADO_FACTURACION_LABEL[f.estado_facturacion]}
@@ -327,8 +495,9 @@ export function FacturasClientePage() {
         <div>
           <div className="cat-title">Facturas al cliente</div>
           <div className="cat-sub">
-            Preparación de la factura a partir de una orden cerrada. El sistema no timbra:
-            exporta al timbrador externo y registra el folio fiscal que devuelve.
+            El sistema <strong>prepara</strong> toda la información necesaria para enviar al
+            sistema externo de timbrado. NO timbra internamente. Al recibir respuesta del
+            timbrado, se registran folio fiscal, XML y PDF.
           </div>
         </div>
         <button
@@ -340,7 +509,7 @@ export function FacturasClientePage() {
             setSubmitError(null);
           }}
         >
-          <i className="pi pi-plus" aria-hidden="true" /> Nueva factura
+          + Generar factura desde orden cerrada
         </button>
       </div>
 
@@ -350,7 +519,7 @@ export function FacturasClientePage() {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar por número, razón social o folio fiscal…"
+        searchPlaceholder="Buscar número, pedido, razón social…"
         filterLabel="Estado"
         filters={FILTROS}
         activeFilter={filtro}

@@ -16,6 +16,7 @@ como texto libre nullable y `metodo_pago_clave` como texto sin FK formal.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -32,6 +33,7 @@ from sqlalchemy import (
     Numeric,
     Unicode,
     Uuid,
+    case,
     func,
     select,
     text,
@@ -258,6 +260,10 @@ class FacturaClienteRead(BaseModel):
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
+    #: Nombre de la empresa emisora, DENORMALIZADO para la lista (la pantalla aprobada lo
+    #: muestra como columna). Lo resuelve el servicio en una sola consulta por página; no
+    #: es una columna de la tabla ni una relación del ORM, para no arrastrar un N+1.
+    empresa_facturadora: str | None = None
 
 
 class FacturaClienteListParams(ListParams):
@@ -310,6 +316,13 @@ class FacturaClienteCreate(BaseModel):
 
     orden_id: uuid.UUID
     numero_factura: str = Field(min_length=1, max_length=30)
+    # Receptor: se DERIVA de la orden, pero la pantalla aprobada lo muestra editable
+    # (etiqueta "EDITABLE" en el panel de detalle). Si vienen, mandan sobre lo derivado;
+    # si no, el servicio los resuelve como siempre. Los IMPORTES no son negociables por
+    # esta vía: `subtotal` se hereda y el IVA y el total se calculan.
+    razon_social_facturacion: str | None = Field(default=None, max_length=200)
+    rfc_facturacion: str | None = Field(default=None, max_length=13)
+    direccion_facturacion: str | None = None
     numero_pedido: str | None = Field(default=None, max_length=50)
     referencia_adicional: str | None = Field(default=None, max_length=150)
     factura_relacionada_id: uuid.UUID | None = None
@@ -399,6 +412,35 @@ class FacturaClienteService(
         super().__init__(repo)
         self._repo = repo
 
+    # ── Enriquecido de lectura ────────────────────────────────────────────────
+    def _nombres_emisoras(self, facturas: list[FacturaClienteRead]) -> dict[uuid.UUID, str]:
+        """Nombres de las empresas emisoras de una página, en UNA consulta."""
+        from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
+
+        ids = {f.empresa_facturadora_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(
+                EmpresaFacturadora.empresa_facturadora_id, EmpresaFacturadora.nombre_empresa
+            ).where(EmpresaFacturadora.empresa_facturadora_id.in_(ids))
+        ).all()
+        return {fila[0]: fila[1] for fila in filas}
+
+    def list(self, params: ListParams) -> Page[FacturaClienteRead]:
+        pagina = super().list(params)
+        nombres = self._nombres_emisoras(pagina.items)
+        for f in pagina.items:
+            f.empresa_facturadora = nombres.get(f.empresa_facturadora_id)
+        return pagina
+
+    def get(self, id_: Any) -> FacturaClienteRead:
+        leida = super().get(id_)
+        leida.empresa_facturadora = self._nombres_emisoras([leida]).get(
+            leida.empresa_facturadora_id
+        )
+        return leida
+
     # ── Captura ───────────────────────────────────────────────────────────────
     def create(self, data: FacturaClienteCreate, usuario: CurrentUser) -> FacturaClienteRead:
         """Alta de la factura a partir de una OrdenCliente CERRADA.
@@ -469,16 +511,19 @@ class FacturaClienteService(
         subtotal = Decimal(oc.subtotal).quantize(CENTAVOS)
         iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
 
+        capturado = data.model_dump(
+            exclude={"razon_social_facturacion", "rfc_facturacion", "direccion_facturacion"}
+        )
         obj = FacturaCliente(
             factura_id=uuid4(),
-            **data.model_dump(),
+            **capturado,
             # ── heredados de la OC (spec: origen "Derivado") ──
             empresa_facturadora_id=oc.empresa_facturadora_id,
             anunciante_id=oc.anunciante_id,
             agencia_id=oc.agencia_id,
-            razon_social_facturacion=razon_social,
-            rfc_facturacion=rfc,
-            direccion_facturacion=oc.direccion_facturacion,
+            razon_social_facturacion=data.razon_social_facturacion or razon_social,
+            rfc_facturacion=data.rfc_facturacion or rfc,
+            direccion_facturacion=data.direccion_facturacion or oc.direccion_facturacion,
             fecha_inicio_transmision=oc.fecha_inicio_campania,
             fecha_fin_transmision=oc.fecha_fin_campania,
             # ── calculados ──
@@ -602,7 +647,9 @@ class FacturaClienteService(
             forma_pago_clave=self._constante_unica("FormaPago"),
         )
 
-    def archivo_plano(self, factura_id: uuid.UUID) -> tuple[bytes, str, list[str]]:
+    # `Sequence[str]` y no `list[str]`: dentro de esta clase el nombre `list` refiere al
+    # MÉTODO `list` de arriba, no al tipo (mismo motivo que `BaseService.historial`).
+    def archivo_plano(self, factura_id: uuid.UUID) -> tuple[bytes, str, Sequence[str]]:
         """Exporta la factura al layout del PAC via el PUERTO.
 
         Devuelve `(contenido, nombre_archivo, campos_faltantes)`. El archivo se genera
@@ -885,6 +932,16 @@ class OrdenPorFacturarRead(BaseModel):
     fecha_fin_campania: date
     subtotal: Decimal
     total: Decimal
+    # ── Lo que el alta necesita para PRE-CARGAR el formulario (pantalla aprobada) ──
+    empresa_emisora: str | None = None
+    total_spots: int | None = None
+    duracion_spot: str | None = None
+    #: A quién se factura: agencia si la hay y no es facturación directa (misma regla que
+    #: aplica el servicio al crear). Se resuelve aquí para que el formulario no la repita.
+    facturacion_directa_cliente: bool = False
+    receptor_razon_social: str | None = None
+    receptor_rfc: str | None = None
+    receptor_direccion: str | None = None
 
 
 class OrdenesPorFacturarRepository:
@@ -897,6 +954,7 @@ class OrdenesPorFacturarRepository:
     def listar(self, page: int, size: int, q: str | None) -> tuple[list[Any], int]:
         from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
         from app.modules.catalogos.vendedor import Vendedor
         from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
 
@@ -913,8 +971,35 @@ class OrdenesPorFacturarRepository:
                 OrdenCliente.fecha_fin_campania,
                 OrdenCliente.subtotal,
                 OrdenCliente.total,
+                EmpresaFacturadora.nombre_empresa.label("empresa_emisora"),
+                OrdenCliente.total_spots,
+                OrdenCliente.duracion_spot,
+                OrdenCliente.facturacion_directa_cliente,
+                OrdenCliente.direccion_facturacion.label("receptor_direccion"),
+                # Receptor: agencia si la hay y no es facturación directa. `case` en vez de
+                # resolverlo en Python para que salga en la MISMA consulta.
+                case(
+                    (
+                        (OrdenCliente.facturacion_directa_cliente == True)  # noqa: E712 — BIT
+                        | (OrdenCliente.agencia_id.is_(None)),
+                        Anunciante.nombre_fiscal,
+                    ),
+                    else_=Agencia.nombre_agencia,
+                ).label("receptor_razon_social"),
+                case(
+                    (
+                        (OrdenCliente.facturacion_directa_cliente == True)  # noqa: E712 — BIT
+                        | (OrdenCliente.agencia_id.is_(None)),
+                        Anunciante.rfc_anunciante,
+                    ),
+                    else_=Agencia.rfc_agencia,
+                ).label("receptor_rfc"),
             )
             .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
+            .join(
+                EmpresaFacturadora,
+                EmpresaFacturadora.empresa_facturadora_id == OrdenCliente.empresa_facturadora_id,
+            )
             .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
             .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
             # El corazón de la bandeja: LEFT JOIN + IS NULL = "sin factura todavía".

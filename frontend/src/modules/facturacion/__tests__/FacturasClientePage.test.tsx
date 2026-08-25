@@ -68,6 +68,7 @@ const base: FacturaCliente = {
   created_by: "u-1",
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
+  empresa_facturadora: "OIR Comercial",
 };
 
 function renderCon(factura: FacturaCliente) {
@@ -96,16 +97,16 @@ describe("FacturasClientePage", () => {
   it("en 'preparada' ofrece enviar a timbrado, pero NO registrar timbrado", async () => {
     renderCon(base);
     (await screen.findByText("A-1041")).click();
-    await waitFor(() => expect(screen.getByText("Enviar a timbrado")).toBeInTheDocument());
-    expect(screen.queryByText("Registrar timbrado")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Marcar enviada a timbrado →")).toBeInTheDocument());
+    expect(screen.queryByText("Registrar respuesta del timbrado →")).not.toBeInTheDocument();
     expect(screen.queryByText("Marcar entregada")).not.toBeInTheDocument();
   });
 
   it("en 'enviada_a_timbrado' ofrece registrar el timbrado", async () => {
     renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
     (await screen.findByText("A-1041")).click();
-    await waitFor(() => expect(screen.getByText("Registrar timbrado")).toBeInTheDocument());
-    expect(screen.queryByText("Enviar a timbrado")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Registrar respuesta del timbrado →")).toBeInTheDocument());
+    expect(screen.queryByText("Marcar enviada a timbrado →")).not.toBeInTheDocument();
   });
 
   it("una factura cancelada no ofrece ninguna transición", async () => {
@@ -115,9 +116,9 @@ describe("FacturasClientePage", () => {
       expect(screen.getByText(/Archivo plano/)).toBeInTheDocument(),
     );
     for (const accion of [
-      "Enviar a timbrado",
-      "Registrar timbrado",
-      "Marcar entregada",
+      "Marcar enviada a timbrado →",
+      "Registrar respuesta del timbrado →",
+      "Marcar entregada →",
       "Cancelar",
     ]) {
       expect(screen.queryByText(accion)).not.toBeInTheDocument();

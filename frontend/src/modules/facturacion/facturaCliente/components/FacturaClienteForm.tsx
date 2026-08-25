@@ -1,11 +1,15 @@
-/** Alta de FacturaCliente (React Hook Form + Zod).
+/** Alta de FacturaCliente — formulario largo por secciones.
  *
- * Solo pide lo que Facturación CAPTURA. Todo lo demás —receptor, RFC, dirección, periodo
- * de transmisión, subtotal, IVA y total— lo deriva el backend de la OrdenCliente; el
- * schema del servidor rechaza esos campos si se mandan (`extra="forbid"`).
+ * Estructura de la pantalla aprobada `Fase_2_-_Facturacion.html`: bloque ámbar con los
+ * datos heredados de la orden y luego tarjetas por sección (Identificación, Receptor,
+ * Concepto, Montos, Configuración contable, Fechas). No es el panel de detalle: es el
+ * "form full-screen" que el `frontend/CLAUDE.md` reserva justo para la preparación de una
+ * factura.
  *
- * El selector de orden ofrece SOLO las que están en `orden_cerrada`: es la precondición
- * del backend, y mostrar aquí una orden que va a dar 400 sería enseñar un callejón.
+ * Lo que el backend DERIVA de la orden (periodo, subtotal, emisor) se muestra pero no se
+ * captura. El receptor sí es editable —la pantalla aprobada lo marca así— y viaja como
+ * override opcional. Los IMPORTES calculados (IVA y total) se previsualizan aquí y los
+ * recalcula el servicio: el front nunca los manda.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,17 +18,21 @@ import { z } from "zod";
 
 import { FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
+import { fmtFecha, fmtMoneda, oGuion } from "../../format";
 import { useCuentasContables, useMetodosDePago, useOrdenesFacturables } from "../../hooks";
-import type { FacturaClienteCreate } from "../../types";
+import type { FacturaClienteCreate, OrdenPorFacturar } from "../../types";
 
 const schema = z.object({
   orden_id: z.string().min(1, "Selecciona la orden a facturar."),
-  numero_factura: z.string().trim().min(1, "El folio interno es obligatorio.").max(30),
+  numero_factura: z.string().trim().min(1, "El número de factura es obligatorio.").max(30),
   numero_pedido: z.string().trim().max(50).optional(),
   referencia_adicional: z.string().trim().max(150).optional(),
+  razon_social_facturacion: z.string().trim().min(1, "La razón social es obligatoria.").max(200),
+  rfc_facturacion: z.string().trim().min(1, "El RFC es obligatorio.").max(13),
+  direccion_facturacion: z.string().trim().optional(),
   descripcion_factura: z.string().trim().min(1, "La descripción es obligatoria."),
   observaciones_factura: z.string().trim().optional(),
-  fecha_factura: z.string().min(1, "La fecha de emisión es obligatoria."),
+  fecha_factura: z.string().min(1, "La fecha de la factura es obligatoria."),
   cuenta_contable_id: z.string().min(1, "Selecciona la cuenta contable."),
   metodo_pago_clave: z.string().min(1, "Selecciona el método de pago."),
   info_cuenta_pago: z.string().trim().optional(),
@@ -34,9 +42,8 @@ const schema = z.object({
 type Valores = z.infer<typeof schema>;
 
 interface Props {
-  /** Cuando la orden ya viene decidida (alta desde la bandeja "Listas para facturar"):
-   *  se prellena y se muestra fija, sin selector — elegir otra ahí no tendría sentido. */
-  ordenFija?: { orden_id: string; folio: string } | null;
+  /** Orden ya elegida (alta desde la bandeja): sus datos pre-cargan el formulario. */
+  orden?: OrdenPorFacturar | null;
   submitting?: boolean;
   submitError?: string | null;
   onSubmit: (data: FacturaClienteCreate) => void;
@@ -45,14 +52,27 @@ interface Props {
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
+/** Descripción sugerida, con el mismo texto que arma la pantalla aprobada. */
+function descripcionSugerida(o: OrdenPorFacturar | null | undefined): string {
+  if (!o) return "";
+  const spots =
+    o.total_spots != null && o.duracion_spot
+      ? ` ${o.total_spots} spots de ${o.duracion_spot}`
+      : "";
+  return (
+    `Servicios de transmisión publicitaria — ${o.producto ?? "Campaña"} del ` +
+    `${o.fecha_inicio_campania} al ${o.fecha_fin_campania}.${spots} según orden ` +
+    `${o.numero_orden_cliente}.`
+  );
+}
+
 export function FacturaClienteForm({
-  ordenFija = null,
+  orden = null,
   submitting,
   submitError,
   onSubmit,
   onCancel,
 }: Props) {
-  // Con la orden ya fijada no hace falta traer el catálogo de órdenes facturables.
   const ordenes = useOrdenesFacturables();
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
@@ -65,30 +85,73 @@ export function FacturaClienteForm({
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
-    defaultValues: { fecha_factura: hoy(), orden_id: ordenFija?.orden_id ?? "" },
+    defaultValues: {
+      orden_id: orden?.orden_id ?? "",
+      numero_pedido: orden?.numero_orden_cliente ?? "",
+      razon_social_facturacion: orden?.receptor_razon_social ?? "",
+      rfc_facturacion: orden?.receptor_rfc ?? "",
+      direccion_facturacion: orden?.receptor_direccion ?? "",
+      descripcion_factura: descripcionSugerida(orden),
+      fecha_factura: hoy(),
+    },
   });
 
   const ordenId = watch("orden_id");
 
-  return (
-    <form className="form" onSubmit={handleSubmit((v) => onSubmit(v as FacturaClienteCreate))}>
-      <SavingOverlay visible={!!submitting} />
-      <div className="dh">
-        <div className="dh-name">Nueva factura al cliente</div>
-        <div className="dh-sub">
-          Solo se listan órdenes en «orden cerrada»: son las únicas facturables.
-        </div>
-      </div>
+  // IVA y total son PREVISUALIZACIÓN: los calcula el servicio sobre el subtotal heredado.
+  const subtotal = Number(orden?.subtotal ?? 0);
+  const iva = subtotal * 0.16;
+  const total = subtotal + iva;
 
-      <div className="fg">
-        <label className="fl">
-          Orden a facturar <span className="req">*</span>
-          {ordenFija && <FieldTag origin="heredado" />}
-        </label>
-        {ordenFija ? (
-          <div className="fv mono strong">{ordenFija.folio}</div>
-        ) : (
+  return (
+    <form
+      className="form"
+      onSubmit={handleSubmit((v) => onSubmit(v as FacturaClienteCreate))}
+      style={{ maxWidth: 900 }}
+    >
+      <SavingOverlay visible={!!submitting} />
+
+      {orden && (
+        <div className="heredado-block">
+          <div className="heredado-title">Datos heredados de la orden</div>
+          <div className="heredado-grid">
+            <div className="heredado-row">
+              <span className="heredado-lbl">Orden origen</span>
+              <span className="heredado-val mono">{orden.folio_orden}</span>
+            </div>
+            <div className="heredado-row">
+              <span className="heredado-lbl">Pedido</span>
+              <span className="heredado-val mono">{orden.numero_orden_cliente}</span>
+            </div>
+            <div className="heredado-row">
+              <span className="heredado-lbl">Empresa emisora</span>
+              <span className="heredado-val">{oGuion(orden.empresa_emisora)}</span>
+            </div>
+            <div className="heredado-row">
+              <span className="heredado-lbl">Vendedor</span>
+              <span className="heredado-val">{oGuion(orden.vendedor)}</span>
+            </div>
+            <div className="heredado-row">
+              <span className="heredado-lbl">Período transmisión</span>
+              <span className="heredado-val mono">
+                {fmtFecha(orden.fecha_inicio_campania)} → {fmtFecha(orden.fecha_fin_campania)}
+              </span>
+            </div>
+            <div className="heredado-row">
+              <span className="heredado-lbl">Subtotal</span>
+              <span className="heredado-val mono">{fmtMoneda(orden.subtotal)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Identificación ── */}
+      <div className="form-card">
+        <div className="form-card-title">Identificación de la factura</div>
+
+        {!orden && (
           <>
+            <div className="fl fl-required">Orden a facturar</div>
             <SearchableSelect
               value={ordenId ?? ""}
               onChange={(v) => setValue("orden_id", v, { shouldValidate: true })}
@@ -101,47 +164,116 @@ export function FacturaClienteForm({
             {!ordenes.isLoading && (ordenes.data?.length ?? 0) === 0 && (
               <div className="fe">No hay órdenes cerradas pendientes de facturar.</div>
             )}
+            {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
           </>
         )}
-        {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
+
+        <div className="r2">
+          <div>
+            <div className="fl fl-required">Número de factura</div>
+            <input className="fi mono" placeholder="Ej. A-001246" {...register("numero_factura")} />
+            {errors.numero_factura && <div className="fe">{errors.numero_factura.message}</div>}
+          </div>
+          <div>
+            <div className="fl">Número de pedido</div>
+            <input className="fi mono" {...register("numero_pedido")} />
+          </div>
+        </div>
+        <div className="fl">Referencia adicional</div>
+        <input
+          className="fi"
+          placeholder="Referencia para reconciliación con cliente"
+          {...register("referencia_adicional")}
+        />
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="numero_factura">
-          Folio interno <span className="req">*</span>
-        </label>
-        <input id="numero_factura" className="in mono" {...register("numero_factura")} />
-        {errors.numero_factura && <div className="fe">{errors.numero_factura.message}</div>}
+      {/* ── Receptor ── */}
+      <div className="form-card">
+        <div className="form-card-title">Receptor de la factura</div>
+        {orden && (
+          <div className="receptor-nota">
+            {orden.facturacion_directa_cliente || !orden.agencia
+              ? `Facturación directa al cliente — la factura va a ${orden.anunciante}.`
+              : `Vía agencia — la factura va a la agencia ${orden.agencia}.`}
+          </div>
+        )}
+        <div className="fl fl-required">
+          Razón social <FieldTag origin="heredado" />
+        </div>
+        <input className="fi" {...register("razon_social_facturacion")} />
+        {errors.razon_social_facturacion && (
+          <div className="fe">{errors.razon_social_facturacion.message}</div>
+        )}
+        <div className="r2">
+          <div>
+            <div className="fl fl-required">RFC</div>
+            <input className="fi mono" maxLength={13} {...register("rfc_facturacion")} />
+            {errors.rfc_facturacion && <div className="fe">{errors.rfc_facturacion.message}</div>}
+          </div>
+          <div />
+        </div>
+        <div className="fl">Dirección</div>
+        <textarea className="ftxt" {...register("direccion_facturacion")} />
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="numero_pedido">
-          Número de pedido del cliente
-        </label>
-        <input id="numero_pedido" className="in" {...register("numero_pedido")} />
+      {/* ── Concepto ── */}
+      <div className="form-card">
+        <div className="form-card-title">Concepto y observaciones</div>
+        <div className="fl fl-required">
+          Descripción del servicio (aparece en el cuerpo de la factura)
+        </div>
+        <textarea
+          className="ftxt"
+          style={{ minHeight: 80 }}
+          {...register("descripcion_factura")}
+        />
+        {errors.descripcion_factura && (
+          <div className="fe">{errors.descripcion_factura.message}</div>
+        )}
+        <div className="fl">Observaciones adicionales</div>
+        <textarea
+          className="ftxt"
+          placeholder="Notas que aparecen en la factura…"
+          {...register("observaciones_factura")}
+        />
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="descripcion_factura">
-          Descripción de los servicios <span className="req">*</span>
-        </label>
-        <textarea id="descripcion_factura" className="in ta" {...register("descripcion_factura")} />
-        {errors.descripcion_factura && <div className="fe">{errors.descripcion_factura.message}</div>}
+      {/* ── Montos ── */}
+      <div className="form-card">
+        <div className="form-card-title">Montos</div>
+        <div className="r3">
+          <div>
+            <div className="fl">
+              Subtotal <FieldTag origin="heredado" />
+            </div>
+            {/* Solo lectura: es la base de los calculados y viene de la orden. Editarlo
+                rompería la correspondencia con lo que F1 cerró. */}
+            <div className="fv mono big">{fmtMoneda(orden?.subtotal ?? null)}</div>
+          </div>
+          <div>
+            <div className="fl">
+              IVA <FieldTag origin="calculado" />
+            </div>
+            <div className="fv mono big">{fmtMoneda(iva.toFixed(2))}</div>
+          </div>
+          <div>
+            <div className="fl">
+              Total <FieldTag origin="calculado" />
+            </div>
+            <div className="fv mono big" style={{ color: "var(--blue-text)" }}>
+              {fmtMoneda(total.toFixed(2))}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="fecha_factura">
-          Fecha de emisión <span className="req">*</span>
-        </label>
-        <input id="fecha_factura" type="date" className="in" {...register("fecha_factura")} />
-        {errors.fecha_factura && <div className="fe">{errors.fecha_factura.message}</div>}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="cuenta_contable_id">
-          Cuenta contable <span className="req">*</span> <FieldTag origin="catalogo" />
-        </label>
-        <select id="cuenta_contable_id" className="in" {...register("cuenta_contable_id")}>
+      {/* ── Configuración contable ── */}
+      <div className="form-card">
+        <div className="form-card-title">Configuración contable</div>
+        <div className="fl fl-required">
+          Cuenta contable <FieldTag origin="catalogo" />
+        </div>
+        <select className="fsel" {...register("cuenta_contable_id")}>
           <option value="">— Selecciona —</option>
           {(cuentas.data ?? []).map((c) => (
             <option key={c.id} value={c.id}>
@@ -150,36 +282,55 @@ export function FacturaClienteForm({
           ))}
         </select>
         {errors.cuenta_contable_id && <div className="fe">{errors.cuenta_contable_id.message}</div>}
+
+        <div className="r2">
+          <div>
+            <div className="fl fl-required">
+              Método de pago <FieldTag origin="catalogo" />
+            </div>
+            {/* Se guarda la CLAVE, no un FK: MetodoPago vive en ConstantesSistema. */}
+            <select className="fsel" {...register("metodo_pago_clave")}>
+              <option value="">— Selecciona —</option>
+              {(metodos.data ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.etiqueta}
+                </option>
+              ))}
+            </select>
+            {errors.metodo_pago_clave && (
+              <div className="fe">{errors.metodo_pago_clave.message}</div>
+            )}
+          </div>
+          <div>
+            <div className="fl">Layout de factura</div>
+            <input className="fi" {...register("layout_factura")} />
+          </div>
+        </div>
+
+        <div className="fl">Información cuenta de pago (aparece en factura)</div>
+        <textarea
+          className="ftxt"
+          placeholder="Ej. BBVA · CLABE 012180001234567890 · Titular…"
+          {...register("info_cuenta_pago")}
+        />
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="metodo_pago_clave">
-          Método de pago <span className="req">*</span> <FieldTag origin="catalogo" />
-        </label>
-        <select id="metodo_pago_clave" className="in" {...register("metodo_pago_clave")}>
-          <option value="">— Selecciona —</option>
-          {(metodos.data ?? []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.etiqueta}
-            </option>
-          ))}
-        </select>
-        {/* Se guarda la CLAVE, no un FK: MetodoPago vive en ConstantesSistema. */}
-        {errors.metodo_pago_clave && <div className="fe">{errors.metodo_pago_clave.message}</div>}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="info_cuenta_pago">
-          Datos de cuenta para el pago
-        </label>
-        <textarea id="info_cuenta_pago" className="in ta" {...register("info_cuenta_pago")} />
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="layout_factura">
-          Layout de impresión
-        </label>
-        <input id="layout_factura" className="in" {...register("layout_factura")} />
+      {/* ── Fechas ── */}
+      <div className="form-card">
+        <div className="form-card-title">Fechas</div>
+        <div className="r2">
+          <div>
+            <div className="fl fl-required">Fecha de la factura</div>
+            <input type="date" className="fi" {...register("fecha_factura")} />
+            {errors.fecha_factura && <div className="fe">{errors.fecha_factura.message}</div>}
+          </div>
+          <div>
+            <div className="fl">Fecha de entrega</div>
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Se registra al marcar la factura como entregada.
+            </div>
+          </div>
+        </div>
       </div>
 
       {submitError && <div className="state-msg error">{submitError}</div>}
@@ -189,7 +340,7 @@ export function FacturaClienteForm({
           Cancelar
         </button>
         <button type="submit" className="btn btn-sm btn-primary" disabled={submitting}>
-          Guardar
+          Crear factura (preparada)
         </button>
       </div>
     </form>

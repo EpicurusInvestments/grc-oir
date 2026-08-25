@@ -1,9 +1,12 @@
 /** Registro de secciones de la fase Facturación (F2) — gemelo del de Catálogos y Seguridad.
  *
- * Los dos grupos NO son cosmética: reflejan que el módulo tiene dos claves de RBAC
- * distintas (ADR-044). «Ingresos» lo captura Facturación (`facturacion:*`) y «Costos» lo
- * captura CxP (`costos:*`). Agruparlo así hace visible en el menú una regla que de otro
- * modo solo se descubre al recibir un 403.
+ * Los grupos y sus etiquetas son los de la pantalla aprobada
+ * (`docs/referencias/pantallas/Fase_2_-_Facturacion.html`): «Facturación al cliente»,
+ * «Facturas recibidas» y «Costos».
+ *
+ * De paso reflejan las dos claves de RBAC del módulo (ADR-044): el primer grupo lo captura
+ * Facturación (`facturacion:*`) y los otros dos CxP (`costos:*`), así que el menú hace
+ * visible una regla que si no solo se descubre al recibir un 403.
  */
 
 /* eslint-disable react-refresh/only-export-components --
@@ -27,13 +30,18 @@ export interface FacturacionEntry {
   render?: () => ReactNode;
 }
 
-export const FACTURACION_GROUPS = ["Ingresos", "Costos"] as const;
+/** Grupos y orden EXACTOS de la pantalla aprobada `Fase_2_-_Facturacion.html`. */
+export const FACTURACION_GROUPS = [
+  "Facturación al cliente",
+  "Facturas recibidas",
+  "Costos",
+] as const;
 
 export const facturacionRegistry: FacturacionEntry[] = [
   {
     key: "facturas_cliente",
     label: "Facturas al cliente",
-    group: "Ingresos",
+    group: "Facturación al cliente",
     render: () => <FacturasClientePage />,
   },
   {
@@ -41,19 +49,19 @@ export const facturacionRegistry: FacturacionEntry[] = [
     // Ingresos porque es el paso PREVIO a emitir la factura al cliente.
     key: "listas_para_facturar",
     label: "Listas para facturar",
-    group: "Ingresos",
+    group: "Facturación al cliente",
     render: () => <ListasParaFacturarPage />,
   },
   {
     key: "facturas_afiliado",
-    label: "Facturas de afiliado",
-    group: "Costos",
+    label: "De afiliados",
+    group: "Facturas recibidas",
     render: () => <FacturasAfiliadoPage />,
   },
   {
     key: "facturas_agencia",
-    label: "Facturas de agencia",
-    group: "Costos",
+    label: "De agencias",
+    group: "Facturas recibidas",
     render: () => <FacturasAgenciaPage />,
   },
   {

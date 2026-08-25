@@ -15,6 +15,15 @@ export const ESTADOS_FACTURACION = [
 ] as const;
 export type EstadoFacturacion = (typeof ESTADOS_FACTURACION)[number];
 
+/** Ciclo de vida SIN la rama de cancelación: es lo que dibuja el timeline del detalle. */
+export const FLUJO_FACTURACION = [
+  "preparada",
+  "enviada_a_timbrado",
+  "timbrada",
+  "entregada",
+  "cobrada",
+] as const;
+
 export const ESTADO_FACTURACION_LABEL: Record<EstadoFacturacion, string> = {
   preparada: "Preparada",
   enviada_a_timbrado: "Enviada a timbrado",
@@ -77,6 +86,8 @@ export interface FacturaCliente {
   created_by: string;
   created_at: string;
   updated_at: string | null;
+  /** Nombre de la empresa emisora, denormalizado por el backend para la lista. */
+  empresa_facturadora: string | null;
 }
 
 /** Lo que Facturación captura. Lo derivado y lo calculado los pone el servicio. */
@@ -92,6 +103,11 @@ export interface FacturaClienteCreate {
   metodo_pago_clave: string;
   info_cuenta_pago?: string | null;
   layout_factura?: string | null;
+  /** El receptor se DERIVA de la orden; estos tres campos lo sobrescriben si el usuario
+   *  los ajusta (la pantalla aprobada los muestra editables). */
+  razon_social_facturacion?: string | null;
+  rfc_facturacion?: string | null;
+  direccion_facturacion?: string | null;
 }
 
 export interface TimbrarInput {
@@ -224,4 +240,12 @@ export interface OrdenPorFacturar {
   fecha_fin_campania: string;
   subtotal: string;
   total: string;
+  // ── Para pre-cargar el formulario de alta (pantalla aprobada) ──
+  empresa_emisora: string | null;
+  total_spots: number | null;
+  duracion_spot: string | null;
+  facturacion_directa_cliente: boolean;
+  receptor_razon_social: string | null;
+  receptor_rfc: string | null;
+  receptor_direccion: string | null;
 }

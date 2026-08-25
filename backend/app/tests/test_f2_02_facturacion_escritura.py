@@ -26,6 +26,9 @@ from app.modules.catalogos.afiliado import Afiliado
 from app.modules.catalogos.agencia import Agencia
 from app.modules.catalogos.anunciante import Anunciante
 from app.modules.catalogos.categoria import Categoria  # noqa: F401 — registra la tabla
+from app.modules.catalogos.constantes_sistema import (
+    ConstanteSistema,  # noqa: F401 — el export al PAC consulta este catálogo
+)
 from app.modules.catalogos.contrato import Contrato  # noqa: F401 — ídem
 from app.modules.catalogos.cuenta_contable import CuentaContable
 from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
