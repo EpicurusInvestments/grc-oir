@@ -164,3 +164,47 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 
 - Formato real del archivo plano del PAC (ver sección dedicada arriba).
 - Catálogo `LayoutFactura` real, si el negocio termina necesitando más de una plantilla.
+
+## Estado de implementación
+
+- **Tanda 1 (modelo + migración + lectura) — COMPLETA.** Las 5 entidades como tablas
+  reales (`factura_cliente`, `factura_afiliado`, `factura_afiliado_orden`,
+  `factura_agencia`, `costo_adicional`) en la migración `3e57e45d24cb`, encadenada a
+  `a1c8e3d47b92` (F5-00). Ninguna tabla de F0/F1 se toca. 9 endpoints `GET` con
+  paginación, filtros propios y búsqueda de texto. RBAC con las dos claves del ADR-044.
+  Verificado: **334/334 pytest** (31 nuevas), `ruff`/`mypy` limpios sobre el módulo, SQL
+  offline de `mssql` regenerado (0 `NTEXT`, 0 `DATETIME` espurio, 7 `DATE`, 8
+  `DATETIME2`, 5 `NVARCHAR(max)`), y ciclo `downgrade`/`upgrade` completo contra la
+  SQLite local. **No aplicada a RDS todavía.**
+  - Los 4 CHECK de igualdad de montos llevan `ROUND(x, 2)` en ambos lados desde el primer
+    día (ADR-039), con prueba de que un centavo de diferencia SIGUE siendo rechazado.
+    Solo `FacturaCliente` lleva además el CHECK de `iva = subtotal * 0.16`: en las
+    facturas de proveedor el IVA es capturado (spec: "Manual"), puede traer retenciones o
+    exentos, e imponerle la tasa rechazaría facturas legítimas.
+  - Las 2 UNIQUE (1:1 de `factura_cliente.orden_id` y la compuesta de
+    `FacturaAfiliadoOrden`) están probadas por ambos lados: que el duplicado falla y que
+    el caso legítimo pasa (varias facturas de agencia por OC; la misma OE repartida entre
+    facturas de afiliado distintas).
+  - **Hallazgo (ADR-045):** el CHECK de formato de `periodo_contable` se escribió primero
+    con `LIKE '[0-9]...'` (T-SQL) y SQLite lo rechaza todo, incluido el valor válido. Se
+    cambió a `LIKE '____-__'`, portable. Lo encontró la prueba, no la revisión visual.
+  - **Hallazgo colateral (fuera de F2):** `migrations/env.py` no importaba
+    `constantes_sistema` ni `cuenta_contable`, así que cualquier `--autogenerate` habría
+    emitido un `drop_table` de dos tablas ya aplicadas a RDS. Se agregaron los imports.
+    La deriva de índices que el autogenerate reportó sobre `constantes_sistema`,
+    `contrato` y `marca` se eliminó a mano de la migración de F2 (es preexistente y ajena
+    a esta fase) y queda como ticket aparte.
+
+- **Tanda 2 (escritura + máquinas de estado + handoff + puerto de timbrado):** pendiente.
+- **Tanda 3 (frontend + siembra de demo):** pendiente.
+
+## Pendientes / dudas
+
+- **Formato real del archivo plano del PAC** — el adaptador de la Tanda 2 es un
+  placeholder explícitamente marcado como borrador. Crítico antes de producción, no antes
+  de seguir desarrollando.
+- **Catálogo `LayoutFactura` real**, si el negocio termina necesitando más de una
+  plantilla (hoy `layout_factura` es texto libre).
+- **Deriva de índices en tablas de F0** (ver hallazgo colateral arriba): decidir si se
+  corrige con una migración dedicada o si se alinean los modelos a lo que ya existe en
+  RDS.

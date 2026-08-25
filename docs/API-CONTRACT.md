@@ -697,3 +697,78 @@ ejecutar la acción sensible" (chequeo de área específico de esta entidad).
 autorización sensible en `/comisiones`), 404 (no encontrado), 409 (`transicion_invalida`
 — máquina de estados), 422 (validación de payload/filtros), 400 (`error_dominio` —
 reglas de negocio: balances, tarifas, pertenencia contrato/marca-anunciante).
+
+## Facturación (F2)
+
+Prefijo `/facturacion`. **Ojo con los permisos: NO son uniformes dentro del módulo.**
+`_nivel()` de `core/security.py` resuelve el RBAC por MÓDULO, no por entidad, y la matriz
+de F2 pide áreas de captura distintas por entidad — así que el módulo usa **dos claves de
+permiso** (las mismas que el mapa del `CLAUDE.md` §4 predefine para F2; ver ADR-044):
+
+| Sub-recurso | Permiso | Captura | Lectura |
+|---|---|---|---|
+| `/facturacion/clientes` | `facturacion:*` | Facturación | todas las demás áreas |
+| `/facturacion/afiliados`, `/agencias`, `/costos` | `costos:*` | CxP | todas las demás áreas |
+
+Admin no aparece en ninguna matriz: `_nivel()` le da WRITE en todo módulo (ADR-040).
+
+### Lectura (Tanda 1)
+
+Todas las listas devuelven el `Page<T>` estándar (`items`/`total`/`page`/`size`/`pages`) y
+aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de cada una.
+
+- **`GET /facturacion/clientes`** (`facturacion:leer`) — facturas al cliente. Filtros:
+  `orden_id`, `anunciante_id`, `agencia_id`, `empresa_facturadora_id`,
+  `estado_facturacion`. `q` busca en número de factura, razón social y folio fiscal.
+- **`GET /facturacion/clientes/{id}`** (`facturacion:leer`) — 404 si no existe.
+- **`GET /facturacion/afiliados`** (`costos:leer`) — facturas recibidas de afiliados.
+  Filtros: `afiliado_id`, `estatus_factura_afiliado`. `q` busca en el folio de la emisora
+  y la razón social.
+- **`GET /facturacion/afiliados/{id}`** (`costos:leer`).
+- **`GET /facturacion/afiliados/{id}/ordenes`** (`costos:leer`) — el reparto de esa
+  factura entre las `OrdenEstacion` a las que se asignó (`FacturaAfiliadoOrden`). Devuelve
+  una lista simple, no paginada: son pocas por factura.
+- **`GET /facturacion/agencias`** (`costos:leer`) — facturas recibidas de agencias.
+  Filtros: `agencia_id`, `orden_id`, `estatus_factura_agencia`. `q` busca en el folio
+  externo.
+- **`GET /facturacion/agencias/{id}`** (`costos:leer`).
+- **`GET /facturacion/costos`** (`costos:leer`) — costos adicionales. Filtros:
+  `tipo_costo` (`nomina`|`overhead`), `orden_id`, `periodo_contable` (`YYYY-MM`). `q`
+  busca en la descripción.
+- **`GET /facturacion/costos/{id}`** (`costos:leer`).
+
+### Estados
+
+`FacturaCliente.estado_facturacion`: `preparada → enviada_a_timbrado → timbrada →
+entregada → cobrada`, con rama a `cancelada` desde los 4 primeros. El paso a `cobrada` lo
+hará **F3**: F2 declara el estado pero no lo dispara.
+
+`FacturaAfiliado.estatus_factura_afiliado` y `FacturaAgencia.estatus_factura_agencia`:
+`recibida → en_revision → autorizada → pagada`. **`en_revision → autorizada` exige área
+Dirección o Admin** (chequeo explícito en el servicio, no la matriz de módulo — mismo
+patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
+
+`CostoAdicional` no tiene máquina de estados.
+
+### Reglas de negocio del esquema
+
+- **1:1 OC ↔ FacturaCliente** (`uq_factura_cliente_orden`): una `OrdenCliente` no puede
+  tener dos facturas de cliente → 409 `conflicto`. `FacturaAgencia` **sí** es 1:N sobre la
+  misma OC (no lleva esa restricción).
+- **Una OE no se asigna dos veces a la misma factura de afiliado**
+  (`uq_factura_afiliado_orden_factura_oe`); la misma OE sí puede repartirse entre facturas
+  distintas (parcialidades de la emisora).
+- **Montos**: `total_* = monto/subtotal + iva` con CHECK de igualdad envuelto en
+  `ROUND(x, 2)` (ADR-039). En `FacturaCliente` además `iva_factura = subtotal * 0.16`,
+  porque ahí el IVA es derivado; en las facturas de proveedor el IVA es **capturado**
+  (la spec lo marca "Manual": pueden traer retenciones o exentos), así que no se les
+  impone la tasa.
+- **Dos desviaciones aditivas** respecto a la spec (catálogos que nunca se construyeron en
+  F0): `layout_factura` es texto libre nullable (no FK a `LayoutFactura`) y
+  `metodo_pago_clave` es texto sin FK (`MetodoPago` vive en `ConstantesSistema`, grupo
+  `MetodoPago`; el frontend sugiere desde ahí, la base no valida la relación).
+
+**Errores posibles (todo el módulo):** 401 (sin auth), 403 (área sin permiso, o sin
+autorización sensible al autorizar una factura de proveedor), 404 (no encontrado), 409
+(`transicion_invalida` / `conflicto`), 422 (validación de payload/filtros), 400
+(`error_dominio` — reglas de negocio: OC no cerrada, OE no cerrada).

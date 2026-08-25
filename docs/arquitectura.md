@@ -1143,4 +1143,57 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   reales (ADR-030/034): solo les faltaba un mecanismo de subida real, no un cambio de
   esquema.
 
-[[Agregar aquí cada nueva decisión: ADR-043, ...]]
+> **Nota de numeración:** el **ADR-043** (un solo `.env` en la raíz, `envDir` de Vite)
+> está redactado en la rama `fix/ordenes-correcciones-f1`, todavía sin mergear a `main`.
+> Los ADR de F2 arrancan en 044 para no colisionar cuando ambas ramas se integren.
+
+### ADR-044 — F2 usa DOS claves de RBAC (`facturacion` y `costos`) para UN solo módulo de código
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 1).
+- **Contexto:** la ficha de F2 pide áreas de CAPTURA distintas por ENTIDAD dentro del
+  mismo módulo: Facturación captura `FacturaCliente`; CxP captura `FacturaAfiliado`,
+  `FacturaAgencia` y `CostoAdicional`. Pero `_nivel(modulo, area)` en `core/security.py`
+  resuelve el permiso **por módulo**, no por entidad: `RBAC["facturacion"]` es un solo
+  diccionario área→acceso. Con una sola clave, o Facturación podía capturar costos o CxP
+  podía capturar facturas de cliente — ninguna de las dos aceptable.
+- **Decisión:** dos claves de permiso, `facturacion` (WRITE: Facturación) y `costos`
+  (WRITE: CxP), sobre **un solo paquete de código** `app/modules/facturacion/`. Lo que se
+  parte es el permiso, no el módulo: la ficha pide las 5 entidades juntas por su
+  acoplamiento, y separarlas en dos paquetes obligaría a que uno importara del otro. Los
+  nombres no son inventados: son exactamente los dos que el mapa fases→módulos del
+  `CLAUDE.md` §4 ya predefine para F2 (`facturacion`, `costos`).
+  Se descartó la alternativa de una clave única + chequeo de área explícito en cada
+  servicio de costos: repetiría en 3 servicios lo que la matriz resuelve como datos, que
+  es justo lo que el `backend/CLAUDE.md` prohíbe ("datos, no ifs repartidos").
+- **Consecuencias:** el módulo tiene permisos NO uniformes — `/facturacion/clientes/*`
+  exige `facturacion:*` y el resto `costos:*`. Queda documentado en el `__init__.py` del
+  módulo, en el `router.py` y en `API-CONTRACT.md`, porque es lo primero que sorprende al
+  leer el código. Admin sigue sin listarse en ninguna de las dos matrices: `_nivel()` le
+  da WRITE en todo módulo presente y futuro (ADR-040). El chequeo de área explícito SÍ se
+  usa, pero solo donde la matriz no alcanza: autorizar una factura de proveedor exige
+  Dirección/Admin (mismo patrón que el canal de comisiones de F1).
+
+### ADR-045 — `LIKE` con clases de caracteres (`[0-9]`) es T-SQL puro: no usarlo en CHECK
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 1).
+- **Contexto:** `CostoAdicional.periodo_contable` es `VARCHAR(7)` con formato `YYYY-MM`
+  (spec). Para garantizarlo en el esquema se escribió el CHECK natural en T-SQL:
+  `periodo_contable LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]'`. **SQL Server lo soporta;
+  SQLite no.** SQLite no implementa clases de caracteres en `LIKE`: compara `[0-9]`
+  literalmente, así que el patrón no calza NUNCA y el CHECK rechaza todos los valores,
+  incluido el válido `'2026-02'`. Lo detectó la prueba de la Tanda 1 (la inserción del
+  dato correcto falló), y se confirmó aislado con `sqlite3` en memoria: el patrón devuelve
+  0 para los 4 valores probados, válidos e inválidos por igual.
+- **Decisión:** usar `LIKE '____-__'`. El comodín de UN carácter (`_`) sí es estándar en
+  ambos motores. Garantiza la FORMA (7 caracteres con guion en la quinta posición:
+  rechaza `'feb-2026'` y `'2026-2'`), pero no que los caracteres sean dígitos — eso lo
+  valida el schema Pydantic en la captura. Es la garantía más fuerte que se puede expresar
+  de forma **portable** en una constraint de tabla.
+- **Por qué importa más allá de este campo:** es la misma clase de bug que ADR-014
+  (`.is_(True)` sobre `BIT`), ADR-036 (`sa.Date()` cayendo a `DATETIME` offline) y ADR-039
+  (`NUMERIC` como float64 en SQLite) — una construcción que funciona bajo un supuesto
+  implícito de dialecto y se rompe en silencio en el otro. Con la diferencia de que este
+  falla en el sentido MENOS habitual: el DDL habría pasado cualquier revisión pensada para
+  SQL Server, y lo que se habría roto es el desarrollo local completo. **Regla para
+  módulos futuros: cualquier CHECK que use `LIKE` debe limitarse a `%` y `_`; si hace
+  falta validar un formato más fino, va en el schema Pydantic, no en la constraint.**
+
+[[Agregar aquí cada nueva decisión: ADR-046, ...]]

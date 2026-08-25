@@ -92,9 +92,39 @@ _LECTURA_ORDENES = {
     Area.DIRECCION: Acceso.READ,
 }
 
+# F2: la matriz de la ficha del módulo pide áreas de CAPTURA distintas por ENTIDAD
+# (Facturación captura FacturaCliente; CxP captura FacturaAfiliado/FacturaAgencia/
+# CostoAdicional). `_nivel()` resuelve por MÓDULO, no por entidad, así que una sola clave
+# no puede expresarlo: se usan DOS claves, que son además las que el mapa de módulos del
+# CLAUDE.md §4 ya predefine para F2 (`facturacion`, `costos`). El código sigue siendo UN
+# solo módulo (`app/modules/facturacion/`); lo que se parte es el permiso, no el paquete.
+_LECTURA_FACTURACION = {
+    Area.VENTAS: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXC: Acceso.READ,
+    Area.CXP: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+    Area.NOMINAS: Acceso.READ,
+}
+
+# Costos (facturas de proveedor + costos adicionales): captura CxP, el resto lee. Nóminas
+# lee porque el costo de tipo `nomina` sale de su propio archivo NOI.
+_LECTURA_COSTOS = {
+    Area.VENTAS: Acceso.READ,
+    Area.FACTURACION: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXC: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+    Area.NOMINAS: Acceso.READ,
+}
+
 RBAC: dict[str, dict[Area, Acceso]] = {
     "catalogos": _LECTURA_CATALOGOS,
     "ordenes": {Area.VENTAS: Acceso.WRITE, **_LECTURA_ORDENES},
+    # F2 — FacturaCliente. Admin no se lista: siempre WRITE vía `_nivel()` (ADR-040).
+    "facturacion": {Area.FACTURACION: Acceso.WRITE, **_LECTURA_FACTURACION},
+    # F2 — FacturaAfiliado / FacturaAgencia / CostoAdicional.
+    "costos": {Area.CXP: Acceso.WRITE, **_LECTURA_COSTOS},
     # F5-00: la gestión de usuarios es exclusiva de Admin, INCLUSO en lectura. El padrón
     # de usuarios (quién existe, con qué área) no es un catálogo consultable por el resto
     # de las áreas. El diccionario va VACÍO a propósito: no hay ningún área con acceso
