@@ -19,6 +19,7 @@ servicio y el router usen una sola fuente de verdad:
 from __future__ import annotations
 
 import re
+from codecs import BOM_UTF8
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -152,9 +153,20 @@ _MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
     "xlsx": (b"PK\x03\x04",),
     "doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
     "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+    # XML del CFDI timbrado (F2). Se acepta la declaracion con y sin BOM UTF-8:
+    # los PAC entregan ambas variantes. NO se acepta un "<" suelto, seria tan laxo
+    # que dejaria pasar cualquier HTML o texto plano que empiece con ese caracter.
+    "xml": (b"<?xml", BOM_UTF8 + b"<?xml"),
 }
 
-EXTENSIONES_ADJUNTO_ORDENES = frozenset(_MAGIC_POR_EXTENSION)
+# Listas blancas POR MODULO, explicitas: agregar una extension para un modulo no
+# debe ampliarla en silencio para los demas (por eso ya no se derivan de las claves
+# del dict de firmas).
+EXTENSIONES_ADJUNTO_ORDENES = frozenset(
+    {"pdf", "jpg", "jpeg", "png", "docx", "xlsx", "doc", "xls"}
+)
+#: F2 acepta ademas el XML del CFDI devuelto por el timbrador.
+EXTENSIONES_ADJUNTO_FACTURACION = EXTENSIONES_ADJUNTO_ORDENES | {"xml"}
 
 _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "pdf": "application/pdf",
@@ -165,6 +177,7 @@ _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xls": "application/vnd.ms-excel",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xml": "application/xml",
 }
 
 

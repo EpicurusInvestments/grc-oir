@@ -25,13 +25,16 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, UniqueConstraint
+from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.core.config import settings
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
+from app.core.errors import ConflictError, DomainError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
+from app.integrations.timbrado import get_timbrado_export
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
@@ -58,6 +61,11 @@ class EstadoFacturacion(StrEnum):
 # CHECK del estado derivado del enum: una sola fuente de verdad para el DDL del modelo
 # (mismo patrón que `_GRUPOS_SQL` en `catalogos/constantes_sistema.py`).
 _ESTADOS_SQL = ", ".join(f"'{e.value}'" for e in EstadoFacturacion)
+
+# Mismos helpers de dinero que F1 (`orden_cliente.py`): `Decimal` cuantizado a centavos y
+# la tasa de IVA desde configuración central, nunca repetida como literal en el código.
+CENTAVOS = Decimal("0.01")
+IVA_RATE = Decimal(str(settings.iva_rate))
 
 
 # ── Modelo ──────────────────────────────────────────────────────────────────────
@@ -234,6 +242,94 @@ class FacturaClienteListParams(ListParams):
     estado_facturacion: str | None = None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Tanda 2 — escritura, máquina de estados y handoff con F1
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Transiciones permitidas. Fuente única: el servicio NO decide con `if` sueltos.
+# `cobrada` es alcanzable desde `entregada`, pero en F2 NADIE la dispara: es de F3
+# (decisión confirmada — la transición existe, el disparador no).
+TRANSICIONES: dict[str, set[str]] = {
+    EstadoFacturacion.PREPARADA.value: {
+        EstadoFacturacion.ENVIADA_A_TIMBRADO.value,
+        EstadoFacturacion.CANCELADA.value,
+    },
+    EstadoFacturacion.ENVIADA_A_TIMBRADO.value: {
+        EstadoFacturacion.TIMBRADA.value,
+        EstadoFacturacion.CANCELADA.value,
+    },
+    EstadoFacturacion.TIMBRADA.value: {
+        EstadoFacturacion.ENTREGADA.value,
+        EstadoFacturacion.CANCELADA.value,
+    },
+    EstadoFacturacion.ENTREGADA.value: {
+        EstadoFacturacion.COBRADA.value,  # la dispara F3, no F2
+        EstadoFacturacion.CANCELADA.value,
+    },
+    EstadoFacturacion.COBRADA.value: set(),  # terminal
+    EstadoFacturacion.CANCELADA.value: set(),  # terminal
+}
+
+
+class FacturaClienteCreate(BaseModel):
+    """Lo que Facturación CAPTURA. Todo lo demás se hereda de la OrdenCliente o se
+    calcula en el servicio: los campos derivados y calculados NO se aceptan del cliente
+    (regla del `backend/CLAUDE.md`), por eso `extra="forbid"`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    orden_id: uuid.UUID
+    numero_factura: str = Field(min_length=1, max_length=30)
+    numero_pedido: str | None = Field(default=None, max_length=50)
+    referencia_adicional: str | None = Field(default=None, max_length=150)
+    factura_relacionada_id: uuid.UUID | None = None
+    descripcion_factura: str = Field(min_length=1)
+    observaciones_factura: str | None = None
+    fecha_factura: date
+    cuenta_contable_id: uuid.UUID
+    # Clave de `ConstantesSistema` (grupo MetodoPago). Sin FK: el frontend sugiere desde
+    # el catálogo, pero la base no valida la relación (desviación aditiva 2).
+    metodo_pago_clave: str = Field(min_length=1, max_length=20)
+    info_cuenta_pago: str | None = None
+    layout_factura: str | None = Field(default=None, max_length=200)
+
+
+class FacturaClienteUpdate(BaseModel):
+    """Edición de los campos capturables. Los heredados y los calculados no se tocan
+    aquí: para cambiarlos habría que re-derivarlos de la OC, que es otra operación."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    numero_factura: str | None = Field(default=None, min_length=1, max_length=30)
+    numero_pedido: str | None = Field(default=None, max_length=50)
+    referencia_adicional: str | None = Field(default=None, max_length=150)
+    descripcion_factura: str | None = Field(default=None, min_length=1)
+    observaciones_factura: str | None = None
+    fecha_factura: date | None = None
+    cuenta_contable_id: uuid.UUID | None = None
+    metodo_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
+    info_cuenta_pago: str | None = None
+    layout_factura: str | None = Field(default=None, max_length=200)
+
+
+class TimbrarIn(BaseModel):
+    """Datos que DEVUELVE el timbrador externo. El sistema no los genera (ADR-002)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    folio_fiscal_sat: str = Field(min_length=1, max_length=50)
+    fecha_timbrado: date
+    # Claves de almacenamiento devueltas por el endpoint de adjuntos (no rutas de disco).
+    xml_path: str | None = Field(default=None, max_length=500)
+    pdf_path: str | None = Field(default=None, max_length=500)
+
+
+class EntregarIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fecha_entrega_factura: date | None = None
+
+
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class FacturaClienteRepository(BaseRepository[FacturaCliente]):
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
@@ -257,13 +353,219 @@ class FacturaClienteRepository(BaseRepository[FacturaCliente]):
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
-class FacturaClienteService(BaseService[FacturaCliente, BaseModel, BaseModel, FacturaClienteRead]):
-    """Tanda 1: solo lectura. La captura (con la precondición `orden_cerrada`), la
-    máquina de estados y el handoff `timbrada → OrdenCliente.facturada` llegan en la
-    Tanda 2."""
+class FacturaClienteService(
+    BaseService[FacturaCliente, FacturaClienteCreate, FacturaClienteUpdate, FacturaClienteRead]
+):
+    """Captura, máquina de estados y handoff con F1.
+
+    Las 4 transiciones son métodos dedicados (no un `PATCH estado` genérico), igual que
+    en F1: cada una tiene su propia regla y su propio payload.
+    """
 
     read_schema = FacturaClienteRead
     entidad = "FacturaCliente"
+
+    def __init__(self, repo: FacturaClienteRepository) -> None:
+        super().__init__(repo)
+        self._repo = repo
+
+    # ── Captura ───────────────────────────────────────────────────────────────
+    def create(self, data: FacturaClienteCreate, usuario: CurrentUser) -> FacturaClienteRead:
+        """Alta de la factura a partir de una OrdenCliente CERRADA.
+
+        Hereda de la OC todo lo que la spec marca como "Derivado" y calcula IVA y total:
+        el cliente no puede mandar ninguno de esos campos (`extra="forbid"` en el schema).
+        """
+        from app.modules.catalogos.agencia import Agencia
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.catalogos.cuenta_contable import CuentaContable
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+        from app.modules.usuarios.lookup import resolver_usuario_id
+
+        db = self._repo.db
+        oc = db.get(OrdenCliente, data.orden_id)
+        if oc is None:
+            raise DomainError(
+                "La OrdenCliente indicada no existe.", detalles={"orden_id": str(data.orden_id)}
+            )
+        # PRECONDICIÓN de la ficha: solo se factura lo que F1 ya cerró.
+        if oc.estatus_orden != EstatusOrden.ORDEN_CERRADA.value:
+            raise DomainError(
+                "Solo se puede facturar una OrdenCliente en 'orden_cerrada'.",
+                detalles={"orden_id": str(data.orden_id), "estatus_orden": oc.estatus_orden},
+            )
+        # 1:1 (spec). La UNIQUE del esquema es la garantía dura; este chequeo existe para
+        # devolver un 409 legible en vez de un error de integridad de la base.
+        ya = db.scalar(
+            select(FacturaCliente).where(FacturaCliente.orden_id == data.orden_id).limit(1)
+        )
+        if ya is not None:
+            raise ConflictError(
+                "La OrdenCliente ya tiene una factura de cliente (relación 1:1).",
+                detalles={"orden_id": str(data.orden_id), "factura_id": str(ya.factura_id)},
+            )
+        if db.get(CuentaContable, data.cuenta_contable_id) is None:
+            raise DomainError(
+                "La cuenta contable indicada no existe.",
+                detalles={"cuenta_contable_id": str(data.cuenta_contable_id)},
+            )
+        if data.factura_relacionada_id is not None and (
+            db.get(FacturaCliente, data.factura_relacionada_id) is None
+        ):
+            raise DomainError(
+                "La factura relacionada indicada no existe.",
+                detalles={"factura_relacionada_id": str(data.factura_relacionada_id)},
+            )
+
+        # Receptor: anunciante o agencia según `facturacion_directa_cliente` (spec).
+        if oc.facturacion_directa_cliente or oc.agencia_id is None:
+            anunciante = db.get(Anunciante, oc.anunciante_id)
+            if anunciante is None:  # pragma: no cover — la FK de la OC lo garantiza
+                raise DomainError("El anunciante de la orden no existe.")
+            razon_social, rfc = anunciante.nombre_fiscal, anunciante.rfc_anunciante
+        else:
+            agencia = db.get(Agencia, oc.agencia_id)
+            if agencia is None:  # pragma: no cover — la FK de la OC lo garantiza
+                raise DomainError("La agencia de la orden no existe.")
+            razon_social, rfc = agencia.nombre_agencia, agencia.rfc_agencia
+
+        subtotal = Decimal(oc.subtotal).quantize(CENTAVOS)
+        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+
+        obj = FacturaCliente(
+            factura_id=uuid4(),
+            **data.model_dump(),
+            # ── heredados de la OC (spec: origen "Derivado") ──
+            empresa_facturadora_id=oc.empresa_facturadora_id,
+            anunciante_id=oc.anunciante_id,
+            agencia_id=oc.agencia_id,
+            razon_social_facturacion=razon_social,
+            rfc_facturacion=rfc,
+            direccion_facturacion=oc.direccion_facturacion,
+            fecha_inicio_transmision=oc.fecha_inicio_campania,
+            fecha_fin_transmision=oc.fecha_fin_campania,
+            # ── calculados ──
+            subtotal_factura=subtotal,
+            iva_factura=iva,
+            total_factura=(subtotal + iva).quantize(CENTAVOS),
+            estado_facturacion=EstadoFacturacion.PREPARADA.value,
+            created_by=resolver_usuario_id(db, usuario.username),
+        )
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+        return self._to_read(obj)
+
+    def update(
+        self, id_: Any, data: FacturaClienteUpdate, usuario: CurrentUser
+    ) -> FacturaClienteRead:
+        """Edición de los campos capturables. Bloqueada una vez timbrada: a partir de ahí
+        el contenido ya salió al SAT y cambiarlo aquí lo desincronizaría."""
+        obj = self._get_or_404(id_)
+        if obj.estado_facturacion not in (
+            EstadoFacturacion.PREPARADA.value,
+            EstadoFacturacion.ENVIADA_A_TIMBRADO.value,
+        ):
+            raise ConflictError(
+                "Una factura timbrada, entregada, cobrada o cancelada ya no se edita.",
+                detalles={"estado_facturacion": obj.estado_facturacion},
+            )
+        payload = data.model_dump(exclude_unset=True)
+        return self._to_read(self._repo.update(obj, payload))
+
+    # ── Máquina de estados ────────────────────────────────────────────────────
+    def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
+        """`True` si hay que aplicarla; `False` si ya estaba ahí (idempotente).
+
+        Transición no permitida → 409 `transicion_invalida`.
+        """
+        if obj.estado_facturacion == destino:
+            return False
+        if destino not in TRANSICIONES.get(obj.estado_facturacion, set()):
+            raise StateTransitionError(
+                f"No se puede pasar de '{obj.estado_facturacion}' a '{destino}'.",
+                detalles={"estado_facturacion": obj.estado_facturacion, "destino": destino},
+            )
+        return True
+
+    def archivo_plano(self, factura_id: uuid.UUID) -> tuple[bytes, str]:
+        """Exporta la factura vía el PUERTO de timbrado (contenido, nombre de archivo).
+
+        OJO: el adaptador de hoy es un PLACEHOLDER — el formato real del PAC sigue sin
+        especificarse. Ver `app/integrations/timbrado/adapter_placeholder.py`.
+        """
+        obj = self._get_or_404(factura_id)
+        if obj.estado_facturacion == EstadoFacturacion.CANCELADA.value:
+            raise ConflictError("Una factura cancelada no se exporta a timbrado.")
+        exportador = get_timbrado_export()
+        return exportador.exportar(obj), exportador.nombre_archivo(obj)
+
+    def enviar_a_timbrado(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
+        obj = self._get_or_404(factura_id)
+        if self._validar_transicion(obj, EstadoFacturacion.ENVIADA_A_TIMBRADO.value):
+            obj.estado_facturacion = EstadoFacturacion.ENVIADA_A_TIMBRADO.value
+            self._repo.db.commit()
+            self._repo.db.refresh(obj)
+        return self._to_read(obj)
+
+    def timbrar(
+        self, factura_id: uuid.UUID, input_: TimbrarIn, usuario: CurrentUser
+    ) -> FacturaClienteRead:
+        """Registra la respuesta del PAC y **promueve la OrdenCliente a `facturada`**.
+
+        El handoff (ficha de F2): la OC pasa a `facturada` exactamente aquí — no con
+        `preparada`/`enviada_a_timbrado`, ni esperando a `entregada`. Se invoca
+        `OrdenClienteService.marcar_facturada`, que vive en F1 (dueño de esa máquina de
+        estados), con la MISMA sesión y ANTES del commit: si la OC no admite la
+        transición, la excepción aborta también el timbrado. Atómico por construcción.
+        """
+        from app.modules.ordenes.orden_cliente import (
+            OrdenCliente,
+            OrdenClienteRepository,
+            OrdenClienteService,
+        )
+
+        obj = self._get_or_404(factura_id)
+        db = self._repo.db
+        if not self._validar_transicion(obj, EstadoFacturacion.TIMBRADA.value):
+            return self._to_read(obj)  # ya timbrada: idempotente, no re-dispara el handoff
+
+        obj.folio_fiscal_sat = input_.folio_fiscal_sat
+        obj.fecha_timbrado = input_.fecha_timbrado
+        if input_.xml_path is not None:
+            obj.xml_path = input_.xml_path
+        if input_.pdf_path is not None:
+            obj.pdf_path = input_.pdf_path
+        obj.estado_facturacion = EstadoFacturacion.TIMBRADA.value
+
+        # ── handoff con F1, misma sesión, antes del commit ──
+        OrdenClienteService(OrdenClienteRepository(db, OrdenCliente)).marcar_facturada(obj.orden_id)
+
+        db.commit()
+        db.refresh(obj)
+        return self._to_read(obj)
+
+    def entregar(
+        self, factura_id: uuid.UUID, input_: EntregarIn, usuario: CurrentUser
+    ) -> FacturaClienteRead:
+        obj = self._get_or_404(factura_id)
+        if self._validar_transicion(obj, EstadoFacturacion.ENTREGADA.value):
+            obj.estado_facturacion = EstadoFacturacion.ENTREGADA.value
+            obj.fecha_entrega_factura = input_.fecha_entrega_factura or date.today()
+            self._repo.db.commit()
+            self._repo.db.refresh(obj)
+        return self._to_read(obj)
+
+    def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
+        """Cancelación desde los 4 primeros estados (ficha). **NO revierte la
+        OrdenCliente**: deshacer `facturada` es una decisión de negocio que nadie ha
+        tomado — queda anotado como pendiente en la ficha, no se inventa aquí."""
+        obj = self._get_or_404(factura_id)
+        if self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
+            obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
+            self._repo.db.commit()
+            self._repo.db.refresh(obj)
+        return self._to_read(obj)
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
@@ -310,3 +612,85 @@ def obtener_factura_cliente(
     svc: FacturaClienteService = Depends(get_factura_cliente_service),
 ) -> FacturaClienteRead:
     return svc.get(item_id)
+
+
+# ── Escritura + transiciones (Tanda 2) ────────────────────────────────────────
+@router_clientes.post("", response_model=FacturaClienteRead, status_code=201)
+def crear_factura_cliente(
+    payload: FacturaClienteCreate,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:crear")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    """400 `error_dominio` si la OrdenCliente no está en `orden_cerrada`;
+    409 `conflicto` si esa orden ya tiene factura (1:1)."""
+    return svc.create(payload, usuario)
+
+
+@router_clientes.put("/{item_id}", response_model=FacturaClienteRead)
+def actualizar_factura_cliente(
+    item_id: uuid.UUID,
+    payload: FacturaClienteUpdate,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    return svc.update(item_id, payload, usuario)
+
+
+@router_clientes.get("/{item_id}/archivo-plano")
+def descargar_archivo_plano(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> Response:
+    """Exporta la factura al formato del timbrador externo.
+
+    **ADVERTENCIA:** el adaptador actual es un PLACEHOLDER — el layout real del PAC sigue
+    sin especificarse y el archivo lleva esa marca en su primera línea. No enviarlo a un
+    PAC real.
+    """
+    contenido, nombre = svc.archivo_plano(item_id)
+    return Response(
+        content=contenido,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+    )
+
+
+@router_clientes.post("/{item_id}/enviar-a-timbrado", response_model=FacturaClienteRead)
+def enviar_a_timbrado(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    return svc.enviar_a_timbrado(item_id, usuario)
+
+
+@router_clientes.post("/{item_id}/timbrar", response_model=FacturaClienteRead)
+def timbrar_factura(
+    item_id: uuid.UUID,
+    payload: TimbrarIn,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    """Registra la respuesta del PAC. **Promueve la OrdenCliente a `facturada`** en la
+    misma transacción (handoff con F1)."""
+    return svc.timbrar(item_id, payload, usuario)
+
+
+@router_clientes.post("/{item_id}/entregar", response_model=FacturaClienteRead)
+def entregar_factura(
+    item_id: uuid.UUID,
+    payload: EntregarIn,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    return svc.entregar(item_id, payload, usuario)
+
+
+@router_clientes.post("/{item_id}/cancelar", response_model=FacturaClienteRead)
+def cancelar_factura(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> FacturaClienteRead:
+    return svc.cancelar(item_id, usuario)

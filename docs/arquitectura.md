@@ -1196,4 +1196,31 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   módulos futuros: cualquier CHECK que use `LIKE` debe limitarse a `%` y `_`; si hace
   falta validar un formato más fino, va en el schema Pydantic, no en la constraint.**
 
-[[Agregar aquí cada nueva decisión: ADR-046, ...]]
+### ADR-046 — Canal dedicado de autorización cuando la matriz de módulo contradice a la ficha
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 2).
+- **Contexto:** la ficha de F2 pide dos cosas que, juntas, no se pueden implementar con un
+  solo endpoint: (a) la captura de facturas de proveedor es de **CxP** y las demás áreas
+  solo leen; (b) el paso `en_revision → autorizada` lo ejecuta **Dirección o Admin**. Con
+  `POST /{id}/estatus` protegido por `costos:editar`, Dirección —que en la matriz solo
+  tiene READ— quedaba bloqueada por el permiso de MÓDULO antes de llegar al chequeo de
+  área del servicio. Lo detectó una prueba parametrizada (`direccion` → 403 en lugar de
+  200), no la lectura del código.
+- **Decisión:** separar la acción sensible en su propio endpoint, replicando el patrón que
+  F1 ya usa para el canal de comisiones (`PATCH /ordenes/clientes/{id}/comisiones`):
+  - `POST /{id}/estatus` (`costos:editar`) → transiciones OPERATIVAS de CxP. Pedir
+    `autorizada` por aquí devuelve 403 y remite al canal dedicado.
+  - `POST /{id}/autorizar` (**`costos:leer`**) → la transición sensible. El permiso del
+    router es de LECTURA a propósito, y la autorización real (`area in (DIRECCION, ADMIN)`)
+    se valida DENTRO del servicio.
+  El flag interno `autorizando=True` que `autorizar()` pasa a `transicionar()` es lo que
+  impide que el canal operativo alcance ese estado por la puerta de atrás.
+- **Consecuencias:** queda una regla general para el proyecto: **cuando una acción tiene
+  una autorización distinta a la del módulo, va en su propio endpoint con el permiso de
+  router al nivel del área MENOS privilegiada que debe poder ejecutarla, y la regla real
+  en el servicio.** Ponerlo al revés (subir a Dirección a WRITE en `costos`) habría sido
+  peor: le daría de paso captura y edición sobre facturas de proveedor, que es justo lo que
+  la matriz de la ficha le niega. El costo es un endpoint más por acción sensible; el
+  beneficio es que el permiso de módulo sigue siendo una matriz de datos y no se ensucia
+  con excepciones. Ver también ADR-044 (las dos claves de RBAC de F2).
+
+[[Agregar aquí cada nueva decisión: ADR-047, ...]]

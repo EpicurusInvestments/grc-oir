@@ -195,7 +195,33 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     `contrato` y `marca` se eliminó a mano de la migración de F2 (es preexistente y ajena
     a esta fase) y queda como ticket aparte.
 
-- **Tanda 2 (escritura + máquinas de estado + handoff + puerto de timbrado):** pendiente.
+- **Tanda 2 (escritura + máquinas de estado + handoff + puerto de timbrado) — COMPLETA.**
+  17 endpoints en total (9 de lectura + 8 de escritura/transición) más el de adjuntos.
+  **No requirió tocar el esquema**: `alembic check` confirma 0 operaciones pendientes de
+  F2 (todo estaba previsto en la migración de la Tanda 1). Verificado: **355/355 pytest**
+  (21 nuevas), `ruff`/`mypy` limpios sobre el módulo.
+  - **Handoff con F1 implementado y probado.** `FacturaClienteService.timbrar` invoca
+    `OrdenClienteService.marcar_facturada` — método NUEVO y aditivo en F1, el único cambio
+    a `app/modules/ordenes/` — con la misma sesión y antes del commit. Las pruebas cubren:
+    que `preparada` y `enviada_a_timbrado` NO mueven la orden, que `timbrada` sí la deja en
+    `facturada`, que repetir el timbrado es idempotente, y que **si la OC no admite la
+    transición el timbrado se revierte entero** (atomicidad).
+  - **Cancelar una factura NO revierte la OrdenCliente.** Deshacer `facturada` es una
+    decisión de negocio que nadie ha tomado; se dejó explícito en el código y en la prueba
+    en vez de inventar un comportamiento. Ver pendientes.
+  - **Puerto de timbrado** (`app/integrations/timbrado/`): `TimbradoExportPort` + un
+    adaptador **placeholder** cuyo archivo lleva la advertencia *"FORMATO BORRADOR - NO ES
+    EL LAYOUT REAL DEL PAC - NO ENVIAR A TIMBRAR"* en la primera línea. Una prueba verifica
+    esa marca: si alguien escribe el adaptador real reutilizando el placeholder, falla.
+    Deliberadamente NO imita un layout posicional ni un CFDI — un archivo que aparenta ser
+    el formato real es peor que uno que evidentemente no lo es.
+  - **Hallazgo (ADR-046):** la matriz de la ficha (CxP captura, Dirección solo lee) y la
+    regla de autorización (Dirección autoriza) se contradicen si ambas pasan por el mismo
+    endpoint: el permiso de módulo bloqueaba a Dirección antes del chequeo de área. Se
+    separó `POST /{id}/autorizar` como canal dedicado con permiso de router `costos:leer`,
+    igual que el canal de comisiones de F1. Lo encontró una prueba parametrizada.
+  - **XML agregado a la lista blanca de adjuntos** (capa de integración compartida), sin
+    ampliar en silencio lo que acepta F1: las listas por módulo ahora son explícitas.
 - **Tanda 3 (frontend + siembra de demo):** pendiente.
 
 ## Pendientes / dudas
@@ -207,4 +233,10 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   plantilla (hoy `layout_factura` es texto libre).
 - **Deriva de índices en tablas de F0** (ver hallazgo colateral arriba): decidir si se
   corrige con una migración dedicada o si se alinean los modelos a lo que ya existe en
-  RDS.
+  RDS. `alembic check` sigue reportando esas 3 operaciones (y solo esas).
+- **¿Cancelar una factura timbrada debe revertir la `OrdenCliente`?** Hoy NO lo hace: la
+  orden se queda en `facturada`. Es la decisión conservadora, pero deja un hueco si una
+  factura se cancela por error de captura. Requiere decisión de negocio antes de
+  implementarse.
+- **¿Quién dispara `FacturaCliente → cobrada`?** La transición existe en la máquina pero
+  en F2 nadie la invoca; es de F3 (Cobranza), igual que `OrdenCliente → cobrada`.

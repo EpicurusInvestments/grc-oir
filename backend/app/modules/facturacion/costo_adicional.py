@@ -21,11 +21,12 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2, get_db
+from app.core.errors import DomainError
 from app.core.security import CurrentUser, requiere_permiso
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
@@ -41,6 +42,9 @@ class TipoCosto(StrEnum):
 
 
 _TIPOS_COSTO_SQL = ", ".join(f"'{t.value}'" for t in TipoCosto)
+
+#: Dinero cuantizado a centavos, igual que el resto del módulo.
+CENTAVOS = Decimal("0.01")
 
 
 # ── Modelo ──────────────────────────────────────────────────────────────────────
@@ -119,6 +123,38 @@ class CostoAdicionalListParams(ListParams):
     periodo_contable: str | None = None
 
 
+# ── Schemas de escritura (Tanda 2) ───────────────────────────────────────────────
+#: `YYYY-MM`. La validación FINA de que sean dígitos vive aquí y no en el CHECK de la
+#: tabla: el patrón portable de la constraint solo puede garantizar la forma (ADR-045).
+_PERIODO_RE = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
+class CostoAdicionalCreate(BaseModel):
+    """Captura de CxP. `orden_id` opcional: NULL = costo general, no ligado a una venta."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo_costo: TipoCosto
+    orden_id: uuid.UUID | None = None
+    descripcion_costo: str = Field(min_length=1, max_length=300)
+    periodo_contable: str = Field(pattern=_PERIODO_RE)
+    monto_costo: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    archivo_nombre: str | None = Field(default=None, max_length=255)
+    archivo_path: str | None = Field(default=None, max_length=500)
+
+
+class CostoAdicionalUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tipo_costo: TipoCosto | None = None
+    orden_id: uuid.UUID | None = None
+    descripcion_costo: str | None = Field(default=None, min_length=1, max_length=300)
+    periodo_contable: str | None = Field(default=None, pattern=_PERIODO_RE)
+    monto_costo: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    archivo_nombre: str | None = Field(default=None, max_length=255)
+    archivo_path: str | None = Field(default=None, max_length=500)
+
+
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class CostoAdicionalRepository(BaseRepository[CostoAdicional]):
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
@@ -134,11 +170,54 @@ class CostoAdicionalRepository(BaseRepository[CostoAdicional]):
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
-class CostoAdicionalService(BaseService[CostoAdicional, BaseModel, BaseModel, CostoAdicionalRead]):
-    """Tanda 1: solo lectura. La captura por CxP llega en la Tanda 2."""
+class CostoAdicionalService(
+    BaseService[CostoAdicional, CostoAdicionalCreate, CostoAdicionalUpdate, CostoAdicionalRead]
+):
+    """Captura de CxP. Sin máquina de estados: es un registro simple (la spec no le
+    define ningún ENUM de estatus)."""
 
     read_schema = CostoAdicionalRead
     entidad = "CostoAdicional"
+
+    def __init__(self, repo: CostoAdicionalRepository) -> None:
+        super().__init__(repo)
+        self._repo = repo
+
+    def _validar_orden(self, orden_id: uuid.UUID | None) -> None:
+        """`orden_id` es opcional, pero si viene tiene que existir. No se le exige ningún
+        estado: un costo puede imputarse a una orden en curso, no solo a una cerrada."""
+        if orden_id is None:
+            return
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+
+        if self._repo.db.get(OrdenCliente, orden_id) is None:
+            raise DomainError(
+                "La OrdenCliente indicada no existe.", detalles={"orden_id": str(orden_id)}
+            )
+
+    def create(self, data: CostoAdicionalCreate, usuario: CurrentUser) -> CostoAdicionalRead:
+        from app.modules.usuarios.lookup import resolver_usuario_id
+
+        self._validar_orden(data.orden_id)
+        payload = data.model_dump()
+        payload["tipo_costo"] = data.tipo_costo.value
+        payload["monto_costo"] = Decimal(data.monto_costo).quantize(CENTAVOS)
+        # `dev_headers` no trae usuario_id (F5-00): se resuelve por username, igual que F1.
+        payload["created_by"] = resolver_usuario_id(self._repo.db, usuario.username)
+        return self._to_read(self._repo.create(payload))
+
+    def update(
+        self, id_: Any, data: CostoAdicionalUpdate, usuario: CurrentUser
+    ) -> CostoAdicionalRead:
+        obj = self._get_or_404(id_)
+        payload = data.model_dump(exclude_unset=True)
+        if "orden_id" in payload:
+            self._validar_orden(payload["orden_id"])
+        if payload.get("tipo_costo") is not None:
+            payload["tipo_costo"] = data.tipo_costo.value if data.tipo_costo else None
+        if payload.get("monto_costo") is not None:
+            payload["monto_costo"] = Decimal(payload["monto_costo"]).quantize(CENTAVOS)
+        return self._to_read(self._repo.update(obj, payload))
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
@@ -179,3 +258,23 @@ def obtener_costo_adicional(
     svc: CostoAdicionalService = Depends(get_costo_adicional_service),
 ) -> CostoAdicionalRead:
     return svc.get(item_id)
+
+
+# ── Escritura (Tanda 2) ───────────────────────────────────────────────────────
+@router_costos.post("", response_model=CostoAdicionalRead, status_code=201)
+def crear_costo_adicional(
+    payload: CostoAdicionalCreate,
+    usuario: CurrentUser = Depends(requiere_permiso("costos:crear")),
+    svc: CostoAdicionalService = Depends(get_costo_adicional_service),
+) -> CostoAdicionalRead:
+    return svc.create(payload, usuario)
+
+
+@router_costos.put("/{item_id}", response_model=CostoAdicionalRead)
+def actualizar_costo_adicional(
+    item_id: uuid.UUID,
+    payload: CostoAdicionalUpdate,
+    usuario: CurrentUser = Depends(requiere_permiso("costos:editar")),
+    svc: CostoAdicionalService = Depends(get_costo_adicional_service),
+) -> CostoAdicionalRead:
+    return svc.update(item_id, payload, usuario)

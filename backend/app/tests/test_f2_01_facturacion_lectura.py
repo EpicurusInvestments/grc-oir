@@ -69,7 +69,7 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
     fila de cada entidad de F2."""
     db.add(
         Usuario(
-            usuario_id=ADMIN_ID, nombre_usuario="Admin", email="admin@grcoir.com", area="admin"
+            usuario_id=ADMIN_ID, nombre_usuario="tester", email="admin@grcoir.com", area="admin"
         )
     )
     plaza_id = uuid.uuid4()
