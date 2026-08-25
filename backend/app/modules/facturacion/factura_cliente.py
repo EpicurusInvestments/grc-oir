@@ -4,13 +4,10 @@ El sistema **NUNCA timbra** (ADR-002): PREPARA emisor, receptor, conceptos, tota
 método de pago, cuenta contable y layout; exporta esa información al timbrador externo
 (PAC) y REGISTRA lo que el PAC devuelve (folio fiscal, XML, PDF).
 
-Relación 1:1 con `OrdenCliente` (spec): una OC genera como máximo una factura de cliente.
-La unicidad se garantiza en el ESQUEMA (`UNIQUE` sobre `orden_id`), no solo en el
-servicio — así ninguna vía de escritura futura puede violarla.
-
-Tanda 1 (esta): modelo + migración + API de lectura. La escritura, la máquina de estados
-y el handoff con F1 llegan en la Tanda 2; el enum y los CHECK de estado ya se declaran
-aquí para no encadenar una migración extra solo por eso.
+Relación 1:1 con `OrdenCliente` (spec): una OC tiene como máximo una factura VIGENTE. La
+unicidad se garantiza en el ESQUEMA con un índice único FILTRADO que excluye las
+canceladas (ADR-047), no solo en el servicio — así ninguna vía de escritura futura puede
+violarla, y a la vez una OC cuya factura se canceló puede volver a facturarse.
 
 Dos desviaciones aditivas aprobadas (ver `__init__.py` del módulo): `layout_factura`
 como texto libre nullable y `metodo_pago_clave` como texto sin FK formal.
@@ -31,11 +28,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    Index,
     Numeric,
     Unicode,
-    UniqueConstraint,
     func,
     select,
+    text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -81,8 +79,23 @@ IVA_RATE = Decimal(str(settings.iva_rate))
 class FacturaCliente(Base):
     __tablename__ = "factura_cliente"
     __table_args__ = (
-        # 1:1 con OrdenCliente (spec). En el ESQUEMA, no solo en el servicio.
-        UniqueConstraint("orden_id", name="uq_factura_cliente_orden"),
+        # 1:1 con OrdenCliente (spec), pero como índice único FILTRADO: la unicidad
+        # aplica solo entre facturas NO canceladas. Así una OC cuya factura se canceló
+        # puede volver a facturarse sin borrar el registro de la cancelada (decisión de
+        # negocio de la Tanda 4 — ver ADR-047).
+        #
+        # Portabilidad verificada en los DOS motores: SQL Server soporta índices
+        # filtrados y SQLite índices PARCIALES (desde 3.8; la del entorno es 3.53).
+        # SQLAlchemy emite el mismo DDL para ambos, así que NO hace falta un respaldo en
+        # el servicio para la unicidad. Lo que sí vive en el servicio es el chequeo que
+        # devuelve un 409 legible, y ese también ignora las canceladas.
+        Index(
+            "uq_factura_cliente_orden_vigente",
+            "orden_id",
+            unique=True,
+            mssql_where=text("estado_facturacion <> 'cancelada'"),
+            sqlite_where=text("estado_facturacion <> 'cancelada'"),
+        ),
         CheckConstraint(
             f"estado_facturacion IN ({_ESTADOS_SQL})", name="ck_factura_cliente_estado"
         ),
@@ -403,14 +416,21 @@ class FacturaClienteService(
                 "Solo se puede facturar una OrdenCliente en 'orden_cerrada'.",
                 detalles={"orden_id": str(data.orden_id), "estatus_orden": oc.estatus_orden},
             )
-        # 1:1 (spec). La UNIQUE del esquema es la garantía dura; este chequeo existe para
-        # devolver un 409 legible en vez de un error de integridad de la base.
+        # 1:1 (spec) entre facturas VIGENTES. El índice único filtrado del esquema es la
+        # garantía dura; este chequeo existe para devolver un 409 legible en vez de un
+        # error de integridad. Ignora las CANCELADAS por la misma razón que el índice: una
+        # OC cuya factura se canceló vuelve a ser facturable (ADR-047).
         ya = db.scalar(
-            select(FacturaCliente).where(FacturaCliente.orden_id == data.orden_id).limit(1)
+            select(FacturaCliente)
+            .where(
+                FacturaCliente.orden_id == data.orden_id,
+                FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value,
+            )
+            .limit(1)
         )
         if ya is not None:
             raise ConflictError(
-                "La OrdenCliente ya tiene una factura de cliente (relación 1:1).",
+                "La OrdenCliente ya tiene una factura de cliente vigente (relación 1:1).",
                 detalles={"orden_id": str(data.orden_id), "factura_id": str(ya.factura_id)},
             )
         if db.get(CuentaContable, data.cuenta_contable_id) is None:
@@ -566,14 +586,36 @@ class FacturaClienteService(
         return self._to_read(obj)
 
     def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
-        """Cancelación desde los 4 primeros estados (ficha). **NO revierte la
-        OrdenCliente**: deshacer `facturada` es una decisión de negocio que nadie ha
-        tomado — queda anotado como pendiente en la ficha, no se inventa aquí."""
+        """Cancelación desde los 4 primeros estados, **revirtiendo el handoff** (ADR-047).
+
+        Si la OrdenCliente quedó en `facturada`, vuelve a `orden_cerrada` y puede
+        facturarse de nuevo (el índice único es filtrado: ignora las canceladas). Si ya
+        está en `cobrada`, `revertir_facturacion` lanza 400 y la cancelación NO ocurre:
+        deshacer una venta cobrada exige una nota de crédito que el sistema no maneja.
+
+        La reversión se invoca ANTES del commit y con la misma sesión, igual que el
+        handoff hacia adelante: cancelar la factura y revertir la orden son atómicos.
+        """
+        from app.modules.ordenes.orden_cliente import (
+            OrdenCliente,
+            OrdenClienteRepository,
+            OrdenClienteService,
+        )
+
         obj = self._get_or_404(factura_id)
-        if self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
-            obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
-            self._repo.db.commit()
-            self._repo.db.refresh(obj)
+        db = self._repo.db
+        if not self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
+            return self._to_read(obj)  # ya cancelada: idempotente, no re-revierte
+
+        obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
+
+        # ── reversión del handoff, misma transacción ──
+        OrdenClienteService(OrdenClienteRepository(db, OrdenCliente)).revertir_facturacion(
+            obj.orden_id
+        )
+
+        db.commit()
+        db.refresh(obj)
         return self._to_read(obj)
 
 
@@ -776,7 +818,15 @@ class OrdenesPorFacturarRepository:
             .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
             .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
             # El corazón de la bandeja: LEFT JOIN + IS NULL = "sin factura todavía".
-            .outerjoin(FacturaCliente, FacturaCliente.orden_id == OrdenCliente.orden_id)
+            # La condición de CANCELADA va en el JOIN, no en el WHERE: en el WHERE
+            # convertiría el LEFT JOIN en un INNER y la bandeja saldría siempre vacía.
+            # Sin ella, una OC con su factura cancelada sería re-facturable por el índice
+            # filtrado pero INVISIBLE aquí — media decisión de negocio perdida (ADR-047).
+            .outerjoin(
+                FacturaCliente,
+                (FacturaCliente.orden_id == OrdenCliente.orden_id)
+                & (FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value),
+            )
             .where(
                 OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
                 FacturaCliente.factura_id.is_(None),

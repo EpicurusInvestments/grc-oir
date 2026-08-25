@@ -799,8 +799,13 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 - **`POST /facturacion/clientes/{id}/entregar`** (`facturacion:editar`) — body opcional
   `fecha_entrega_factura` (default: hoy).
 - **`POST /facturacion/clientes/{id}/cancelar`** (`facturacion:editar`) — desde los 4
-  primeros estados. **No revierte la OrdenCliente**: deshacer `facturada` es una decisión
-  de negocio pendiente (ver ficha del módulo).
+  primeros estados. **Revierte el handoff** (ADR-047): si la `OrdenCliente` está en
+  `facturada`, vuelve a `orden_cerrada` en la MISMA transacción y reaparece en la bandeja
+  «Listas para facturar»; si está en `cobrada`, la cancelación se rechaza con **400
+  `error_dominio`** (requeriría una nota de crédito, fuera del alcance de F2); en
+  cualquier otro estado la orden no se toca. La factura cancelada **no se borra**: sigue
+  listándose con estado `cancelada`, y la orden puede recibir una factura nueva porque el
+  1:1 es un índice único FILTRADO que excluye las canceladas.
 
 Todas las transiciones son **idempotentes** (repetir el destino actual devuelve 200 sin
 efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
@@ -824,10 +829,9 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   servicio ni su router. Cuelga de su propio prefijo y no de `/clientes/...` porque ahí
   `{item_id}` capturaría el segmento literal e intentaría leerlo como UUID (422).
 
-  **Límite conocido:** una factura CANCELADA sigue siendo una fila, así que su orden no
-  reaparece en la bandeja. Es coherente con el `UNIQUE` 1:1 (esa orden no admite otra
-  factura de todos modos), pero si el negocio quiere re-facturar tras una cancelación,
-  hace falta decidir antes qué pasa con la factura cancelada.
+  Las facturas **canceladas se ignoran** (el filtro va en la condición del `JOIN`), así que
+  una orden cuya factura se canceló vuelve a aparecer aquí y puede facturarse de nuevo
+  (ADR-047).
 
 #### FacturaAfiliado / FacturaAgencia
 

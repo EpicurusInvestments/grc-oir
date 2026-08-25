@@ -394,28 +394,6 @@ def test_transicion_invalida_da_409(
     assert r.json()["error"]["codigo"] == "transicion_invalida"
 
 
-def test_cancelar_no_revierte_la_orden(
-    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
-) -> None:
-    """Decisión explícita: deshacer `facturada` es una regla de negocio que nadie tomó."""
-    factura_id, orden_id = _crear_factura(client, db, cat)
-    client.post(
-        f"/api/v1/facturacion/clientes/{factura_id}/enviar-a-timbrado", headers=_hdr("facturacion")
-    )
-    client.post(
-        f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
-        json={"folio_fiscal_sat": "X", "fecha_timbrado": "2026-03-02"},
-        headers=_hdr("facturacion"),
-    )
-    r = client.post(
-        f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion")
-    )
-    assert r.status_code == 200
-    assert r.json()["estado_facturacion"] == "cancelada"
-    db.expire_all()
-    assert db.get(OrdenCliente, orden_id).estatus_orden == "facturada"  # NO retrocede
-
-
 def test_no_se_edita_una_factura_timbrada(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -750,3 +728,144 @@ def test_la_bandeja_exige_permiso_de_facturacion(
         ).status_code
         in (401, 403, 422)
     )
+
+
+# ── Tanda 4: cancelar revierte el handoff (ADR-047) ───────────────────────────
+def _timbrar(client: TestClient, factura_id: str) -> None:
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/enviar-a-timbrado", headers=_hdr("facturacion")
+    )
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
+        json={"folio_fiscal_sat": "FOLIO-1", "fecha_timbrado": "2026-03-02"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_cancelar_una_timbrada_regresa_la_orden_a_cerrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-REV")
+    _timbrar(client, factura_id)
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_id).estatus_orden == "facturada"
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    assert r.json()["estado_facturacion"] == "cancelada"
+
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_id).estatus_orden == "orden_cerrada"
+
+
+def test_tras_cancelar_se_puede_facturar_de_nuevo_la_misma_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Lo que habilita el índice único FILTRADO: la cancelada no bloquea a la nueva."""
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-1")
+    _timbrar(client, factura_id)
+    client.post(f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion"))
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-2"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["estado_facturacion"] == "preparada"
+
+    # Y la SEGUNDA vigente sí vuelve a bloquear una tercera.
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-3"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 409
+
+
+def test_la_factura_cancelada_no_se_borra_y_sigue_listandose(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-HIST")
+    _timbrar(client, factura_id)
+    client.post(f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion"))
+    client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-HIST-2"),
+        headers=_hdr("facturacion"),
+    )
+
+    r = client.get(
+        "/api/v1/facturacion/clientes",
+        params={"orden_id": str(orden_id)},
+        headers=_hdr("facturacion"),
+    )
+    numeros = {f["numero_factura"]: f["estado_facturacion"] for f in r.json()["items"]}
+    assert numeros == {"F-HIST": "cancelada", "F-HIST-2": "preparada"}
+
+    # Y sigue apareciendo bajo su propio filtro de estado.
+    r = client.get(
+        "/api/v1/facturacion/clientes",
+        params={"estado_facturacion": "cancelada"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json()["total"] == 1
+
+
+def test_no_se_cancela_la_factura_de_una_orden_ya_cobrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Requeriría una nota de crédito real, fuera del alcance de F2."""
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-COB")
+    _timbrar(client, factura_id)
+    oc = db.get(OrdenCliente, orden_id)
+    assert oc is not None
+    oc.estatus_orden = "cobrada"  # lo hará F3
+    db.commit()
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+    # Ni la factura ni la orden se movieron.
+    db.rollback()
+    db.expire_all()
+    assert db.get(FacturaCliente, uuid.UUID(factura_id)).estado_facturacion == "timbrada"
+    assert db.get(OrdenCliente, orden_id).estatus_orden == "cobrada"
+
+
+def test_cancelar_desde_preparada_no_toca_la_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El handoff nunca ocurrió (se dispara al TIMBRAR): no hay nada que revertir."""
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-PREP")
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_id).estatus_orden == "orden_cerrada"
+
+
+def test_la_orden_reaparece_en_la_bandeja_tras_cancelar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Sin el filtro de canceladas en el JOIN, sería re-facturable pero invisible."""
+    factura_id, orden_id = _crear_factura(client, db, cat, "F-BAND")
+    assert client.get(
+        "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
+    ).json()["total"] == 0
+
+    _timbrar(client, factura_id)
+    client.post(f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion"))
+
+    cuerpo = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
+    ).json()
+    assert cuerpo["total"] == 1
+    assert cuerpo["items"][0]["orden_id"] == str(orden_id)

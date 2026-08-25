@@ -222,6 +222,35 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     igual que el canal de comisiones de F1. Lo encontró una prueba parametrizada.
   - **XML agregado a la lista blanca de adjuntos** (capa de integración compartida), sin
     ampliar en silencio lo que acepta F1: las listas por módulo ahora son explícitas.
+- **Tanda 4 (reversión del handoff al cancelar) — COMPLETA.** Decisión de negocio del
+  equipo, documentada en **ADR-047**. Cancelar una factura devuelve la `OrdenCliente` de
+  `facturada` a `orden_cerrada`, y el 1:1 pasa de `UNIQUE` a **índice único FILTRADO**
+  (`WHERE estado_facturacion <> 'cancelada'`) para que esa orden pueda facturarse de
+  nuevo sin borrar el registro de la cancelada.
+  - `OrdenClienteService.revertir_facturacion()` — segundo y último toque a F1, gemelo
+    hacia atrás de `marcar_facturada()`: sin `commit` propio, invocado desde F2 en la
+    misma transacción.
+  - **La regla se expresa por el estado de la ORDEN**, no por el de la factura:
+    `facturada` → revierte; `cobrada` → **400** (requeriría nota de crédito, fuera de
+    alcance); cualquier otro → no hace nada. Así quedan cubiertos sin enumerarlos tanto
+    cancelar desde `preparada`/`enviada_a_timbrado` (el handoff nunca ocurrió) como desde
+    `entregada`, que la redacción inicial de la decisión no mencionaba pero sí requiere
+    reversión.
+  - **Portabilidad verificada, no supuesta:** SQLite SÍ soporta índices parciales (desde
+    3.8) y SQLAlchemy emite el mismo DDL para SQL Server y SQLite, así que no hizo falta
+    una validación de unicidad de respaldo en el servicio. Lo que sí se ajustó es el
+    chequeo que devuelve el 409 legible, que ahora ignora las canceladas.
+  - **La bandeja "Listas para facturar" tuvo que cambiar también**, o la decisión quedaba
+    a medias: la orden sería re-facturable pero invisible. El filtro va en la condición
+    del `JOIN`, no en el `WHERE` (ahí convertiría el `LEFT JOIN` en `INNER`).
+  - La migración `3e57e45d24cb` se editó EN SITIO tras confirmar que no se ha aplicado a
+    RDS (`alembic_version = a1c8e3d47b92`, `factura_cliente` inexistente ahí). Ciclo
+    `downgrade`/`upgrade` verificado.
+  - Se retiró la prueba `test_cancelar_no_revierte_la_orden`, que afirmaba el
+    comportamiento anterior y quedó invalidada por esta decisión.
+  - Verificado: **364/364 pytest** (6 nuevas), `ruff`/`mypy` limpios, DDL comprobado en
+    los dos dialectos.
+
 - **Ajustes contra la pantalla aprobada** (revisión de `Fase_2_-_Facturacion.html` con
   capturas reales, 2026-08-24):
   1. **Bandeja "Listas para facturar"** (faltaba): ítem propio en el sidebar de Ingresos
@@ -230,7 +259,8 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
      el mockup: cada renglón es una decisión ("¿facturo esta?"), no un dato que se compare
      en columnas. «Generar factura →» REUTILIZA `FacturaClienteForm` con la orden fija (se
      muestra el folio, sin selector), no un segundo formulario en paralelo. El endpoint
-     vive en F2 y solo LEE el modelo de F1.
+     vive en F2 y solo LEE el modelo de F1. Desde la Tanda 4 el `JOIN` ignora las
+     facturas canceladas, así que una orden cuya factura se canceló REAPARECE aquí.
      Para que la bandeja sea demostrable se agregó una **11.ª OrdenCliente** a la siembra,
      cerrada y sin factura: la única otra orden cerrada (`oc6`) ya tiene factura sembrada,
      así que la pantalla habría salido siempre vacía.
@@ -280,9 +310,9 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 - **Deriva de índices en tablas de F0** (ver hallazgo colateral arriba): decidir si se
   corrige con una migración dedicada o si se alinean los modelos a lo que ya existe en
   RDS. `alembic check` sigue reportando esas 3 operaciones (y solo esas).
-- **¿Cancelar una factura timbrada debe revertir la `OrdenCliente`?** Hoy NO lo hace: la
-  orden se queda en `facturada`. Es la decisión conservadora, pero deja un hueco si una
-  factura se cancela por error de captura. Requiere decisión de negocio antes de
-  implementarse.
+- ~~¿Cancelar una factura timbrada debe revertir la `OrdenCliente`?~~ **RESUELTO** en la
+  Tanda 4 (ADR-047): sí revierte, y el 1:1 pasó a índice único filtrado para permitir
+  refacturar. La excepción es una orden ya `cobrada`, que se rechaza con 400 porque
+  requeriría una nota de crédito — eso sí sigue fuera de alcance.
 - **¿Quién dispara `FacturaCliente → cobrada`?** La transición existe en la máquina pero
   en F2 nadie la invoca; es de F3 (Cobranza), igual que `OrdenCliente → cobrada`.

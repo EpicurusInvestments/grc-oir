@@ -7,6 +7,11 @@
  * Timbrar es la acción con efecto colateral: promueve la `OrdenCliente` a `facturada`
  * (el handoff de F2). El diálogo lo dice explícitamente, porque desde esta pantalla no se
  * ve la orden que se está moviendo.
+ *
+ * Cancelar es su espejo (ADR-047): si la orden quedó en `facturada`, vuelve a
+ * `orden_cerrada` y reaparece en «Listas para facturar». El botón lo advierte en su
+ * tooltip, por el mismo motivo. Si la orden ya está `cobrada`, el backend rechaza la
+ * cancelación con 400 y el mensaje se pinta tal cual.
  */
 
 import { useState } from "react";
@@ -223,6 +228,11 @@ export function FacturasClientePage() {
                 type="button"
                 className="btn btn-sm btn-danger"
                 disabled={cancelar.isPending}
+                title={
+                  ["timbrada", "entregada"].includes(estado)
+                    ? "La orden asociada regresará a «orden cerrada» y podrá volver a facturarse."
+                    : undefined
+                }
                 onClick={() => ejecutar(() => cancelar.mutateAsync(selected.factura_id))}
               >
                 Cancelar

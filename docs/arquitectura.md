@@ -1223,4 +1223,52 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   beneficio es que el permiso de módulo sigue siendo una matriz de datos y no se ensucia
   con excepciones. Ver también ADR-044 (las dos claves de RBAC de F2).
 
-[[Agregar aquí cada nueva decisión: ADR-047, ...]]
+### ADR-047 — Cancelar una factura revierte el handoff; el 1:1 pasa a índice único FILTRADO
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 4). Decisión de negocio del equipo.
+- **Contexto:** la Tanda 2 dejó abierto qué pasa al cancelar una `FacturaCliente` ya
+  timbrada. El comportamiento provisional —no tocar la `OrdenCliente`— dejaba dos huecos:
+  la orden se quedaba en `facturada` para siempre aunque no hubiera factura vigente, y el
+  `UNIQUE` sobre `factura_cliente.orden_id` impedía volver a facturarla, así que un error
+  de captura era irreparable sin intervención en la base.
+- **Decisión:**
+  1. **Reversión simétrica del handoff.** Al cancelar, `FacturaClienteService.cancelar`
+     invoca `OrdenClienteService.revertir_facturacion(orden_id)` —gemelo hacia atrás de
+     `marcar_facturada`, en F1 porque la máquina de estados de la OC es suya— con la misma
+     sesión y antes del commit: cancelar y revertir son atómicos.
+  2. **La regla se expresa por el estado de la ORDEN, no por el de la factura.** Si la OC
+     está en `facturada` → vuelve a `orden_cerrada`; si está en `cobrada` → **400
+     `error_dominio`**; en cualquier otro estado → no hace nada. Esto cubre sin
+     enumerarlos los casos de cancelar desde `preparada` y `enviada_a_timbrado` (ahí el
+     handoff nunca ocurrió: se dispara al TIMBRAR) y también desde `entregada`, que la
+     redacción inicial de la decisión no mencionaba pero SÍ requiere reversión, porque
+     viene después de `timbrada`.
+  3. **El `UNIQUE` de `orden_id` pasa a índice único FILTRADO**
+     (`WHERE estado_facturacion <> 'cancelada'`): la unicidad aplica solo entre facturas
+     vigentes, así que la OC puede recibir una factura nueva sin borrar el registro de la
+     cancelada. El chequeo del servicio que devuelve el 409 legible ignora las canceladas
+     por la misma razón.
+  4. **La bandeja "Listas para facturar" también ignora las canceladas**, moviendo la
+     condición a la del `JOIN` (no al `WHERE`, que convertiría el `LEFT JOIN` en `INNER`).
+     Sin esto la orden sería re-facturable por el índice pero INVISIBLE en la bandeja: la
+     mitad de la decisión se habría perdido en silencio.
+- **Excepción `cobrada`, y por qué:** deshacer una venta ya cobrada no es un cambio de
+  estado, es una **nota de crédito** — un documento fiscal que el sistema no modela
+  todavía. Rechazar es la única respuesta honesta: revertir en silencio dejaría la
+  contabilidad descuadrada. Queda como alcance de una fase o extensión futura.
+- **Portabilidad del índice filtrado (verificada, no supuesta):** SQL Server soporta
+  índices filtrados y **SQLite soporta índices PARCIALES** desde la 3.8 (la del entorno es
+  3.53) — al contrario de lo que se asumió al plantear la decisión. Se comprobó aislado
+  que la semántica es la deseada (rechaza duplicado vigente, permite refacturar tras
+  cancelar, permite varias canceladas) y que SQLAlchemy emite el MISMO DDL en ambos
+  dialectos. Por eso **no** hace falta una validación de unicidad de respaldo en el
+  servicio, a diferencia de lo que habría exigido un motor sin índices parciales.
+  Nota para el día que se aplique a RDS: el predicado usa `<>`, que SQL Server admite en
+  índices filtrados; si lo rechazara, el equivalente es un `IN` con los cinco estados no
+  cancelados.
+- **Sobre la migración:** se editó `3e57e45d24cb` en sitio en vez de encadenar una nueva,
+  porque se confirmó que NO se ha aplicado a RDS (`alembic_version = a1c8e3d47b92` y
+  `factura_cliente` no existe ahí). Encadenar habría exigido un `DROP CONSTRAINT` que
+  SQLite no soporta sin `batch_alter_table`. **Esa ventana se cierra en cuanto la
+  revisión se aplique a RDS.**
+
+[[Agregar aquí cada nueva decisión: ADR-048, ...]]
