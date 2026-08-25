@@ -14,7 +14,7 @@ import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { fmtMonto, fmtPct } from "../../format";
-import { findAfiliado, findEstacion, findPlaza, estaciones } from "../../state/catalogosCache";
+import { esActivo, findAfiliado, findEstacion, findPlaza, estaciones } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oesDeOC, oiTotalSpots, type BalanceSpotsOC } from "../../state/selectors";
 import type { OrdenCliente, OrdenEstacionInput, PeriodoTransmisionRow } from "../../types";
@@ -133,7 +133,7 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
               <div className="sec">Estación</div>
               <select className="fsel" value={estacionId} onChange={(e) => onEstacionChange(e.target.value)}>
                 <option value="">Selecciona…</option>
-                {estaciones.map((e) => (
+                {estaciones.filter(esActivo).map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.nombre_estacion} ({e.frecuencia})
                   </option>

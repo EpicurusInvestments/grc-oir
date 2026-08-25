@@ -14,6 +14,10 @@ export interface AgenciaRef {
   nombre_agencia: string;
   rfc_agencia: string;
   porcentaje_comision_agencia_default: number;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface AnuncianteRef {
@@ -24,12 +28,20 @@ export interface AnuncianteRef {
   rfc_anunciante: string;
   dias_credito_default: number;
   categoria_id: string;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface MarcaRef {
   id: string;
   anunciante_id: string;
   nombre_marca: string;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export type EstadoContratoRef = "vigente" | "finalizado";
@@ -40,17 +52,29 @@ export interface ContratoRef {
   numero_contrato: string;
   nombre_contrato: string;
   estado_contrato: EstadoContratoRef;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface VendedorRef {
   id: string;
   nombre_vendedor: string;
   porcentaje_comision_default: number;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface CategoriaRef {
   id: string;
   nombre_categoria: string;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface EmpresaFacturadoraRef {
@@ -58,6 +82,10 @@ export interface EmpresaFacturadoraRef {
   nombre_empresa: string;
   razon_social_empresa: string;
   rfc_empresa: string;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface PlazaRef {
@@ -82,6 +110,10 @@ export interface EstacionRef {
   nombre_estacion: string;
   frecuencia: string;
   tipo_senal: TipoSenal;
+  /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
+   * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
+   * `<select>` del formulario de alta/edición. */
+  activo?: boolean;
 }
 
 export interface TarifaRef {
@@ -105,17 +137,31 @@ export const afiliados: AfiliadoRef[] = [];
 export const estaciones: EstacionRef[] = [];
 export const tarifas: TarifaRef[] = [];
 
+/** `activo` es opcional en los `*Ref` (ver comentario en cada interfaz): `undefined` se
+ * trata como activo — solo un `false` explícito (el dato real que manda el backend para
+ * un registro dado de baja) lo excluye. */
+export function esActivo(x: { activo?: boolean }): boolean {
+  return x.activo !== false;
+}
+
 export function findAgencia(id: string | null): AgenciaRef | null {
   return id ? (agencias.find((a) => a.id === id) ?? null) : null;
 }
 export function findAnunciante(id: string): AnuncianteRef | undefined {
   return anunciantes.find((a) => a.id === id);
 }
+/** Solo para poblar el `<select>` de Marca en el alta/edición de OrdenCliente — por eso
+ * también filtra `activo` (a diferencia de la búsqueda directa en `marcas` que usan los
+ * paneles de detalle para mostrar la marca YA elegida de una OC existente, sin filtrar,
+ * para no perder el nombre si esa marca se desactivó después). */
 export function marcasDeAnunciante(anuncianteId: string): MarcaRef[] {
-  return marcas.filter((m) => m.anunciante_id === anuncianteId);
+  return marcas.filter((m) => m.anunciante_id === anuncianteId && esActivo(m));
 }
+/** Mismo criterio que `marcasDeAnunciante`: solo para el `<select>` del formulario. */
 export function contratosVigentesDeAnunciante(anuncianteId: string): ContratoRef[] {
-  return contratos.filter((c) => c.anunciante_id === anuncianteId && c.estado_contrato === "vigente");
+  return contratos.filter(
+    (c) => c.anunciante_id === anuncianteId && c.estado_contrato === "vigente" && esActivo(c),
+  );
 }
 export function findVendedor(id: string | null): VendedorRef | null {
   return id ? (vendedores.find((v) => v.id === id) ?? null) : null;

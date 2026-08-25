@@ -61,7 +61,7 @@ export function OrdenEstacionListPage({
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return state.ordenesEstacion.filter((oe) => {
+    const filtrados = state.ordenesEstacion.filter((oe) => {
       if (filtro !== "todas" && oe.estatus !== filtro) return false;
       if (q) {
         const estacion = findEstacion(oe.estacion_id);
@@ -72,6 +72,8 @@ export function OrdenEstacionListPage({
       }
       return true;
     });
+    // Más reciente primero: para que una OI recién dada de alta aparezca al principio.
+    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [state.ordenesEstacion, state.ordenesCliente, filtro, search]);
 
   const selected = selectedId ? (state.ordenesEstacion.find((o) => o.id === selectedId) ?? null) : null;
@@ -198,12 +200,13 @@ export function OrdenEstacionListPage({
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "12%" }}>Folio</th>
-                <th style={{ width: "11%" }}>OC de origen</th>
-                <th style={{ width: "16%" }}>Estación</th>
-                <th style={{ width: "10%" }}>Plaza</th>
-                <th style={{ width: "15%" }}>Afiliado</th>
-                <th style={{ width: "14%" }}>Periodo</th>
+                <th style={{ width: "11%" }}>Folio</th>
+                <th style={{ width: "8%" }}>Fecha</th>
+                <th style={{ width: "10%" }}>OC de origen</th>
+                <th style={{ width: "14%" }}>Estación</th>
+                <th style={{ width: "8%" }}>Plaza</th>
+                <th style={{ width: "13%" }}>Afiliado</th>
+                <th style={{ width: "12%" }}>Periodo</th>
                 <th className="td-center" style={{ width: "7%" }}>
                   Spots
                 </th>
@@ -225,6 +228,9 @@ export function OrdenEstacionListPage({
                   <tr key={oe.id} className={selectedId === oe.id ? "sel" : ""} onClick={() => setSelectedId(oe.id)}>
                     <td className="td-mono">{oe.folio_orden_interna}</td>
                     <td className="td-mono" style={{ fontSize: 11 }}>
+                      {oe.created_at}
+                    </td>
+                    <td className="td-mono" style={{ fontSize: 11 }}>
                       {oc?.folio_orden ?? "—"}
                     </td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
@@ -245,7 +251,7 @@ export function OrdenEstacionListPage({
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="state-msg">
+                  <td colSpan={10} className="state-msg">
                     No hay órdenes internas para los filtros seleccionados.
                   </td>
                 </tr>

@@ -14,12 +14,14 @@ from app.modules.ordenes.adjuntos import router as adjuntos_router
 from app.modules.ordenes.incidencia import router as incidencia_router
 from app.modules.ordenes.orden_cliente import router_clientes
 from app.modules.ordenes.orden_estacion import router_estaciones
+from app.modules.ordenes.orden_estacion_pdf import router_pdf
 from app.modules.ordenes.verificacion import router as verificacion_router
 
 router = APIRouter(prefix="/ordenes", tags=["ordenes"])
 
 router.include_router(router_clientes)
 router.include_router(router_estaciones)
+router.include_router(router_pdf)
 router.include_router(verificacion_router)
 router.include_router(incidencia_router)
 router.include_router(adjuntos_router)

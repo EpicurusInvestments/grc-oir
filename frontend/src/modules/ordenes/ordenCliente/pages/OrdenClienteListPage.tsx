@@ -52,16 +52,25 @@ export function OrdenClienteListPage({
 }: OrdenClienteListPageProps) {
   const { state, crearOC, actualizarOC, cerrarOC } = useOrdenes();
   const [filtro, setFiltro] = useState<FiltroOrdenCliente>(filtroInicial ?? "todas");
-  const [search, setSearch] = useState("");
+  // Al llegar con una OC preseleccionada (p.ej. "Ver OC →" desde el detalle de una orden
+  // interna), el buscador arranca filtrado por su folio: así la tabla muestra SOLO esa
+  // fila en vez de todas — antes solo se resaltaba en el detalle, sin filtrar la lista
+  // (mismo fix que OrdenEstacionListPage.tsx para "Ver orden interna →").
+  const [search, setSearch] = useState(() => {
+    if (!ocIdPreseleccionada) return "";
+    const oc = state.ordenesCliente.find((o) => o.id === ocIdPreseleccionada);
+    return oc?.folio_orden ?? "";
+  });
   const [selectedId, setSelectedId] = useState<string | null>(ocIdPreseleccionada ?? null);
   const [modo, setModo] = useState<Modo>("view");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const items = useMemo(
-    () => filtrarOrdenesCliente(state.ordenesCliente, state.ordenesEstacion, { filtro, search }),
-    [state.ordenesCliente, state.ordenesEstacion, filtro, search],
-  );
+  const items = useMemo(() => {
+    const filtrados = filtrarOrdenesCliente(state.ordenesCliente, state.ordenesEstacion, { filtro, search });
+    // Más reciente primero: para que una OC recién dada de alta aparezca al principio.
+    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }, [state.ordenesCliente, state.ordenesEstacion, filtro, search]);
   const selected = selectedId ? (state.ordenesCliente.find((o) => o.id === selectedId) ?? null) : null;
 
   const filtroDescripcion = filtro !== (filtroInicial ?? "todas") ? undefined : FILTRO_DESCRIPCION[filtro];
@@ -201,18 +210,19 @@ export function OrdenClienteListPage({
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "11%" }}>Folio</th>
-                <th style={{ width: "16%" }}>Anunciante</th>
-                <th style={{ width: "14%" }}>Agencia / Vendedor</th>
-                <th style={{ width: "16%" }}>Producto / Marca</th>
-                <th style={{ width: "12%" }}>Campaña</th>
-                <th className="td-right" style={{ width: "10%" }}>
+                <th style={{ width: "10%" }}>Folio</th>
+                <th style={{ width: "9%" }}>Fecha</th>
+                <th style={{ width: "15%" }}>Anunciante</th>
+                <th style={{ width: "13%" }}>Agencia / Vendedor</th>
+                <th style={{ width: "13%" }}>Producto / Marca</th>
+                <th style={{ width: "11%" }}>Campaña</th>
+                <th className="td-right" style={{ width: "9%" }}>
                   Total
                 </th>
                 <th className="td-center" style={{ width: "6%" }}>
                   OI
                 </th>
-                <th className="td-center" style={{ width: "15%" }}>
+                <th className="td-center" style={{ width: "14%" }}>
                   Estado
                 </th>
               </tr>
@@ -231,6 +241,7 @@ export function OrdenClienteListPage({
                       <div className="td-mono">{oc.folio_orden}</div>
                       <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{oc.numero_orden_cliente}</div>
                     </td>
+                    <td className="td-mono" style={{ fontSize: 11 }}>{oc.created_at}</td>
                     <td className="td-main">{anunciante ? anunciante.nombre_comercial : "—"}</td>
                     <td className="td-2">
                       <div style={{ fontSize: 12 }}>{agencia ? agencia.nombre_agencia : <span style={{ color: "var(--text3)" }}>Sin agencia</span>}</div>
@@ -255,7 +266,7 @@ export function OrdenClienteListPage({
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="state-msg">
+                  <td colSpan={9} className="state-msg">
                     No hay órdenes para los filtros seleccionados.
                   </td>
                 </tr>

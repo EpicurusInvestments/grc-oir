@@ -35,7 +35,7 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return state.incidencias.filter((i) => {
+    const filtradas = state.incidencias.filter((i) => {
       if (filtro !== "todas" && i.tipo !== filtro) return false;
       if (q) {
         const oe = state.ordenesEstacion.find((o) => o.id === i.orden_interna_id);
@@ -45,6 +45,10 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
       }
       return true;
     });
+    // Más reciente primero: por cuándo se dio de alta la incidencia (no por
+    // `fecha_transmision`, que muestra la columna "Fecha" pero puede ser de un día
+    // anterior al momento en que se registró la diferencia).
+    return [...filtradas].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [state.incidencias, state.ordenesEstacion, filtro, search]);
 
   const selected = selectedId ? (state.incidencias.find((i) => i.id === selectedId) ?? null) : null;

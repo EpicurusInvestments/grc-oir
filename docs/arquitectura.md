@@ -1338,3 +1338,85 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   **no está probando la serialización**: hay que forzar al menos una lectura desde la base.
 
 [[Agregar aquí cada nueva decisión: ADR-050, ...]]
+### ADR-043 — PDFs de Orden interna (servicio/programados/reales): reportlab, sin persistencia (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-21 (F1).
+- **Contexto:** el equipo pidió 3 PDFs descargables desde el detalle de "Órdenes internas"
+  — "Orden de servicio" (2.1), "Horarios programados" (2.2) y "Horarios reales de
+  transmisión" (2.3) — a partir de 3 documentos de referencia que comparten estructura de
+  campos pero **no están en la propuesta ni en la especificación BD v2**: es una
+  funcionalidad nueva, sin spec previa, aclarada con el equipo antes de programar
+  (preguntas resueltas: fuente de la razón social/domicilio del encabezado, logo, momento
+  de generación, librería).
+- **Decisión:**
+  1. **`reportlab`, no WeasyPrint.** WeasyPrint (HTML+CSS → PDF) se probó primero por
+     mantenibilidad de plantilla, pero requiere Pango/GObject del sistema operativo —
+     confirmado que **no funciona en Windows sin instalar el runtime de GTK3**, lo que
+     habría bloqueado el desarrollo local de cualquier persona del equipo sin Docker.
+     `reportlab` es puro Python (sin dependencias de sistema), se agregó a
+     `pyproject.toml`/`uv.lock`, y NO requiere cambios al `Dockerfile`.
+  2. **Generación al vuelo, sin guardar archivo.** A diferencia de los adjuntos de
+     ADR-042 (subida real, snapshot fijo en S3), estos 3 PDFs se arman en cada `GET` con
+     el estado ACTUAL de la `OrdenEstacion` (`app/modules/ordenes/orden_estacion_pdf.py`):
+     más simple, y evita archivos obsoletos si la orden se corrige después. Endpoints:
+     `GET /ordenes/estaciones/{id}/pdf/servicio|programados|reales` (permiso
+     `ordenes:leer`), colgados del router de `orden_estacion.py` vía `router_pdf`.
+  3. **Encabezado/pie dinámicos, sin logo de "OIR".** El nombre de empresa y domicilio que
+     aparecen en cada PDF salen de `EmpresaFacturadora` (catálogo F0, vía
+     `OrdenCliente.empresa_facturadora_id`) — NO es un texto fijo de Grupo Radio Centro:
+     cambia según qué empresa facturadora tenga la orden. Sin logo de "OIR" (ese asset no
+     existe en el repo); queda pendiente agregarlo cuando el equipo lo proporcione.
+  4. **"Programados" y "Reales" están gateados por el estatus real de la OE**
+     (`EstatusOrdenEstacion`, no el `EstadoOI` del frontend): el de programados rechaza con
+     `DomainError` (400) si la OE sigue en `asignada` (2.2 no se ha capturado); el de
+     reales, si no llegó a `cerrada` (2.3 no se ha capturado). El de "servicio" no tiene
+     gate: siempre refleja el 2.1 (asignación), independiente de las etapas siguientes. El
+     frontend (`OrdenEstacionDetailPanel.tsx`) oculta los botones de #2/#3 antes de tiempo
+     como UX, pero el backend es quien realmente lo impide.
+  5. **Las tablas de "Pedidos vs. Asignados" (programados) y "reales por día" leen
+     `OrdenEstacionDia`/`Verificacion` completos, no los arreglos-excepción del frontend**
+     (`horarios_programados`/`horarios_reales` en `types.ts` solo guardan los días que
+     CAMBIARON, ver `fromApi.ts`) — el PDF necesita el detalle de TODOS los días, así que
+     el backend consulta directo, no reutiliza esos adaptadores reducidos.
+- **Consecuencias:** nueva dependencia de Python (`reportlab`) sin impacto en Docker;
+  nuevo módulo `orden_estacion_pdf.py` con pruebas propias (`test_f1_06_ordenes_pdf.py`,
+  SQLite) que verifican gating por estatus y que cada PDF se genera (`%PDF` + contenido);
+  nuevo `frontend/src/modules/ordenes/adapters/pdfsApi.ts` (mismo patrón de descarga con
+  nombre forzado que ADR-042). Pendiente de spec/negocio: logo de "OIR" y cualquier ajuste
+  de formato una vez que el equipo revise el resultado visual.
+
+### ADR-044 — Ajustes a ADR-043 tras revisión visual: logos, ubicación de botones y visor
+- **Estado:** aceptada · **Fecha:** 2026-08-22 (F1).
+- **Contexto:** el equipo revisó el resultado visual de ADR-043 contra el prototipo HTML
+  aprobado (`docs/referencias/pantallas/Fase_1_-_Ordenes.html`) y pidió 3 correcciones.
+- **Decisión:**
+  1. **Logos reales, en una carpeta pensada para sustituirse sin tocar código.**
+     `app/assets/logos/{oir,grc}.{jpg|png}` (ver README ahí) — el backend los busca por
+     nombre fijo con `_ruta_logo()`; si no existe el archivo, el PDF se genera igual, sin
+     ese logo (nunca falla por esto). Los 2 archivos iniciales se extrayeron de las
+     imágenes ya incrustadas en el prototipo HTML aprobado (`LOGO_OIR_SVG`/`LOGO_GRC_SVG`,
+     ambas JPEG pese al nombre). El encabezado de los 3 PDFs (`_encabezado()`) ahora es
+     una tabla de 3 columnas: logo OIR (izquierda) · razón social/subtítulo (centro,
+     dinámico desde `EmpresaFacturadora`, sin cambios respecto a ADR-043) · logo GRC
+     (derecha) — igual a la cabecera del prototipo.
+  2. **Los 3 botones de PDF NO son parte de "Documentos".** No existe una sección
+     "Documentos" en el detalle de Orden interna (a diferencia de Orden del cliente,
+     ADR-042) — los botones viven en la barra de acciones inferior (`.df`), agrupados a
+     la izquierda (`margin-right: auto`) mientras los botones de transición de etapa
+     (capturar programados/reales, ver verificación) quedan a la derecha — mismo layout
+     que el prototipo (`.df` con `style="...margin-right:auto"` en
+     `Fase_1_-_Ordenes.html`).
+  3. **Visor de PDF en vez de descarga forzada.** `previsualizarPdfOrdenEstacion()`
+     (`pdfsApi.ts`) reemplaza a `descargarPdfOrdenEstacion()`: abre una pestaña nueva con
+     el PDF incrustado (`<embed type="application/pdf">`) y una barra inferior fija
+     "Vista previa del PDF · listo para imprimir o guardar" con botones "Imprimir /
+     Guardar PDF" (`window.print()`) y "Cerrar" (`window.close()`) — mismo patrón que
+     `_pdfWindow()`/`_pdfPrintBar()` del prototipo aprobado, en vez de forzar un
+     `<a download>` como con los adjuntos de ADR-042 (ahí sí se quiere forzar el nombre
+     de archivo; aquí se quiere previsualizar antes de decidir imprimir/guardar).
+- **Consecuencias:** nueva carpeta versionada `backend/app/assets/logos/` (con README);
+  `orden_estacion_pdf.py` gana `_ruta_logo()`/`_logo_flowable()`/`_encabezado()`;
+  `OrdenEstacionDetailPanel.tsx` ya no tiene sección "Documentos", los 3 botones se
+  movieron al footer; `pdfsApi.ts` cambia su única función exportada. Pruebas de
+  `OrdenEstacionDetailPanel.test.tsx` actualizadas al nuevo nombre/firma de función.
+
+[[Agregar aquí cada nueva decisión: ADR-045, ...]]

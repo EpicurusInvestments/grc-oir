@@ -25,6 +25,7 @@ import {
   categorias,
   contratosVigentesDeAnunciante,
   empresasFacturadoras,
+  esActivo,
   findAgencia,
   findVendedor,
   marcasDeAnunciante,
@@ -384,7 +385,7 @@ export function OrdenClienteForm({
           <div className="fl fl-required">Empresa facturadora</div>
           <select className="fsel" disabled={congelado} {...register("empresa_facturadora_id")}>
             <option value="">Selecciona…</option>
-            {empresasFacturadoras.map((e) => (
+            {empresasFacturadoras.filter(esActivo).map((e) => (
               <option key={e.id} value={e.id}>
                 {e.nombre_empresa}
               </option>
@@ -396,7 +397,7 @@ export function OrdenClienteForm({
           <div className="fl fl-required">Anunciante</div>
           <select className="fsel" disabled={congelado} value={anuncianteId} onChange={(e) => onAnuncianteChange(e.target.value)}>
             <option value="">Selecciona…</option>
-            {anunciantes.map((a) => (
+            {anunciantes.filter(esActivo).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.nombre_comercial}
               </option>
@@ -411,7 +412,7 @@ export function OrdenClienteForm({
               </div>
               <select className="fsel" disabled={congelado} value={watch("agencia_id")} onChange={(e) => onAgenciaChange(e.target.value)}>
                 <option value="">Sin agencia (venta directa)</option>
-                {agencias.map((a) => (
+                {agencias.filter(esActivo).map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.nombre_agencia}
                   </option>
@@ -422,7 +423,7 @@ export function OrdenClienteForm({
               <div className="fl">Categoría</div>
               <select className="fsel" disabled={congelado} {...register("categoria_id")}>
                 <option value="">Selecciona…</option>
-                {categorias.map((c) => (
+                {categorias.filter(esActivo).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.nombre_categoria}
                   </option>
@@ -582,7 +583,7 @@ export function OrdenClienteForm({
                 onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
               >
                 <option value="">Selecciona…</option>
-                {vendedores.map((v) => (
+                {vendedores.filter(esActivo).map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.nombre_vendedor}
                   </option>
@@ -609,7 +610,7 @@ export function OrdenClienteForm({
                 onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
               >
                 <option value="">Sin vendedor secundario</option>
-                {vendedores.map((v) => (
+                {vendedores.filter(esActivo).map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.nombre_vendedor}
                   </option>
