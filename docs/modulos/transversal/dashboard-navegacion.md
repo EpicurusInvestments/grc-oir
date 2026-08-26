@@ -6,8 +6,10 @@
 ## Alcance
 
 - **Dashboard (`/`)**: malla responsiva de 6 tarjetas, una por fase, con ilustración,
-  código+nombre, descripción de una línea y acento de color por fase. Hoy **solo F0
-  (Catálogos) está activa**; F1–F5 se muestran "Próximamente" (atenuadas, no clicables).
+  código+nombre, descripción de una línea y acento de color por fase. Hoy están **activas
+  F0 (Catálogos), F1 (Órdenes), F2 (Facturación) y F5 (Seguridad)**; las demás se muestran
+  "Próximamente" (atenuadas, no clicables). La fuente única de qué está activa es `enabled`
+  en `phaseRegistry.ts` — esta lista se actualiza cuando ese arreglo cambia.
 - **Navegación global (drawer)**: menú lateral deslizante disponible desde cualquier
   pantalla que use `AppHeader` (hamburguesa arriba a la izquierda). Contiene acceso a
   Inicio y a las 6 fases. Cierra con overlay, tecla Escape y botón de cerrar.

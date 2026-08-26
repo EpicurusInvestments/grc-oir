@@ -952,6 +952,65 @@ class OrdenClienteService(
         db.refresh(obj)
         return self._to_read(obj)
 
+    # ── Handoff con F2 (Facturación) ──────────────────────────────────────────
+    def marcar_facturada(self, orden_id: uuid.UUID) -> None:
+        """`orden_cerrada → facturada`. La DISPARA F2 al timbrar la FacturaCliente.
+
+        Por qué vive aquí y no en F2: `OrdenCliente` es el agregado de F1 y la regla de
+        qué estados admiten pasar a `facturada` es suya. F1 ya promueve la OC desde
+        `OrdenEstacionService` mutando el ORM directamente, pero eso ocurre DENTRO del
+        mismo módulo; hacerlo desde F2 dejaría una regla de la máquina de estados de la
+        OC escrita en el módulo equivocado.
+
+        **No hace `commit`, a propósito.** El llamador (`FacturaClienteService.
+        transicionar`) la invoca con la MISMA sesión antes de su propio `commit`, así que
+        timbrar la factura y facturar la orden son una sola transacción atómica: si esto
+        falla, el timbrado también se revierte y no queda una factura timbrada con su
+        orden desincronizada.
+
+        Idempotente: si la orden ya está `facturada` no hace nada (permite reintentar el
+        timbrado sin romper). Desde `cobrada` tampoco retrocede: `cobrada` es un estado
+        POSTERIOR, responsabilidad de F3, y volver a `facturada` sería un retroceso.
+        """
+        obj = self._get_or_404(orden_id)
+        if obj.estatus_orden in (EstatusOrden.FACTURADA.value, EstatusOrden.COBRADA.value):
+            return  # ya facturada (o más allá): nada que hacer
+        if obj.estatus_orden != EstatusOrden.ORDEN_CERRADA.value:
+            raise StateTransitionError(
+                "Solo una orden en 'orden_cerrada' puede pasar a 'facturada'.",
+                detalles={"orden_id": str(orden_id), "estatus_orden": obj.estatus_orden},
+            )
+        obj.estatus_orden = EstatusOrden.FACTURADA.value
+
+    def revertir_facturacion(self, orden_id: uuid.UUID) -> None:
+        """`facturada → orden_cerrada`. La DISPARA F2 al cancelar la FacturaCliente.
+
+        Es el gemelo hacia atrás de `marcar_facturada` y comparte su contrato: vive aquí
+        porque la máquina de estados de la OC es de F1, y **no hace `commit`** — el
+        llamador la invoca con la misma sesión antes del suyo, así que cancelar la factura
+        y revertir la orden son una sola transacción (ADR-047).
+
+        Tres casos, resueltos por el estado de la ORDEN y no por el de la factura:
+        - `facturada` → vuelve a `orden_cerrada`: queda lista para facturarse de nuevo.
+        - `cobrada`   → **se rechaza**. Deshacer una venta ya cobrada exige una nota de
+          crédito real, que no existe todavía (fuera del alcance de F2). Es el único caso
+          en que cancelar la factura falla, y falla ANTES de tocar nada.
+        - cualquier otro → no hace nada. Cubre sin enumerarlas las cancelaciones desde
+          `preparada` y `enviada_a_timbrado`: ahí el handoff nunca llegó a ocurrir (se
+          dispara al TIMBRAR), así que la orden sigue en `orden_cerrada` y no hay qué
+          revertir.
+        """
+        obj = self._get_or_404(orden_id)
+        if obj.estatus_orden == EstatusOrden.COBRADA.value:
+            raise DomainError(
+                "No se puede cancelar la factura de una orden ya COBRADA: requiere una "
+                "nota de crédito, que el sistema todavía no maneja.",
+                detalles={"orden_id": str(orden_id), "estatus_orden": obj.estatus_orden},
+            )
+        if obj.estatus_orden != EstatusOrden.FACTURADA.value:
+            return  # el handoff nunca ocurrió: nada que deshacer
+        obj.estatus_orden = EstatusOrden.ORDEN_CERRADA.value
+
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_orden_cliente_service(db: Session = Depends(get_db)) -> OrdenClienteService:

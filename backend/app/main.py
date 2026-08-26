@@ -18,6 +18,7 @@ from app.core.db import get_engine
 from app.core.errors import register_error_handlers
 from app.modules.auth.router import router as auth_router
 from app.modules.catalogos.router import router as catalogos_router
+from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.router import router as ordenes_router
 from app.modules.usuarios.router import router as usuarios_router
 
@@ -76,4 +77,5 @@ api_v1.include_router(auth_router)
 api_v1.include_router(usuarios_router)
 api_v1.include_router(catalogos_router)
 api_v1.include_router(ordenes_router)
+api_v1.include_router(facturacion_router)
 app.include_router(api_v1)

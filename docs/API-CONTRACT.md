@@ -714,3 +714,179 @@ ejecutar la acción sensible" (chequeo de área específico de esta entidad).
 autorización sensible en `/comisiones`), 404 (no encontrado), 409 (`transicion_invalida`
 — máquina de estados), 422 (validación de payload/filtros), 400 (`error_dominio` —
 reglas de negocio: balances, tarifas, pertenencia contrato/marca-anunciante).
+
+## Facturación (F2)
+
+Prefijo `/facturacion`. **Ojo con los permisos: NO son uniformes dentro del módulo.**
+`_nivel()` de `core/security.py` resuelve el RBAC por MÓDULO, no por entidad, y la matriz
+de F2 pide áreas de captura distintas por entidad — así que el módulo usa **dos claves de
+permiso** (las mismas que el mapa del `CLAUDE.md` §4 predefine para F2; ver ADR-044):
+
+| Sub-recurso | Permiso | Captura | Lectura |
+|---|---|---|---|
+| `/facturacion/clientes` | `facturacion:*` | Facturación | todas las demás áreas |
+| `/facturacion/afiliados`, `/agencias`, `/costos` | `costos:*` | CxP | todas las demás áreas |
+
+Admin no aparece en ninguna matriz: `_nivel()` le da WRITE en todo módulo (ADR-040).
+
+### Lectura (Tanda 1)
+
+Todas las listas devuelven el `Page<T>` estándar (`items`/`total`/`page`/`size`/`pages`) y
+aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de cada una.
+
+- **`GET /facturacion/clientes`** (`facturacion:leer`) — facturas al cliente. Filtros:
+  `orden_id`, `anunciante_id`, `agencia_id`, `empresa_facturadora_id`,
+  `estado_facturacion`. `q` busca en número de factura, razón social y folio fiscal.
+- **`GET /facturacion/clientes/{id}`** (`facturacion:leer`) — 404 si no existe.
+- **`GET /facturacion/afiliados`** (`costos:leer`) — facturas recibidas de afiliados.
+  Filtros: `afiliado_id`, `estatus_factura_afiliado`. `q` busca en el folio de la emisora
+  y la razón social.
+- **`GET /facturacion/afiliados/{id}`** (`costos:leer`).
+- **`GET /facturacion/afiliados/{id}/ordenes`** (`costos:leer`) — el reparto de esa
+  factura entre las `OrdenEstacion` a las que se asignó (`FacturaAfiliadoOrden`). Devuelve
+  una lista simple, no paginada: son pocas por factura.
+- **`GET /facturacion/agencias`** (`costos:leer`) — facturas recibidas de agencias.
+  Filtros: `agencia_id`, `orden_id`, `estatus_factura_agencia`. `q` busca en el folio
+  externo.
+- **`GET /facturacion/agencias/{id}`** (`costos:leer`).
+- **`GET /facturacion/costos`** (`costos:leer`) — costos adicionales. Filtros:
+  `tipo_costo` (`nomina`|`overhead`), `orden_id`, `periodo_contable` (`YYYY-MM`). `q`
+  busca en la descripción.
+- **`GET /facturacion/costos/{id}`** (`costos:leer`).
+
+### Estados
+
+`FacturaCliente.estado_facturacion`: `preparada → enviada_a_timbrado → timbrada →
+entregada → cobrada`, con rama a `cancelada` desde los 4 primeros. El paso a `cobrada` lo
+hará **F3**: F2 declara el estado pero no lo dispara.
+
+`FacturaAfiliado.estatus_factura_afiliado` y `FacturaAgencia.estatus_factura_agencia`:
+`recibida → en_revision → autorizada → pagada`. **`en_revision → autorizada` exige área
+Dirección o Admin** (chequeo explícito en el servicio, no la matriz de módulo — mismo
+patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
+
+`CostoAdicional` no tiene máquina de estados.
+
+### Reglas de negocio del esquema
+
+- **1:1 OC ↔ FacturaCliente** (`uq_factura_cliente_orden`): una `OrdenCliente` no puede
+  tener dos facturas de cliente → 409 `conflicto`. `FacturaAgencia` **sí** es 1:N sobre la
+  misma OC (no lleva esa restricción).
+- **Una OE no se asigna dos veces a la misma factura de afiliado**
+  (`uq_factura_afiliado_orden_factura_oe`); la misma OE sí puede repartirse entre facturas
+  distintas (parcialidades de la emisora).
+- **Montos**: `total_* = monto/subtotal + iva` con CHECK de igualdad envuelto en
+  `ROUND(x, 2)` (ADR-039). En `FacturaCliente` además `iva_factura = subtotal * 0.16`,
+  porque ahí el IVA es derivado; en las facturas de proveedor el IVA es **capturado**
+  (la spec lo marca "Manual": pueden traer retenciones o exentos), así que no se les
+  impone la tasa.
+- **Dos desviaciones aditivas** respecto a la spec (catálogos que nunca se construyeron en
+  F0): `layout_factura` es texto libre nullable (no FK a `LayoutFactura`) y
+  `metodo_pago_clave` es texto sin FK (`MetodoPago` vive en `ConstantesSistema`, grupo
+  `MetodoPago`; el frontend sugiere desde ahí, la base no valida la relación).
+
+**Errores posibles (todo el módulo):** 401 (sin auth), 403 (área sin permiso, o sin
+autorización sensible al autorizar una factura de proveedor), 404 (no encontrado), 409
+(`transicion_invalida` / `conflicto`), 422 (validación de payload/filtros), 400
+(`error_dominio` — reglas de negocio: OC no cerrada, OE no cerrada).
+
+### Escritura y transiciones (Tanda 2)
+
+#### FacturaCliente
+
+- **`POST /facturacion/clientes`** (`facturacion:crear`) — alta. **400 `error_dominio`** si
+  la `OrdenCliente` no está en `orden_cerrada`; **409 `conflicto`** si esa orden ya tiene
+  factura (1:1). Hereda de la OC empresa/anunciante/agencia, razón social y RFC del
+  receptor (anunciante o agencia según `facturacion_directa_cliente`), dirección, fechas de
+  transmisión y `subtotal_factura`; calcula `iva_factura` y `total_factura`. Los campos
+  derivados y calculados **no se aceptan del cliente** (`extra="forbid"` → 422).
+- **`PUT /facturacion/clientes/{id}`** (`facturacion:editar`) — edición de los campos
+  capturables. **409** una vez `timbrada`: el contenido ya salió al SAT.
+- **`GET /facturacion/clientes/{id}/archivo-plano`** (`facturacion:leer`) — exporta la
+  factura al **layout real del PAC (V40)** vía el puerto `TimbradoExportPort`. Texto plano
+  con CRLF, codificado según `TIMBRADO_ENCODING` (hoy `cp1252`). **409** si la factura está
+  cancelada.
+
+  Devuelve la cabecera **`X-Campos-Faltantes`** (expuesta por CORS) con los campos que el
+  PAC exige y que el modelo todavía no captura, separados por `;`. Vacía = archivo
+  completo. Con contenido, el archivo se genera igual —para poder revisarlo— pero el PAC
+  lo rechazaría, y la pantalla lo advierte. Ver ADR-048 y la ficha del módulo.
+- **`POST /facturacion/clientes/{id}/enviar-a-timbrado`** (`facturacion:editar`).
+- **`POST /facturacion/clientes/{id}/timbrar`** (`facturacion:editar`) — body:
+  `folio_fiscal_sat`, `fecha_timbrado`, y opcionalmente `xml_path`/`pdf_path` (claves de
+  almacenamiento devueltas por el endpoint de adjuntos). **Promueve la `OrdenCliente` a
+  `facturada`** en la MISMA transacción (handoff con F1). Si la OC no admite esa
+  transición, el 409 aborta también el timbrado: no queda factura timbrada con la orden
+  desincronizada.
+- **`POST /facturacion/clientes/{id}/entregar`** (`facturacion:editar`) — body opcional
+  `fecha_entrega_factura` (default: hoy).
+- **`POST /facturacion/clientes/{id}/cancelar`** (`facturacion:editar`) — desde los 4
+  primeros estados. **Revierte el handoff** (ADR-047): si la `OrdenCliente` está en
+  `facturada`, vuelve a `orden_cerrada` en la MISMA transacción y reaparece en la bandeja
+  «Listas para facturar»; si está en `cobrada`, la cancelación se rechaza con **400
+  `error_dominio`** (requeriría una nota de crédito, fuera del alcance de F2); en
+  cualquier otro estado la orden no se toca. La factura cancelada **no se borra**: sigue
+  listándose con estado `cancelada`, y la orden puede recibir una factura nueva porque el
+  1:1 es un índice único FILTRADO que excluye las canceladas.
+
+Todas las transiciones son **idempotentes** (repetir el destino actual devuelve 200 sin
+efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
+
+#### Bandeja "Listas para facturar"
+
+- **`GET /facturacion/ordenes-por-facturar`** (`facturacion:leer`) — órdenes en
+  `estatus_orden = orden_cerrada` que **todavía no tienen `FacturaCliente`**
+  (`LEFT JOIN factura_cliente ... WHERE factura_id IS NULL`). Es el atajo operativo del
+  día a día de Facturación. Acepta `page`, `size` y `q` (folio, número de orden y
+  anunciante); el `total` de la respuesta es el contador que la pantalla pinta en el
+  sidebar.
+
+  Devuelve los NOMBRES ya resueltos (`anunciante`, `agencia`, `vendedor`) además de los
+  datos de la orden, para que la vista no dispare tres consultas de catálogo por renglón.
+  `agencia: null` significa trato directo con el anunciante.
+
+  **Vive en F2, no en `ordenes`**, aunque la entidad principal sea `OrdenCliente`: la
+  pregunta que responde es de Facturación y el criterio que la define (la ausencia de una
+  fila en `factura_cliente`) es un concepto de F2. Solo LEE el modelo de F1; no toca su
+  servicio ni su router. Cuelga de su propio prefijo y no de `/clientes/...` porque ahí
+  `{item_id}` capturaría el segmento literal e intentaría leerlo como UUID (422).
+
+  Las facturas **canceladas se ignoran** (el filtro va en la condición del `JOIN`), así que
+  una orden cuya factura se canceló vuelve a aparecer aquí y puede facturarse de nuevo
+  (ADR-047).
+
+#### FacturaAfiliado / FacturaAgencia
+
+- **`POST /facturacion/afiliados`**, **`POST /facturacion/agencias`** (`costos:crear`) —
+  captura de CxP. `total_* = monto + iva` calculado. En afiliado, `razon_social_afiliada`
+  se hereda del catálogo. En agencia, `comision_agencia = OrdenCliente.total * porcentaje
+  / 100`, con el porcentaje sugerido del catálogo Agencia si no se captura, y persistido.
+- **`PUT .../{id}`** (`costos:editar`) — **409** si ya está `autorizada` o `pagada`.
+  Recalcula total y comisión si cambian sus insumos.
+- **`POST .../{id}/estatus`** (`costos:editar`) — transiciones **operativas** de CxP:
+  `recibida ↔ en_revision` y `autorizada → pagada`. Pedir `autorizada` por aquí da **403**
+  y remite al canal dedicado.
+- **`POST .../{id}/autorizar`** (`costos:leer`) — **canal dedicado** para
+  `en_revision → autorizada`. El permiso del router es `leer` a propósito, porque Dirección
+  **no** tiene captura sobre `costos`; la autorización real (solo **Dirección/Admin**) se
+  valida dentro del servicio → **403** para cualquier otra área, incluida la CxP que
+  capturó. Mismo diseño que `PATCH /ordenes/clientes/{id}/comisiones` en F1. Ver ADR-046.
+
+#### FacturaAfiliadoOrden y CostoAdicional
+
+- **`POST /facturacion/afiliados/{id}/ordenes`** (`costos:editar`) — reparte una porción
+  del costo a una `OrdenEstacion`. **400** si la OE no está `cerrada`; **409** si esa OE ya
+  está asignada a esta factura.
+- **`POST /facturacion/costos`**, **`PUT /facturacion/costos/{id}`** (`costos:crear` /
+  `costos:editar`). `periodo_contable` valida `YYYY-MM` con mes 01–12 en el schema
+  (**422**): el CHECK de la tabla solo puede garantizar la forma, ver ADR-045. `orden_id`
+  es opcional (NULL = costo general) y, si viene, debe existir (**400**).
+
+#### Adjuntos de facturación
+
+- **`POST /facturacion/adjuntos?tipo={cfdi_xml|cfdi_pdf|factura_afiliado|factura_agencia|
+  respaldo_costo}`** (`costos:editar`) — sube el archivo y devuelve su `ref` (clave de
+  almacenamiento). Lista blanca de extensiones + *magic bytes*; F2 acepta además **XML**
+  (el CFDI), que F1 no acepta. La `ref` se guarda en la entidad por su propio endpoint.
+- **`GET /facturacion/adjuntos?ref=...`** (`costos:leer`) — descarga. Solo sirve objetos
+  de los prefijos de facturación: una `ref` de `contratos/` u `ordenes/` da 404.

@@ -25,12 +25,20 @@ from app.modules.catalogos import (  # noqa: F401
     agencia,
     anunciante,
     categoria,
+    constantes_sistema,
     contrato,
+    cuenta_contable,
     empresa_facturadora,
     estacion,
     plaza,
     tarifa,
     vendedor,
+)
+from app.modules.facturacion import (  # noqa: F401  (F2 — Facturación)
+    costo_adicional,
+    factura_afiliado,
+    factura_agencia,
+    factura_cliente,
 )
 from app.modules.ordenes import (  # noqa: F401  (F1 — ver ADR-028 y siguientes)
     incidencia,

@@ -205,7 +205,7 @@ Entregas incrementales según la propuesta (cada una usable en producción):
 
 | Integración | Dirección | Mecanismo |
 |---|---|---|
-| **Timbrador fiscal externo** | Salida/Entrada | Exporta archivo plano por factura (estructura de referencia: `archivo_plano_FACTURA_33_NPG_D_28_11757_V40.txt` — `[[POR LLENAR: conseguir spec del formato]]`). Recibe folio fiscal + datos de timbrado → `FacturaCliente`. **El sistema NO timbra.** |
+| **Timbrador fiscal externo** | Salida/Entrada | Exporta archivo plano por factura. Layout **V40 implementado** (`app/integrations/timbrado/adapter_pac_v40.py`), reconstruido del ejemplo de producción en `docs/referencias/` — ver ADR-048. Recibe folio fiscal + datos de timbrado → `FacturaCliente`. **El sistema NO timbra.** Abierto: la CODIFICACIÓN del archivo (`TIMBRADO_ENCODING`, hoy cp1252) y los campos fiscales que el modelo aún no captura (se reportan en `X-Campos-Faltantes`). |
 | **SAP** | Referencia | Las requisiciones capturan el número de OC de SAP como referencia. Sin integración directa (alcance ampliado a evaluar). |
 | **NOI de nóminas** | Entrada | Carga de archivo mensual; parseo y validación → `CostoAdicional` tipo `nomina`. `[[POR LLENAR: spec del formato NOI]]` |
 | **Estados de cuenta bancarios** | Entrada | Carga manual o archivo → `MovimientoBancario` para conciliación. `[[POR LLENAR: banco(s) y formato]]` |
@@ -286,7 +286,9 @@ Definido en `docs/GITHUB_WORKFLOW.md`. Resumen: `main` protegida, ramas
 - Envío de la factura al cliente: ¿correo automático del sistema, descarga por ventas, o
   correo al vendedor? `[[POR LLENAR]]`
 - SSO definitivo (Azure AD / Google Workspace / otro). `[[POR LLENAR]]`
-- Formato exacto del archivo plano del timbrador y del NOI. `[[POR LLENAR]]`
+- Formato exacto del **NOI**. `[[POR LLENAR]]` (el del archivo plano del timbrador ya llegó
+  y está implementado; quedan abiertos su codificación y los campos fiscales del modelo —
+  ver ADR-048 y la ficha de F2).
 - ¿BD de desarrollo separada de producción en RDS? Recomendado SÍ. Hoy se usa la
   instancia/BD de pruebas `devapps.../GRC-OIR`; definir cuándo y cómo se crea la de
   producción. `[[POR LLENAR: decisión y endpoint de prod]]`

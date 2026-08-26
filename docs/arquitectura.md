@@ -1143,6 +1143,201 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   reales (ADR-030/034): solo les faltaba un mecanismo de subida real, no un cambio de
   esquema.
 
+> **Nota de numeración:** el **ADR-043** (un solo `.env` en la raíz, `envDir` de Vite)
+> está redactado en la rama `fix/ordenes-correcciones-f1`, todavía sin mergear a `main`.
+> Los ADR de F2 arrancan en 044 para no colisionar cuando ambas ramas se integren.
+
+### ADR-044 — F2 usa DOS claves de RBAC (`facturacion` y `costos`) para UN solo módulo de código
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 1).
+- **Contexto:** la ficha de F2 pide áreas de CAPTURA distintas por ENTIDAD dentro del
+  mismo módulo: Facturación captura `FacturaCliente`; CxP captura `FacturaAfiliado`,
+  `FacturaAgencia` y `CostoAdicional`. Pero `_nivel(modulo, area)` en `core/security.py`
+  resuelve el permiso **por módulo**, no por entidad: `RBAC["facturacion"]` es un solo
+  diccionario área→acceso. Con una sola clave, o Facturación podía capturar costos o CxP
+  podía capturar facturas de cliente — ninguna de las dos aceptable.
+- **Decisión:** dos claves de permiso, `facturacion` (WRITE: Facturación) y `costos`
+  (WRITE: CxP), sobre **un solo paquete de código** `app/modules/facturacion/`. Lo que se
+  parte es el permiso, no el módulo: la ficha pide las 5 entidades juntas por su
+  acoplamiento, y separarlas en dos paquetes obligaría a que uno importara del otro. Los
+  nombres no son inventados: son exactamente los dos que el mapa fases→módulos del
+  `CLAUDE.md` §4 ya predefine para F2 (`facturacion`, `costos`).
+  Se descartó la alternativa de una clave única + chequeo de área explícito en cada
+  servicio de costos: repetiría en 3 servicios lo que la matriz resuelve como datos, que
+  es justo lo que el `backend/CLAUDE.md` prohíbe ("datos, no ifs repartidos").
+- **Consecuencias:** el módulo tiene permisos NO uniformes — `/facturacion/clientes/*`
+  exige `facturacion:*` y el resto `costos:*`. Queda documentado en el `__init__.py` del
+  módulo, en el `router.py` y en `API-CONTRACT.md`, porque es lo primero que sorprende al
+  leer el código. Admin sigue sin listarse en ninguna de las dos matrices: `_nivel()` le
+  da WRITE en todo módulo presente y futuro (ADR-040). El chequeo de área explícito SÍ se
+  usa, pero solo donde la matriz no alcanza: autorizar una factura de proveedor exige
+  Dirección/Admin (mismo patrón que el canal de comisiones de F1).
+
+### ADR-045 — `LIKE` con clases de caracteres (`[0-9]`) es T-SQL puro: no usarlo en CHECK
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 1).
+- **Contexto:** `CostoAdicional.periodo_contable` es `VARCHAR(7)` con formato `YYYY-MM`
+  (spec). Para garantizarlo en el esquema se escribió el CHECK natural en T-SQL:
+  `periodo_contable LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9]'`. **SQL Server lo soporta;
+  SQLite no.** SQLite no implementa clases de caracteres en `LIKE`: compara `[0-9]`
+  literalmente, así que el patrón no calza NUNCA y el CHECK rechaza todos los valores,
+  incluido el válido `'2026-02'`. Lo detectó la prueba de la Tanda 1 (la inserción del
+  dato correcto falló), y se confirmó aislado con `sqlite3` en memoria: el patrón devuelve
+  0 para los 4 valores probados, válidos e inválidos por igual.
+- **Decisión:** usar `LIKE '____-__'`. El comodín de UN carácter (`_`) sí es estándar en
+  ambos motores. Garantiza la FORMA (7 caracteres con guion en la quinta posición:
+  rechaza `'feb-2026'` y `'2026-2'`), pero no que los caracteres sean dígitos — eso lo
+  valida el schema Pydantic en la captura. Es la garantía más fuerte que se puede expresar
+  de forma **portable** en una constraint de tabla.
+- **Por qué importa más allá de este campo:** es la misma clase de bug que ADR-014
+  (`.is_(True)` sobre `BIT`), ADR-036 (`sa.Date()` cayendo a `DATETIME` offline) y ADR-039
+  (`NUMERIC` como float64 en SQLite) — una construcción que funciona bajo un supuesto
+  implícito de dialecto y se rompe en silencio en el otro. Con la diferencia de que este
+  falla en el sentido MENOS habitual: el DDL habría pasado cualquier revisión pensada para
+  SQL Server, y lo que se habría roto es el desarrollo local completo. **Regla para
+  módulos futuros: cualquier CHECK que use `LIKE` debe limitarse a `%` y `_`; si hace
+  falta validar un formato más fino, va en el schema Pydantic, no en la constraint.**
+
+### ADR-046 — Canal dedicado de autorización cuando la matriz de módulo contradice a la ficha
+- **Estado:** aceptada · **Fecha:** 2026-08-24 (F2, tanda 2).
+- **Contexto:** la ficha de F2 pide dos cosas que, juntas, no se pueden implementar con un
+  solo endpoint: (a) la captura de facturas de proveedor es de **CxP** y las demás áreas
+  solo leen; (b) el paso `en_revision → autorizada` lo ejecuta **Dirección o Admin**. Con
+  `POST /{id}/estatus` protegido por `costos:editar`, Dirección —que en la matriz solo
+  tiene READ— quedaba bloqueada por el permiso de MÓDULO antes de llegar al chequeo de
+  área del servicio. Lo detectó una prueba parametrizada (`direccion` → 403 en lugar de
+  200), no la lectura del código.
+- **Decisión:** separar la acción sensible en su propio endpoint, replicando el patrón que
+  F1 ya usa para el canal de comisiones (`PATCH /ordenes/clientes/{id}/comisiones`):
+  - `POST /{id}/estatus` (`costos:editar`) → transiciones OPERATIVAS de CxP. Pedir
+    `autorizada` por aquí devuelve 403 y remite al canal dedicado.
+  - `POST /{id}/autorizar` (**`costos:leer`**) → la transición sensible. El permiso del
+    router es de LECTURA a propósito, y la autorización real (`area in (DIRECCION, ADMIN)`)
+    se valida DENTRO del servicio.
+  El flag interno `autorizando=True` que `autorizar()` pasa a `transicionar()` es lo que
+  impide que el canal operativo alcance ese estado por la puerta de atrás.
+- **Consecuencias:** queda una regla general para el proyecto: **cuando una acción tiene
+  una autorización distinta a la del módulo, va en su propio endpoint con el permiso de
+  router al nivel del área MENOS privilegiada que debe poder ejecutarla, y la regla real
+  en el servicio.** Ponerlo al revés (subir a Dirección a WRITE en `costos`) habría sido
+  peor: le daría de paso captura y edición sobre facturas de proveedor, que es justo lo que
+  la matriz de la ficha le niega. El costo es un endpoint más por acción sensible; el
+  beneficio es que el permiso de módulo sigue siendo una matriz de datos y no se ensucia
+  con excepciones. Ver también ADR-044 (las dos claves de RBAC de F2).
+
+### ADR-047 — Cancelar una factura revierte el handoff; el 1:1 pasa a índice único FILTRADO
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 4). Decisión de negocio del equipo.
+- **Contexto:** la Tanda 2 dejó abierto qué pasa al cancelar una `FacturaCliente` ya
+  timbrada. El comportamiento provisional —no tocar la `OrdenCliente`— dejaba dos huecos:
+  la orden se quedaba en `facturada` para siempre aunque no hubiera factura vigente, y el
+  `UNIQUE` sobre `factura_cliente.orden_id` impedía volver a facturarla, así que un error
+  de captura era irreparable sin intervención en la base.
+- **Decisión:**
+  1. **Reversión simétrica del handoff.** Al cancelar, `FacturaClienteService.cancelar`
+     invoca `OrdenClienteService.revertir_facturacion(orden_id)` —gemelo hacia atrás de
+     `marcar_facturada`, en F1 porque la máquina de estados de la OC es suya— con la misma
+     sesión y antes del commit: cancelar y revertir son atómicos.
+  2. **La regla se expresa por el estado de la ORDEN, no por el de la factura.** Si la OC
+     está en `facturada` → vuelve a `orden_cerrada`; si está en `cobrada` → **400
+     `error_dominio`**; en cualquier otro estado → no hace nada. Esto cubre sin
+     enumerarlos los casos de cancelar desde `preparada` y `enviada_a_timbrado` (ahí el
+     handoff nunca ocurrió: se dispara al TIMBRAR) y también desde `entregada`, que la
+     redacción inicial de la decisión no mencionaba pero SÍ requiere reversión, porque
+     viene después de `timbrada`.
+  3. **El `UNIQUE` de `orden_id` pasa a índice único FILTRADO**
+     (`WHERE estado_facturacion <> 'cancelada'`): la unicidad aplica solo entre facturas
+     vigentes, así que la OC puede recibir una factura nueva sin borrar el registro de la
+     cancelada. El chequeo del servicio que devuelve el 409 legible ignora las canceladas
+     por la misma razón.
+  4. **La bandeja "Listas para facturar" también ignora las canceladas**, moviendo la
+     condición a la del `JOIN` (no al `WHERE`, que convertiría el `LEFT JOIN` en `INNER`).
+     Sin esto la orden sería re-facturable por el índice pero INVISIBLE en la bandeja: la
+     mitad de la decisión se habría perdido en silencio.
+- **Excepción `cobrada`, y por qué:** deshacer una venta ya cobrada no es un cambio de
+  estado, es una **nota de crédito** — un documento fiscal que el sistema no modela
+  todavía. Rechazar es la única respuesta honesta: revertir en silencio dejaría la
+  contabilidad descuadrada. Queda como alcance de una fase o extensión futura.
+- **Portabilidad del índice filtrado (verificada, no supuesta):** SQL Server soporta
+  índices filtrados y **SQLite soporta índices PARCIALES** desde la 3.8 (la del entorno es
+  3.53) — al contrario de lo que se asumió al plantear la decisión. Se comprobó aislado
+  que la semántica es la deseada (rechaza duplicado vigente, permite refacturar tras
+  cancelar, permite varias canceladas) y que SQLAlchemy emite el MISMO DDL en ambos
+  dialectos. Por eso **no** hace falta una validación de unicidad de respaldo en el
+  servicio, a diferencia de lo que habría exigido un motor sin índices parciales.
+  Nota para el día que se aplique a RDS: el predicado usa `<>`, que SQL Server admite en
+  índices filtrados; si lo rechazara, el equivalente es un `IN` con los cinco estados no
+  cancelados.
+- **Sobre la migración:** se editó `3e57e45d24cb` en sitio en vez de encadenar una nueva,
+  porque se confirmó que NO se ha aplicado a RDS (`alembic_version = a1c8e3d47b92` y
+  `factura_cliente` no existe ahí). Encadenar habría exigido un `DROP CONSTRAINT` que
+  SQLite no soporta sin `batch_alter_table`. **Esa ventana se cierra en cuanto la
+  revisión se aplique a RDS.**
+
+### ADR-048 — Layout real del PAC (V40) reconstruido desde un ejemplo, no desde una spec
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 5).
+- **Contexto:** llegó por fin el formato del archivo plano del timbrador, pero como un
+  **ejemplo de producción** (`docs/referencias/ejemplo_archivo_plano_FACTURA_33_NPG_D_28_
+  11757_V40 (2).txt`), no como una especificación. Un ejemplo dice cómo se ve UN caso; no
+  dice qué campos son obligatorios, qué anchos tolera el parser ni en qué codificación va.
+- **Qué se midió (dato duro, verificable en el archivo):** `XXXINICIO` / `XXXFINDO` como
+  delimitadores, 20 secciones `================ Nombre`, `XXXFINDETA` cerrando el detalle,
+  `xxxFinRelaciones` cerrando los documentos relacionados, **CRLF** en todo el archivo, y
+  el valor arrancando en la **columna 17** (163 líneas) salvo en `AGREGADOS`, que usa la
+  **19** (6 líneas). El detalle es posicional, con 17 columnas de anchos fijos.
+- **La gramática real del separador:** el ejemplo tiene un campo llamado
+  `Residencia Fiscal` —con espacio DENTRO del nombre— y un `UsoCFDI` cuyo valor cae en la
+  columna 13 en vez de la 19. Ninguna de las dos cosas encaja con "clave hasta el primer
+  espacio" ni con "columna fija estricta", pero **ambas encajan con: clave, dos o más
+  espacios, valor**. Se emite en la columna canónica (17/19, la del generador del PAC) y
+  se asume que el parser tolera el resto.
+- **Decisión de verificación:** una prueba **regenera la fila de detalle del ejemplo byte a
+  byte** desde sus valores, y otra compara las 20 secciones y sus campos contra el archivo
+  de referencia. Con una sola muestra, esa comparación es la única evidencia dura de que
+  el layout está bien; si alguien toca los anchos, falla.
+- **Codificación — punto abierto:** el ejemplo llegó **ya corrupto**: contiene 3 veces
+  U+FFFD donde iban `Ó` y `ñ` («MENCI?N», «Campa?a»), señal de que el original no era UTF-8
+  y alguien lo convirtió mal. Se asume **CP1252** (lo habitual en los PAC mexicanos),
+  configurable con `TIMBRADO_ENCODING`. Si un carácter no cabe, el adaptador **falla con un
+  error claro** en vez de escribir basura: mejor no exportar que mandar un nombre fiscal
+  mutilado. **Confirmar con el proveedor antes de producción.**
+- **Lo que el modelo todavía no puede llenar** (régimen fiscal del emisor y del receptor,
+  ClaveProdServ, ClaveUnidad, UsoCFDI, serie, código postal de expedición, forma de pago
+  SAT y los domicilios desglosados) se emite **vacío** y se reporta en
+  `campos_faltantes()`, que viaja al frontend en la cabecera `X-Campos-Faltantes` y se
+  pinta como advertencia. **No se inventan valores plausibles:** un ClaveProdServ
+  equivocado produce un CFDI que timbra y está mal, que es peor que uno que no timbra.
+  Las constantes que sí existen como catálogo (`ConstantesSistema`) se resuelven **solo si
+  el grupo tiene UNA activa**: con varias, elegir es una decisión fiscal que nadie tomó.
+- **Consecuencias:** el adaptador placeholder se **eliminó** — mantener un generador falso
+  junto al real solo invita a exportar el equivocado. El formato queda cerrado en cuanto a
+  estructura; lo que falta para timbrar de verdad son **campos del modelo de datos**, no
+  del layout, y está listado en la ficha del módulo.
+
+### ADR-049 — Una FK sin tipo explícito puede quedarse en `NullType` y devolver `str`
+- **Estado:** aceptada · **Fecha:** 2026-08-25 (F2, tanda 5).
+- **Contexto:** al generar el primer archivo contra la base REAL (no la de pruebas), el
+  export reventó con `'str' object has no attribute 'hex'` al hacer
+  `db.get(EmpresaFacturadora, factura.empresa_facturadora_id)`. La columna estaba declarada
+  `Mapped[uuid.UUID]`, pero al inspeccionarla su tipo era **`NullType()`**: sin tipo, no hay
+  procesador de resultado, y el valor vuelve de la base como `str` hexadecimal en vez de
+  `uuid.UUID`.
+- **Causa:** cuando una columna lleva `ForeignKey(...)`, SQLAlchemy **toma el tipo de la
+  columna referida** en vez de la anotación. Si el módulo de esa tabla todavía no se
+  importó cuando se define la clase, la resolución queda pendiente y el tipo se queda en
+  `NullType`. F1 no lo sufre porque `orden_cliente.py` importa sus catálogos al inicio del
+  módulo; los de F2 se importan DENTRO de las funciones (para evitar ciclos), así que al
+  definir la clase las tablas referidas no existían todavía en el `MetaData`.
+- **Por qué las pruebas no lo vieron:** insertan y leen en la MISMA sesión, así que los
+  objetos salen del identity map con los `uuid.UUID` de Python que se les pasó — nunca
+  hacen el viaje de ida y vuelta por la base. El bug solo aparece al leer una fila que
+  escribió otro proceso, que es exactamente lo que hace producción.
+- **Decisión:** **tipo EXPLÍCITO en toda columna con `ForeignKey`** (`mapped_column(Uuid(),
+  ForeignKey(...))`), en las 16 FK de F2. Y una prueba que recorre las tablas del módulo y
+  falla si alguna columna quedó en `NullType`, para que no vuelva a colarse.
+- **Regla para módulos futuros:** es la misma familia que ADR-014, ADR-036 y ADR-045 —algo
+  que funciona bajo un supuesto implícito (aquí, el orden de importación) y se rompe en
+  silencio cuando ese supuesto cambia. Si una prueba solo escribe y lee en la misma sesión,
+  **no está probando la serialización**: hay que forzar al menos una lectura desde la base.
+
+[[Agregar aquí cada nueva decisión: ADR-050, ...]]
 ### ADR-043 — PDFs de Orden interna (servicio/programados/reales): reportlab, sin persistencia (F1)
 - **Estado:** aceptada · **Fecha:** 2026-08-21 (F1).
 - **Contexto:** el equipo pidió 3 PDFs descargables desde el detalle de "Órdenes internas"
