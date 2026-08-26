@@ -1,9 +1,10 @@
 /** Facturas al cliente (F2) — lista + panel de detalle.
  *
  * Estructura tomada de la pantalla aprobada `Fase_2_-_Facturacion.html`: la tabla lleva
- * 8 columnas (número, pedido, receptor, emisora, fecha, total, folio fiscal y estado), los
- * filtros son 4 (no uno por estado) y el panel abre con el timeline del ciclo de vida y
- * las tres tarjetas de importes ANTES de cualquier otro dato.
+ * 8 columnas (número, pedido, receptor, emisora, fecha, total, folio fiscal y estado) y
+ * el panel abre con el timeline del ciclo de vida y las tres tarjetas de importes ANTES de
+ * cualquier otro dato. Los filtros son los del prototipo más «Entregadas» (pedido del
+ * equipo): agrupan estados, no hay uno por cada uno.
  *
  * Las acciones se muestran SOLO cuando la transición es válida desde el estado actual: la
  * UI no ofrece un botón que el servidor rechazaría con 409. El backend valida siempre —
@@ -33,15 +34,25 @@ import {
   type TimbrarInput,
 } from "../../types";
 
-/** Los 4 filtros de la pantalla aprobada: no hay uno por cada estado. */
-type Filtro = "todas" | "pendientes_timbrar" | "timbradas" | "cobradas";
+/** Filtros de la pantalla aprobada, más «Entregadas» (pedido del equipo): sigue sin haber
+ *  uno por cada estado — «Pendientes timbrar» agrupa `preparada` y `enviada_a_timbrado`. */
+type Filtro = "todas" | "pendientes_timbrar" | "timbradas" | "entregadas" | "cobradas";
 
 const FILTROS: { key: Filtro; label: string }[] = [
   { key: "todas", label: "Todas" },
   { key: "pendientes_timbrar", label: "Pendientes timbrar" },
   { key: "timbradas", label: "Timbradas" },
+  { key: "entregadas", label: "Entregadas" },
   { key: "cobradas", label: "Cobradas" },
 ];
+
+/** Filtros que el BACKEND resuelve por estado. `pendientes_timbrar` no está aquí: agrupa
+ *  dos estados y la API filtra por uno solo, así que se resuelve en el cliente. */
+const ESTADO_POR_FILTRO: Partial<Record<Filtro, EstadoFacturacion>> = {
+  timbradas: "timbrada",
+  entregadas: "entregada",
+  cobradas: "cobrada",
+};
 
 /** Etiquetas del timeline; el prototipo abrevia el primer paso a "Prep.". */
 const PASO_LABEL: Record<(typeof FLUJO_FACTURACION)[number], string> = {
@@ -92,8 +103,7 @@ export function FacturasClientePage() {
     page,
     size,
     q: q || undefined,
-    estado_facturacion:
-      filtro === "timbradas" ? "timbrada" : filtro === "cobradas" ? "cobrada" : undefined,
+    estado_facturacion: ESTADO_POR_FILTRO[filtro],
   };
   const { list, crear, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
 

@@ -39,18 +39,19 @@ export const FACTURACION_GROUPS = [
 
 export const facturacionRegistry: FacturacionEntry[] = [
   {
-    key: "facturas_cliente",
-    label: "Facturas al cliente",
-    group: "Facturación al cliente",
-    render: () => <FacturasClientePage />,
-  },
-  {
-    // Bandeja operativa, no un CRUD: órdenes cerradas que aún no tienen factura. Va con
-    // Ingresos porque es el paso PREVIO a emitir la factura al cliente.
+    // Bandeja operativa, no un CRUD: órdenes cerradas que aún no tienen factura. Va
+    // PRIMERA a propósito: es el "qué me falta hacer hoy", el paso previo a emitir la
+    // factura, y por eso también es la sección con la que abre el explorador.
     key: "listas_para_facturar",
     label: "Listas para facturar",
     group: "Facturación al cliente",
     render: () => <ListasParaFacturarPage />,
+  },
+  {
+    key: "facturas_cliente",
+    label: "Facturas al cliente",
+    group: "Facturación al cliente",
+    render: () => <FacturasClientePage />,
   },
   {
     key: "facturas_afiliado",
