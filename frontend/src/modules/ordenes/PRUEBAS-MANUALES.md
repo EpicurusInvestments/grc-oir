@@ -322,9 +322,9 @@ botones de acción activos más que ver el detalle.
 
 ### CP-27 · Órdenes facturadas (4.1 y 4.2 — fuera de alcance, solo lectura)
 **Pantalla:** Detalle de `OC-2025-0047` (archivo plano) y `OC-2025-0048` (timbrada)
-**Resultado esperado:** Ambas se ven congeladas (solo lectura total); el botón "Generar
-archivo plano (4.1)" aparece deshabilitado con el tooltip "Fase 2 — fuera de alcance de
-esta demo".
+**Resultado esperado:** Ambas se ven congeladas (solo lectura total), sin botones de
+acción — el placeholder "Generar archivo plano (4.1)" se quitó: Facturación (F2) ya
+implementó el flujo real de archivo plano al timbrador en su propia pantalla.
 **Estado:** ⬜ Pendiente
 
 ### CP-28 · Orden cobrada, con historial de comisión previo a la demo

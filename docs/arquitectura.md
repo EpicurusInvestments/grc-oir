@@ -1419,4 +1419,24 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   movieron al footer; `pdfsApi.ts` cambia su única función exportada. Pruebas de
   `OrdenEstacionDetailPanel.test.tsx` actualizadas al nuevo nombre/firma de función.
 
-[[Agregar aquí cada nueva decisión: ADR-045, ...]]
+### ADR-050 — Correcciones puntuales de encabezado por PDF, contra sus referencias reales
+- **Estado:** aceptada · **Fecha:** 2026-08-26 (F1).
+- **Contexto:** el equipo comparó cada uno de los 3 PDFs de Orden interna contra un PDF de
+  referencia real (no el prototipo HTML de ADR-044) y encontró 2 diferencias de
+  encabezado, cada una en un solo reporte:
+  1. **"Horarios programados" (2.2):** `_encabezado()` siempre pone el nombre de la
+     empresa grande arriba y el título del reporte chico debajo; en la referencia de
+     "programados" es al revés — título del reporte grande arriba, empresa chica debajo.
+  2. **"Horarios reales" (2.3):** su referencia no lleva el logo de Radio Centro (derecha),
+     solo el de OIR (izquierda) — a diferencia de servicio y programados, que sí lo llevan.
+  "Orden de servicio" (2.1) no tuvo corrección; se queda igual que en ADR-044.
+- **Decisión:** `_encabezado()` gana 2 parámetros opcionales, cada uno con default que
+  preserva el comportamiento de ADR-044 para los reportes no corregidos:
+  `subtitulo_primero: bool = False` (usado solo por `generar_pdf_programados()`) y
+  `logo_grc: bool = True` (`generar_pdf_reales()` lo llama con `logo_grc=False`).
+- **Consecuencias:** cambios acotados a `orden_estacion_pdf.py` (la función compartida +
+  una llamada por corrección); sin cambios de API ni de tests existentes. Si aparecen más
+  diferencias puntuales entre estos 3 PDFs y sus referencias reales, el patrón es el
+  mismo: un parámetro opcional en `_encabezado()` con default = comportamiento actual.
+
+[[Agregar aquí cada nueva decisión: ADR-051, ...]]
