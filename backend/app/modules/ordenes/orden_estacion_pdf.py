@@ -139,14 +139,29 @@ def _logo_flowable(nombre: str):
     return Image(str(ruta), width=ancho, height=_LOGO_ALTO)
 
 
-def _encabezado(nombre_empresa: str, subtitulo: str, ancho_disponible: float) -> Table:
+def _encabezado(
+    nombre_empresa: str,
+    subtitulo: str,
+    ancho_disponible: float,
+    *,
+    subtitulo_primero: bool = False,
+    logo_grc: bool = True,
+) -> Table:
+    """Por defecto el nombre de empresa va grande y `subtitulo` chico debajo (ADR-044).
+    "Horarios programados" (2.2) usa `subtitulo_primero=True` para igualar su PDF de
+    referencia, donde el título del reporte va grande arriba y la empresa chica debajo —
+    corrección puntual a ese reporte, no cambia servicio (2.1) ni reales (2.3).
+    "Horarios reales" (2.3) usa `logo_grc=False`: su PDF de referencia no lleva el logo
+    de Radio Centro, a diferencia de servicio y programados."""
+    grande, chico = (subtitulo, nombre_empresa) if subtitulo_primero else (nombre_empresa, subtitulo)
     ancho_logo_col = 3.5 * cm
+    logo_derecho = _logo_flowable("grc") if logo_grc else Spacer(1, _LOGO_ALTO)
     tabla = Table(
         [
             [
                 _logo_flowable("oir"),
-                [Paragraph(nombre_empresa, _TITULO), Paragraph(subtitulo, _SUBTITULO)],
-                _logo_flowable("grc"),
+                [Paragraph(grande, _TITULO), Paragraph(chico, _SUBTITULO)],
+                logo_derecho,
             ]
         ],
         colWidths=[ancho_logo_col, ancho_disponible - 2 * ancho_logo_col, ancho_logo_col],
@@ -408,7 +423,12 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     )
 
     elementos: list = [
-        _encabezado(ctx.empresa.nombre_empresa, "HORARIOS PROGRAMADOS", _ANCHO_DISPONIBLE),
+        _encabezado(
+            ctx.empresa.nombre_empresa,
+            "HORARIOS PROGRAMADOS",
+            _ANCHO_DISPONIBLE,
+            subtitulo_primero=True,
+        ),
         Spacer(1, 10),
         Table(
             [
@@ -487,7 +507,10 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
 
     elementos: list = [
         _encabezado(
-            ctx.empresa.nombre_empresa, "HORARIOS REALES DE TRANSMISION", _ANCHO_DISPONIBLE
+            ctx.empresa.nombre_empresa,
+            "HORARIOS REALES DE TRANSMISION",
+            _ANCHO_DISPONIBLE,
+            logo_grc=False,
         ),
         Spacer(1, 10),
         Table(

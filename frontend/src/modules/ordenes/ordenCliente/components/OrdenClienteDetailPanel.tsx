@@ -316,11 +316,6 @@ export function OrdenClienteDetailPanel({
             Cerrar orden →
           </button>
         )}
-        {oc.estatus_orden === "orden_cerrada" && (
-          <button type="button" className="btn btn-sm btn-purple" disabled title="Fase 2 — fuera de alcance de esta demo">
-            Generar archivo plano (4.1) →
-          </button>
-        )}
       </div>
     </>
   );
