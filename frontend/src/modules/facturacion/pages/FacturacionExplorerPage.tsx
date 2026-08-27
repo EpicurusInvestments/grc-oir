@@ -15,7 +15,7 @@ import {
   facturacionRegistry,
   type FacturacionEntry,
 } from "../facturacionRegistry";
-import { useOrdenesPorFacturar } from "../hooks";
+import { useConteosFacturacion } from "../hooks";
 
 const FASE_LABEL = "FACTURACIÓN";
 
@@ -24,13 +24,15 @@ export function FacturacionExplorerPage() {
 
   const entry: FacturacionEntry | undefined = facturacionRegistry.find((e) => e.key === activeKey);
 
-  // Solo se pide el TOTAL: `size: 1` evita traer filas de una lista que aquí no se pinta.
-  // Su clave comparte PREFIJO con la de la bandeja, así que al crear una factura (que
-  // invalida ese prefijo) el contador baja solo.
-  const porFacturar = useOrdenesPorFacturar({ page: 1, size: 1 });
-  const contadores = {
-    listas_para_facturar: { count: porFacturar.data?.total ?? 0, urgent: true },
-  };
+  // Un contador por sección. "Listas para facturar" va en rojo (`urgent`) porque es
+  // trabajo PENDIENTE; los demás son inventario y van en gris.
+  const totales = useConteosFacturacion();
+  const contadores = Object.fromEntries(
+    Object.entries(totales).map(([clave, count]) => [
+      clave,
+      { count, urgent: clave === "listas_para_facturar" },
+    ]),
+  );
 
   return (
     <ExplorerLayout

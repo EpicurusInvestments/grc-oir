@@ -186,6 +186,57 @@ export function useOrdenesPorFacturar(params: { page?: number; size?: number; q?
   });
 }
 
+// ── Contadores del sidebar ────────────────────────────────────────────────────
+/** Totales por sección, para los contadores del menú.
+ *
+ * Pide `size: 1` a propósito: lo único que se usa es el `total` de la respuesta, así que
+ * no tiene sentido traerse 20 filas que nadie va a pintar.
+ *
+ * Las claves comparten PREFIJO con las de cada lista, de modo que cualquier mutación del
+ * módulo —crear, timbrar, cancelar— ya las invalida y el contador baja o sube solo, sin
+ * lógica extra.
+ *
+ * Si el área del usuario no tiene permiso sobre una sección, esa consulta falla con 403 y
+ * su contador queda en 0: es un indicador, no una pantalla, y no vale la pena romper el
+ * menú por eso.
+ */
+export function useConteosFacturacion(): Record<string, number> {
+  const soloTotal = { page: 1, size: 1 };
+  const clientes = useQuery({
+    queryKey: [K_CLIENTES, "list", soloTotal],
+    queryFn: () => facturaClienteApi.list(soloTotal),
+    retry: false,
+  });
+  const afiliados = useQuery({
+    queryKey: [K_AFILIADOS, "list", soloTotal],
+    queryFn: () => facturaAfiliadoApi.list(soloTotal),
+    retry: false,
+  });
+  const agencias = useQuery({
+    queryKey: [K_AGENCIAS, "list", soloTotal],
+    queryFn: () => facturaAgenciaApi.list(soloTotal),
+    retry: false,
+  });
+  const costos = useQuery({
+    queryKey: [K_COSTOS, "list", soloTotal],
+    queryFn: () => costoApi.list(soloTotal),
+    retry: false,
+  });
+  const porFacturar = useQuery({
+    queryKey: [K_POR_FACTURAR, "list", soloTotal],
+    queryFn: () => ordenesPorFacturar(soloTotal),
+    retry: false,
+  });
+
+  return {
+    facturas_cliente: clientes.data?.total ?? 0,
+    listas_para_facturar: porFacturar.data?.total ?? 0,
+    facturas_afiliado: afiliados.data?.total ?? 0,
+    facturas_agencia: agencias.data?.total ?? 0,
+    costos_adicionales: costos.data?.total ?? 0,
+  };
+}
+
 // ── Combos ────────────────────────────────────────────────────────────────────
 export const useOrdenesFacturables = () =>
   useQuery({ queryKey: ["facturacion:ordenes-facturables"], queryFn: ordenesFacturables });
