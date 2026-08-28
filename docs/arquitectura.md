@@ -571,6 +571,13 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   solo decide quién puede *llegar* al endpoint — ver nota de permisos en
   `docs/API-CONTRACT.md`. Ver también la excepción de auditoría de este canal en la
   actualización de 2026-07 de ADR-016.
+- **Actualización (2026-08, F1):** el equipo pidió que, en la pantalla de edición de OC
+  (`OrdenClienteForm.tsx`), una orden congelada sea de solo lectura SIN excepción — los 3
+  campos de % de comisión dejan de mostrarse habilitados ahí (antes `canEditComisiones`
+  era siempre `true`, delegando la autorización real al backend). El canal
+  `PATCH /clientes/{id}/comisiones` **sigue existiendo tal cual en el backend** — la
+  decisión original de este ADR (editable "sin importar si la OC está congelada o no") no
+  cambió a nivel de API, solo se retiró la manera de llegar a él desde este formulario.
 
 ### ADR-030 — Granularidad por día (`OrdenEstacionDia`) y tres capas de captura asignado/programado/verificado (F1)
 - **Estado:** aceptada · **Fecha:** 2026-07 (F1)
@@ -1419,24 +1426,75 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   movieron al footer; `pdfsApi.ts` cambia su única función exportada. Pruebas de
   `OrdenEstacionDetailPanel.test.tsx` actualizadas al nuevo nombre/firma de función.
 
-### ADR-050 — Correcciones puntuales de encabezado por PDF, contra sus referencias reales
-- **Estado:** aceptada · **Fecha:** 2026-08-26 (F1).
+### ADR-050 — Correcciones puntuales de encabezado/formato por PDF, contra sus referencias reales
+- **Estado:** aceptada · **Fecha:** 2026-08-26/27 (F1).
 - **Contexto:** el equipo comparó cada uno de los 3 PDFs de Orden interna contra un PDF de
-  referencia real (no el prototipo HTML de ADR-044) y encontró 2 diferencias de
-  encabezado, cada una en un solo reporte:
+  referencia real (no el prototipo HTML de ADR-044) y encontró varias diferencias, cada
+  una acotada a un solo reporte:
   1. **"Horarios programados" (2.2):** `_encabezado()` siempre pone el nombre de la
      empresa grande arriba y el título del reporte chico debajo; en la referencia de
      "programados" es al revés — título del reporte grande arriba, empresa chica debajo.
   2. **"Horarios reales" (2.3):** su referencia no lleva el logo de Radio Centro (derecha),
      solo el de OIR (izquierda) — a diferencia de servicio y programados, que sí lo llevan.
-  "Orden de servicio" (2.1) no tuvo corrección; se queda igual que en ADR-044.
-- **Decisión:** `_encabezado()` gana 2 parámetros opcionales, cada uno con default que
+  3. **"Orden de servicio" (2.1):** su referencia lleva un marco completo (recuadro)
+     alrededor de estación/plaza + campos + tabla de días; la etiqueta "Observaciones:" va
+     en rojo; y el pie (dirección + fecha de generación) va justificado a la izquierda, no
+     a la derecha.
+  4. **"Horarios programados" (2.2), segunda ronda:** en su referencia los logos van en su
+     propio renglón, ARRIBA del título (no centrados verticalmente junto a él); los
+     campos (Cliente/Campaña/No. de Orden/Estación/etc.) van en líneas de texto corridas
+     con etiqueta en negro (no gris, no en el formato de 2 columnas de `_campo()`) y
+     agrupados distinto: una línea por Cliente y por Campaña, una línea combinando
+     No. de Orden + Duración + Periodo, y una última con Estación/Ciudad a la izquierda y
+     Total Spots empujado al margen derecho.
+  5. **"Horarios reales" (2.3), segunda ronda:** su referencia lleva los campos en
+     negritas (etiqueta Y valor, no solo la etiqueta como en el resto de "Observaciones:"
+     de servicio) y en mayúsculas; la tabla de días NO lleva cuadrícula ni fondo de
+     encabezado (`_GRID` sí los lleva) — solo una línea bajo los encabezados de columna;
+     la columna de numeración pierde su encabezado "#" (queda en blanco, igual que la
+     referencia); y el pie con la fecha de generación (`_generado_el()`) se quita por
+     completo — la referencia no lo lleva.
+  6. **"Orden de servicio" (2.1), tercera ronda:** el recuadro de estación/plaza
+     (`tabla_estacion_plaza`) llevaba su propio `GRID` ADEMÁS del marco exterior — se ve
+     como doble borde; la referencia solo tiene el marco exterior ahí. Además, "Horario de
+     transmisión", "Observaciones:", "Facturar al término..." y el pie (dirección + fecha)
+     debían quedar DENTRO del mismo marco (al corregirlo en la ronda 3 del ADR quedaron
+     fuera por alcance no aclarado en ese momento; el equipo confirmó después que sí van
+     adentro).
+  7. **"Horarios reales" (2.3), tercera ronda:** el logo de OIR también debía ir arriba
+     del título, igual que ya se corrigió en "programados" (punto 4). El equipo confirmó
+     explícitamente que el orden título/empresa de "reales" (punto 2: empresa grande,
+     título chico) se queda IGUAL por ahora — no se corrige junto con esto.
+- **Decisión:** `_encabezado()` gana 3 parámetros opcionales, cada uno con default que
   preserva el comportamiento de ADR-044 para los reportes no corregidos:
-  `subtitulo_primero: bool = False` (usado solo por `generar_pdf_programados()`) y
-  `logo_grc: bool = True` (`generar_pdf_reales()` lo llama con `logo_grc=False`).
-- **Consecuencias:** cambios acotados a `orden_estacion_pdf.py` (la función compartida +
-  una llamada por corrección); sin cambios de API ni de tests existentes. Si aparecen más
-  diferencias puntuales entre estos 3 PDFs y sus referencias reales, el patrón es el
-  mismo: un parámetro opcional en `_encabezado()` con default = comportamiento actual.
+  `subtitulo_primero: bool = False` (usado solo por `generar_pdf_programados()`),
+  `logo_grc: bool = True` (`generar_pdf_reales()` lo llama con `logo_grc=False`) y
+  `logos_arriba: bool = False` (`generar_pdf_programados()` Y `generar_pdf_reales()` lo
+  llaman con `logos_arriba=True` — servicio es el único que queda con logos centrados
+  junto al título). `logos_arriba=True` cambia la tabla de 1 renglón a 2: logos solos
+  arriba, título/subtítulo centrados abajo. Para "servicio": nuevo `TableStyle` `_MARCO`
+  (un `BOX` envolviendo un único `Table` de 1 celda que anida estación/plaza + campos +
+  título "Periodo de Transmisión" + tabla de días + horario de transmisión +
+  observaciones + "Facturar al término..." + pie — TODO el contenido del reporte queda
+  dentro de un solo marco; mismo truco de "celda con lista de flowables" que
+  `_encabezado()`); `tabla_estacion_plaza` pierde su `GRID` propio (ya no hay doble
+  borde); nuevo estilo `_PIE_IZQUIERDA` (idéntico a `_PIE` salvo `alignment=TA_LEFT`),
+  usado solo en el pie de "servicio"; "Observaciones:" ahora usa `<font color="red">` en
+  el `Paragraph`. Para
+  "programados": nuevo estilo `_CAMPO_LINEA` (negro, sin el par etiqueta-gris/valor-negro
+  de `_campo()`) reemplaza la tabla 2×4 de campos por líneas de `Paragraph` + una tabla de
+  2 columnas solo para la fila Estación/Total Spots (la única que necesita alineación
+  derecha). Para "reales": nuevo helper `_campo_negrita()` (etiqueta+valor en negritas,
+  con `:` explícito) reemplaza `_campo()`; nuevo `TableStyle` `_TABLA_SIN_MARCO`
+  (`LINEBELOW` solo en el encabezado, sin `GRID` ni `BACKGROUND`) reemplaza `_GRID` en la
+  tabla de días; se agrega `VALIGN: TOP` a la tabla de campos (antes heredaba el `BOTTOM`
+  por defecto de reportlab, que desalineaba las etiquetas cuando "Periodo" ocupaba más de
+  una línea); se quita el `Paragraph(_generado_el(), _PIE)` final.
+- **Consecuencias:** cambios acotados a `orden_estacion_pdf.py`; sin cambios de API ni de
+  tests existentes (los 5 tests de `test_f1_06_ordenes_pdf.py` solo verifican `%PDF` +
+  gating por estatus, no el layout visual — verificación visual hecha manualmente por
+  render a PNG). Si aparecen más diferencias puntuales entre estos 3 PDFs y sus
+  referencias reales, el patrón es el mismo: un parámetro/estilo opcional con default =
+  comportamiento actual, acotado al reporte que lo pide.
 
 [[Agregar aquí cada nueva decisión: ADR-051, ...]]

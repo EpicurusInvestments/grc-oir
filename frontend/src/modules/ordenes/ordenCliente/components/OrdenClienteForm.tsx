@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
+import { FieldTag, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { ChecklistVoBo } from "../../components/ChecklistVoBo";
@@ -145,10 +145,10 @@ export function OrdenClienteForm({
   const [checklist, setChecklist] = useState<Record<string, boolean>>(defaultValues?.revision_checklist ?? {});
 
   const congelado = isEdit && estatusActual ? FROZEN_STATES.includes(estatusActual) : false;
-  // La autorización real la valida el backend (solo Admin/Dirección, canal dedicado de
-  // comisiones) — aquí solo se decide si el campo se muestra habilitado o no; siempre
-  // habilitado, incluso con la OC congelada, ya no depende de un selector de persona de demo.
-  const canEditComisiones = true;
+  // Con la OC congelada (orden_cerrada+), el formulario completo es de solo lectura sin
+  // excepción — el canal dedicado de comisiones (`PATCH /comisiones`) sigue existiendo en
+  // el backend, pero este formulario ya no ofrece forma de llegar a él.
+  const canEditComisiones = !congelado;
   const puedeMostrarChecklist = !isEdit || estatusActual === "orden_cliente_sin_vobo";
 
   const {
@@ -235,6 +235,9 @@ export function OrdenClienteForm({
   };
 
   // ── cálculos en vivo ────────────────────────────────────────────────────────
+  const fechaVenta = watch("fecha_venta");
+  const anioVenta = fechaVenta ? fechaVenta.slice(0, 4) : "—";
+  const mesVenta = fechaVenta ? fechaVenta.slice(5, 7) : "—";
   const fechaInicio = watch("fecha_inicio_campania");
   const fechaFin = watch("fecha_fin_campania");
   const totalSpots = Number(watch("total_spots")) || 0;
@@ -357,306 +360,437 @@ export function OrdenClienteForm({
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, alignContent: "start" }}>
         {/* ── Columna de captura ── */}
         <div>
-          <div className="sec">Identificación</div>
-          <div className="r2">
+          <div className="zone-header">
+            <div className="zone-bar a" />
             <div>
-              <div className="fl fl-required">No. de orden del cliente</div>
-              <input
-                className="fi"
-                style={{ fontFamily: "var(--mono)" }}
-                placeholder="PO-CLIENTE-001"
-                disabled={congelado}
-                {...register("numero_orden_cliente")}
-              />
-              <div className="fe">{errors.numero_orden_cliente?.message}</div>
-            </div>
-            <div>
-              <div className="fl fl-required">Fecha de venta</div>
-              <input
-                className="fi"
-                type="date"
-                disabled={congelado}
-                min={new Date().toISOString().slice(0, 10)}
-                {...register("fecha_venta")}
-              />
-              <div className="fe">{errors.fecha_venta?.message}</div>
-            </div>
-          </div>
-          <div className="fl fl-required">Empresa facturadora</div>
-          <select className="fsel" disabled={congelado} {...register("empresa_facturadora_id")}>
-            <option value="">Selecciona…</option>
-            {empresasFacturadoras.filter(esActivo).map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nombre_empresa}
-              </option>
-            ))}
-          </select>
-          <div className="fe">{errors.empresa_facturadora_id?.message}</div>
-
-          <div className="sec">Cliente</div>
-          <div className="fl fl-required">Anunciante</div>
-          <select className="fsel" disabled={congelado} value={anuncianteId} onChange={(e) => onAnuncianteChange(e.target.value)}>
-            <option value="">Selecciona…</option>
-            {anunciantes.filter(esActivo).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.nombre_comercial}
-              </option>
-            ))}
-          </select>
-          <div className="fe">{errors.anunciante_id?.message}</div>
-
-          <div className="r2">
-            <div>
-              <div className="fl">
-                Agencia <span style={{ color: "var(--text3)", fontWeight: 400 }}>(sugerida del anunciante)</span>
-              </div>
-              <select className="fsel" disabled={congelado} value={watch("agencia_id")} onChange={(e) => onAgenciaChange(e.target.value)}>
-                <option value="">Sin agencia (venta directa)</option>
-                {agencias.filter(esActivo).map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.nombre_agencia}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="fl">Categoría</div>
-              <select className="fsel" disabled={congelado} {...register("categoria_id")}>
-                <option value="">Selecciona…</option>
-                {categorias.filter(esActivo).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nombre_categoria}
-                  </option>
-                ))}
-              </select>
+              <div className="zone-title">ZONA A · DATOS DE LA ODC DEL CLIENTE</div>
+              <div className="zone-sub">Lo que viene en el documento que mandó el cliente o la agencia.</div>
             </div>
           </div>
 
-          <div className="r2">
-            <div>
-              <div className="fl">
-                Contrato <span style={{ color: "var(--text3)", fontWeight: 400 }}>(vigentes del anunciante)</span>
+          <div className="form-card">
+            <div className="form-card-title">Identificación</div>
+            <div className="r3">
+              <div>
+                <div className="fl fl-required">No. de orden del cliente</div>
+                <input
+                  className="fi"
+                  style={{ fontFamily: "var(--mono)" }}
+                  placeholder="PO-CLIENTE-001"
+                  disabled={congelado}
+                  {...register("numero_orden_cliente")}
+                />
+                <div className="fe">{errors.numero_orden_cliente?.message}</div>
               </div>
-              {anuncianteId && contratos.length === 0 ? (
-                <div className="fv muted" style={{ fontSize: 12 }}>
-                  Este anunciante no tiene contratos vigentes.
+              <div>
+                <div className="fl fl-required">Fecha de venta</div>
+                <input
+                  className="fi"
+                  type="date"
+                  disabled={congelado}
+                  min={new Date().toISOString().slice(0, 10)}
+                  {...register("fecha_venta")}
+                />
+                <div className="fe">{errors.fecha_venta?.message}</div>
+              </div>
+              <div>
+                <div className="fl fl-required">
+                  Empresa facturadora <FieldTag origin="catalogo" />
                 </div>
-              ) : (
-                <select className="fsel" disabled={!anuncianteId || congelado} {...register("contrato_id")}>
-                  <option value="">Sin contrato</option>
-                  {contratos.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nombre_contrato}
+                <select className="fsel" disabled={congelado} {...register("empresa_facturadora_id")}>
+                  <option value="">Selecciona…</option>
+                  {empresasFacturadoras.filter(esActivo).map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.nombre_empresa}
                     </option>
                   ))}
                 </select>
-              )}
-            </div>
-            <div>
-              <div className="fl">
-                Marca <span style={{ color: "var(--text3)", fontWeight: 400 }}>(del anunciante)</span>
+                <div className="fe">{errors.empresa_facturadora_id?.message}</div>
               </div>
-              {anuncianteId && marcas.length === 0 ? (
-                <div className="fv muted" style={{ fontSize: 12 }}>
-                  Este anunciante no tiene marcas registradas.
+            </div>
+            <div style={{ display: "flex", gap: 14, fontSize: 11, color: "var(--text3)" }}>
+              <span>
+                Año venta <FieldTag origin="derivado" />: <span className="mono">{anioVenta}</span>
+              </span>
+              <span>
+                Mes <FieldTag origin="derivado" />: <span className="mono">{mesVenta}</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Cliente comercial</div>
+            <div className="form-card-sub">
+              El anunciante define al cliente final de la venta. Si hay agencia, ella es la que típicamente factura y paga.
+            </div>
+            <div className="r2">
+              <div>
+                <div className="fl fl-required">
+                  Anunciante <FieldTag origin="catalogo" />
                 </div>
-              ) : (
-                <select className="fsel" disabled={!anuncianteId || congelado} {...register("marca_id")}>
-                  <option value="">Sin marca</option>
-                  {marcas.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre_marca}
+                <select className="fsel" disabled={congelado} value={anuncianteId} onChange={(e) => onAnuncianteChange(e.target.value)}>
+                  <option value="">Selecciona…</option>
+                  {anunciantes.filter(esActivo).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.nombre_comercial}
                     </option>
                   ))}
                 </select>
-              )}
+                <div className="fe">{errors.anunciante_id?.message}</div>
+              </div>
+              <div>
+                <div className="fl">
+                  Agencia <FieldTag origin="catalogo" /> <span className="derivado-hint">sugerida del anunciante</span>
+                </div>
+                <select className="fsel" disabled={congelado} value={watch("agencia_id")} onChange={(e) => onAgenciaChange(e.target.value)}>
+                  <option value="">Sin agencia (venta directa)</option>
+                  {agencias.filter(esActivo).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.nombre_agencia}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
-          <div className="fl">Producto</div>
-          <input className="fi" placeholder="Descripción del producto anunciado" disabled={congelado} {...register("producto")} />
 
-          <div className="sec">Campaña y montos</div>
-          <div className="r2">
-            <div>
-              <div className="fl fl-required">Inicio de campaña</div>
-              <input
-                className="fi"
-                type="date"
-                disabled={congelado}
-                min={new Date().toISOString().slice(0, 10)}
-                {...register("fecha_inicio_campania")}
-              />
-              <div className="fe">{errors.fecha_inicio_campania?.message}</div>
-            </div>
-            <div>
-              <div className="fl fl-required">Fin de campaña</div>
-              <input className="fi" type="date" disabled={congelado} {...register("fecha_fin_campania")} />
-              <div className="fe">{errors.fecha_fin_campania?.message}</div>
-            </div>
-          </div>
-          <div className="r3">
-            <div>
-              <div className="fl">Duración del spot</div>
-              <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
-                {OPCIONES_DURACION.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="fl fl-required">Total de spots</div>
-              <input
-                className="fi"
-                style={{ fontFamily: "var(--mono)" }}
-                inputMode="numeric"
-                disabled={congelado}
-                {...register("total_spots")}
-              />
-              <div className="fe">{errors.total_spots?.message}</div>
-            </div>
-            <div>
-              <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
-              <Controller
-                control={control}
-                name="precio_unitario"
-                render={({ field }) => (
-                  <MoneyInput
-                    value={field.value}
-                    onChange={field.onChange}
-                    onBlur={field.onBlur}
-                    disabled={congelado}
-                  />
+            <div className="r2">
+              <div>
+                <div className="fl">
+                  Contrato <FieldTag origin="catalogo" /> <span className="derivado-hint">vigentes del anunciante</span>
+                </div>
+                {anuncianteId && contratos.length === 0 ? (
+                  <div className="fv muted" style={{ fontSize: 12 }}>
+                    Este anunciante no tiene contratos vigentes.
+                  </div>
+                ) : (
+                  <select className="fsel" disabled={!anuncianteId || congelado} {...register("contrato_id")}>
+                    <option value="">Sin contrato</option>
+                    {contratos.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre_contrato}
+                      </option>
+                    ))}
+                  </select>
                 )}
-              />
-              <div className="fe">{errors.precio_unitario?.message}</div>
-            </div>
-          </div>
-
-          <div className="sec">Facturación</div>
-          <div className="fl">Dirección de facturación</div>
-          <input className="fi" disabled={congelado} {...register("direccion_facturacion")} />
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 8, cursor: "pointer" }}>
-            <input type="checkbox" disabled={congelado} {...register("facturacion_directa_cliente")} /> Facturación directa al cliente
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 8, cursor: "pointer" }}>
-            <input type="checkbox" disabled={congelado} {...register("afiliado_factura_directo_al_cliente")} /> Afiliado factura directo
-            al cliente
-          </label>
-
-          <div className="fl">Adjuntar ODC</div>
-          <AdjuntoOrdenInput
-            tipo="odc"
-            value={odcPdfRef}
-            onChange={(ref) => setValue("odc_pdf_ref", ref)}
-            disabled={congelado}
-          />
-
-          <div className="sec">Equipo comercial y comisiones</div>
-
-          {congelado && (
-            <div
-              style={{
-                background: "var(--amber-bg)",
-                color: "var(--amber-text)",
-                borderRadius: "var(--r)",
-                padding: "8px 11px",
-                fontSize: 12,
-                marginBottom: 10,
-              }}
-            >
-              🔒 Orden congelada ({estatusActual}): el formulario completo es de solo lectura.{" "}
-              {canEditComisiones
-                ? "Tienes admin_parametros: puedes sobrescribir los % de comisión (queda auditado)."
-                : "Necesitas el rol admin_parametros para sobrescribir los % de comisión."}
-            </div>
-          )}
-
-          <div className="r2">
-            <div>
-              <div className="fl fl-required">Vendedor principal</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vpId}
-                onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
-              >
-                <option value="">Selecciona…</option>
-                {vendedores.filter(esActivo).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-              <div className="fe">{errors.vendedor_principal_id?.message}</div>
-            </div>
-            <div>
-              <SensitiveField
-                label="% comisión vendedor principal"
-                register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
-                error={errors.porcentaje_comision_vendedor_principal_snap?.message}
-                badge={badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
-              />
-            </div>
-          </div>
-          <div className="r2">
-            <div>
-              <div className="fl">Vendedor secundario</div>
-              <select
-                className="fsel"
-                disabled={congelado}
-                value={vsId}
-                onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
-              >
-                <option value="">Sin vendedor secundario</option>
-                {vendedores.filter(esActivo).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <SensitiveField
-                label="% comisión vendedor secundario"
-                register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
-                error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
-                badge={vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
-              />
-            </div>
-          </div>
-
-          <SensitiveField
-            label="% comisión agencia"
-            register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones })}
-            error={errors.porcentaje_comision_agencia_snap?.message}
-            badge={agId ? badgeOverride(pctAg, findAgencia(agId)?.porcentaje_comision_agencia_default) : null}
-          />
-          {/* Compartido entre los 3 % de arriba (antes solo vivía junto al de agencia, lo
-              que dejaba sin dónde capturar el motivo un cambio de comisión de vendedor). */}
-          {isEdit && canEditComisiones && (
-            <>
-              <div className="fl fl-required">
-                Motivo del cambio <span style={{ color: "var(--text3)", fontWeight: 400 }}>(si modificas cualquiera de los 3 % anteriores)</span>
               </div>
-              <input className="fi" placeholder="Requerido al modificar el valor…" {...register("motivo_cambio_comision")} />
-              <div className="fe">{errors.motivo_cambio_comision?.message}</div>
-            </>
-          )}
+              <div />
+            </div>
+          </div>
 
-          <div className="sec">Observaciones</div>
-          <div className="fl">Observación predefinida</div>
-          <select className="fsel" disabled={congelado} {...register("observaciones_predefinidas")}>
-            <option value="">Ninguna</option>
-            {OBS_PREDEFINIDAS.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
-          <div className="fl">Observaciones libres</div>
-          <textarea className="ftxt" rows={2} disabled={congelado} {...register("observaciones_libres")} />
+          <div className="form-card">
+            <div className="form-card-title">Producto anunciado</div>
+            <div className="r2">
+              <div>
+                <div className="fl">
+                  Marca <FieldTag origin="catalogo" /> <span className="derivado-hint">filtrada por anunciante</span>
+                </div>
+                {anuncianteId && marcas.length === 0 ? (
+                  <div className="fv muted" style={{ fontSize: 12 }}>
+                    Este anunciante no tiene marcas registradas.
+                  </div>
+                ) : (
+                  <select className="fsel" disabled={!anuncianteId || congelado} {...register("marca_id")}>
+                    <option value="">Sin marca</option>
+                    {marcas.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.nombre_marca}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div>
+                <div className="fl">Producto específico</div>
+                <input className="fi" placeholder="Descripción del producto anunciado" disabled={congelado} {...register("producto")} />
+              </div>
+            </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Campaña y montos</div>
+            <div className="r3">
+              <div>
+                <div className="fl fl-required">Inicio de campaña</div>
+                <input
+                  className="fi"
+                  type="date"
+                  disabled={congelado}
+                  min={new Date().toISOString().slice(0, 10)}
+                  {...register("fecha_inicio_campania")}
+                />
+                <div className="fe">{errors.fecha_inicio_campania?.message}</div>
+              </div>
+              <div>
+                <div className="fl fl-required">Fin de campaña</div>
+                <input className="fi" type="date" disabled={congelado} {...register("fecha_fin_campania")} />
+                <div className="fe">{errors.fecha_fin_campania?.message}</div>
+              </div>
+              <div>
+                <div className="fl">
+                  Días campaña <FieldTag origin="calculado" />
+                </div>
+                <div className="fv mono">{dias != null && dias > 0 ? `${dias} días` : "—"}</div>
+              </div>
+            </div>
+            <div className="r3">
+              <div>
+                <div className="fl">
+                  Duración del spot <FieldTag origin="catalogo" />
+                </div>
+                <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
+                  {OPCIONES_DURACION.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="fl fl-required">Total de spots</div>
+                <input
+                  className="fi"
+                  style={{ fontFamily: "var(--mono)" }}
+                  inputMode="numeric"
+                  disabled={congelado}
+                  {...register("total_spots")}
+                />
+                <div className="fe">{errors.total_spots?.message}</div>
+              </div>
+              <div>
+                <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
+                <Controller
+                  control={control}
+                  name="precio_unitario"
+                  render={({ field }) => (
+                    <MoneyInput
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      disabled={congelado}
+                    />
+                  )}
+                />
+                <div className="fe">{errors.precio_unitario?.message}</div>
+              </div>
+            </div>
+            <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "12px 14px", marginTop: 4 }} className="r3">
+              <div>
+                <div className="fl">
+                  Subtotal <FieldTag origin="calculado" />
+                </div>
+                <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {fmtMonto(subtotal)}
+                </div>
+              </div>
+              <div>
+                <div className="fl">
+                  IVA ({(IVA_RATE * 100).toFixed(0)}%) <FieldTag origin="calculado" />
+                </div>
+                <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {fmtMonto(iva)}
+                </div>
+              </div>
+              <div>
+                <div className="fl">
+                  Total c/IVA <FieldTag origin="calculado" />
+                </div>
+                <div className="fv mono" style={{ fontSize: 16, fontWeight: 600, color: "var(--purple-text)" }}>
+                  {fmtMonto(total)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Facturación</div>
+            <div className="fl">
+              Dirección de facturación <FieldTag origin="heredado" text="Heredado de anunciante" />{" "}
+              <span className="derivado-hint">editable si esta venta usa otra</span>
+            </div>
+            <textarea className="ftxt" rows={2} disabled={congelado} {...register("direccion_facturacion")} />
+            <div className="r2" style={{ marginTop: 6 }}>
+              <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
+                <input type="checkbox" disabled={congelado} {...register("facturacion_directa_cliente")} />
+                <div>
+                  <div className="check-box-title">Facturación directa al cliente</div>
+                  <div className="check-box-desc">Se factura al anunciante sin pasar por la agencia.</div>
+                </div>
+              </label>
+              <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
+                <input type="checkbox" disabled={congelado} {...register("afiliado_factura_directo_al_cliente")} />
+                <div>
+                  <div className="check-box-title">Afiliado factura directo al cliente</div>
+                  <div className="check-box-desc">El afiliado emite su factura al cliente final, no a OIR.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Adjuntos del cliente</div>
+            <div className="fl">Adjuntar ODC</div>
+            <AdjuntoOrdenInput
+              tipo="odc"
+              value={odcPdfRef}
+              onChange={(ref) => setValue("odc_pdf_ref", ref)}
+              disabled={congelado}
+            />
+          </div>
+
+          <div className="zone-header">
+            <div className="zone-bar b" />
+            <div>
+              <div className="zone-title">ZONA B · PROCESAMIENTO INTERNO</div>
+              <div className="zone-sub">Decisiones de OIR sobre esta venta. No vienen del cliente.</div>
+            </div>
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Equipo comercial y comisiones</div>
+            <div className="form-card-sub">
+              El % de cada uno se sugiere desde el catálogo pero queda <strong>snapshot en la OC</strong>: el catálogo puede
+              cambiar después sin afectar esta venta. <strong>Editable durante captura y operación; se congela al cerrar la
+              orden</strong> — desde ese momento solo editable con permiso (parámetro sensible, queda en LogCambioParametro).
+            </div>
+
+            {congelado && (
+              <div
+                style={{
+                  background: "var(--amber-bg)",
+                  color: "var(--amber-text)",
+                  borderRadius: "var(--r)",
+                  padding: "8px 11px",
+                  fontSize: 12,
+                  marginBottom: 10,
+                }}
+              >
+                🔒 Orden congelada ({estatusActual}): el formulario completo es de solo lectura, incluyendo los % de comisión.
+              </div>
+            )}
+
+            <div className="r2">
+              <div>
+                <div className="fl fl-required">
+                  Vendedor principal <FieldTag origin="catalogo" />
+                </div>
+                <select
+                  className="fsel"
+                  disabled={congelado}
+                  value={vpId}
+                  onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
+                >
+                  <option value="">Selecciona…</option>
+                  {vendedores.filter(esActivo).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.nombre_vendedor}
+                    </option>
+                  ))}
+                </select>
+                <div className="fe">{errors.vendedor_principal_id?.message}</div>
+              </div>
+              <div>
+                <SensitiveField
+                  label="% comisión vendedor principal"
+                  register={register("porcentaje_comision_vendedor_principal_snap", { disabled: !canEditComisiones })}
+                  error={errors.porcentaje_comision_vendedor_principal_snap?.message}
+                  badge={
+                    <>
+                      <FieldTag origin="derivado" text="Snapshot" /> {badgeOverride(pctVp, findVendedor(vpId)?.porcentaje_comision_default)}
+                    </>
+                  }
+                />
+              </div>
+            </div>
+            <div className="r2">
+              <div>
+                <div className="fl">
+                  Vendedor secundario <FieldTag origin="catalogo" />
+                </div>
+                <select
+                  className="fsel"
+                  disabled={congelado}
+                  value={vsId}
+                  onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
+                >
+                  <option value="">Sin vendedor secundario</option>
+                  {vendedores.filter(esActivo).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.nombre_vendedor}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <SensitiveField
+                  label="% comisión vendedor secundario"
+                  register={register("porcentaje_comision_vendedor_secundario_snap", { disabled: !canEditComisiones })}
+                  error={errors.porcentaje_comision_vendedor_secundario_snap?.message}
+                  badge={
+                    <>
+                      <FieldTag origin="derivado" text="Snapshot" />{" "}
+                      {vsId ? badgeOverride(pctVs, findVendedor(vsId)?.porcentaje_comision_default) : null}
+                    </>
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="r2">
+              <div>
+                <SensitiveField
+                  label="% comisión agencia"
+                  register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones })}
+                  error={errors.porcentaje_comision_agencia_snap?.message}
+                  badge={
+                    <>
+                      <FieldTag origin="derivado" text="Snapshot" /> {agId ? badgeOverride(pctAg, findAgencia(agId)?.porcentaje_comision_agencia_default) : null}
+                    </>
+                  }
+                />
+              </div>
+              <div>
+                <div className="fl">
+                  Categoría comercial <FieldTag origin="catalogo" />
+                </div>
+                <select className="fsel" disabled={congelado} {...register("categoria_id")}>
+                  <option value="">Selecciona…</option>
+                  {categorias.filter(esActivo).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre_categoria}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {/* Compartido entre los 3 % de arriba (antes solo vivía junto al de agencia, lo
+                que dejaba sin dónde capturar el motivo un cambio de comisión de vendedor). */}
+            {isEdit && canEditComisiones && (
+              <>
+                <div className="fl fl-required">
+                  Motivo del cambio <span style={{ color: "var(--text3)", fontWeight: 400 }}>(si modificas cualquiera de los 3 % anteriores)</span>
+                </div>
+                <input className="fi" placeholder="Requerido al modificar el valor…" {...register("motivo_cambio_comision")} />
+                <div className="fe">{errors.motivo_cambio_comision?.message}</div>
+              </>
+            )}
+          </div>
+
+          <div className="form-card">
+            <div className="form-card-title">Observaciones internas</div>
+            <div className="fl">
+              Observación predefinida <FieldTag origin="catalogo" />
+            </div>
+            <select className="fsel" disabled={congelado} {...register("observaciones_predefinidas")}>
+              <option value="">Ninguna</option>
+              {OBS_PREDEFINIDAS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+            <div className="fl">Observaciones libres</div>
+            <textarea className="ftxt" rows={2} disabled={congelado} {...register("observaciones_libres")} />
+          </div>
         </div>
 
         {/* ── Columna de resumen ── */}

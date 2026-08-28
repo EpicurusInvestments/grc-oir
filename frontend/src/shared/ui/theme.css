@@ -1681,3 +1681,111 @@ body {
   color: var(--purple-text);
   margin-bottom: 11px;
 }
+
+/* Divisor de "zona" en formularios largos que mezclan datos que llegan del cliente con
+ * decisiones internas de OIR (alta de OrdenCliente, prototipo `Fase_1_-_Ordenes.html`):
+ * barra de color + título + subtítulo, sin tarjeta propia — agrupa varias `.form-card`. */
+.zone-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 10px;
+}
+.zone-header:first-child {
+  margin-top: 0;
+}
+.zone-bar {
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.zone-bar.a {
+  background: var(--teal);
+}
+.zone-bar.b {
+  background: var(--text2);
+}
+.zone-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.zone-sub {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+}
+
+/* Hint chico junto a una etiqueta de campo, sin badge de color (p.ej. "sugerida del
+ * anunciante" junto a Agencia) — a diferencia de `.fl-tag`, no lleva fondo. */
+.derivado-hint {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text3);
+  margin-left: 4px;
+  font-style: italic;
+}
+
+/* Subtítulo de una tarjeta de formulario (`.form-card`), bajo el título. */
+.form-card-sub {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: -8px;
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
+/* Checkbox "grande" con título + descripción dentro de una caja — condiciones especiales
+ * de un formulario largo (p.ej. facturación directa al cliente). */
+.check-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface2);
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 12px;
+}
+.check-box-title {
+  font-weight: 500;
+  color: var(--text);
+}
+.check-box-desc {
+  color: var(--text3);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+/* Input de archivo nativo: mismo look que `.btn` en el botón "Seleccionar archivo" que
+ * dibuja el navegador, sin cambiar el elemento ni su comportamiento. */
+.file-input {
+  font-size: 12px;
+  color: var(--text2);
+}
+.file-input::file-selector-button,
+.file-input::-webkit-file-upload-button {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-med);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-right: 10px;
+  transition: background 0.12s;
+}
+.file-input:hover::file-selector-button,
+.file-input:hover::-webkit-file-upload-button {
+  background: var(--surface3);
+}
+.file-input:disabled::file-selector-button,
+.file-input:disabled::-webkit-file-upload-button {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

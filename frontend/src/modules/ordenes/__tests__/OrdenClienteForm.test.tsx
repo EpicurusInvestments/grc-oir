@@ -251,11 +251,11 @@ describe("Checklist de Vo.Bo. — transición 1.1 → 1.2 (1.5)", () => {
 });
 
 describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
-  it("congelada: los 3 campos de % de comisión siguen editables (la autorización real la valida el backend, canal dedicado)", () => {
+  it("fix: congelada deshabilita también los 3 campos de % de comisión (antes seguían editables)", () => {
     const { container } = renderForm({ isEdit: true, estatusActual: "orden_cerrada" });
-    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").disabled).toBe(false);
-    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").disabled).toBe(false);
-    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(false);
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").disabled).toBe(true);
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").disabled).toBe(true);
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(true);
   });
 
   it("fix: una OC congelada deshabilita el RESTO del formulario también, no solo las comisiones (antes 'Total de spots' quedaba editable)", () => {
