@@ -110,61 +110,70 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignContent: "start" }}>
         <div>
-          <div className="sec">Orden del cliente de origen</div>
-          {ocIdFijo ? (
-            <div className="fv mono">{oc?.folio_orden}</div>
-          ) : (
-            <>
-              <SearchableSelect
-                value={ocId}
-                onChange={setOcId}
-                options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
-              />
-              {ocsElegibles.length === 0 && (
-                <div className="fv muted" style={{ fontSize: 12 }}>
-                  No hay órdenes del cliente elegibles (necesitan Vo.Bo. y no estar congeladas).
-                </div>
-              )}
-            </>
-          )}
+          <div className="form-card">
+            <div className="form-card-title">Orden del cliente de origen</div>
+            {ocIdFijo ? (
+              <div className="fv mono">{oc?.folio_orden}</div>
+            ) : (
+              <>
+                <SearchableSelect
+                  value={ocId}
+                  onChange={setOcId}
+                  options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
+                />
+                {ocsElegibles.length === 0 && (
+                  <div className="fv muted" style={{ fontSize: 12 }}>
+                    No hay órdenes del cliente elegibles (necesitan Vo.Bo. y no estar congeladas).
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {oc && (
             <>
-              <div className="sec">Estación</div>
-              <select className="fsel" value={estacionId} onChange={(e) => onEstacionChange(e.target.value)}>
-                <option value="">Selecciona…</option>
-                {estaciones.filter(esActivo).map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.nombre_estacion} ({e.frecuencia})
-                  </option>
-                ))}
-              </select>
-              {estacion && (
-                <div className="r2" style={{ marginTop: 4 }}>
-                  <div>
-                    <div className="fl">
-                      Plaza <span style={{ color: "var(--text3)", fontWeight: 400 }}>(heredada)</span>
+              <div className="form-card">
+                <div className="form-card-title">Datos de la orden interna</div>
+                <div className="fl fl-required">Estación</div>
+                <select className="fsel" value={estacionId} onChange={(e) => onEstacionChange(e.target.value)}>
+                  <option value="">Selecciona…</option>
+                  {estaciones.filter(esActivo).map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.nombre_estacion} ({e.frecuencia})
+                    </option>
+                  ))}
+                </select>
+                {estacion && (
+                  <div className="heredado-block" style={{ marginTop: 4 }}>
+                    <div className="heredado-title">Datos heredados de la estación</div>
+                    <div className="heredado-grid">
+                      <div className="heredado-row">
+                        <span className="heredado-lbl">Plaza</span>
+                        <span className="heredado-val">{plaza?.nombre_plaza ?? "—"}</span>
+                      </div>
+                      <div className="heredado-row">
+                        <span className="heredado-lbl">Afiliado</span>
+                        <span className="heredado-val">{afiliado?.nombre_afiliado ?? "—"}</span>
+                      </div>
                     </div>
-                    <div className="fv mono">{plaza?.nombre_plaza ?? "—"}</div>
                   </div>
-                  <div>
-                    <div className="fl">
-                      Afiliado <span style={{ color: "var(--text3)", fontWeight: 400 }}>(heredado)</span>
-                    </div>
-                    <div className="fv">{afiliado?.nombre_afiliado ?? "—"}</div>
-                  </div>
-                </div>
-              )}
+                )}
 
-              <div className="fl fl-required">Tarifa por spot (MXN)</div>
-              <MoneyInput
-                style={{ maxWidth: 200 }}
-                value={precioSpot}
-                onChange={setPrecioSpot}
-              />
-              {tarifaEstMayorQueCliente && (
-                <div className="fe">La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.</div>
-              )}
+                <div className="fl fl-required">Tarifa por spot (MXN)</div>
+                <MoneyInput
+                  style={{ maxWidth: 200 }}
+                  value={precioSpot}
+                  onChange={setPrecioSpot}
+                />
+                {tarifaEstMayorQueCliente && (
+                  <div className="fe">La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.</div>
+                )}
+
+                <div className="fl" style={{ marginTop: 10 }}>
+                  Observaciones de la estación
+                </div>
+                <textarea className="ftxt" rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
+              </div>
 
               <div className="sec">Periodo de transmisión</div>
               <PeriodoTransmisionGrid
@@ -172,11 +181,6 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
                 onChange={setPeriodo}
                 rangoCampania={{ inicio: oc.fecha_inicio_campania, fin: oc.fecha_fin_campania }}
               />
-
-              <div className="fl" style={{ marginTop: 14 }}>
-                Observaciones de la estación
-              </div>
-              <textarea className="ftxt" rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
             </>
           )}
         </div>

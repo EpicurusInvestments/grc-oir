@@ -68,8 +68,8 @@ export function OrdenClienteListPage({
 
   const items = useMemo(() => {
     const filtrados = filtrarOrdenesCliente(state.ordenesCliente, state.ordenesEstacion, { filtro, search });
-    // Más reciente primero: para que una OC recién dada de alta aparezca al principio.
-    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    // Folio descendente: el folio más alto (el más reciente, por ser correlativo) primero.
+    return [...filtrados].sort((a, b) => b.folio_orden.localeCompare(a.folio_orden));
   }, [state.ordenesCliente, state.ordenesEstacion, filtro, search]);
   const selected = selectedId ? (state.ordenesCliente.find((o) => o.id === selectedId) ?? null) : null;
 

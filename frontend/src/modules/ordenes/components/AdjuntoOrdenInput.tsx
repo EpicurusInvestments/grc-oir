@@ -74,6 +74,7 @@ export function AdjuntoOrdenInput({ tipo, value, onChange, disabled }: AdjuntoOr
     <div>
       <input
         ref={inputRef}
+        className="file-input"
         type="file"
         accept={ADJUNTO_ORDEN_ACCEPT}
         disabled={disabled || subiendo}

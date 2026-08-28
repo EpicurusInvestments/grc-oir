@@ -47,12 +47,14 @@ describe("Fix: OC preseleccionada filtra la tabla (no solo resalta la fila)", ()
   });
 });
 
-describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la más antigua", () => {
-  it("una OC dada de alta después aparece primero, sin importar el orden en que llegaron los datos", () => {
-    const vieja = makeOC({ id: "oc-vieja", folio_orden: "OC-2026-0041", created_at: "2026-01-01" });
-    const nueva = makeOC({ id: "oc-nueva", folio_orden: "OC-2026-0050", created_at: "2026-06-15" });
+describe("Fix: la tabla muestra columna Fecha y ordena por folio descendente", () => {
+  it("ordena por folio descendente, aunque haya sido dada de alta antes", () => {
+    // "oc-folio-mayor" se creó ANTES que "oc-folio-menor" (created_at más viejo), pero su
+    // folio es mayor — debe aparecer primero: el orden es por folio, no por fecha de alta.
+    const ocFolioMenor = makeOC({ id: "oc-folio-menor", folio_orden: "OC-2026-0041", created_at: "2026-06-15" });
+    const ocFolioMayor = makeOC({ id: "oc-folio-mayor", folio_orden: "OC-2026-0050", created_at: "2026-01-01" });
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [vieja, nueva], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+      <OrdenesProvider initialState={{ ordenesCliente: [ocFolioMenor, ocFolioMayor], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
         <OrdenClienteListPage onSeleccionarOE={vi.fn()} onAsignarEstaciones={vi.fn()} />
       </OrdenesProvider>,
     );
@@ -61,7 +63,6 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
     expect(within(filas[0]).getByText("OC-2026-0050")).toBeInTheDocument();
-    expect(within(filas[0]).getByText("2026-06-15")).toBeInTheDocument();
     expect(within(filas[1]).getByText("OC-2026-0041")).toBeInTheDocument();
   });
 });

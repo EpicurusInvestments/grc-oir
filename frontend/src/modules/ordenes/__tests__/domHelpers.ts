@@ -7,9 +7,12 @@
  * reproduce cómo lo ubica un usuario vidente: el campo que sigue inmediatamente a la etiqueta
  * visible. Los checkboxes SÍ están bien asociados (envueltos en `<label>`) y usan
  * `getByRole("checkbox", { name })` normalmente.
+ *
+ * `.form-card-title` se suma a `.fl`/`.sec`: mismo patrón "etiqueta + campo inmediato",
+ * usado por las tarjetas de sección (look and feel del prototipo `Fase_1_-_Ordenes.html`).
  */
 export function fieldByLabelText<T extends Element = HTMLElement>(container: ParentNode, labelText: string): T {
-  const candidatos = Array.from(container.querySelectorAll(".fl, .sec"));
+  const candidatos = Array.from(container.querySelectorAll(".fl, .sec, .form-card-title"));
   const labelDiv = candidatos.find((d) => d.textContent?.trim().startsWith(labelText));
   if (!labelDiv) throw new Error(`No se encontró la etiqueta "${labelText}"`);
   const campo = labelDiv.nextElementSibling;

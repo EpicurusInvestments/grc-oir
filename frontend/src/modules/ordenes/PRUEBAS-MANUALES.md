@@ -257,24 +257,19 @@ valor anterior, el nuevo, tu usuario y el motivo capturado.
 
 ## E. Congelamiento y cambio de usuario de demo
 
-### CP-20 · Editar una orden congelada sin `admin_parametros`
+### CP-20 · Editar una orden congelada — formulario 100% de solo lectura
 **Pantalla:** Editar `OC-2025-0046` (orden_cerrada)
-**Precondición:** Usuario de demo por default ("Ventas · sin permisos especiales").
+**Precondición:** Cualquier usuario de demo, incluyendo "Admin"/"Ventas · con
+admin_parametros" (fix: antes estos 2 podían seguir editando los 3 % de comisión desde
+este formulario aun con la orden congelada).
 **Pasos:**
   1. Abre el detalle de `OC-2025-0046`, clic en "Editar".
 **Resultado esperado:** Aviso ámbar "🔒 Orden congelada: el formulario completo es de solo
-lectura." **Todos** los campos están deshabilitados, incluyendo los que no son de
-comisión (p.ej. "Total de spots").
-**Estado:** ⬜ Pendiente
-
-### CP-21 · Cambiar a un usuario con `admin_parametros`
-**Pantalla:** Selector "DEMO" en el header + mismo formulario del CP-20
-**Precondición:** Formulario del CP-20 abierto.
-**Pasos:**
-  1. En el selector "DEMO" del header, cambia a "Ventas · con admin_parametros" o "Admin".
-**Resultado esperado:** Los 3 campos de % de comisión se habilitan; el resto del
-formulario sigue de solo lectura (el permiso es solo para comisiones, no para reabrir todo
-el pedido).
+lectura, incluyendo los % de comisión." **Todos** los campos están deshabilitados, sin
+excepción — los 3 % de comisión, el resto de los campos (p.ej. "Total de spots"), y el
+campo "Motivo del cambio" ya ni siquiera aparece. El canal dedicado
+`PATCH /clientes/{id}/comisiones` sigue existiendo en el backend, pero este formulario ya
+no ofrece manera de llegar a él.
 **Estado:** ⬜ Pendiente
 
 ---
@@ -360,7 +355,7 @@ revisa `OC-2025-0047` y `OC-2025-0048`: cada una trae su propia entrada precarga
 | `OC-2025-0043` | 2 (orden interna) | **Sobre-asignada** 155/150 (CP-16); 1 OI en 2.1, 1 en 2.2 (con override), 1 en 2.3 (con descuento) |
 | `OC-2025-0044` | 2 (orden interna) | **Sub-asignada** 80/100; ambas OI en 2.1 |
 | `OC-2025-0045` | 2 (orden interna) | **Exacta** 120/120, las 3 OI en 2.3 — lista para cerrar (CP-12, CP-24) |
-| `OC-2025-0046` | 3 (orden_cerrada) | Congelada (CP-20/21); cerrada sin ODC (CP-13); lista para facturar (CP-25) |
+| `OC-2025-0046` | 3 (orden_cerrada) | Congelada (CP-20); cerrada sin ODC (CP-13); lista para facturar (CP-25) |
 | `OC-2025-0047` | 4.1 archivo plano | Congelada, solo lectura total |
 | `OC-2025-0048` | 4.2 timbrada | Congelada; pago a afiliado ya "pagado" |
 | `OC-2025-0049` | 5 cobrada | Único caso con vendedor secundario (CP-28) |

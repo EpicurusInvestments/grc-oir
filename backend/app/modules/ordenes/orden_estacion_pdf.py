@@ -25,7 +25,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Response
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -146,32 +146,39 @@ def _encabezado(
     *,
     subtitulo_primero: bool = False,
     logo_grc: bool = True,
+    logos_arriba: bool = False,
 ) -> Table:
     """Por defecto el nombre de empresa va grande y `subtitulo` chico debajo (ADR-044).
     "Horarios programados" (2.2) usa `subtitulo_primero=True` para igualar su PDF de
     referencia, donde el título del reporte va grande arriba y la empresa chica debajo —
     corrección puntual a ese reporte, no cambia servicio (2.1) ni reales (2.3).
     "Horarios reales" (2.3) usa `logo_grc=False`: su PDF de referencia no lleva el logo
-    de Radio Centro, a diferencia de servicio y programados."""
+    de Radio Centro, a diferencia de servicio y programados.
+    "Horarios programados" también usa `logos_arriba=True`: en su referencia los logos
+    van en su propio renglón, arriba del título — no centrados verticalmente junto al
+    título/subtítulo como en servicio/reales (ADR-044)."""
     grande, chico = (subtitulo, nombre_empresa) if subtitulo_primero else (nombre_empresa, subtitulo)
     ancho_logo_col = 3.5 * cm
     logo_derecho = _logo_flowable("grc") if logo_grc else Spacer(1, _LOGO_ALTO)
+    titulo_bloque = [Paragraph(grande, _TITULO), Paragraph(chico, _SUBTITULO)]
+    if logos_arriba:
+        data = [
+            [_logo_flowable("oir"), "", logo_derecho],
+            ["", titulo_bloque, ""],
+        ]
+    else:
+        data = [[_logo_flowable("oir"), titulo_bloque, logo_derecho]]
     tabla = Table(
-        [
-            [
-                _logo_flowable("oir"),
-                [Paragraph(grande, _TITULO), Paragraph(chico, _SUBTITULO)],
-                logo_derecho,
-            ]
-        ],
+        data,
         colWidths=[ancho_logo_col, ancho_disponible - 2 * ancho_logo_col, ancho_logo_col],
     )
     tabla.setStyle(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ALIGN", (0, 0), (0, 0), "LEFT"),
-                ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+                ("TOPPADDING", (1, -1), (1, -1), 6 if logos_arriba else 0),
             ]
         )
     )
@@ -247,6 +254,22 @@ _NOTA = ParagraphStyle(
 _PIE = ParagraphStyle(
     "pie", parent=_STYLES["Normal"], fontSize=8, textColor=colors.grey, alignment=TA_RIGHT
 )
+# Pie de "Orden de servicio" (2.1): a diferencia de `_PIE`, va justificado a la izquierda
+# (corrección puntual contra el PDF de referencia — programados/reales no cambian).
+_PIE_IZQUIERDA = ParagraphStyle("pie_izquierda", parent=_PIE, alignment=TA_LEFT)
+
+# Marco completo de "Orden de servicio" (2.1): envuelve estación/plaza + campos + tabla
+# de días en un solo recuadro, igual al PDF de referencia (programados/reales no llevan
+# este marco — cada uno conserva su propio estilo de tabla).
+_MARCO = TableStyle(
+    [
+        ("BOX", (0, 0), (-1, -1), 1, colors.black),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]
+)
 
 _GRID = TableStyle(
     [
@@ -275,6 +298,41 @@ _FILA_CON_LINEA = TableStyle(
 
 _FILA_PROGRAMADO = ParagraphStyle(
     "fila_programado", parent=_STYLES["Normal"], fontSize=9, leading=12
+)
+
+# Líneas de campo de "Horarios programados" (2.2): etiqueta en negro (no gris como
+# `_ETIQUETA`) seguida del valor en la misma línea — igual al PDF de referencia, que no
+# usa el formato de 2 columnas etiqueta-arriba/valor-abajo de `_campo()`.
+_CAMPO_LINEA = ParagraphStyle(
+    "campo_linea", parent=_STYLES["Normal"], fontSize=9.5, textColor=colors.black, spaceAfter=4
+)
+_CAMPO_LINEA_DER = ParagraphStyle("campo_linea_der", parent=_CAMPO_LINEA, alignment=TA_RIGHT)
+
+# Campos de "Horarios reales" (2.3): etiqueta Y valor en negritas (a diferencia de
+# `_campo()`, que deja la etiqueta en gris) — igual al PDF de referencia.
+_CAMPO_NEGRITA = ParagraphStyle(
+    "campo_negrita", parent=_STYLES["Normal"], fontSize=9.5, textColor=colors.black, spaceAfter=4
+)
+
+
+def _campo_negrita(etiqueta: str, valor: str) -> list:
+    return [
+        Paragraph(f"<b>{etiqueta}:</b>", _CAMPO_NEGRITA),
+        Paragraph(f"<b>{valor}</b>", _CAMPO_NEGRITA),
+    ]
+
+
+# Tabla de "Horarios reales" (2.3): SIN cuadrícula (a diferencia de `_GRID`) — solo una
+# línea bajo el encabezado, igual al PDF de referencia.
+_TABLA_SIN_MARCO = TableStyle(
+    [
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
 )
 
 
@@ -328,42 +386,30 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     total = oe.importe_estacion + iva
     total_spots = sum(d.spots_asignados for d in ctx.dias)
 
-    elementos: list = [
-        _encabezado(
-            ctx.empresa.nombre_empresa, "ORDEN DE SERVICIOS RADIOFÓNICOS", _ANCHO_DISPONIBLE
-        ),
-        Spacer(1, 10),
-        Table(
-            [[f"{estacion.nombre_estacion} ({estacion.frecuencia or '—'})", plaza.nombre_plaza]],
-            colWidths=[10 * cm, 6 * cm],
-            style=TableStyle(
-                [
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTSIZE", (0, 0), (-1, -1), 11),
-                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-                ]
-            ),
-        ),
-        Spacer(1, 10),
-        Table(
+    tabla_estacion_plaza = Table(
+        [[f"{estacion.nombre_estacion} ({estacion.frecuencia or '—'})", plaza.nombre_plaza]],
+        colWidths=[10 * cm, 6 * cm],
+        style=TableStyle(
             [
-                _campo("Solicitud Orden", oc.numero_orden_cliente)
-                + _campo("Duración", oe.duracion_spot),
-                _campo("Agencia", ctx.agencia.nombre_agencia if ctx.agencia else "Venta directa")
-                + _campo("Total de Spots", str(total_spots)),
-                _campo("Anunciante", ctx.anunciante.nombre_comercial)
-                + _campo("Precio Unitario", _moneda(oe.precio_spot)),
-                _campo("Producto", oc.producto or "—")
-                + _campo("Total de Días", str(len(ctx.dias))),
-                ["", ""] + _campo("Importe", _moneda(oe.importe_estacion)),
-                ["", ""] + _campo("I.V.A.", _moneda(iva)),
-                ["", ""] + _campo("Total", _moneda(total)),
-            ],
-            colWidths=[3 * cm, 5 * cm, 3.5 * cm, 4.5 * cm],
+                ("FONTSIZE", (0, 0), (-1, -1), 11),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ]
         ),
-        Spacer(1, 12),
-        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
-    ]
+    )
+    tabla_campos = Table(
+        [
+            _campo("Solicitud Orden", oc.numero_orden_cliente) + _campo("Duración", oe.duracion_spot),
+            _campo("Agencia", ctx.agencia.nombre_agencia if ctx.agencia else "Venta directa")
+            + _campo("Total de Spots", str(total_spots)),
+            _campo("Anunciante", ctx.anunciante.nombre_comercial)
+            + _campo("Precio Unitario", _moneda(oe.precio_spot)),
+            _campo("Producto", oc.producto or "—") + _campo("Total de Días", str(len(ctx.dias))),
+            ["", ""] + _campo("Importe", _moneda(oe.importe_estacion)),
+            ["", ""] + _campo("I.V.A.", _moneda(iva)),
+            ["", ""] + _campo("Total", _moneda(total)),
+        ],
+        colWidths=[3 * cm, 5 * cm, 3.5 * cm, 4.5 * cm],
+    )
 
     filas = [["Día", "Fecha", "Inicio", "Término", "Spots Diarios", "Importe"]]
     for dia in ctx.dias:
@@ -377,31 +423,60 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 _moneda((Decimal(dia.spots_asignados) * oe.precio_spot).quantize(CENTAVOS)),
             ]
         )
-    elementos.append(
-        Table(
-            filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
-        )
+    tabla_dias = Table(
+        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
     )
+
+    contenido_marco: list = [
+        tabla_estacion_plaza,
+        Spacer(1, 10),
+        tabla_campos,
+        Spacer(1, 12),
+        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
+        Spacer(1, 6),
+        tabla_dias,
+    ]
 
     horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
     if len(horarios) == 1:
         ini, fin = next(iter(horarios))
-        elementos.append(Spacer(1, 8))
-        elementos.append(
+        contenido_marco.append(Spacer(1, 8))
+        contenido_marco.append(
             Paragraph(
                 f"<b>Horario de transmisión:</b> {ini.strftime('%H:%M')} A {fin.strftime('%H:%M')}",
                 _VALOR,
             )
         )
 
-    elementos.append(Spacer(1, 6))
-    elementos.append(Paragraph(f"<b>Observaciones:</b> {oe.observaciones_estacion or '—'}", _VALOR))
-    elementos.append(Spacer(1, 10))
-    elementos.append(
+    contenido_marco.append(Spacer(1, 6))
+    contenido_marco.append(
+        Paragraph(
+            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
+            _VALOR,
+        )
+    )
+    contenido_marco.append(Spacer(1, 10))
+    contenido_marco.append(
         Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
     )
-    elementos.append(Spacer(1, 20))
-    elementos.append(Paragraph(f"{ctx.empresa.direccion_empresa or '—'} : {_generado_el()}", _PIE))
+    contenido_marco.append(Spacer(1, 20))
+    contenido_marco.append(
+        Paragraph(f"{ctx.empresa.direccion_empresa or '—'} : {_generado_el()}", _PIE_IZQUIERDA)
+    )
+
+    marco = Table(
+        [[contenido_marco]],
+        colWidths=[_ANCHO_DISPONIBLE],
+        style=_MARCO,
+    )
+
+    elementos: list = [
+        _encabezado(
+            ctx.empresa.nombre_empresa, "ORDEN DE SERVICIOS RADIOFÓNICOS", _ANCHO_DISPONIBLE
+        ),
+        Spacer(1, 10),
+        marco,
+    ]
 
     return _build(elementos)
 
@@ -422,27 +497,37 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         for d in ctx.dias
     )
 
+    nombre_estacion_ciudad = f"{estacion.nombre_estacion} {estacion.frecuencia or ''}".strip()
+
     elementos: list = [
         _encabezado(
             ctx.empresa.nombre_empresa,
             "HORARIOS PROGRAMADOS",
             _ANCHO_DISPONIBLE,
             subtitulo_primero=True,
+            logos_arriba=True,
         ),
         Spacer(1, 10),
+        Paragraph(f"<b>CLIENTE :</b> {ctx.anunciante.nombre_comercial.upper()}", _CAMPO_LINEA),
+        Paragraph(f"<b>CAMPAÑA :</b> {(oc.producto or '—').upper()}", _CAMPO_LINEA),
+        Paragraph(
+            f"<b>No. DE ORDEN :</b> {oc.numero_orden_cliente}/{letra} &nbsp;&nbsp; "
+            f"<b>DURACION:</b> {oe.duracion_spot} &nbsp;/&nbsp; "
+            f"<b>PERIODO :</b> {_rango_campania(oc)}",
+            _CAMPO_LINEA,
+        ),
         Table(
             [
-                _campo("Cliente", ctx.anunciante.nombre_comercial)
-                + _campo("No. de Orden", f"{oc.numero_orden_cliente}/{letra}"),
-                _campo("Campaña", oc.producto or "—") + _campo("Duración", oe.duracion_spot),
-                _campo("Periodo", _rango_campania(oc))
-                + _campo("Total Spots", str(total_programado)),
-                _campo(
-                    "Estación", f"{estacion.nombre_estacion} {estacion.frecuencia or ''}".strip()
-                )
-                + _campo("Ciudad", plaza.nombre_plaza),
+                [
+                    Paragraph(
+                        f"<b>ESTACION:</b> {nombre_estacion_ciudad} / "
+                        f"<b>CIUDAD:</b> {plaza.nombre_plaza.upper()}",
+                        _CAMPO_LINEA,
+                    ),
+                    Paragraph(f"<b>TOTAL SPOTS</b> &nbsp;&nbsp;{total_programado}", _CAMPO_LINEA_DER),
+                ]
             ],
-            colWidths=[3 * cm, 6 * cm, 3 * cm, 4 * cm],
+            colWidths=[_ANCHO_DISPONIBLE * 0.7, _ANCHO_DISPONIBLE * 0.3],
         ),
         Spacer(1, 12),
     ]
@@ -511,24 +596,26 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             "HORARIOS REALES DE TRANSMISION",
             _ANCHO_DISPONIBLE,
             logo_grc=False,
+            logos_arriba=True,
         ),
         Spacer(1, 10),
         Table(
             [
-                _campo("Cliente", ctx.anunciante.nombre_comercial)
-                + _campo("Periodo", f"DEL {_rango_campania(oc)}"),
-                _campo("Campaña", oc.producto or "—")
-                + _campo("Tipo de Medio", _tipo_medio(estacion)),
-                _campo("Duración", oe.duracion_spot) + ["", ""],
-                _campo("Emisora", f"{estacion.nombre_estacion} / {plaza.nombre_plaza}")
-                + _campo("Total Spots Reales", str(total_real)),
+                _campo_negrita("CLIENTE", ctx.anunciante.nombre_comercial.upper())
+                + _campo_negrita("PERIODO", f"DEL {_rango_campania(oc)}"),
+                _campo_negrita("CAMPAÑA", (oc.producto or "—").upper())
+                + _campo_negrita("TIPO DE MEDIO", _tipo_medio(estacion)),
+                _campo_negrita("DURACION", oe.duracion_spot) + ["", ""],
+                _campo_negrita("EMISORA", f"{estacion.nombre_estacion} / {plaza.nombre_plaza}".upper())
+                + _campo_negrita("TOTAL SPOTS REALES", str(total_real)),
             ],
             colWidths=[3 * cm, 6 * cm, 3.5 * cm, 3.5 * cm],
+            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]),
         ),
         Spacer(1, 12),
     ]
 
-    filas = [["#", "Fecha", "Hora", "Spots", "Descripción", "Emisora"]]
+    filas = [["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]]
     for i, dia in enumerate(ctx.dias, start=1):
         verificacion = verificaciones.get(dia.orden_estacion_dia_id)
         spots = verificacion.spots_verificados if verificacion else "—"
@@ -538,13 +625,15 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 _fecha_corta(dia.fecha_transmision),
                 f"{_hora_24h(dia.hora_inicio)} - {_hora_24h(dia.hora_fin)}",
                 str(spots),
-                oc.producto or "—",
-                estacion.nombre_estacion,
+                (oc.producto or "—").upper(),
+                estacion.nombre_estacion.upper(),
             ]
         )
     elementos.append(
         Table(
-            filas, style=_GRID, colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 1.8 * cm, 5.5 * cm, 2.4 * cm]
+            filas,
+            style=_TABLA_SIN_MARCO,
+            colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 1.8 * cm, 5.5 * cm, 2.4 * cm],
         )
     )
 
@@ -563,8 +652,6 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 _NOTA,
             )
         )
-    elementos.append(Spacer(1, 20))
-    elementos.append(Paragraph(_generado_el(), _PIE))
 
     return _build(elementos)
 
