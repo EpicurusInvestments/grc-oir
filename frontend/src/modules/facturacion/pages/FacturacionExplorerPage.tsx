@@ -44,7 +44,7 @@ export function FacturacionExplorerPage() {
       rootClassName="phase-f2"
     >
       {entry?.render ? (
-        entry.render()
+        entry.render({ goTo: setActiveKey })
       ) : (
         <>
           <div className="cat-header">

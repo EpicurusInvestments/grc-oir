@@ -333,8 +333,18 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     daría la falsa impresión de que la acción no existe.
   - El sidebar agrupa en **«Ingresos»** y **«Costos»**, que no es cosmética: refleja las
     dos claves de RBAC del ADR-044 (Facturación captura lo primero, CxP lo segundo).
-  - El diálogo de timbrado **avisa explícitamente que la orden pasará a `facturada`**,
-    porque el handoff ocurre fuera de la vista de esta pantalla.
+  - El formulario de "Registrar timbrado" (`RegistrarTimbradoForm.tsx` — pantalla
+    completa desde ADR-051, ya no un `Dialog` chico) **avisa explícitamente que la orden
+    pasará a `facturada`**, porque el handoff ocurre fuera de la vista de esta pantalla.
+    Ahí mismo ya se pueden cargar de verdad el XML y el PDF del CFDI (`AdjuntoFacturaInput`,
+    opcionales), conectados al endpoint de adjuntos que ya existía sin usarse. También
+    captura `serie_timbrado` (columna aditiva NULL, migración `4f2e15c90f71` — ver ADR-051).
+  - El botón «+ Generar factura desde orden cerrada» de «Facturas al cliente» YA NO abre
+    un alta embebida (esa rama se eliminó): navega a «Listas para facturar» — el único
+    punto de alta real, con la orden ya fija — y se inhabilita cuando esa bandeja está
+    vacía (ver ADR-053). El salto entre secciones lo permite un `goTo` nuevo en
+    `facturacionRegistry`/`FacturacionExplorerPage`, disponible para cualquier otra
+    sección que lo necesite.
   - `hooks.ts`: timbrar invalida ADEMÁS la caché de órdenes (`ordenes`), o la pantalla de
     F1 quedaría mostrando un estado viejo tras el handoff.
   - **Siembra de demo** en `scripts/seed_dev.py`: 4 FacturaCliente (una por estado del

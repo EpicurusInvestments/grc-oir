@@ -48,59 +48,55 @@ export function CostoForm({ submitting, submitError, onSubmit, onCancel }: Props
   });
 
   return (
-    <form className="form" onSubmit={handleSubmit((v) => onSubmit(v as CostoAdicionalCreate))}>
+    <form
+      onSubmit={handleSubmit((v) => onSubmit(v as CostoAdicionalCreate))}
+      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
+    >
       <SavingOverlay visible={!!submitting} />
       <div className="dh">
         <div className="dh-name">Nuevo costo adicional</div>
         <div className="dh-sub">Sin orden asociada queda como costo general del área.</div>
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="tipo_costo">
-          Tipo <span className="req">*</span>
-        </label>
-        <select id="tipo_costo" className="in" {...register("tipo_costo")}>
-          {TIPOS_COSTO.map((t) => (
-            <option key={t} value={t}>
-              {TIPO_COSTO_LABEL[t]}
-            </option>
-          ))}
-        </select>
-        {errors.tipo_costo && <div className="fe">{errors.tipo_costo.message}</div>}
+      <div className="db">
+        <div className="form-card">
+          <div className="fl fl-required">Tipo</div>
+          <select className="fsel" {...register("tipo_costo")}>
+            {TIPOS_COSTO.map((t) => (
+              <option key={t} value={t}>
+                {TIPO_COSTO_LABEL[t]}
+              </option>
+            ))}
+          </select>
+          {errors.tipo_costo && <div className="fe">{errors.tipo_costo.message}</div>}
+
+          <div className="fl fl-required">Descripción</div>
+          <input className="fi" {...register("descripcion_costo")} />
+          {errors.descripcion_costo && <div className="fe">{errors.descripcion_costo.message}</div>}
+
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Periodo contable</div>
+              <input
+                className="fi"
+                style={{ fontFamily: "var(--mono)" }}
+                placeholder="AAAA-MM"
+                {...register("periodo_contable")}
+              />
+              {errors.periodo_contable && <div className="fe">{errors.periodo_contable.message}</div>}
+            </div>
+            <div>
+              <div className="fl fl-required">Monto</div>
+              <input className="fi" inputMode="decimal" {...register("monto_costo")} />
+              {errors.monto_costo && <div className="fe">{errors.monto_costo.message}</div>}
+            </div>
+          </div>
+        </div>
+
+        {submitError && <div className="state-msg error">{submitError}</div>}
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="descripcion_costo">
-          Descripción <span className="req">*</span>
-        </label>
-        <input id="descripcion_costo" className="in" {...register("descripcion_costo")} />
-        {errors.descripcion_costo && <div className="fe">{errors.descripcion_costo.message}</div>}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="periodo_contable">
-          Periodo contable <span className="req">*</span>
-        </label>
-        <input
-          id="periodo_contable"
-          className="in mono"
-          placeholder="AAAA-MM"
-          {...register("periodo_contable")}
-        />
-        {errors.periodo_contable && <div className="fe">{errors.periodo_contable.message}</div>}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="monto_costo">
-          Monto <span className="req">*</span>
-        </label>
-        <input id="monto_costo" className="in" inputMode="decimal" {...register("monto_costo")} />
-        {errors.monto_costo && <div className="fe">{errors.monto_costo.message}</div>}
-      </div>
-
-      {submitError && <div className="state-msg error">{submitError}</div>}
-
-      <div className="fa">
+      <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>

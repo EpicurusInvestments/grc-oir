@@ -104,6 +104,52 @@ function leerNombreDeContentDisposition(cabeceras: unknown): string | null {
   return m ? m[1] : null;
 }
 
+// ── Adjuntos de Facturación (XML/PDF del CFDI timbrado) ────────────────────────
+// Mismo patrón que `ordenes/adapters/adjuntosApi.ts` (ADR-042): un endpoint genérico de
+// subida/descarga; el bucket es privado, la descarga SIEMPRE pasa por el backend.
+export type TipoAdjuntoFacturacion = "cfdi_xml" | "cfdi_pdf";
+
+export interface AdjuntoFacturacionSubido {
+  ref: string;
+  nombre_archivo: string;
+}
+
+export const adjuntosFacturacionApi = {
+  async subir(tipo: TipoAdjuntoFacturacion, archivo: File): Promise<AdjuntoFacturacionSubido> {
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    const { data } = await apiClient.post<AdjuntoFacturacionSubido>(
+      `${BASE}/adjuntos?tipo=${tipo}`,
+      fd,
+    );
+    return data;
+  },
+  /** Descarga el adjunto (blob servido por el backend, con auth) forzando el nombre
+   * original — un `window.open` sobre una blob: URL no lleva metadatos de nombre. */
+  async ver(ref: string): Promise<void> {
+    const { data } = await apiClient.get<Blob>(`${BASE}/adjuntos`, {
+      params: { ref },
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(data);
+    const enlace = document.createElement("a");
+    enlace.href = url;
+    enlace.download = nombreDeAdjuntoFacturacionRef(ref);
+    document.body.appendChild(enlace);
+    enlace.click();
+    enlace.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+};
+
+/** La clave real es `<prefijo><uuid_hex>_<nombre>` (ver backend) — para mostrar solo el
+ * nombre original al usuario, sin el prefijo ni el UUID. */
+export function nombreDeAdjuntoFacturacionRef(ref: string): string {
+  const base = ref.split("/").pop() ?? ref;
+  const idx = base.indexOf("_");
+  return idx >= 0 ? base.slice(idx + 1) : base;
+}
+
 // ── FacturaAfiliado ───────────────────────────────────────────────────────────
 export interface FiltrosFacturaAfiliado extends ListParams {
   estatus_factura_afiliado?: string;

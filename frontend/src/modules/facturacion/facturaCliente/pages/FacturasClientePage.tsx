@@ -20,17 +20,15 @@ import { useState } from "react";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
-import { FacturaClienteForm } from "../components/FacturaClienteForm";
-import { TimbrarDialog } from "../components/TimbrarDialog";
+import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
 import { facturaClienteApi } from "../../api";
 import { badgeEstadoFactura, fmtFecha, fmtMoneda, oGuion } from "../../format";
-import { useFacturasCliente } from "../../hooks";
+import { useFacturasCliente, useOrdenesPorFacturar } from "../../hooks";
 import {
   ESTADO_FACTURACION_LABEL,
   FLUJO_FACTURACION,
   type EstadoFacturacion,
   type FacturaCliente,
-  type FacturaClienteCreate,
   type TimbrarInput,
 } from "../../types";
 
@@ -85,16 +83,18 @@ function Timeline({ estado }: { estado: EstadoFacturacion }) {
   );
 }
 
-export function FacturasClientePage() {
+interface Props {
+  onIrAListasParaFacturar: () => void;
+}
+
+export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [selected, setSelected] = useState<FacturaCliente | null>(null);
-  const [modo, setModo] = useState<"view" | "new">("view");
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [modo, setModo] = useState<"view" | "timbrar">("view");
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
-  const [dialogoTimbrar, setDialogoTimbrar] = useState(false);
   const [faltantes, setFaltantes] = useState<string[] | null>(null);
 
   // "Pendientes timbrar" agrupa los DOS estados previos al folio fiscal; el backend filtra
@@ -105,7 +105,11 @@ export function FacturasClientePage() {
     q: q || undefined,
     estado_facturacion: ESTADO_POR_FILTRO[filtro],
   };
-  const { list, crear, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
+  const { list, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
+  // Solo para saber si queda algo por facturar y así habilitar/inhabilitar el botón del
+  // header — la bandeja en sí vive en «Listas para facturar» (ADR pendiente de numerar).
+  const porFacturar = useOrdenesPorFacturar({ page: 1, size: 1 });
+  const hayOrdenesPorFacturar = (porFacturar.data?.total ?? 0) > 0;
 
   const mensajeDeError = (e: unknown): string =>
     e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
@@ -115,16 +119,6 @@ export function FacturasClientePage() {
     setModo("view");
     setErrorAccion(null);
     setFaltantes(null);
-  };
-
-  const onCrear = async (data: FacturaClienteCreate) => {
-    setSubmitError(null);
-    try {
-      setSelected(await crear.mutateAsync(data));
-      setModo("view");
-    } catch (e) {
-      setSubmitError(mensajeDeError(e));
-    }
   };
 
   const ejecutar = async (accion: () => Promise<FacturaCliente>) => {
@@ -153,24 +147,24 @@ export function FacturasClientePage() {
     setErrorAccion(null);
     try {
       setSelected(await timbrar.mutateAsync({ id: selected.factura_id, data }));
+      setModo("view");
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
-    } finally {
-      setDialogoTimbrar(false);
     }
   };
 
   // ── panel de detalle ────────────────────────────────────────────────────────
   let detail;
-  if (modo === "new") {
+  if (modo === "timbrar" && selected) {
     detail = (
-      <FacturaClienteForm
-        submitting={crear.isPending}
-        submitError={submitError}
-        onSubmit={onCrear}
+      <RegistrarTimbradoForm
+        numeroFactura={selected.numero_factura}
+        submitting={timbrar.isPending}
+        submitError={errorAccion}
+        onConfirm={onTimbrar}
         onCancel={() => {
           setModo("view");
-          setSubmitError(null);
+          setErrorAccion(null);
         }}
       />
     );
@@ -315,8 +309,16 @@ export function FacturasClientePage() {
               >
                 {oGuion(selected.folio_fiscal_sat)}
               </div>
-              <div className="fl">Fecha timbrado</div>
-              <div className="fv mono">{fmtFecha(selected.fecha_timbrado)}</div>
+              <div className="r2">
+                <div>
+                  <div className="fl">Fecha timbrado</div>
+                  <div className="fv mono">{fmtFecha(selected.fecha_timbrado)}</div>
+                </div>
+                <div>
+                  <div className="fl">Serie / certificado</div>
+                  <div className="fv mono">{oGuion(selected.serie_timbrado)}</div>
+                </div>
+              </div>
             </>
           )}
 
@@ -375,7 +377,10 @@ export function FacturasClientePage() {
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
-                onClick={() => setDialogoTimbrar(true)}
+                onClick={() => {
+                  setErrorAccion(null);
+                  setModo("timbrar");
+                }}
               >
                 Registrar respuesta del timbrado →
               </button>
@@ -513,11 +518,13 @@ export function FacturasClientePage() {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => {
-            setSelected(null);
-            setModo("new");
-            setSubmitError(null);
-          }}
+          disabled={!hayOrdenesPorFacturar}
+          title={
+            hayOrdenesPorFacturar
+              ? undefined
+              : "No hay órdenes cerradas pendientes de facturar."
+          }
+          onClick={onIrAListasParaFacturar}
         >
           + Generar factura desde orden cerrada
         </button>
@@ -541,16 +548,6 @@ export function FacturasClientePage() {
       />
 
       <ListDetailLayout list={listNode} detail={detail} />
-
-      {selected && (
-        <TimbrarDialog
-          visible={dialogoTimbrar}
-          numeroFactura={selected.numero_factura}
-          submitting={timbrar.isPending}
-          onConfirm={onTimbrar}
-          onCancel={() => setDialogoTimbrar(false)}
-        />
-      )}
     </>
   );
 }

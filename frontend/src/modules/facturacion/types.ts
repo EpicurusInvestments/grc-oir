@@ -81,6 +81,7 @@ export interface FacturaCliente {
   estado_facturacion: EstadoFacturacion;
   folio_fiscal_sat: string | null;
   fecha_timbrado: string | null;
+  serie_timbrado: string | null;
   xml_path: string | null;
   pdf_path: string | null;
   created_by: string;
@@ -113,6 +114,7 @@ export interface FacturaClienteCreate {
 export interface TimbrarInput {
   folio_fiscal_sat: string;
   fecha_timbrado: string;
+  serie_timbrado?: string | null;
   xml_path?: string | null;
   pdf_path?: string | null;
 }

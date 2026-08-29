@@ -23,11 +23,18 @@ import { FacturasAgenciaPage } from "./facturaAgencia/pages/FacturasAgenciaPage"
 import { FacturasClientePage } from "./facturaCliente/pages/FacturasClientePage";
 import { ListasParaFacturarPage } from "./facturaCliente/pages/ListasParaFacturarPage";
 
+/** `goTo` deja que una sección navegue a otra del mismo explorador — hoy solo lo usa
+ *  «Facturas al cliente» para mandar a «Listas para facturar», pero cualquier entrada
+ *  puede recibirlo sin romper las que lo ignoran (siguen siendo `() => <X/>`). */
+export interface FacturacionNav {
+  goTo: (key: string) => void;
+}
+
 export interface FacturacionEntry {
   key: string;
   label: string;
   group: string;
-  render?: () => ReactNode;
+  render?: (nav: FacturacionNav) => ReactNode;
 }
 
 /** Grupos y orden EXACTOS de la pantalla aprobada `Fase_2_-_Facturacion.html`. */
@@ -51,7 +58,9 @@ export const facturacionRegistry: FacturacionEntry[] = [
     key: "facturas_cliente",
     label: "Facturas al cliente",
     group: "Facturación al cliente",
-    render: () => <FacturasClientePage />,
+    render: (nav) => (
+      <FacturasClientePage onIrAListasParaFacturar={() => nav.goTo("listas_para_facturar")} />
+    ),
   },
   {
     key: "facturas_afiliado",

@@ -6,13 +6,14 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FacturasClientePage } from "../facturaCliente/pages/FacturasClientePage";
 import type { FacturaCliente } from "../types";
 
 const listMock = vi.fn();
+const porFacturarMock = vi.fn();
 
 vi.mock("../api", () => ({
   facturaClienteApi: {
@@ -24,6 +25,9 @@ vi.mock("../api", () => ({
     cancelar: vi.fn(),
     descargarArchivoPlano: vi.fn(),
   },
+  adjuntosFacturacionApi: { subir: vi.fn(), ver: vi.fn() },
+  nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
+  ordenesPorFacturar: (params: unknown) => porFacturarMock(params),
   ordenesFacturables: vi.fn().mockResolvedValue([]),
   cuentasContables: vi.fn().mockResolvedValue([]),
   metodosDePago: vi.fn().mockResolvedValue([]),
@@ -63,6 +67,7 @@ const base: FacturaCliente = {
   estado_facturacion: "preparada",
   folio_fiscal_sat: null,
   fecha_timbrado: null,
+  serie_timbrado: null,
   xml_path: null,
   pdf_path: null,
   created_by: "u-1",
@@ -71,12 +76,12 @@ const base: FacturaCliente = {
   empresa_facturadora: "OIR Comercial",
 };
 
-function renderCon(factura: FacturaCliente) {
+function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void = vi.fn()) {
   listMock.mockResolvedValue({ items: [factura], total: 1, page: 1, size: 20, pages: 1 });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <FacturasClientePage />
+      <FacturasClientePage onIrAListasParaFacturar={onIrAListasParaFacturar} />
     </QueryClientProvider>,
   );
 }
@@ -84,6 +89,8 @@ function renderCon(factura: FacturaCliente) {
 describe("FacturasClientePage", () => {
   beforeEach(() => {
     listMock.mockReset();
+    porFacturarMock.mockReset();
+    porFacturarMock.mockResolvedValue({ items: [], total: 1, page: 1, size: 1, pages: 1 });
   });
 
   it("lista las facturas con su total en pesos y su estado legible", async () => {
@@ -107,6 +114,44 @@ describe("FacturasClientePage", () => {
     (await screen.findByText("A-1041")).click();
     await waitFor(() => expect(screen.getByText("Registrar respuesta del timbrado →")).toBeInTheDocument());
     expect(screen.queryByText("Marcar enviada a timbrado →")).not.toBeInTheDocument();
+  });
+
+  it("fix: registra el timbrado con folio y fecha desde el formulario de pantalla completa (antes un modal roto)", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.timbrar).mockResolvedValue({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      fecha_timbrado: "2026-03-05",
+    });
+    const { container } = renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    expect(await screen.findByText("Registrar timbrado")).toBeInTheDocument();
+    const folioInput = container.querySelector(
+      'input[placeholder="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"]',
+    ) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890" } });
+    screen.getByText("Registrar timbrado").click();
+
+    await waitFor(() =>
+      expect(facturaClienteApi.timbrar).toHaveBeenCalledWith(
+        "f-1",
+        expect.objectContaining({ folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890" }),
+      ),
+    );
+    // Al confirmar, vuelve a la vista normal de la factura (ya no muestra el formulario).
+    expect(await screen.findByText("Marcar entregada →")).toBeInTheDocument();
+  });
+
+  it("fix: sin capturar el folio, no permite registrar el timbrado", async () => {
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    (await screen.findByText("Registrar timbrado")).click();
+    expect(await screen.findByText(/El folio fiscal.*es obligatorio/)).toBeInTheDocument();
   });
 
   it("una factura cancelada no ofrece ninguna transición", async () => {
@@ -138,6 +183,25 @@ describe("FacturasClientePage", () => {
     // El aviso es explícito: un archivo incompleto que se envíe al PAC será rechazado.
     expect(await screen.findByText(/INCOMPLETO/)).toBeInTheDocument();
     expect(screen.getByText(/Detalle.ClaveProdServ/)).toBeInTheDocument();
+  });
+
+  it("fix: el botón del header navega a «Listas para facturar» en vez de abrir un formulario aquí", async () => {
+    const onIr = vi.fn();
+    renderCon(base, onIr);
+    const boton = await screen.findByText("+ Generar factura desde orden cerrada");
+    await waitFor(() => expect(boton).not.toBeDisabled());
+    boton.click();
+    expect(onIr).toHaveBeenCalledTimes(1);
+    // Ya no existe un formulario de alta embebido en esta pantalla.
+    expect(screen.queryByLabelText(/Orden/)).not.toBeInTheDocument();
+  });
+
+  it("fix: el botón del header se inhabilita cuando ya no hay órdenes por facturar", async () => {
+    porFacturarMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 1 });
+    renderCon(base);
+    await waitFor(() =>
+      expect(screen.getByText("+ Generar factura desde orden cerrada")).toBeDisabled(),
+    );
   });
 
   it("si el archivo está completo lo dice, sin alarmar", async () => {
