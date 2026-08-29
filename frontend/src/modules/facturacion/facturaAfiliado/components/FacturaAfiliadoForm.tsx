@@ -56,93 +56,77 @@ export function FacturaAfiliadoForm({ submitting, submitError, onSubmit, onCance
   const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : (m + i).toFixed(2);
 
   return (
-    <form className="form" onSubmit={handleSubmit((v) => onSubmit(v as FacturaAfiliadoCreate))}>
+    <form
+      onSubmit={handleSubmit((v) => onSubmit(v as FacturaAfiliadoCreate))}
+      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
+    >
       <SavingOverlay visible={!!submitting} />
       <div className="dh">
         <div className="dh-name">Nueva factura de afiliado</div>
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="afiliado_id">
-          Afiliado <span className="req">*</span> <FieldTag origin="catalogo" />
-        </label>
-        <select id="afiliado_id" className="in" {...register("afiliado_id")}>
-          <option value="">— Selecciona —</option>
-          {(afiliados.data ?? []).map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.etiqueta}
-            </option>
-          ))}
-        </select>
-        {errors.afiliado_id && <div className="fe">{errors.afiliado_id.message}</div>}
-      </div>
+      <div className="db">
+        <div className="form-card">
+          <div className="fl fl-required">
+            Afiliado <FieldTag origin="catalogo" />
+          </div>
+          <select className="fsel" {...register("afiliado_id")}>
+            <option value="">— Selecciona —</option>
+            {(afiliados.data ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.etiqueta}
+              </option>
+            ))}
+          </select>
+          {errors.afiliado_id && <div className="fe">{errors.afiliado_id.message}</div>}
 
-      <div className="fg">
-        <label className="fl" htmlFor="factura_emisora">
-          Folio de la emisora <span className="req">*</span>
-        </label>
-        <input id="factura_emisora" className="in mono" {...register("factura_emisora")} />
-        {errors.factura_emisora && <div className="fe">{errors.factura_emisora.message}</div>}
-      </div>
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Folio de la emisora</div>
+              <input className="fi" style={{ fontFamily: "var(--mono)" }} {...register("factura_emisora")} />
+              {errors.factura_emisora && <div className="fe">{errors.factura_emisora.message}</div>}
+            </div>
+            <div>
+              <div className="fl fl-required">Fecha de la factura</div>
+              <input type="date" className="fi" {...register("fecha_factura_afiliado")} />
+              {errors.fecha_factura_afiliado && (
+                <div className="fe">{errors.fecha_factura_afiliado.message}</div>
+              )}
+            </div>
+          </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="fecha_factura_afiliado">
-          Fecha de la factura <span className="req">*</span>
-        </label>
-        <input
-          id="fecha_factura_afiliado"
-          type="date"
-          className="in"
-          {...register("fecha_factura_afiliado")}
-        />
-        {errors.fecha_factura_afiliado && (
-          <div className="fe">{errors.fecha_factura_afiliado.message}</div>
-        )}
-      </div>
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Subtotal</div>
+              <input className="fi" inputMode="decimal" {...register("monto_factura_afiliado")} />
+              {errors.monto_factura_afiliado && (
+                <div className="fe">{errors.monto_factura_afiliado.message}</div>
+              )}
+            </div>
+            <div>
+              <div className="fl fl-required">IVA</div>
+              <input className="fi" inputMode="decimal" {...register("iva_factura_afiliado")} />
+              {errors.iva_factura_afiliado && (
+                <div className="fe">{errors.iva_factura_afiliado.message}</div>
+              )}
+            </div>
+          </div>
+          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
+            Se captura tal como viene en la factura: puede no ser el 16% (retenciones, exentos).
+          </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="monto_factura_afiliado">
-          Subtotal <span className="req">*</span>
-        </label>
-        <input
-          id="monto_factura_afiliado"
-          className="in"
-          inputMode="decimal"
-          {...register("monto_factura_afiliado")}
-        />
-        {errors.monto_factura_afiliado && (
-          <div className="fe">{errors.monto_factura_afiliado.message}</div>
-        )}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="iva_factura_afiliado">
-          IVA <span className="req">*</span>
-        </label>
-        <input
-          id="iva_factura_afiliado"
-          className="in"
-          inputMode="decimal"
-          {...register("iva_factura_afiliado")}
-        />
-        <div className="fh">
-          Se captura tal como viene en la factura: puede no ser el 16% (retenciones, exentos).
+          <div className="fl">
+            Total <FieldTag origin="calculado" />
+          </div>
+          <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+            {fmtMoneda(totalPreview)}
+          </div>
         </div>
-        {errors.iva_factura_afiliado && (
-          <div className="fe">{errors.iva_factura_afiliado.message}</div>
-        )}
+
+        {submitError && <div className="state-msg error">{submitError}</div>}
       </div>
 
-      <div className="fg">
-        <label className="fl">
-          Total <FieldTag origin="calculado" />
-        </label>
-        <div className="fv strong">{fmtMoneda(totalPreview)}</div>
-      </div>
-
-      {submitError && <div className="state-msg error">{submitError}</div>}
-
-      <div className="fa">
+      <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>

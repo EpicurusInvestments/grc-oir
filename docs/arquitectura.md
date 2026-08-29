@@ -1497,4 +1497,131 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   referencias reales, el patrón es el mismo: un parámetro/estilo opcional con default =
   comportamiento actual, acotado al reporte que lo pide.
 
-[[Agregar aquí cada nueva decisión: ADR-051, ...]]
+### ADR-051 — "Registrar timbrado" pasa de modal roto a formulario de pantalla completa (F2)
+- **Estado:** aceptada · **Fecha:** 2026-08-28 (F2).
+- **Contexto:** el equipo reportó que la pantalla de "Registrar timbrado" (captura de la
+  respuesta del PAC externo) se veía mal comparada con el prototipo aprobado
+  (`Fase_2_-_Facturacion.html`). Causa raíz: `TimbrarDialog.tsx` usaba clases CSS que
+  nunca existieron en `theme.css` (`.fg`/`.in`/`.req`, restos de una convención distinta a
+  la del resto del sistema — `.fl`/`.fi`/`.fl-required`), quedando sin estilo alguno; era
+  además un `Dialog` chico de PrimeReact (460px) superpuesto a la pantalla en vez del
+  patrón "form full-screen" que el propio `frontend/CLAUDE.md` reserva para estos flujos;
+  y solo capturaba folio fiscal + fecha, sin los campos de XML/PDF que `TimbrarInput` (el
+  tipo) ya declaraba opcionalmente desde antes — nunca se habían conectado a un campo real
+  del formulario.
+- **Decisión:**
+  1. `TimbrarDialog.tsx` se reemplaza por `RegistrarTimbradoForm.tsx`: mismo patrón que el
+     resto de formularios largos (`cat-header` + `.form-card`), ya no un `Dialog` de
+     PrimeReact. `FacturasClientePage.tsx` lo monta con un tercer valor de `modo`
+     (`"timbrar"`, junto a `"view"`/`"new"`) en vez del booleano `dialogoTimbrar` — mismo
+     slot del panel de detalle que ya usaba `modo === "new"` para `FacturaClienteForm`.
+  2. Nuevo banner reutilizable `.info-banner`/`.info-banner-title`/`.info-banner-msg`
+     (morado) en `theme.css`, para cualquier pantalla que capture la respuesta de un
+     sistema externo — hoy solo lo usa esta, pero no es específico de timbrado.
+  3. **XML y PDF ahora se pueden cargar de verdad.** El backend YA tenía el endpoint
+     genérico `POST /facturacion/adjuntos` (`backend/app/modules/facturacion/adjuntos.py`,
+     tipos `cfdi_xml`/`cfdi_pdf`) desde antes — nunca se había conectado un componente de
+     frontend a él. Se agregan `adjuntosFacturacionApi` (en `facturacion/api.ts`, mismo
+     patrón que `ordenes/adapters/adjuntosApi.ts` de F1) y
+     `AdjuntoFacturaInput.tsx` (gemelo de `AdjuntoOrdenInput.tsx`), más
+     `facturacion/constants.ts` (extensiones/tamaño máximo, alineado con
+     `EXTENSIONES_ADJUNTO_FACTURACION` del backend). **Se dejan opcionales** (no
+     bloquean el envío): el prototipo los marca obligatorios, pero endurecer esa regla es
+     una decisión de negocio aparte que nadie pidió en este fix — antes ni siquiera
+     existían, así que no hay regresión de estricto a opcional.
+  4. El campo "Serie / certificado (opcional)" del prototipo **no se agregó** en esta
+     ronda: no existía columna para eso en `FacturaCliente`. **Actualización del mismo
+     día:** el equipo pidió explícitamente agregarlo de verdad (ver más abajo).
+  5. `AdjuntoFacturaInput` usa la caja `.dropzone` (nueva, `theme.css`): un `<label>` que
+     envuelve un `<input type="file">` oculto, para que TODA la caja punteada sea
+     clickeable con ícono + texto — igual que el prototipo, pero con subida real.
+- **Consecuencias:** `TimbrarInput.xml_path`/`pdf_path` (ya declarados) ahora sí se pueden
+  poblar desde la UI. Sin cambios de API/schema backend en esta ronda. 2 pruebas nuevas en
+  `FacturasClientePage.test.tsx` cubren el flujo completo (folio+fecha confirman timbrado;
+  folio vacío bloquea). Si más adelante se decide volver XML/PDF obligatorios, es un
+  `if (!xmlPath || !pdfPath)` en `RegistrarTimbradoForm.confirmar()`, sin tocar el backend.
+- **Actualización (2026-08-28, misma tarde):** el equipo revisó de nuevo la pantalla
+  contra el prototipo y pidió el campo "Serie / certificado" persistido de verdad (no solo
+  visual) — a diferencia de XML/PDF, aquí sí se optó por el cambio de esquema:
+  - Nueva columna `factura_cliente.serie_timbrado` NVARCHAR(50) NULL — migración
+    `4f2e15c90f71` (down_revision `3e57e45d24cb`). Texto libre nullable, sin catálogo
+    propio (misma familia de desviación aditiva que `layout_factura`/`metodo_pago_clave`
+    de la migración F2 original). **Pendiente de aplicar a RDS**: la instancia
+    `devapps...` no era alcanzable en el momento de este cambio (timeout de red/TCP en
+    el puerto 1433, verificado con `Test-NetConnection` — no es un bug de la migración
+    ni del código); el modelo/schema ya están actualizados, pero la tabla real de
+    desarrollo NO tiene la columna todavía hasta que alguien corra
+    `alembic upgrade head` con conectividad a RDS.
+  - `TimbrarIn`/`FacturaClienteRead` (backend) y `TimbrarInput`/`FacturaCliente`
+    (frontend, `types.ts`) ganan `serie_timbrado: str | None`. `RegistrarTimbradoForm`
+    lo captura junto a "Fecha de timbrado"; el detalle de la factura lo muestra en
+    "Datos del timbrado" junto a la fecha.
+
+### ADR-052 — Mismo bug de clases CSS inexistentes en los 3 formularios cortos de F2
+- **Estado:** aceptada · **Fecha:** 2026-08-28 (F2).
+- **Contexto:** el equipo reportó que "Nueva factura de afiliado" se veía sin estilo
+  (comparado contra `FacturaClienteForm`, la pantalla "buena" de referencia). Causa raíz:
+  mismo patrón exacto de ADR-051 — `FacturaAfiliadoForm.tsx` usaba clases que nunca
+  existieron en `theme.css` (`.fg`/`.in`/`.req`/`.fh`/`.fa`/`.form`). Al buscar el mismo
+  patrón se encontraron 2 formularios más con la idéntica falla:
+  `FacturaAgenciaForm.tsx` y `CostoForm.tsx` — se corrigieron los 3 juntos (confirmado con
+  el equipo antes de tocarlos).
+- **Decisión:** los 3 pasan al mismo patrón que ya usa `FacturaClienteForm` (la pantalla
+  de referencia) y el resto del sistema: `.form-card` envolviendo los campos, `.fl`/
+  `.fl-required`/`.fi`/`.fsel` para etiquetas y controles, `.r2` para pares en una fila,
+  `.derivado-hint` para texto de ayuda bajo un campo (en vez de `.fh`), y `.df` para el pie
+  de botones (en vez de `.fa`). El encabezado `.dh`/`.dh-name`/`.dh-sub` SÍ estaba bien
+  estilizado desde antes — se conserva tal cual. Los 3 formularios ahora envuelven su
+  `<form>` en un flex-column (`display:flex;flexDirection:column;height:100%`) con
+  `.dh`/`.db`/`.db` scrollable/`.df`, igual que la vista de detalle de la propia pantalla
+  (antes el `<form>` no tenía scroll propio dentro del panel de 420px de
+  `ListDetailLayout`, arriesgando contenido cortado en formularios largos).
+  `FacturaClienteForm.tsx` también tenía el mismo defecto en su encabezado de `<form>`
+  (`className="form"`, sin efecto) y su pie (`className="fa"`, sin efecto) — se limpian
+  ahí también (`.fa`→`.df`) para que la pantalla de referencia deje de tener el mismo
+  hueco, aunque no se había reportado.
+- **Consecuencias:** cambio puramente visual (mismas validaciones Zod, mismos
+  `register()`, mismos handlers) en 4 archivos. Sin pruebas nuevas: no existían pruebas
+  de estos 3 formularios antes del cambio (solo `FacturasClientePage.test.tsx` cubre F2), y
+  no se tocó lógica que ameritara agregarlas ahora. Si aparece un cuarto formulario con
+  este patrón viejo, es la misma receta.
+
+### ADR-053 — "Generar factura desde orden cerrada" navega a la bandeja en vez de abrir un alta duplicada (F2)
+- **Estado:** aceptada · **Fecha:** 2026-08-28 (F2).
+- **Contexto:** el botón "+ Generar factura desde orden cerrada" en «Facturas al
+  cliente» abría `FacturaClienteForm` embebido en el propio panel de detalle de esa
+  pantalla, SIN pedir la orden a facturar (no hay selección posible ahí). Ya existía
+  una bandeja dedicada y correcta para esto — «Listas para facturar»
+  (`ListasParaFacturarPage`) — con una tarjeta por orden elegible y su propio botón
+  "Generar factura →" que sí fija la orden antes de mostrar el formulario. El botón
+  del header duplicaba el flujo mal (sin orden) y además quedaba siempre habilitado,
+  aunque ya no hubiera nada pendiente de facturar.
+- **Decisión:**
+  1. Se elimina por completo la rama `modo === "new"` de `FacturasClientePage.tsx`
+     (y con ella `crear`/`onCrear`/`submitError`, que solo existían para ese alta
+     embebida). El único punto de alta de una `FacturaCliente` vuelve a ser
+     `ListasParaFacturarPage`, tal como documenta su propio comentario de cabecera
+     ("El alta REUTILIZA `FacturaClienteForm`... no hay un segundo formulario que
+     mantener en paralelo") — la duplicidad era justo lo que ese comentario decía
+     que no debía existir.
+  2. El botón ahora navega a la sección «Listas para facturar» del mismo explorador,
+     en vez de abrir nada localmente. Como `facturacionRegistry`/
+     `FacturacionExplorerPage` (a diferencia del patrón `Nav`/callbacks de F1) no
+     tenían forma de que una sección le pidiera al explorador cambiar de sección, se
+     agrega `FacturacionEntry.render?: (nav: { goTo: (key) => void }) => ReactNode` —
+     compatible hacia atrás porque JS ignora el argumento en las entradas que siguen
+     usando `() => <X/>`. `FacturacionExplorerPage` pasa `{ goTo: setActiveKey }`, y
+     solo la entrada `facturas_cliente` lo usa hoy, inyectando
+     `onIrAListasParaFacturar={() => nav.goTo("listas_para_facturar")}` en
+     `FacturasClientePage`.
+  3. El botón se inhabilita cuando no queda ninguna orden por facturar, usando el
+     mismo total que ya expone `useOrdenesPorFacturar({ page: 1, size: 1 })` (la
+     misma consulta que alimenta el contador `listas_para_facturar` del sidebar).
+- **Consecuencias:** una sola vía de alta para `FacturaCliente`, sin pantallas
+  huérfanas. El mecanismo `goTo` queda disponible para cualquier otra sección de F2
+  que necesite el mismo salto en el futuro, sin tener que migrar todo el módulo al
+  patrón `Nav` de F1. Pruebas nuevas en `FacturasClientePage.test.tsx`: el botón
+  llama a `onIrAListasParaFacturar` en vez de abrir un formulario, y se inhabilita
+  cuando `ordenesPorFacturar` reporta `total: 0`.
+
+[[Agregar aquí cada nueva decisión: ADR-054, ...]]

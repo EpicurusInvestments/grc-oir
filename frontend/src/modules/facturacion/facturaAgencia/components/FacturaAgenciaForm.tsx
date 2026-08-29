@@ -69,7 +69,6 @@ export function FacturaAgenciaForm({ submitting, submitError, onSubmit, onCancel
 
   return (
     <form
-      className="form"
       onSubmit={handleSubmit((v) =>
         onSubmit({
           ...v,
@@ -77,119 +76,92 @@ export function FacturaAgenciaForm({ submitting, submitError, onSubmit, onCancel
           porcentaje_comision_agencia: v.porcentaje_comision_agencia || null,
         } as FacturaAgenciaCreate),
       )}
+      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
     >
       <SavingOverlay visible={!!submitting} />
       <div className="dh">
         <div className="dh-name">Nueva factura de agencia</div>
       </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="agencia_id">
-          Agencia <span className="req">*</span> <FieldTag origin="catalogo" />
-        </label>
-        <select id="agencia_id" className="in" {...register("agencia_id")}>
-          <option value="">— Selecciona —</option>
-          {(agencias.data ?? []).map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.etiqueta}
-            </option>
-          ))}
-        </select>
-        {errors.agencia_id && <div className="fe">{errors.agencia_id.message}</div>}
-      </div>
+      <div className="db">
+        <div className="form-card">
+          <div className="fl fl-required">
+            Agencia <FieldTag origin="catalogo" />
+          </div>
+          <select className="fsel" {...register("agencia_id")}>
+            <option value="">— Selecciona —</option>
+            {(agencias.data ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.etiqueta}
+              </option>
+            ))}
+          </select>
+          {errors.agencia_id && <div className="fe">{errors.agencia_id.message}</div>}
 
-      <div className="fg">
-        <label className="fl">
-          Orden relacionada <span className="req">*</span>
-        </label>
-        <SearchableSelect
-          value={ordenId ?? ""}
-          onChange={(v) => setValue("orden_id", v, { shouldValidate: true })}
-          placeholder={ordenes.isLoading ? "Cargando órdenes…" : "Busca por folio o número…"}
-          options={(ordenes.data ?? []).map((o) => ({
-            value: o.orden_id,
-            label: `${o.folio_orden} · ${o.numero_orden_cliente}`,
-          }))}
-        />
-        {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
-      </div>
+          <div className="fl fl-required">Orden relacionada</div>
+          <SearchableSelect
+            value={ordenId ?? ""}
+            onChange={(v) => setValue("orden_id", v, { shouldValidate: true })}
+            placeholder={ordenes.isLoading ? "Cargando órdenes…" : "Busca por folio o número…"}
+            options={(ordenes.data ?? []).map((o) => ({
+              value: o.orden_id,
+              label: `${o.folio_orden} · ${o.numero_orden_cliente}`,
+            }))}
+          />
+          {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
 
-      <div className="fg">
-        <label className="fl" htmlFor="folio_factura_agencia">
-          Folio externo
-        </label>
-        <input
-          id="folio_factura_agencia"
-          className="in mono"
-          {...register("folio_factura_agencia")}
-        />
-      </div>
+          <div className="r2">
+            <div>
+              <div className="fl">Folio externo</div>
+              <input className="fi" style={{ fontFamily: "var(--mono)" }} {...register("folio_factura_agencia")} />
+            </div>
+            <div>
+              <div className="fl fl-required">Fecha de la factura</div>
+              <input type="date" className="fi" {...register("fecha_factura_agencia")} />
+              {errors.fecha_factura_agencia && (
+                <div className="fe">{errors.fecha_factura_agencia.message}</div>
+              )}
+            </div>
+          </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="fecha_factura_agencia">
-          Fecha de la factura <span className="req">*</span>
-        </label>
-        <input
-          id="fecha_factura_agencia"
-          type="date"
-          className="in"
-          {...register("fecha_factura_agencia")}
-        />
-        {errors.fecha_factura_agencia && (
-          <div className="fe">{errors.fecha_factura_agencia.message}</div>
-        )}
-      </div>
+          <div className="r2">
+            <div>
+              <div className="fl fl-required">Subtotal</div>
+              <input className="fi" inputMode="decimal" {...register("monto_factura_agencia")} />
+              {errors.monto_factura_agencia && (
+                <div className="fe">{errors.monto_factura_agencia.message}</div>
+              )}
+            </div>
+            <div>
+              <div className="fl fl-required">IVA</div>
+              <input className="fi" inputMode="decimal" {...register("iva_factura_agencia")} />
+              {errors.iva_factura_agencia && (
+                <div className="fe">{errors.iva_factura_agencia.message}</div>
+              )}
+            </div>
+          </div>
 
-      <div className="fg">
-        <label className="fl" htmlFor="monto_factura_agencia">
-          Subtotal <span className="req">*</span>
-        </label>
-        <input
-          id="monto_factura_agencia"
-          className="in"
-          inputMode="decimal"
-          {...register("monto_factura_agencia")}
-        />
-        {errors.monto_factura_agencia && (
-          <div className="fe">{errors.monto_factura_agencia.message}</div>
-        )}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="iva_factura_agencia">
-          IVA <span className="req">*</span>
-        </label>
-        <input
-          id="iva_factura_agencia"
-          className="in"
-          inputMode="decimal"
-          {...register("iva_factura_agencia")}
-        />
-        {errors.iva_factura_agencia && <div className="fe">{errors.iva_factura_agencia.message}</div>}
-      </div>
-
-      <div className="fg">
-        <label className="fl" htmlFor="porcentaje_comision_agencia">
-          % de comisión <FieldTag origin="catalogo" />
-        </label>
-        <input
-          id="porcentaje_comision_agencia"
-          className="in"
-          inputMode="decimal"
-          placeholder="Vacío = default del catálogo"
-          {...register("porcentaje_comision_agencia")}
-        />
-        <div className="fh">
-          Se guarda en la factura: si el catálogo cambia después, esta conserva el pactado.
+          <div className="fl">
+            % de comisión <FieldTag origin="catalogo" />
+          </div>
+          <input
+            className="fi"
+            inputMode="decimal"
+            placeholder="Vacío = default del catálogo"
+            {...register("porcentaje_comision_agencia")}
+          />
+          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
+            Se guarda en la factura: si el catálogo cambia después, esta conserva el pactado.
+          </div>
+          {errors.porcentaje_comision_agencia && (
+            <div className="fe">{errors.porcentaje_comision_agencia.message}</div>
+          )}
         </div>
-        {errors.porcentaje_comision_agencia && (
-          <div className="fe">{errors.porcentaje_comision_agencia.message}</div>
-        )}
+
+        {submitError && <div className="state-msg error">{submitError}</div>}
       </div>
 
-      {submitError && <div className="state-msg error">{submitError}</div>}
-
-      <div className="fa">
+      <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>

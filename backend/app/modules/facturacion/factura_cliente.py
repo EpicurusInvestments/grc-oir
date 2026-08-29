@@ -208,6 +208,9 @@ class FacturaCliente(Base):
     # NULL hasta timbrar; los llena la transición a `timbrada` (Tanda 2).
     folio_fiscal_sat: Mapped[str | None] = mapped_column(Unicode(50), default=None)
     fecha_timbrado: Mapped[date | None] = mapped_column(fecha_sql(), default=None)
+    # Serie/número del certificado de sello digital (CSD) del PAC — dato que a veces
+    # devuelve el timbrador junto al folio fiscal, sin normativa fija de formato (ADR-051).
+    serie_timbrado: Mapped[str | None] = mapped_column(Unicode(50), default=None)
     # Guardan la CLAVE del almacenamiento (S3/local), no una ruta de disco, pese al
     # nombre heredado de la spec — mismo criterio que los `*_ref` de F1 (ADR-042).
     xml_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
@@ -255,6 +258,7 @@ class FacturaClienteRead(BaseModel):
     estado_facturacion: str
     folio_fiscal_sat: str | None = None
     fecha_timbrado: date | None = None
+    serie_timbrado: str | None = None
     xml_path: str | None = None
     pdf_path: str | None = None
     created_by: uuid.UUID
@@ -362,6 +366,7 @@ class TimbrarIn(BaseModel):
 
     folio_fiscal_sat: str = Field(min_length=1, max_length=50)
     fecha_timbrado: date
+    serie_timbrado: str | None = Field(default=None, max_length=50)
     # Claves de almacenamiento devueltas por el endpoint de adjuntos (no rutas de disco).
     xml_path: str | None = Field(default=None, max_length=500)
     pdf_path: str | None = Field(default=None, max_length=500)
@@ -700,6 +705,7 @@ class FacturaClienteService(
 
         obj.folio_fiscal_sat = input_.folio_fiscal_sat
         obj.fecha_timbrado = input_.fecha_timbrado
+        obj.serie_timbrado = input_.serie_timbrado
         if input_.xml_path is not None:
             obj.xml_path = input_.xml_path
         if input_.pdf_path is not None:

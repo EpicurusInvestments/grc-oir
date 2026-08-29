@@ -105,7 +105,6 @@ export function FacturaClienteForm({
 
   return (
     <form
-      className="form"
       onSubmit={handleSubmit((v) => onSubmit(v as FacturaClienteCreate))}
       style={{ maxWidth: 900 }}
     >
@@ -335,7 +334,7 @@ export function FacturaClienteForm({
 
       {submitError && <div className="state-msg error">{submitError}</div>}
 
-      <div className="fa">
+      <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>
