@@ -18,7 +18,7 @@ facturadora tenga la OrdenCliente de origen.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, time
+from datetime import date, time
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -106,12 +106,6 @@ def _nombre_adjunto(ref: str) -> str:
 
 def _letra_sufijo(folio_orden_estacion: str) -> str:
     return folio_orden_estacion[-1] if folio_orden_estacion else ""
-
-
-def _generado_el() -> str:
-    ahora = datetime.now()
-    hora = ahora.strftime("%I:%M %p").lstrip("0").lower()
-    return f"{ahora.day}/{MESES_ES[ahora.month - 1]}/{ahora.year} {hora}"
 
 
 # ── Logos (app/assets/logos/ — ver README ahí) ───────────────────────────────────
@@ -261,13 +255,22 @@ _PIE_IZQUIERDA = ParagraphStyle("pie_izquierda", parent=_PIE, alignment=TA_LEFT)
 # Marco completo de "Orden de servicio" (2.1): envuelve estación/plaza + campos + tabla
 # de días en un solo recuadro, igual al PDF de referencia (programados/reales no llevan
 # este marco — cada uno conserva su propio estilo de tabla).
+#
+# 2 filas, no 1: la fila 0 (estación/plaza) va SIN padding propio para que su línea
+# inferior (ADR-058-bis) llegue exactamente a los bordes izquierdo/derecho del marco —
+# con padding habría un hueco entre esa línea y el borde. La fila 1 (el resto del
+# contenido) conserva el padding original de 8pt.
 _MARCO = TableStyle(
     [
         ("BOX", (0, 0), (-1, -1), 1, colors.black),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 0),
+        ("TOPPADDING", (0, 0), (0, 0), 0),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (0, 1), (0, 1), 8),
+        ("RIGHTPADDING", (0, 1), (0, 1), 8),
+        ("TOPPADDING", (0, 1), (0, 1), 8),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 8),
     ]
 )
 
@@ -322,6 +325,18 @@ def _campo_negrita(etiqueta: str, valor: str) -> list:
     ]
 
 
+# Columna derecha de "reales" (ADR-058): mismo criterio que `_campo_der()` de "servicio" —
+# el valor va justificado a la derecha, para que ocupe todo el ancho del recuadro.
+_CAMPO_NEGRITA_DER = ParagraphStyle("campo_negrita_der", parent=_CAMPO_NEGRITA, alignment=TA_RIGHT)
+
+
+def _campo_negrita_der(etiqueta: str, valor: str) -> list:
+    return [
+        Paragraph(f"<b>{etiqueta}:</b>", _CAMPO_NEGRITA),
+        Paragraph(f"<b>{valor}</b>", _CAMPO_NEGRITA_DER),
+    ]
+
+
 # Tabla de "Horarios reales" (2.3): SIN cuadrícula (a diferencia de `_GRID`) — solo una
 # línea bajo el encabezado, igual al PDF de referencia.
 _TABLA_SIN_MARCO = TableStyle(
@@ -334,6 +349,12 @@ _TABLA_SIN_MARCO = TableStyle(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
 )
+
+# DESCRIPCION/EMISORA de "Horarios reales" (2.3) van en `Paragraph`, no como texto plano:
+# una celda de tabla de reportlab NO envuelve un `str` dentro del ancho de columna, así que
+# una campaña o nombre de estación largos se salían de su columna y se encimaban con la
+# siguiente. `Paragraph` sí hace word-wrap dentro de `colWidths`.
+_FILA_REALES = ParagraphStyle("fila_reales", parent=_STYLES["Normal"], fontSize=9, leading=11)
 
 
 def _fila_dia_programado(dia: OrdenEstacionDia, programado: int) -> list:
@@ -359,8 +380,31 @@ def _campo(etiqueta: str, valor: str) -> list:
     return [Paragraph(etiqueta, _ETIQUETA), Paragraph(valor, _VALOR)]
 
 
+# Columna derecha de "servicio"/"reales" (ADR-058): el valor va justificado A LA DERECHA,
+# igual que su referencia real — con la fila de estación/plaza (ADR-057) ocupando ya todo
+# el ancho del recuadro, dejar el valor pegado a la etiqueta se veía descentrado.
+_VALOR_DER = ParagraphStyle("valor_der", parent=_VALOR, alignment=TA_RIGHT)
+
+
+def _campo_der(etiqueta: str, valor: str) -> list:
+    return [Paragraph(etiqueta, _ETIQUETA), Paragraph(valor, _VALOR_DER)]
+
+
 _MARGEN_LATERAL = 1.8 * cm
 _ANCHO_DISPONIBLE = letter[0] - 2 * _MARGEN_LATERAL
+_MARGEN_VERTICAL = 1.5 * cm
+# `_MARCO` (servicio) le pone 8pt de LEFTPADDING/RIGHTPADDING a su única celda — el ancho
+# real que le queda a lo que va DENTRO del marco es este, no `_ANCHO_DISPONIBLE` completo.
+_ANCHO_MARCO_INTERNO = _ANCHO_DISPONIBLE - 16
+
+
+def _altura_contenido(elementos: list, ancho: float) -> float:
+    """Suma el alto que ocupará cada flowable, para poder centrar el recuadro
+    verticalmente en la hoja (ADR-057). `wrap()` es la forma estándar de reportlab de
+    medir un flowable sin dibujarlo — es seguro llamarlo aquí y que `doc.build()` lo
+    vuelva a llamar después con el mismo ancho."""
+    alto_holgado = 10_000  # alto "de sobra": que nada calcule un salto de página al medir
+    return sum(el.wrap(ancho, alto_holgado)[1] for el in elementos)
 
 
 def _build(elementos: list) -> bytes:
@@ -368,12 +412,17 @@ def _build(elementos: list) -> bytes:
     doc = SimpleDocTemplate(
         buf,
         pagesize=letter,
-        topMargin=1.5 * cm,
-        bottomMargin=1.5 * cm,
+        topMargin=_MARGEN_VERTICAL,
+        bottomMargin=_MARGEN_VERTICAL,
         leftMargin=_MARGEN_LATERAL,
         rightMargin=_MARGEN_LATERAL,
     )
-    doc.build(elementos)
+    alto_disponible = letter[1] - 2 * _MARGEN_VERTICAL
+    alto_contenido = _altura_contenido(elementos, _ANCHO_DISPONIBLE)
+    relleno = max(0.0, (alto_disponible - alto_contenido) / 2)
+    # Si el contenido no cabe en una hoja (relleno = 0), fluye normal y pagina como
+    # siempre — el centrado solo aplica cuando sobra espacio.
+    doc.build([Spacer(1, relleno), *elementos] if relleno else elementos)
     return buf.getvalue()
 
 
@@ -388,27 +437,38 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
 
     tabla_estacion_plaza = Table(
         [[f"{estacion.nombre_estacion} ({estacion.frecuencia or '—'})", plaza.nombre_plaza]],
-        colWidths=[10 * cm, 6 * cm],
+        colWidths=_proporciones(_ANCHO_DISPONIBLE, [10, 6]),
         style=TableStyle(
             [
                 ("FONTSIZE", (0, 0), (-1, -1), 11),
                 ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                # Solo una línea ABAJO para separar la fila de identificación estación/plaza
+                # del resto de los campos (ADR-058-bis) — no un recuadro propio con las 4
+                # líneas: al ocupar ya todo el ancho interno del marco (ADR-058), esa línea
+                # queda a ras de los bordes del marco exterior, como una sola pieza.
+                ("LINEBELOW", (0, 0), (-1, -1), 1, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ]
         ),
     )
     tabla_campos = Table(
         [
-            _campo("Solicitud Orden", oc.numero_orden_cliente) + _campo("Duración", oe.duracion_spot),
+            _campo("Solicitud Orden", oc.numero_orden_cliente)
+            + _campo_der("Duración", oe.duracion_spot),
             _campo("Agencia", ctx.agencia.nombre_agencia if ctx.agencia else "Venta directa")
-            + _campo("Total de Spots", str(total_spots)),
+            + _campo_der("Total de Spots", str(total_spots)),
             _campo("Anunciante", ctx.anunciante.nombre_comercial)
-            + _campo("Precio Unitario", _moneda(oe.precio_spot)),
-            _campo("Producto", oc.producto or "—") + _campo("Total de Días", str(len(ctx.dias))),
-            ["", ""] + _campo("Importe", _moneda(oe.importe_estacion)),
-            ["", ""] + _campo("I.V.A.", _moneda(iva)),
-            ["", ""] + _campo("Total", _moneda(total)),
+            + _campo_der("Precio Unitario", _moneda(oe.precio_spot)),
+            _campo("Producto", oc.producto or "—")
+            + _campo_der("Total de Días", str(len(ctx.dias))),
+            ["", ""] + _campo_der("Importe", _moneda(oe.importe_estacion)),
+            ["", ""] + _campo_der("I.V.A.", _moneda(iva)),
+            ["", ""] + _campo_der("Total", _moneda(total)),
         ],
-        colWidths=[3 * cm, 5 * cm, 3.5 * cm, 4.5 * cm],
+        colWidths=_proporciones(_ANCHO_MARCO_INTERNO, [3, 5, 3.5, 4.5]),
     )
 
     filas = [["Día", "Fecha", "Inicio", "Término", "Spots Diarios", "Importe"]]
@@ -428,8 +488,6 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     )
 
     contenido_marco: list = [
-        tabla_estacion_plaza,
-        Spacer(1, 10),
         tabla_campos,
         Spacer(1, 12),
         Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
@@ -460,12 +518,10 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
     )
     contenido_marco.append(Spacer(1, 20))
-    contenido_marco.append(
-        Paragraph(f"{ctx.empresa.direccion_empresa or '—'} : {_generado_el()}", _PIE_IZQUIERDA)
-    )
+    contenido_marco.append(Paragraph(ctx.empresa.direccion_empresa or "—", _PIE_IZQUIERDA))
 
     marco = Table(
-        [[contenido_marco]],
+        [[tabla_estacion_plaza], [contenido_marco]],
         colWidths=[_ANCHO_DISPONIBLE],
         style=_MARCO,
     )
@@ -564,9 +620,6 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 _NOTA,
             )
         )
-    elementos.append(Spacer(1, 20))
-    elementos.append(Paragraph(_generado_el(), _PIE))
-
     return _build(elementos)
 
 
@@ -602,14 +655,14 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Table(
             [
                 _campo_negrita("CLIENTE", ctx.anunciante.nombre_comercial.upper())
-                + _campo_negrita("PERIODO", f"DEL {_rango_campania(oc)}"),
+                + _campo_negrita_der("PERIODO", f"DEL {_rango_campania(oc)}"),
                 _campo_negrita("CAMPAÑA", (oc.producto or "—").upper())
-                + _campo_negrita("TIPO DE MEDIO", _tipo_medio(estacion)),
+                + _campo_negrita_der("TIPO DE MEDIO", _tipo_medio(estacion)),
                 _campo_negrita("DURACION", oe.duracion_spot) + ["", ""],
                 _campo_negrita("EMISORA", f"{estacion.nombre_estacion} / {plaza.nombre_plaza}".upper())
-                + _campo_negrita("TOTAL SPOTS REALES", str(total_real)),
+                + _campo_negrita_der("TOTAL SPOTS REALES", str(total_real)),
             ],
-            colWidths=[3 * cm, 6 * cm, 3.5 * cm, 3.5 * cm],
+            colWidths=_proporciones(_ANCHO_DISPONIBLE, [3, 6, 3.5, 3.5]),
             style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]),
         ),
         Spacer(1, 12),
@@ -625,15 +678,15 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 _fecha_corta(dia.fecha_transmision),
                 f"{_hora_24h(dia.hora_inicio)} - {_hora_24h(dia.hora_fin)}",
                 str(spots),
-                (oc.producto or "—").upper(),
-                estacion.nombre_estacion.upper(),
+                Paragraph((oc.producto or "—").upper(), _FILA_REALES),
+                Paragraph(estacion.nombre_estacion.upper(), _FILA_REALES),
             ]
         )
     elementos.append(
         Table(
             filas,
             style=_TABLA_SIN_MARCO,
-            colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 1.8 * cm, 5.5 * cm, 2.4 * cm],
+            colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 1.8 * cm, 6.8 * cm, 2.9 * cm],
         )
     )
 

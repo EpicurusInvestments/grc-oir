@@ -1677,4 +1677,114 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   estado. Pruebas nuevas: backend (`test_f2_01_facturacion_lectura.py`,
   `test_f2_02_facturacion_escritura.py`) y frontend (`FacturasClientePage.test.tsx`).
 
-[[Agregar aquí cada nueva decisión: ADR-056, ...]]
+### ADR-056 — Se quita la fecha/hora de generación de los pies de "servicio"/"programados" y se corrige el encimado de texto en "reales" (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-31 (F1).
+- **Contexto:** el equipo pidió quitar del pie de los 3 PDFs de Orden interna
+  (servicio/programados/reales) la fecha/hora de generación (`"26/agosto/2026
+  5:17 pm"`), y comparó "reales" contra un ejemplo con una descripción larga
+  ("ZAPATOS DE ALTA CALIDAD HECHOS A MANO...") donde el texto de DESCRIPCION se
+  encimaba con la columna EMISORA. Al revisar el código: **"reales" ya NO llevaba
+  esa fecha** — se había quitado en ADR-050 punto 5 (la captura que compartió el
+  equipo para "reales" era de antes de ese ADR, o de otra fuente; verificado en
+  vivo generando el PDF desde el backend corriendo). Solo "servicio" y
+  "programados" la llevaban todavía.
+- **Decisión:**
+  1. Se elimina `_generado_el()` por completo (ya no tiene ningún llamador). Pie de
+     "servicio": era `f"{direccion} : {_generado_el()}"` → queda solo `direccion`
+     (se conserva el domicilio, que sí es información útil del emisor; se quita
+     únicamente la fecha y el separador `" : "`). Pie de "programados": el
+     `Paragraph(_generado_el(), _PIE)` no tenía más contenido que la fecha → se
+     quita la línea completa (el reporte ya no lleva pie).
+  2. **Causa raíz del encimado en "reales":** sus filas de tabla pasaban
+     DESCRIPCION/EMISORA como `str` plano dentro de una celda de `Table` de
+     reportlab — a diferencia de "programados" (`_fila_dia_programado`, que ya
+     envolvía cada celda en `Paragraph`), un `str` plano **no hace word-wrap**
+     dentro de `colWidths`: si el texto es más largo que la columna, se sale y se
+     encima con la columna vecina. Se agrega el estilo `_FILA_REALES` y ambas
+     celdas se envuelven en `Paragraph(..., _FILA_REALES)`, igual que ya hacía
+     "programados". Adicionalmente se aprovechan ~2cm de ancho que la tabla dejaba
+     sin usar (`colWidths` sumaba 16cm contra ~18cm de `_ANCHO_DISPONIBLE`):
+     DESCRIPCION pasa de 5.5cm a 6.8cm y EMISORA de 2.4cm a 2.9cm, para que el
+     wrap ocurra con menos frecuencia.
+  3. Se quita el import `datetime` (ya sin uso en el archivo).
+  4. **Actualización (misma fecha): el recuadro con la información queda centrado
+     verticalmente en la hoja, en los 3 reportes.** El equipo comparó contra un
+     PDF de referencia real donde el contenido no arranca pegado al margen
+     superior, sino con espacio en blanco arriba y abajo en proporción similar.
+     `_build()` (única función que arma el documento final para los 3 reportes)
+     ahora mide el alto real del contenido con `_altura_contenido()` —llamando
+     `.wrap(ancho, alto_holgado)` sobre cada flowable, la forma estándar de
+     reportlab de medir sin dibujar— y antepone un `Spacer` con la mitad del
+     espacio sobrante (`(alto_disponible - alto_contenido) / 2`) para que el
+     contenido quede centrado en vez de pegado arriba. Si el contenido no cabe en
+     una hoja, el relleno calculado es `0` (`max(0, ...)`) y el documento fluye y
+     pagina exactamente como antes — el centrado nunca puede producir un espacio
+     negativo ni romper un reporte largo.
+  5. **Además, "Orden de servicio" recupera un recuadro con borde para la fila de
+     identificación estación/plaza** (p. ej. "XHMT-FM" / "Monterrey"), contra la
+     misma referencia. **Esto no es el mismo "doble borde" que ADR-050 punto 6
+     eliminó**: ahí el problema era la `GRID` de `tabla_dias` duplicando el marco
+     exterior; aquí es un borde nuevo, propio de `tabla_estacion_plaza`, separado
+     del resto de los campos — confirmado con el equipo antes de tocarlo
+     (`AskUserQuestion`: recuadro con borde vs. línea vs. fondo sombreado).
+     **Corrección el mismo día (dos rondas):** al verlo generado, el equipo pidió
+     afinarlo — NO las 4 líneas de un recuadro propio, solo una `LINEBELOW`
+     separando la fila de estación/plaza del resto de los campos. Primer intento:
+     `tabla_estacion_plaza` seguía usando `_ANCHO_MARCO_INTERNO` (el ancho ya
+     reducido por el padding de 8pt de `_MARCO`, ADR-058), así que la línea quedaba
+     inset 8pt de cada lado — no tocaba los bordes del marco. El equipo lo notó
+     ("la línea de abajo debe estar completa") y se corrigió de raíz: `_MARCO` pasa
+     de 1 fila a 2 (`[[tabla_estacion_plaza], [contenido_marco]]`), con padding
+     DISTINTO por fila — la fila 0 (estación/plaza) con
+     `LEFTPADDING`/`RIGHTPADDING`/`TOPPADDING`/`BOTTOMPADDING` = 0 y
+     `tabla_estacion_plaza` dimensionada al `_ANCHO_DISPONIBLE` completo (no ya
+     `_ANCHO_MARCO_INTERNO`), y la fila 1 con el padding de 8pt original de
+     siempre. Así la línea llega exactamente a los bordes izquierdo/derecho del
+     marco exterior, sin hueco, y el resto del contenido conserva su margen interno
+     de siempre.
+- **Consecuencias:** cambios acotados a `orden_estacion_pdf.py`. Sin cambios de API;
+  `test_f1_06_ordenes_pdf.py` gana 1 prueba (6/6 en verde) que cubre que "reales"
+  no truena con una descripción larga (el wrap en sí se verificó visualmente, ver
+  abajo). El centrado y el recuadro de "servicio" se verificaron generando los 3
+  PDFs contra el backend corriendo, con órdenes de 1 y de 2 días (para confirmar
+  que el centrado se recalcula según el contenido real, no un valor fijo) y con
+  una descripción/nombre de estación deliberadamente largos para el wrap de
+  "reales" (no forma parte de la siembra de datos).
+
+### ADR-058 — La columna derecha de "servicio" y "reales" queda justificada a la derecha, ocupando todo el ancho del recuadro (F1)
+- **Estado:** aceptada · **Fecha:** 2026-08-31 (F1).
+- **Contexto:** contra la misma referencia real de ADR-057, el equipo pidió que la
+  información de los 3 reportes se distribuya "justificada a la izquierda, en
+  medio y a la derecha": en la referencia, cada fila de campos tiene 4 zonas
+  (etiqueta-izquierda, valor-izquierda, etiqueta-derecha, valor MUY a la derecha,
+  pegado al borde del recuadro) — nuestros `tabla_campos` (servicio) y su
+  equivalente en "reales" sumaban un ancho de columnas menor al disponible
+  (16cm de 17.4/18cm) y el valor derecho quedaba alineado a la izquierda, pegado a
+  su etiqueta en vez de ir al borde derecho.
+- **Decisión:**
+  1. Nuevo ancho de referencia `_ANCHO_MARCO_INTERNO = _ANCHO_DISPONIBLE - 16`
+     (resta los 8pt de `LEFTPADDING`/`RIGHTPADDING` que `_MARCO` le pone a su
+     única celda — el ancho real que le queda a lo que va DENTRO del marco de
+     "servicio", no `_ANCHO_DISPONIBLE` completo). `tabla_estacion_plaza` y
+     `tabla_campos` (servicio) pasan sus `colWidths` fijos a
+     `_proporciones(_ANCHO_MARCO_INTERNO, [...])` (mismo helper que ya usaba
+     "programados" desde ADR-050), manteniendo la proporción original entre
+     columnas pero ocupando el ancho completo. La tabla de campos de "reales" (que
+     no vive dentro de un marco) hace lo mismo con `_ANCHO_DISPONIBLE` directo.
+  2. Nuevos estilos `_VALOR_DER`/`_CAMPO_NEGRITA_DER` (`parent` + `alignment=TA_RIGHT`)
+     y sus helpers `_campo_der()`/`_campo_negrita_der()`, usados SOLO para los
+     valores de la columna derecha (Duración/Total de Spots/Precio Unitario/Total
+     de Días/Importe/I.V.A./Total en servicio; Periodo/Tipo de medio/Total spots
+     reales en reales) — la columna izquierda conserva `_campo()`/`_campo_negrita()`
+     tal cual, alineada a la izquierda.
+  3. "Programados" no cambia: su fila Estación/Total Spots ya usaba
+     `colWidths=[0.7, 0.3]*_ANCHO_DISPONIBLE` + `_CAMPO_LINEA_DER` desde ADR-050 —
+     ya ocupaba el 100% del ancho con el valor derecho justificado a la derecha,
+     así que ya cumplía lo pedido.
+- **Consecuencias:** cambios acotados a `orden_estacion_pdf.py`, sin tocar
+  `_campo()`/`_campo_negrita()` originales (las columnas izquierdas de ambos
+  reportes siguen igual). Sin cambios de API ni de tests (175/175 en verde);
+  verificado visualmente regenerando "servicio" y "reales" contra el backend
+  corriendo.
+
+[[Agregar aquí cada nueva decisión: ADR-059, ...]]

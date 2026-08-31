@@ -330,3 +330,35 @@ def test_pdf_reales_se_genera_tras_cerrar(
     pdf = generar_pdf_reales(db, oe.orden_estacion_id)
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 500
+
+
+def test_pdf_reales_no_truena_con_descripcion_larga(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-056: DESCRIPCION/EMISORA van en `Paragraph` (no `str` plano) justo para que un
+    texto largo haga word-wrap dentro de su columna en vez de encimarse con la siguiente.
+    No hay forma sencilla de aserto visual aquí (verificado manualmente, ver ADR-056); esto
+    al menos cubre que reportlab no truena al recibir texto que excede la columna."""
+    oc = oc_svc.create(
+        _oc_payload(cat, producto="ZAPATOS DE ALTA CALIDAD HECHOS A MANO EN LEÓN GUANAJUATO"),
+        VENTAS,
+    )
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=4
+                )
+            ],
+        ),
+        VENTAS,
+    )
+    pdf = generar_pdf_reales(db, oe.orden_estacion_id)
+    assert pdf.startswith(b"%PDF")
