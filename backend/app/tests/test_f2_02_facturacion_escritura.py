@@ -275,6 +275,22 @@ def test_alta_hereda_de_la_orden_y_calcula_iva_y_total(
     assert cuerpo["estado_facturacion"] == "preparada"
 
 
+def test_alta_devuelve_el_folio_de_la_orden_sin_necesidad_de_un_get(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-055: el folio viaja denormalizado desde la respuesta del POST, no solo tras
+    un GET posterior — igual en las transiciones (enviar a timbrado, timbrar, etc.)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-CONFOLIO")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-CONFOLIO"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["folio_orden"] == "OC-CONFOLIO"
+
+
 def test_no_se_aceptan_campos_calculados_del_cliente(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

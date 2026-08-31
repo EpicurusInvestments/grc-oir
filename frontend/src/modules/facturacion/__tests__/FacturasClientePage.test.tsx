@@ -74,6 +74,7 @@ const base: FacturaCliente = {
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
   empresa_facturadora: "OIR Comercial",
+  folio_orden: "OC-2026-0041",
 };
 
 function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void = vi.fn()) {
@@ -99,6 +100,19 @@ describe("FacturasClientePage", () => {
     expect(screen.getAllByText("Preparada").length).toBeGreaterThan(0);
     // El monto llega como string decimal y se muestra como moneda MXN.
     expect(screen.getByText(/\$11,600\.00/)).toBeInTheDocument();
+  });
+
+  it("fix: muestra el folio de la orden del cliente en el header del detalle", async () => {
+    renderCon(base);
+    (await screen.findByText("A-1041")).click();
+    expect(await screen.findByText("OC-2026-0041")).toBeInTheDocument();
+  });
+
+  it("sin folio de orden (dato huérfano), no revienta y simplemente no muestra el badge", async () => {
+    renderCon({ ...base, folio_orden: null });
+    (await screen.findByText("A-1041")).click();
+    await waitFor(() => expect(screen.getByText("Agencia Uno SA de CV")).toBeInTheDocument());
+    expect(screen.queryByText("OC-2026-0041")).not.toBeInTheDocument();
   });
 
   it("en 'preparada' ofrece enviar a timbrado, pero NO registrar timbrado", async () => {

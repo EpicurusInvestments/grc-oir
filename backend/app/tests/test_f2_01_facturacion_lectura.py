@@ -502,6 +502,9 @@ def test_obtener_factura_cliente_y_404(client: TestClient, datos: dict[str, uuid
     )
     assert r.status_code == 200
     assert r.json()["metodo_pago_clave"] == "PUE"
+    # ADR-055: el folio de la OrdenCliente asociada viaja denormalizado, para el badge
+    # del header del detalle.
+    assert r.json()["folio_orden"] == "OC-2026-0001"
     r = client.get(f"/api/v1/facturacion/clientes/{uuid.uuid4()}", headers=_hdr("facturacion"))
     assert r.status_code == 404
     assert r.json()["error"]["codigo"] == "no_encontrado"
