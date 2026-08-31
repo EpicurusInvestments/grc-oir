@@ -36,7 +36,6 @@ const schema = z.object({
   cuenta_contable_id: z.string().min(1, "Selecciona la cuenta contable."),
   metodo_pago_clave: z.string().min(1, "Selecciona el método de pago."),
   info_cuenta_pago: z.string().trim().optional(),
-  layout_factura: z.string().trim().max(200).optional(),
 });
 
 type Valores = z.infer<typeof schema>;
@@ -282,29 +281,19 @@ export function FacturaClienteForm({
         </select>
         {errors.cuenta_contable_id && <div className="fe">{errors.cuenta_contable_id.message}</div>}
 
-        <div className="r2">
-          <div>
-            <div className="fl fl-required">
-              Método de pago <FieldTag origin="catalogo" />
-            </div>
-            {/* Se guarda la CLAVE, no un FK: MetodoPago vive en ConstantesSistema. */}
-            <select className="fsel" {...register("metodo_pago_clave")}>
-              <option value="">— Selecciona —</option>
-              {(metodos.data ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.etiqueta}
-                </option>
-              ))}
-            </select>
-            {errors.metodo_pago_clave && (
-              <div className="fe">{errors.metodo_pago_clave.message}</div>
-            )}
-          </div>
-          <div>
-            <div className="fl">Layout de factura</div>
-            <input className="fi" {...register("layout_factura")} />
-          </div>
+        <div className="fl fl-required">
+          Método de pago <FieldTag origin="catalogo" />
         </div>
+        {/* Se guarda la CLAVE, no un FK: MetodoPago vive en ConstantesSistema. */}
+        <select className="fsel" {...register("metodo_pago_clave")}>
+          <option value="">— Selecciona —</option>
+          {(metodos.data ?? []).map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.etiqueta}
+            </option>
+          ))}
+        </select>
+        {errors.metodo_pago_clave && <div className="fe">{errors.metodo_pago_clave.message}</div>}
 
         <div className="fl">Información cuenta de pago (aparece en factura)</div>
         <textarea

@@ -182,6 +182,9 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                   {ESTADO_FACTURACION_LABEL[estado]}
                 </span>
                 <span className="badge b-blue">{selected.razon_social_facturacion}</span>
+                {selected.folio_orden && (
+                  <span className="badge b-blue mono">{selected.folio_orden}</span>
+                )}
               </div>
             </div>
           </div>
@@ -264,16 +267,8 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
           </div>
 
           <div className="sec">Configuración contable</div>
-          <div className="r2">
-            <div>
-              <div className="fl">Método de pago</div>
-              <div className="fv mono">{selected.metodo_pago_clave}</div>
-            </div>
-            <div>
-              <div className="fl">Layout</div>
-              <div className="fv">{oGuion(selected.layout_factura)}</div>
-            </div>
-          </div>
+          <div className="fl">Método de pago</div>
+          <div className="fv mono">{selected.metodo_pago_clave}</div>
           <div className="fl">Información cuenta de pago</div>
           <div className="fv muted" style={{ fontSize: 12 }}>
             {oGuion(selected.info_cuenta_pago)}

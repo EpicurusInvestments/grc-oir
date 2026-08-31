@@ -1624,4 +1624,57 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   llama a `onIrAListasParaFacturar` en vez de abrir un formulario, y se inhabilita
   cuando `ordenesPorFacturar` reporta `total: 0`.
 
-[[Agregar aquí cada nueva decisión: ADR-054, ...]]
+### ADR-054 — Se oculta el campo "Layout de factura" (texto libre, sin catálogo real) del alta y del detalle (F2)
+- **Estado:** aceptada · **Fecha:** 2026-08-31 (F2).
+- **Contexto:** el campo `layout_factura` es texto libre sin ningún catálogo ni
+  validación detrás — ya estaba anotado como pendiente en
+  `docs/modulos/f2-facturacion/f2-facturacion.md` ("Catálogo `LayoutFactura` real,
+  si el negocio termina necesitando más de una plantilla"). El equipo reportó que en
+  la pantalla se ve como un input abierto sin guía (captura de ejemplo con texto sin
+  sentido), y pidió ocultarlo.
+- **Decisión:** se retira de la UI en los dos lugares donde aparecía —
+  `FacturaClienteForm.tsx` (input de captura, y su entrada en el `schema` de Zod) y
+  el detalle de `FacturasClientePage.tsx` (línea de solo lectura "Layout")— dejando
+  "Método de pago" como bloque de ancho completo en ambos (ya no comparte `.r2` con
+  Layout). El campo NO se borra del modelo ni de los tipos (`FacturaCliente`,
+  `FacturaClienteCreate` en `types.ts`): sigue siendo `layout_factura: string | null`
+  en el backend, por si el negocio define su catálogo real más adelante — solo se
+  deja de capturar y de mostrar mientras tanto.
+- **Consecuencias:** ninguna factura nueva llevará `layout_factura` capturado desde
+  el front (queda `null`, como ya pasaba con la mayoría de las existentes). Si el
+  negocio define el catálogo real, se vuelve a exponer con un `<select>` en vez de
+  reintroducir el `<input>` de texto libre.
+
+### ADR-055 — Se agrega el folio de la OrdenCliente al detalle de "Facturas al cliente" (F2)
+- **Estado:** aceptada · **Fecha:** 2026-08-31 (F2).
+- **Contexto:** el equipo comparó el detalle de una factura contra la pantalla
+  aprobada y notó que faltaba el folio de la `OrdenCliente` de origen (p. ej.
+  "OC-2025-0041") como badge en el encabezado, junto al estado y la razón social. El
+  dato existe (`FacturaCliente.orden_id`), pero `FacturaClienteRead` no lo exponía:
+  solo el número de PEDIDO del cliente (`numero_pedido`, texto libre capturado a
+  mano) aparecía en el cuerpo del detalle, y ninguno de los dos es lo mismo que el
+  folio interno de la orden.
+- **Decisión:** se agrega `folio_orden: str | None` a `FacturaClienteRead`,
+  DENORMALIZADO con el mismo criterio ya usado para `empresa_facturadora`: resuelto
+  por el servicio, nunca una columna ni una relación del ORM.
+  - `list()`/`get()` lo resuelven en una sola consulta por página/registro
+    (`_folios_orden`), igual que `_nombres_emisoras`.
+  - A diferencia de `empresa_facturadora` (que hoy solo se resuelve en `list()`/
+    `get()`, no en las transiciones), `folio_orden` SÍ se resuelve también tras
+    `crear`, `actualizar`, `enviar_a_timbrado`, `timbrar`, `entregar` y `cancelar`
+    (`_con_folio_orden`, una consulta por registro) — porque el frontend reemplaza
+    el detalle en pantalla con la respuesta de cada una de esas mutaciones
+    (`setSelected(await accion())`), y sin este paso el badge desaparecería después
+    de cada acción hasta volver a seleccionar la factura desde la lista. No se
+    corrigió el mismo hueco preexistente en `empresa_facturadora` por no ser parte
+    de lo reportado ni visible hoy en el detalle.
+  - Frontend: `FacturaCliente.folio_orden` nuevo en `types.ts`; badge
+    `<span className="badge b-blue mono">` en el header de
+    `FacturasClientePage.tsx`, mismo patrón que `IncidenciaDetailPanel.tsx` usa para
+    el folio de `OrdenEstacion`. Se omite si la orden no existe (dato huérfano).
+- **Consecuencias:** una consulta adicional por página en la lista (mismo costo que
+  ya paga `empresa_facturadora`) y una consulta adicional en cada transición de
+  estado. Pruebas nuevas: backend (`test_f2_01_facturacion_lectura.py`,
+  `test_f2_02_facturacion_escritura.py`) y frontend (`FacturasClientePage.test.tsx`).
+
+[[Agregar aquí cada nueva decisión: ADR-056, ...]]

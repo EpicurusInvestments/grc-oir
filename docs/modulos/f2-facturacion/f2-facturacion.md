@@ -164,6 +164,8 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 
 - Formato real del archivo plano del PAC (ver sección dedicada arriba).
 - Catálogo `LayoutFactura` real, si el negocio termina necesitando más de una plantilla.
+  Mientras no exista, el campo está OCULTO en el alta y el detalle de "Facturas al
+  cliente" (era texto libre sin guía — ver ADR-054); el modelo lo conserva.
 
 ## Estado de implementación
 
@@ -345,6 +347,12 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     vacía (ver ADR-053). El salto entre secciones lo permite un `goTo` nuevo en
     `facturacionRegistry`/`FacturacionExplorerPage`, disponible para cualquier otra
     sección que lo necesite.
+  - El detalle de «Facturas al cliente» muestra el folio de la `OrdenCliente` de
+    origen como badge en el header (junto al estado y la razón social) — antes solo
+    aparecía el número de PEDIDO del cliente (`numero_pedido`), que no es lo mismo.
+    `folio_orden` viaja denormalizado en `FacturaClienteRead`, resuelto también tras
+    cada transición para que no desaparezca al timbrar/entregar/cancelar (ver
+    ADR-055).
   - `hooks.ts`: timbrar invalida ADEMÁS la caché de órdenes (`ordenes`), o la pantalla de
     F1 quedaría mostrando un estado viejo tras el handoff.
   - **Siembra de demo** en `scripts/seed_dev.py`: 4 FacturaCliente (una por estado del

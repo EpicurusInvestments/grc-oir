@@ -89,6 +89,8 @@ export interface FacturaCliente {
   updated_at: string | null;
   /** Nombre de la empresa emisora, denormalizado por el backend para la lista. */
   empresa_facturadora: string | null;
+  /** Folio de la OrdenCliente asociada, denormalizado por el backend (ADR-055). */
+  folio_orden: string | null;
 }
 
 /** Lo que Facturación captura. Lo derivado y lo calculado los pone el servicio. */

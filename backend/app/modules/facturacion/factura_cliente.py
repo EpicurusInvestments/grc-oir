@@ -268,6 +268,10 @@ class FacturaClienteRead(BaseModel):
     #: muestra como columna). Lo resuelve el servicio en una sola consulta por página; no
     #: es una columna de la tabla ni una relación del ORM, para no arrastrar un N+1.
     empresa_facturadora: str | None = None
+    #: Folio de la OrdenCliente asociada, DENORMALIZADO para el badge del header del
+    #: detalle (ADR-055) — mismo criterio que `empresa_facturadora`: se resuelve en el
+    #: servicio, en una sola consulta por página, no es columna ni relación del ORM.
+    folio_orden: str | None = None
 
 
 class FacturaClienteListParams(ListParams):
@@ -432,11 +436,34 @@ class FacturaClienteService(
         ).all()
         return {fila[0]: fila[1] for fila in filas}
 
+    def _folios_orden(self, facturas: list[FacturaClienteRead]) -> dict[uuid.UUID, str]:
+        """Folio de la OrdenCliente asociada a cada factura, en UNA consulta (ADR-055)."""
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+
+        ids = {f.orden_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(OrdenCliente.orden_id, OrdenCliente.folio_orden).where(
+                OrdenCliente.orden_id.in_(ids)
+            )
+        ).all()
+        return {fila[0]: fila[1] for fila in filas}
+
+    def _con_folio_orden(self, leida: FacturaClienteRead) -> FacturaClienteRead:
+        """Enriquece UNA lectura (alta/transiciones) con el folio de su orden — mismo
+        dato que `list()`/`get()` resuelven en lote, aquí en una sola consulta porque
+        es un solo registro."""
+        leida.folio_orden = self._folios_orden([leida]).get(leida.orden_id)
+        return leida
+
     def list(self, params: ListParams) -> Page[FacturaClienteRead]:
         pagina = super().list(params)
         nombres = self._nombres_emisoras(pagina.items)
+        folios = self._folios_orden(pagina.items)
         for f in pagina.items:
             f.empresa_facturadora = nombres.get(f.empresa_facturadora_id)
+            f.folio_orden = folios.get(f.orden_id)
         return pagina
 
     def get(self, id_: Any) -> FacturaClienteRead:
@@ -444,6 +471,7 @@ class FacturaClienteService(
         leida.empresa_facturadora = self._nombres_emisoras([leida]).get(
             leida.empresa_facturadora_id
         )
+        leida.folio_orden = self._folios_orden([leida]).get(leida.orden_id)
         return leida
 
     # ── Captura ───────────────────────────────────────────────────────────────
@@ -541,7 +569,7 @@ class FacturaClienteService(
         db.add(obj)
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        return self._con_folio_orden(self._to_read(obj))
 
     def update(
         self, id_: Any, data: FacturaClienteUpdate, usuario: CurrentUser
@@ -558,7 +586,7 @@ class FacturaClienteService(
                 detalles={"estado_facturacion": obj.estado_facturacion},
             )
         payload = data.model_dump(exclude_unset=True)
-        return self._to_read(self._repo.update(obj, payload))
+        return self._con_folio_orden(self._to_read(self._repo.update(obj, payload)))
 
     # ── Máquina de estados ────────────────────────────────────────────────────
     def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
@@ -679,7 +707,7 @@ class FacturaClienteService(
             obj.estado_facturacion = EstadoFacturacion.ENVIADA_A_TIMBRADO.value
             self._repo.db.commit()
             self._repo.db.refresh(obj)
-        return self._to_read(obj)
+        return self._con_folio_orden(self._to_read(obj))
 
     def timbrar(
         self, factura_id: uuid.UUID, input_: TimbrarIn, usuario: CurrentUser
@@ -701,7 +729,8 @@ class FacturaClienteService(
         obj = self._get_or_404(factura_id)
         db = self._repo.db
         if not self._validar_transicion(obj, EstadoFacturacion.TIMBRADA.value):
-            return self._to_read(obj)  # ya timbrada: idempotente, no re-dispara el handoff
+            # ya timbrada: idempotente, no re-dispara el handoff
+            return self._con_folio_orden(self._to_read(obj))
 
         obj.folio_fiscal_sat = input_.folio_fiscal_sat
         obj.fecha_timbrado = input_.fecha_timbrado
@@ -717,7 +746,7 @@ class FacturaClienteService(
 
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        return self._con_folio_orden(self._to_read(obj))
 
     def entregar(
         self, factura_id: uuid.UUID, input_: EntregarIn, usuario: CurrentUser
@@ -728,7 +757,7 @@ class FacturaClienteService(
             obj.fecha_entrega_factura = input_.fecha_entrega_factura or date.today()
             self._repo.db.commit()
             self._repo.db.refresh(obj)
-        return self._to_read(obj)
+        return self._con_folio_orden(self._to_read(obj))
 
     def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
         """Cancelación desde los 4 primeros estados, **revirtiendo el handoff** (ADR-047).
@@ -750,7 +779,8 @@ class FacturaClienteService(
         obj = self._get_or_404(factura_id)
         db = self._repo.db
         if not self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
-            return self._to_read(obj)  # ya cancelada: idempotente, no re-revierte
+            # ya cancelada: idempotente, no re-revierte
+            return self._con_folio_orden(self._to_read(obj))
 
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
 
@@ -761,7 +791,7 @@ class FacturaClienteService(
 
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        return self._con_folio_orden(self._to_read(obj))
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
