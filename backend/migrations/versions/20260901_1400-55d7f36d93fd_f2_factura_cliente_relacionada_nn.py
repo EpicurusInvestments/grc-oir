@@ -31,8 +31,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_constraint('fk_factura_cliente_relacionada', 'factura_cliente', type_='foreignkey')
-    op.drop_column('factura_cliente', 'factura_relacionada_id')
+    # SQL Server: se suelta la FK y luego la columna. SQLite (BD local de desarrollo,
+    # ADR-028) no soporta ALTER de constraints y ademas rechaza el DROP COLUMN mientras
+    # la columna siga nombrada en el DDL de la tabla, asi que ahi se recrea la tabla con
+    # el batch mode de Alembic. Verificado: el indice unico filtrado
+    # `uq_factura_cliente_orden_vigente` sobrevive a la recreacion con su clausula WHERE.
+    if op.get_bind().dialect.name == 'sqlite':
+        with op.batch_alter_table('factura_cliente') as batch:
+            batch.drop_column('factura_relacionada_id')
+    else:
+        op.drop_constraint('fk_factura_cliente_relacionada', 'factura_cliente', type_='foreignkey')
+        op.drop_column('factura_cliente', 'factura_relacionada_id')
 
     op.create_table(
         'factura_cliente_relacionada',
@@ -57,11 +66,21 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table('factura_cliente_relacionada')
-    op.add_column(
-        'factura_cliente',
-        sa.Column('factura_relacionada_id', sa.Uuid(), nullable=True),
-    )
-    op.create_foreign_key(
-        'fk_factura_cliente_relacionada', 'factura_cliente', 'factura_cliente',
-        ['factura_relacionada_id'], ['factura_id'], ondelete='NO ACTION',
-    )
+    # Misma asimetria que en `upgrade`: crear la FK es tambien un ALTER de constraint,
+    # imposible en SQLite fuera del batch mode.
+    if op.get_bind().dialect.name == 'sqlite':
+        with op.batch_alter_table('factura_cliente') as batch:
+            batch.add_column(sa.Column('factura_relacionada_id', sa.Uuid(), nullable=True))
+            batch.create_foreign_key(
+                'fk_factura_cliente_relacionada', 'factura_cliente',
+                ['factura_relacionada_id'], ['factura_id'], ondelete='NO ACTION',
+            )
+    else:
+        op.add_column(
+            'factura_cliente',
+            sa.Column('factura_relacionada_id', sa.Uuid(), nullable=True),
+        )
+        op.create_foreign_key(
+            'fk_factura_cliente_relacionada', 'factura_cliente', 'factura_cliente',
+            ['factura_relacionada_id'], ['factura_id'], ondelete='NO ACTION',
+        )

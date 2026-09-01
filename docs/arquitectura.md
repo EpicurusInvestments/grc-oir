@@ -2006,3 +2006,36 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   que cubre el filtro por anunciante y la selección múltiple. El self-FK único que
   describía la spec original queda reemplazado, no extendido — es la única desviación de
   este ADR respecto al modelo de datos v2, documentada aquí como pide la regla de oro.
+
+### ADR-063 — Las migraciones que hacen ALTER de constraints necesitan una rama por dialecto
+
+- **Estado:** aceptada · **Fecha:** 2026-09-01 (F2).
+- **Contexto:** ADR-028 fija **SQLite como base local desechable** de desarrollo, mientras
+  que RDS es SQL Server. La migración `55d7f36d93fd` (la relación N:N de ADR-062) se
+  escribió y se aplicó contra RDS, donde funciona, pero **rompía el arranque en local**:
+
+  ```
+  NotImplementedError: No support for ALTER of constraints in SQLite dialect.
+  ```
+
+  SQLite no tiene `ALTER TABLE ... DROP CONSTRAINT`, así que `op.drop_constraint` falla.
+  Y no basta con saltárselo: la FK vive DENTRO del DDL de la tabla, de modo que el
+  `DROP COLUMN` posterior también se rechaza —
+  `unknown column "factura_relacionada_id" in foreign key definition`. El resultado era
+  que la base local se quedaba clavada en `eb36ee5c1a0d` y **el módulo de facturación no
+  levantaba**. El `downgrade` tenía exactamente el mismo defecto, por `create_foreign_key`.
+- **Decisión:** rama por dialecto dentro de la propia migración. En SQLite se usa el
+  **batch mode** de Alembic (`op.batch_alter_table`), que recrea la tabla con la estrategia
+  copy-and-move; en los demás dialectos se conserva el código anterior **carácter por
+  carácter**. Se descartó usar batch mode para todos: en SQL Server se traduce a los mismos
+  `ALTER` de siempre, así que cambiar una ruta que YA se aplicó en RDS no aportaba nada y
+  sí añadía riesgo.
+- **Verificación:** el riesgo real de recrear la tabla era perder el índice único
+  **filtrado** `uq_factura_cliente_orden_vigente` (ADR-047), cuya cláusula `WHERE` es la que
+  permite refacturar una OC cuya factura fue cancelada. Se comprobó sobre copias
+  desechables que sobrevive intacta, que el viaje redondo `downgrade` → `upgrade` conserva
+  las 12 facturas de desarrollo, y que la cadena completa corre desde una base vacía.
+- **Consecuencias:** es la primera migración del proyecto con guarda por dialecto, y queda
+  como **convención**: toda migración que suelte o cree constraints, o que elimine una
+  columna referenciada por una FK, necesita su rama de SQLite o no se podrá desarrollar en
+  local. RDS no se ve afectada — ya está en `55d7f36d93fd` y no vuelve a ejecutarla.

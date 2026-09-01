@@ -73,7 +73,39 @@ cambios manuales en SQL Server Management Studio / Azure Data Studio.
   `[[POR LLENAR: estrategia de seeds]]`.
 - Nunca incluir secretos ni datos personales reales en migraciones.
 
+## Compatibilidad con SQLite (BD local de desarrollo)
+
+El esquema vive en SQL Server (RDS), pero el desarrollo diario corre sobre **SQLite**
+(ADR-028). Una migración que solo funcione en SQL Server deja el proyecto sin poder
+levantar en local, así que hay que cuidar tres operaciones:
+
+| Operación | SQLite | Qué hacer |
+|---|---|---|
+| `op.drop_constraint` / `op.create_foreign_key` | ❌ no existe `ALTER ... CONSTRAINT` | rama por dialecto con `op.batch_alter_table` |
+| `op.drop_column` de una columna citada en una FK | ❌ `unknown column ... in foreign key definition` | igual: batch mode |
+| `op.add_column` nullable, `create_table`, `create_index` | ✅ funcionan | nada especial |
+
+El patrón (ver `55d7f36d93fd` y ADR-063) es dejar intacta la ruta de SQL Server y agregar
+solo la de SQLite:
+
+```python
+if op.get_bind().dialect.name == 'sqlite':
+    with op.batch_alter_table('mi_tabla') as batch:
+        batch.drop_column('mi_columna')
+else:
+    op.drop_constraint('fk_...', 'mi_tabla', type_='foreignkey')
+    op.drop_column('mi_tabla', 'mi_columna')
+```
+
+**Cuidado con el batch mode:** recrea la tabla, así que verifica que sobrevivan los índices
+especiales — sobre todo los **filtrados** (`mssql_where`/`sqlite_where`). Compruébalo sobre
+una copia desechable de la base, no a ojo.
+
+Antes de dar por buena una migración: `alembic upgrade head` sobre una **base vacía** y un
+viaje redondo `downgrade` → `upgrade` sobre una copia con datos.
+
 ## Reglas
 
 - Una migración por cambio lógico, mensaje descriptivo en español.
 - La migración y la ficha del módulo (`docs/modulos/`) se actualizan en el mismo PR.
+- Toda migración corre en SQL Server **y** en SQLite antes de abrir el PR.
