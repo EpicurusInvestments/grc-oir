@@ -64,7 +64,12 @@
   timbrado. El sistema PREPARA la factura, exporta archivo plano y RECIBE el folio.
 - **Archivo plano de timbrado** — Archivo de intercambio con el timbrador (referencia:
   archivo_plano_FACTURA_33_NPG_D_28_11757_V40.txt).
-- **FacturaCliente** — Carátula de la factura al cliente que el sistema prepara.
+- **FacturaCliente** — Carátula de la factura al cliente que el sistema prepara. Puede
+  cubrir VARIAS OrdenCliente (N:M vía `factura_cliente_orden`, ADR-064).
+- **Factura múltiple** — Una sola FacturaCliente que agrupa varias órdenes cerradas del
+  mismo anunciante. Exige que compartan empresa facturadora y receptor, porque un CFDI
+  tiene un solo emisor y un solo receptor; su subtotal es la suma de los subtotales de las
+  órdenes y su periodo abarca de la fecha de inicio más temprana a la de fin más tardía.
 - **FacturaAfiliado / FacturaAgencia** — Facturas RECIBIDAS (captura o carga). La del
   afiliado puede distribuir su costo entre varias OE (FacturaAfiliadoOrden, N:M).
 - **Requisición** — Solicitud de pago (pago_afiliado, pago_agencia, comision_vendedor,

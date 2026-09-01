@@ -14,9 +14,11 @@ import type { OrdenPorFacturar } from "../types";
 
 const porFacturarMock = vi.fn();
 const facturaListMock = vi.fn();
+const anunciantesMock = vi.fn();
 
 vi.mock("../api", () => ({
   ordenesPorFacturar: (p: unknown) => porFacturarMock(p),
+  anunciantesFacturables: (m: unknown) => anunciantesMock(m),
   facturaClienteApi: {
     list: (p: unknown) => facturaListMock(p),
     create: vi.fn(),
@@ -58,6 +60,20 @@ const orden: OrdenPorFacturar = {
   receptor_direccion: "CDMX, Insurgentes Sur 800",
 };
 
+/** Segunda orden del MISMO anunciante: es lo que hace posible la factura múltiple.
+ *  Importe y periodo distintos a propósito, para comprobar que se suma y que el periodo
+ *  abarca de la fecha más temprana a la más tardía. */
+const segundaOrden: OrdenPorFacturar = {
+  ...orden,
+  orden_id: "oc-12",
+  folio_orden: "OC-2025-0052",
+  numero_orden_cliente: "LALA-YOG-12",
+  fecha_inicio_campania: "2025-07-01",
+  fecha_fin_campania: "2025-07-31",
+  subtotal: "300000.00",
+  total: "348000.00",
+};
+
 function renderCon(items: OrdenPorFacturar[]) {
   porFacturarMock.mockResolvedValue({
     items,
@@ -78,6 +94,8 @@ describe("ListasParaFacturarPage", () => {
   beforeEach(() => {
     porFacturarMock.mockReset();
     facturaListMock.mockReset();
+    anunciantesMock.mockReset();
+    anunciantesMock.mockResolvedValue([]);
     facturaListMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 });
   });
 
@@ -149,5 +167,115 @@ describe("ListasParaFacturarPage", () => {
     // control que pidió negocio (ver que una factura del cliente se canceló).
     expect(screen.getByText("A-1010 · Timbrada")).toBeInTheDocument();
     expect(screen.getByText("A-1020 · Cancelada")).toBeInTheDocument();
+  });
+
+  // ── Facturación múltiple (ADR-064) ──────────────────────────────────────────
+  it("el check revela el combo y el botón, y hasta elegir anunciante no lista órdenes", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 3 },
+    ]);
+    renderCon([orden]);
+    await screen.findByText("OC-2025-0051");
+
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+
+    // El botón está desde el principio: valida al hacer clic, no se deshabilita.
+    expect(await screen.findByText("Generar Factura Múltiple")).toBeInTheDocument();
+    // Sin anunciante elegido, la bandeja invita a elegirlo en vez de mostrar órdenes.
+    expect(
+      screen.getByText(/Elige un anunciante para ver sus órdenes cerradas/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("OC-2025-0051")).not.toBeInTheDocument();
+  });
+
+  it("al elegir anunciante pide SOLO sus órdenes y cambia el botón por la casilla", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 2 },
+    ]);
+    renderCon([orden]);
+    await screen.findByText("OC-2025-0051");
+
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
+    fireEvent.focus(combo);
+    // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
+    fireEvent.mouseDown(await screen.findByText(/OXXO · 2 órdenes/));
+
+    // La consulta se acotó al anunciante elegido.
+    await waitFor(() =>
+      expect(porFacturarMock).toHaveBeenCalledWith(
+        expect.objectContaining({ anunciante_id: "an-11" }),
+      ),
+    );
+    // La tarjeta cambia su acción: ya no se factura de a una.
+    expect(await screen.findByLabelText(/Incluir en la factura/)).toBeInTheDocument();
+    expect(screen.queryByText("Generar factura →")).not.toBeInTheDocument();
+  });
+
+  it("con menos de 2 marcadas el botón explica por qué no procede", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 2 },
+    ]);
+    renderCon([orden]);
+    await screen.findByText("OC-2025-0051");
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
+    fireEvent.focus(combo);
+    // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
+    fireEvent.mouseDown(await screen.findByText(/OXXO · 2 órdenes/));
+
+    fireEvent.click(await screen.findByLabelText(/Incluir en la factura/));
+    fireEvent.click(screen.getByText("Generar Factura Múltiple"));
+
+    // Mensaje, no un botón muerto: el usuario sabe qué le falta.
+    expect(await screen.findByText(/Selecciona al menos 2 órdenes/)).toBeInTheDocument();
+    expect(screen.getByText(/Llevas 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nueva factura múltiple/)).not.toBeInTheDocument();
+  });
+
+  it("con 2 marcadas abre el formulario con las órdenes y el subtotal SUMADO", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 2 },
+    ]);
+    renderCon([orden, segundaOrden]);
+    await screen.findByText("OC-2025-0051");
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
+    fireEvent.focus(combo);
+    // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
+    fireEvent.mouseDown(await screen.findByText(/OXXO · 2 órdenes/));
+
+    const casillas = await screen.findAllByLabelText(/Incluir en la factura/);
+    fireEvent.click(casillas[0]);
+    fireEvent.click(casillas[1]);
+    fireEvent.click(screen.getByText("Generar Factura Múltiple"));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Nueva factura múltiple · 2 órdenes/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Datos heredados de 2 órdenes")).toBeInTheDocument();
+    // Los folios salen DOS veces a propósito: en el subtítulo de la cabecera y en el
+    // bloque de datos heredados. Se afirma el par, no un solo elemento.
+    expect(screen.getAllByText("OC-2025-0051, OC-2025-0052")).toHaveLength(2);
+    // 504,000 + 300,000: el formulario previsualiza la suma que hará el servicio.
+    expect(screen.getByText(/\$804,000\.00/)).toBeInTheDocument();
+    // Y el periodo ABARCA de la fecha más temprana a la más tardía de las dos órdenes.
+    expect(screen.getByText(/01\/06\/2025 → 31\/07\/2025/)).toBeInTheDocument();
+  });
+
+  it("desmarcar el check devuelve la bandeja completa a su modo normal", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 2 },
+    ]);
+    renderCon([orden]);
+    await screen.findByText("OC-2025-0051");
+    const check = screen.getByLabelText(/Facturar Múltiples Órdenes/);
+
+    fireEvent.click(check);
+    expect(await screen.findByText("Generar Factura Múltiple")).toBeInTheDocument();
+
+    fireEvent.click(check);
+    expect(await screen.findByText("Generar factura →")).toBeInTheDocument();
+    expect(screen.queryByText("Generar Factura Múltiple")).not.toBeInTheDocument();
   });
 });

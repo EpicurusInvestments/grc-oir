@@ -10,7 +10,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FacturasClientePage } from "../facturaCliente/pages/FacturasClientePage";
-import type { FacturaCliente } from "../types";
+import type { FacturaCliente, OrdenDeFactura } from "../types";
 
 const listMock = vi.fn();
 const porFacturarMock = vi.fn();
@@ -44,6 +44,7 @@ const base: FacturaCliente = {
   numero_pedido: null,
   referencia_adicional: null,
   orden_id: "oc-1",
+  ordenes: [],
   empresa_facturadora_id: "e-1",
   anunciante_id: "an-1",
   agencia_id: null,
@@ -85,6 +86,14 @@ function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void 
       <FacturasClientePage onIrAListasParaFacturar={onIrAListasParaFacturar} />
     </QueryClientProvider>,
   );
+}
+
+/** Abre el panel de detalle: render + clic en el renglón. Las pruebas de la sección
+ *  «Órdenes relacionadas» lo hacen todas, así que se factoriza. */
+async function abrirDetalle(factura: FacturaCliente) {
+  renderCon(factura);
+  (await screen.findByText(factura.numero_factura)).click();
+  await screen.findByText("Órdenes relacionadas");
 }
 
 describe("FacturasClientePage", () => {
@@ -226,5 +235,62 @@ describe("FacturasClientePage", () => {
     (await screen.findByText(/Archivo plano/)).click();
 
     expect(await screen.findByText(/Archivo generado y completo/)).toBeInTheDocument();
+  });
+
+  // ── Sección "Órdenes relacionadas" (ADR-064) ────────────────────────────────
+  const ordenUna: OrdenDeFactura = {
+    orden_id: "oc-1",
+    folio_orden: "OC-2025-0051",
+    numero_orden_cliente: "LALA-YOG-11",
+    fecha_inicio_campania: "2025-06-01",
+    fecha_fin_campania: "2025-06-30",
+    subtotal: "10000.00",
+  };
+  const ordenDos: OrdenDeFactura = {
+    orden_id: "oc-2",
+    folio_orden: "OC-2025-0052",
+    numero_orden_cliente: "LALA-YOG-12",
+    fecha_inicio_campania: "2025-07-01",
+    fecha_fin_campania: "2025-07-31",
+    subtotal: "5000.00",
+  };
+
+  it("muestra «Órdenes relacionadas» también con UNA sola orden", async () => {
+    await abrirDetalle({ ...base, ordenes: [ordenUna] });
+
+    expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
+    expect(screen.getAllByText("OC-2025-0051").length).toBeGreaterThan(0);
+    expect(screen.getByText("LALA-YOG-11")).toBeInTheDocument();
+    expect(screen.getByText(/01\/06\/2025 → 30\/06\/2025/)).toBeInTheDocument();
+    // Con una sola orden NO se pinta el resumen de la suma: no hay nada que sumar.
+    expect(screen.queryByText(/suma de subtotales/)).not.toBeInTheDocument();
+  });
+
+  it("con varias órdenes las lista todas y resume la suma", async () => {
+    await abrirDetalle({
+      ...base,
+      ordenes: [ordenUna, ordenDos],
+      subtotal_factura: "15000.00",
+      iva_factura: "2400.00",
+      total_factura: "17400.00",
+    });
+
+    expect(screen.getAllByText("OC-2025-0051").length).toBeGreaterThan(0);
+    expect(screen.getByText("OC-2025-0052")).toBeInTheDocument();
+    expect(screen.getByText(/2 órdenes · suma de subtotales/)).toBeInTheDocument();
+    // Cada orden muestra SU subtotal, no el de la factura.
+    expect(screen.getByText("$10,000.00")).toBeInTheDocument();
+    expect(screen.getByText("$5,000.00")).toBeInTheDocument();
+  });
+
+  it("el badge del encabezado resume con «+N» cuando cubre varias órdenes", async () => {
+    await abrirDetalle({ ...base, folio_orden: "OC-2025-0051", ordenes: [ordenUna, ordenDos] });
+    expect(screen.getByText("OC-2025-0051 +1")).toBeInTheDocument();
+  });
+
+  it("sin órdenes asociadas lo dice, en vez de dejar la sección vacía", async () => {
+    await abrirDetalle({ ...base, ordenes: [] });
+    expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
+    expect(screen.getByText("Sin órdenes asociadas.")).toBeInTheDocument();
   });
 });

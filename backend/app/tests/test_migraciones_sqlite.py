@@ -58,11 +58,16 @@ def test_viaje_redondo_de_la_ultima_migracion(url_temporal: str) -> None:
     assert arriba.returncode == 0, f"re-upgrade falló:\n{arriba.stderr}"
 
 
-def test_el_indice_filtrado_sobrevive_al_batch_mode(url_temporal: str) -> None:
-    """El batch mode RECREA la tabla; el índice único filtrado de ADR-047 debe seguir vivo.
+def test_los_check_de_factura_cliente_sobreviven_al_batch_mode(url_temporal: str) -> None:
+    """El batch mode RECREA la tabla: hay que verificar qué se lleva por delante.
 
-    Sin su cláusula `WHERE` se perdería la mitad de la decisión de negocio: una OC cuya
-    factura fue cancelada volvería a quedar bloqueada para refacturarse.
+    Las migraciones `55d7f36d93fd` y `5da59f306b51` reconstruyen `factura_cliente` en
+    SQLite. Sus CHECK son invariantes de dinero (ADR-039): que el total sea la suma, que el
+    IVA sea el 16 % del subtotal, que ningún importe sea negativo. Si una recreación se
+    llevara uno, la base aceptaría en silencio facturas descuadradas.
+
+    (Hasta ADR-064 esta prueba vigilaba el índice único filtrado `uq_factura_cliente_orden_
+    vigente`; esa columna ya no existe y la regla que protegía vive ahora en el servicio.)
     """
     import sqlalchemy as sa
 
@@ -71,8 +76,39 @@ def test_el_indice_filtrado_sobrevive_al_batch_mode(url_temporal: str) -> None:
     eng = sa.create_engine(url_temporal)
     with eng.connect() as con:
         ddl = con.exec_driver_sql(
-            "SELECT sql FROM sqlite_master WHERE name = 'uq_factura_cliente_orden_vigente'"
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'factura_cliente'"
         ).scalar()
 
-    assert ddl is not None, "el índice único filtrado desapareció"
-    assert "WHERE" in ddl.upper(), f"el índice perdió su cláusula WHERE: {ddl}"
+    assert ddl is not None, "la tabla factura_cliente desapareció"
+    for constraint in (
+        "ck_factura_cliente_total_suma",
+        "ck_factura_cliente_iva_calculado",
+        "ck_factura_cliente_subtotal",
+        "ck_factura_cliente_periodo",
+        "ck_factura_cliente_estado",
+    ):
+        assert constraint in ddl, f"la recreación de tabla se llevó {constraint}"
+
+
+def test_la_relacion_con_ordenes_queda_en_la_tabla_puente(url_temporal: str) -> None:
+    """ADR-064: `factura_cliente.orden_id` desaparece y la relación pasa a ser N:M."""
+    import sqlalchemy as sa
+
+    assert _alembic("upgrade", "head", url=url_temporal).returncode == 0
+
+    eng = sa.create_engine(url_temporal)
+    with eng.connect() as con:
+        columnas = [
+            fila[1]
+            for fila in con.exec_driver_sql("PRAGMA table_info(factura_cliente)").fetchall()
+        ]
+        puente = con.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE name = 'factura_cliente_orden'"
+        ).scalar()
+        indice = con.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE name = 'ix_factura_cliente_orden_orden'"
+        ).scalar()
+
+    assert "orden_id" not in columnas, "factura_cliente todavía tiene la columna orden_id"
+    assert puente is not None, "falta la tabla puente factura_cliente_orden"
+    assert indice is not None, "falta el índice sobre factura_cliente_orden.orden_id"

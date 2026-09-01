@@ -23,13 +23,85 @@ de F4 y las Requisiciones de pago de F3.
 ## Precondición de alta
 
 Solo se puede generar una `FacturaCliente` para una `OrdenCliente` cuyo
-`estatus_orden = orden_cerrada`. Es 1:1 (spec): una OC genera como máximo una factura de
-cliente. Si no se cumple, `400 error_dominio`.
+`estatus_orden = orden_cerrada`. Si no se cumple, `400 error_dominio`.
+
+La relación es **N:M** desde ADR-064 (desviación de la spec autorizada por el equipo): una
+factura puede cubrir varias órdenes cerradas del mismo anunciante, y vive en la tabla
+puente `factura_cliente_orden`. Lo que sigue vigente es que una OC **no puede estar en dos
+facturas vigentes** (las canceladas no cuentan, ADR-047); con la columna `orden_id` se fue
+el índice que lo garantizaba, así que ahora lo valida el servicio con `409`.
+
+### Facturación múltiple
+
+El alta recibe `ordenes_ids`. Con **una** orden es el flujo de siempre; con **varias**, el
+servicio exige que compartan **empresa facturadora**, **anunciante** y **receptor** — un
+CFDI tiene un solo emisor y un solo receptor, así que mezclarlos es imposible de timbrar.
+El receptor se compara como par `(tipo, id)` y no por `agencia_id`: dos órdenes de la misma
+agencia pueden diferir en `facturacion_directa_cliente`, y entonces una se factura a la
+agencia y la otra al anunciante.
+
+De las órdenes incluidas se calcula:
+
+| Campo | Regla |
+|---|---|
+| `subtotal_factura` | suma de los `subtotal` de las órdenes |
+| `iva_factura` / `total_factura` | sobre esa suma, como siempre (16 %) |
+| `fecha_inicio_transmision` | la más temprana de las órdenes |
+| `fecha_fin_transmision` | la más tardía |
+
+Se suman **subtotales**, no totales: sumar importes que ya traen IVA violaría los CHECK
+`ck_factura_cliente_iva_calculado` y `ck_factura_cliente_total_suma`.
+
+#### La pantalla
+
+La bandeja "Listas para facturar" tiene dos modos. El **normal** factura una orden por
+tarjeta. Al marcar **«Facturar Múltiples Órdenes»** aparecen, en el orden en que se
+trabaja: el combo **«Seleccionar Anunciante»** (con búsqueda; solo lista anunciantes con 2
+o más órdenes disponibles) y el botón **«Generar Factura Múltiple»** a su derecha.
+
+Mientras no se elija anunciante la bandeja no lista nada: muestra la invitación a elegirlo,
+porque listar todas las órdenes en modo múltiple invitaría a marcar órdenes de anunciantes
+distintos que el backend va a rechazar. Al elegirlo, las tarjetas se acotan a ese anunciante
+y cambian su acción: en vez de «Generar factura →» llevan la casilla **«Incluir en la
+factura»**. La tarjeta marcada se distingue por borde y fondo, no solo por su casilla.
+
+El botón **no se deshabilita** con menos de dos órdenes marcadas: valida al hacer clic y
+explica qué falta («Selecciona al menos 2 órdenes… Llevas 1»). Un botón muerto sin
+explicación deja al usuario adivinando.
+
+El formulario de alta es el mismo (`FacturaClienteForm`), con una prop `ordenes`: muestra
+los folios y pedidos concatenados, el periodo consolidado y el **subtotal sumado**, que es
+lo que calculará el servicio. Desmarcar el check devuelve todo al modo normal.
+
+#### «Órdenes relacionadas» en el panel de detalle
+
+El panel de *Facturas al cliente* abre con el timeline y las tres tarjetas de importes, y
+justo después lleva la sección **«Órdenes relacionadas»** (tag *Derivado*): una fila por
+orden con folio, número de pedido del cliente, periodo y **su** subtotal. Con más de una
+cierra con el resumen «N órdenes · suma de subtotales».
+
+Se muestra **siempre**, también en facturas de una sola orden: una sección que aparece y
+desaparece obliga a recordar por qué, y con una orden la respuesta sigue siendo útil. Si no
+hubiera ninguna, lo dice en vez de dejar el hueco.
+
+El badge del encabezado sigue siendo el identificador corto: el folio de la **primera**
+orden y, si cubre varias, cuántas más (`OC-2025-0051 +1`). El detalle está en la sección.
+
+Los datos llegan resueltos en la misma respuesta (`ordenes`), sin una consulta por renglón.
+
+Al timbrar, el handoff con F1 promueve **todas** las órdenes a `facturada`; al cancelar,
+las revierte todas. Si cualquiera está en `cobrada`, la cancelación entera se rechaza con
+**400** y no quedan órdenes revertidas a medias.
+
+En el archivo del PAC va **una sola línea de detalle consolidada** (decisión del equipo),
+con los folios y números de orden concatenados por coma. El producto solo se emite si todas
+las órdenes coinciden; si difieren, cae a `descripcion_factura`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
 ### FacturaCliente (33 campos spec, con 3 ajustes)
-PK `factura_id`. FKs a `OrdenCliente` (1:1), `EmpresaFacturadora`/`Anunciante`/`Agencia`
+PK `factura_id`. Órdenes que cubre vía `factura_cliente_orden` (**N:M**, ADR-064 — la spec
+las ligaba con `orden_id` 1:1). FKs a `EmpresaFacturadora`/`Anunciante`/`Agencia`
 (heredados de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón
 social/RFC/dirección de facturación, fechas de transmisión, `subtotal_factura`.
 Calculados: `iva_factura = subtotal_factura * 0.16`,
@@ -75,7 +147,7 @@ de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacio
 
 ### FacturaAgencia (15 campos spec)
 PK `factura_agencia_id`. FK a `Agencia` y a `OrdenCliente` (**1:N** — una OC puede tener
-varias facturas de agencia, a diferencia de `FacturaCliente` que es 1:1). Captura manual
+varias facturas de agencia; `FacturaCliente` es N:M desde ADR-064). Captura manual
 o carga, por **CxP**. `porcentaje_comision_agencia` sugerido desde el catálogo Agencia
 (editable), `comision_agencia = OrdenCliente.total * porcentaje / 100` calculado. Mismos
 4 estados que `FacturaAfiliado`.
@@ -195,7 +267,8 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   - Las 2 UNIQUE (1:1 de `factura_cliente.orden_id` y la compuesta de
     `FacturaAfiliadoOrden`) están probadas por ambos lados: que el duplicado falla y que
     el caso legítimo pasa (varias facturas de agencia por OC; la misma OE repartida entre
-    facturas de afiliado distintas).
+    facturas de afiliado distintas). **Nota (ADR-064):** la primera de esas dos
+      UNIQUE ya no existe — la relación pasó a N:M y la regla vive ahora en el servicio.
   - **Hallazgo (ADR-045):** el CHECK de formato de `periodo_contable` se escribió primero
     con `LIKE '[0-9]...'` (T-SQL) y SQLite lo rechaza todo, incluido el valor válido. Se
     cambió a `LIKE '____-__'`, portable. Lo encontró la prueba, no la revisión visual.

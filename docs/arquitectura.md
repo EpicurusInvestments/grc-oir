@@ -2039,3 +2039,66 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   como **convención**: toda migración que suelte o cree constraints, o que elimine una
   columna referenciada por una FK, necesita su rama de SQLite o no se podrá desarrollar en
   local. RDS no se ve afectada — ya está en `55d7f36d93fd` y no vuelve a ejecutarla.
+
+### ADR-064 — `OrdenCliente → FacturaCliente` pasa de 1:1 a N:M (facturación múltiple)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-01 (F2).
+- **Contexto:** el equipo pidió emitir **una factura que cubra varias órdenes cerradas** del
+  mismo anunciante. La spec BD v2 lo impide textualmente — *«OrdenCliente → FacturaCliente ·
+  1:1 · Cada orden genera una factura al cliente»* — y esa cardinalidad estaba implementada
+  en tres capas: `factura_cliente.orden_id` (FK NOT NULL), el índice único filtrado
+  `uq_factura_cliente_orden_vigente` (ADR-047), y la derivación de casi todos los campos
+  (emisora, anunciante, agencia, receptor, fechas y subtotal) desde esa OC única.
+  Cambiar la cardinalidad es una desviación de la spec, así que **se confirmó con el equipo
+  antes de tocar el esquema** (regla de oro §3 y §13 del `CLAUDE.md`). Hay precedente
+  interno: `FacturaAfiliadoOrden` ya es N:M. Y el momento es bueno: F3/Cobranza, que también
+  colgará de la factura, todavía no existe.
+- **Decisión:**
+  1. Tabla puente `factura_cliente_orden` (`factura_id`, `orden_id`, PK compuesta) y
+     **eliminación** de `factura_cliente.orden_id`. Se descartó conservar la columna como
+     "orden principal" junto a la tabla: serían dos fuentes de verdad para el mismo hecho.
+  2. **Sin columna de monto**, a diferencia de `FacturaAfiliadoOrden`: allá la factura del
+     proveedor se REPARTE entre órdenes y hace falta saber cuánto toca a cada una; aquí cada
+     orden aporta su subtotal íntegro, así que guardarlo duplicaría `orden_cliente.subtotal`
+     con riesgo de desincronizarse.
+  3. Índice sobre `factura_cliente_orden.orden_id`: la bandeja "Listas para facturar" hace
+     LEFT JOIN por esa columna contra todas las órdenes cerradas en cada carga.
+  4. El handoff con F1 (`marcar_facturada` / `revertir_facturacion`) recorre **todas** las
+     órdenes de la factura, en la misma transacción. Si al cancelar cualquiera está en
+     `cobrada`, la reversión lanza 400 y la cancelación entera no ocurre: nunca quedan
+     órdenes revertidas a medias.
+  5. El filtro `?orden_id=` de la API se resuelve con `EXISTS` sobre la puente, no con JOIN:
+     con JOIN, una factura de tres órdenes saldría tres veces en la lista.
+- **Consecuencia que hay que tener presente:** con la columna se fue el índice único
+  filtrado, y con él la **garantía de base de datos** de que una OC no puede estar en dos
+  facturas vigentes. Esa regla no es expresable sobre la tabla puente, porque
+  `estado_facturacion` vive en `factura_cliente`. Pasa a validarse en el servicio, que
+  devuelve 409 nombrando la factura en conflicto — es ahora la única garantía, y por eso
+  tiene prueba propia. La decisión se tomó a sabiendas al autorizar la desviación.
+- **Migración:** `5da59f306b51`. Copia los `orden_id` existentes a la tabla nueva **antes**
+  de borrar la columna. El índice filtrado se suelta explícitamente en los dos motores: en
+  SQL Server porque una columna indexada no se puede eliminar, y en SQLite porque el batch
+  mode (ADR-063) recrea la tabla junto con los índices reflejados e intentaría reconstruirlo
+  sobre una columna ya inexistente. El `downgrade` **aborta con un error explícito** si
+  alguna factura cubre más de una orden: volver a 1:1 exigiría elegir cuál conservar, y
+  descartar datos en silencio sería peor que fallar.
+- **Reglas de la factura múltiple** (segunda tanda, ya implementadas): el alta recibe
+  `ordenes_ids` y exige que todas las órdenes compartan **empresa facturadora**,
+  **anunciante** y **receptor** —comparado como par `(tipo, id)`, porque dos órdenes de la
+  misma agencia pueden diferir en `facturacion_directa_cliente` y entonces una se factura a
+  la agencia y la otra al anunciante—. `subtotal_factura` es la **suma de subtotales** (no
+  de totales: sumar importes ya con IVA violaría `ck_factura_cliente_iva_calculado`), y el
+  periodo abarca de la fecha de inicio más temprana a la de fin más tardía. Los errores
+  nombran **todas** las órdenes que fallan, no solo la primera.
+- **Archivo del PAC:** una sola línea de detalle **consolidada** (decisión del equipo), con
+  los campos de campaña concatenados por coma. Van en la sección `Personalizados`, que es
+  clave-valor y no de ancho fijo, así que el formato no los trunca; queda abierto si el PAC
+  les impone un largo máximo. El producto solo se emite si **todas** las órdenes coinciden;
+  si difieren cae a `descripcion_factura`, porque inventar una campaña común sería peor.
+- **Defecto encontrado al integrar:** la bandeja resolvía "sin factura" con `LEFT JOIN` +
+  `IS NULL`. Con la relación N:M eso produce **una fila por factura** de la orden, y las
+  canceladas no casan con la condición del join, así que una OC **ya facturada** que además
+  tuviera dos facturas canceladas **reaparecía en la bandeja, dos veces**. Se sustituyó por
+  `NOT EXISTS` en una función compartida (`_tiene_factura_vigente`), que pregunta por
+  existencia sin multiplicar filas. Tiene tres pruebas de regresión, verificadas contra la
+  versión defectuosa.

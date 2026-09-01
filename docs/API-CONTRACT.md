@@ -769,9 +769,12 @@ patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
 
 ### Reglas de negocio del esquema
 
-- **1:1 OC ↔ FacturaCliente** (`uq_factura_cliente_orden`): una `OrdenCliente` no puede
-  tener dos facturas de cliente → 409 `conflicto`. `FacturaAgencia` **sí** es 1:N sobre la
-  misma OC (no lleva esa restricción).
+- **N:M OC ↔ FacturaCliente** (`factura_cliente_orden`, ADR-064): una factura puede cubrir
+  varias órdenes. Lo que sigue prohibido es que una `OrdenCliente` esté en **dos facturas
+  vigentes** → 409 `conflicto`; las canceladas no cuentan (ADR-047). Ojo: esa regla ya
+  **no** la sostiene el esquema —no es expresable sobre la tabla puente, porque
+  `estado_facturacion` vive en `factura_cliente`— sino el servicio, tanto al dar de alta
+  como al armar la bandeja. `FacturaAgencia` es 1:N sobre la misma OC.
 - **Una OE no se asigna dos veces a la misma factura de afiliado**
   (`uq_factura_afiliado_orden_factura_oe`); la misma OE sí puede repartirse entre facturas
   distintas (parcialidades de la emisora).
@@ -794,12 +797,28 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 
 #### FacturaCliente
 
-- **`POST /facturacion/clientes`** (`facturacion:crear`) — alta. **400 `error_dominio`** si
-  la `OrdenCliente` no está en `orden_cerrada`; **409 `conflicto`** si esa orden ya tiene
-  factura (1:1). Hereda de la OC empresa/anunciante/agencia, razón social y RFC del
-  receptor (anunciante o agencia según `facturacion_directa_cliente`), dirección, fechas de
-  transmisión y `subtotal_factura`; calcula `iva_factura` y `total_factura`. Los campos
-  derivados y calculados **no se aceptan del cliente** (`extra="forbid"` → 422).
+- **`POST /facturacion/clientes`** (`facturacion:crear`) — alta. Recibe **`ordenes_ids`**
+  (lista, mínimo 1): una sola orden es el flujo de siempre; varias son **facturación
+  múltiple** (ADR-064). Los ids repetidos se deduplican.
+
+  Rechaza con **400 `error_dominio`**: si alguna orden no existe; si alguna no está en
+  `orden_cerrada` —y las nombra **todas**, no solo la primera—; si no comparten
+  `empresa_facturadora` (un CFDI tiene un solo emisor); si no son del mismo anunciante; o si
+  no comparten receptor (no se pueden mezclar órdenes facturadas a la agencia con otras
+  facturadas directo al anunciante). Y con **409 `conflicto`** si alguna orden ya está en
+  una factura vigente, indicando en `detalles.ordenes` qué folio choca con qué factura.
+
+  Hereda de las órdenes empresa/anunciante/agencia, razón social y RFC del receptor
+  (anunciante o agencia según `facturacion_directa_cliente`) y dirección. Calcula:
+  `subtotal_factura` = **suma de los subtotales** de las órdenes, `iva_factura` y
+  `total_factura` sobre esa suma, y el periodo de transmisión **de la fecha de inicio más
+  temprana a la de fin más tardía**. Los campos derivados y calculados **no se aceptan del
+  cliente** (`extra="forbid"` → 422).
+
+  La lectura devuelve **`ordenes`**: la lista de órdenes que cubre, con folio, número de
+  orden del cliente, periodo y subtotal ya resueltos. `orden_id` y `folio_orden` siguen
+  presentes como escalares de la **primera** orden (por folio), que es el identificador
+  corto que usan la tabla y el encabezado del panel.
 - **`PUT /facturacion/clientes/{id}`** (`facturacion:editar`) — edición de los campos
   capturables. **409** una vez `timbrada`: el contenido ya salió al SAT.
 - **`GET /facturacion/clientes/{id}/archivo-plano`** (`facturacion:leer`) — exporta la
@@ -835,11 +854,19 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
 #### Bandeja "Listas para facturar"
 
 - **`GET /facturacion/ordenes-por-facturar`** (`facturacion:leer`) — órdenes en
-  `estatus_orden = orden_cerrada` que **todavía no tienen `FacturaCliente`**
-  (`LEFT JOIN factura_cliente ... WHERE factura_id IS NULL`). Es el atajo operativo del
-  día a día de Facturación. Acepta `page`, `size` y `q` (folio, número de orden y
-  anunciante); el `total` de la respuesta es el contador que la pantalla pinta en el
+  `estatus_orden = orden_cerrada` que **todavía no están en ninguna `FacturaCliente`
+  vigente** (`NOT EXISTS` sobre `factura_cliente_orden`; las **canceladas no cuentan**, así
+  que una OC cuya factura se canceló vuelve a la bandeja — ADR-047). Es el atajo operativo
+  del día a día de Facturación. Acepta `page`, `size`, `q` (folio, número de orden y
+  anunciante) y **`anunciante_id`**, que es como la facturación múltiple acota la bandeja
+  al anunciante elegido. El `total` SIN filtros es el contador que la pantalla pinta en el
   sidebar.
+
+- **`GET /facturacion/ordenes-por-facturar/anunciantes`** (`facturacion:leer`) — llena el
+  combo de facturación múltiple: anunciantes con al menos `minimo` órdenes **disponibles**
+  (por defecto **2**; con una sola no hay nada que agrupar). Devuelve `anunciante_id`,
+  `anunciante` y `ordenes` (cuántas tiene listas). Sin paginar a propósito: es un combo con
+  búsqueda en el cliente, no una lista.
 
   Devuelve los NOMBRES ya resueltos (`anunciante`, `agencia`, `vendedor`) además de los
   datos de la orden, para que la vista no dispare tres consultas de catálogo por renglón.

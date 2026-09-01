@@ -50,7 +50,7 @@ from app.modules.catalogos.vendedor import Vendedor
 from app.modules.facturacion.costo_adicional import CostoAdicional
 from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfiliadoOrden
 from app.modules.facturacion.factura_agencia import FacturaAgencia
-from app.modules.facturacion.factura_cliente import FacturaCliente
+from app.modules.facturacion.factura_cliente import FacturaCliente, FacturaClienteOrden
 from app.modules.ordenes.incidencia import Incidencia
 from app.modules.ordenes.orden_cliente import ITEMS_VOBO, OrdenCliente, OrdenClienteVoBoItem
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
@@ -863,6 +863,42 @@ OC_MOCKS: list[dict[str, Any]] = [
         estatus_v5="orden_cerrada",
         created_by="ve3",
     ),
+    # 12.ª orden: MISMO anunciante, misma emisora y mismo receptor que oc11, y también
+    # cerrada sin factura. Existe para que la facturación MÚLTIPLE (ADR-064) se pueda
+    # probar: el combo solo ofrece anunciantes con 2 o más órdenes disponibles, así que
+    # con una sola saldría siempre vacío. Periodo e importe distintos a propósito, para
+    # que se note que la factura suma subtotales y abarca de la fecha más temprana a la
+    # más tardía.
+    dict(
+        clave="oc12",
+        folio="OC-2025-0052",
+        numero="LALA-YOG-12",
+        fecha_venta=date(2025, 5, 20),
+        empresa="ef1",
+        vp="ve3",
+        vs=None,
+        anunciante="an3",
+        agencia=None,
+        contrato=None,
+        marca=None,
+        producto="Yoghurt Lala Bebible 1L",
+        categoria="cat2",
+        direccion="CDMX, Insurgentes Sur 800",
+        fact_directa=True,
+        af_directo=False,
+        f_ini=date(2025, 7, 1),
+        f_fin=date(2025, 7, 31),
+        total_spots=40,
+        precio_unitario=Decimal("7500"),
+        comision_vp=Decimal("4"),
+        comision_vs=None,
+        comision_ag=None,
+        obs_libres="Segunda orden cerrada del mismo anunciante: habilita la prueba de "
+        "facturación múltiple.",
+        checklist=set(ITEMS_VOBO),
+        estatus_v5="orden_cerrada",
+        created_by="ve3",
+    ),
 ]
 
 # OE agrupadas por OC (clave) — para resolver_estatus_oc necesitamos saber, para cada OC,
@@ -1602,7 +1638,6 @@ def seed_facturacion(
                 factura_id=uid(f"factura_cliente:{clave}"),
                 numero_factura=numero,
                 numero_pedido=oc.numero_orden_cliente,
-                orden_id=oc.orden_id,
                 empresa_facturadora_id=oc.empresa_facturadora_id,
                 anunciante_id=oc.anunciante_id,
                 agencia_id=oc.agencia_id,
@@ -1627,6 +1662,13 @@ def seed_facturacion(
                 folio_fiscal_sat=folio_fiscal,
                 fecha_timbrado=f_factura if folio_fiscal else None,
                 created_by=ADMIN_ID,
+            )
+        )
+        # La orden va en la tabla puente (ADR-064). `merge` para que re-sembrar sea
+        # idempotente, igual que el resto del seed.
+        db.merge(
+            FacturaClienteOrden(
+                factura_id=uid(f"factura_cliente:{clave}"), orden_id=oc.orden_id
             )
         )
 
