@@ -16,17 +16,23 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
+import { FieldTag, MultiSearchableSelect, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
-import { useCuentasContables, useMetodosDePago, useOrdenesFacturables } from "../../hooks";
-import type { FacturaClienteCreate, OrdenPorFacturar } from "../../types";
+import {
+  useCuentasContables,
+  useFacturasDelAnunciante,
+  useMetodosDePago,
+  useOrdenesFacturables,
+} from "../../hooks";
+import { ESTADO_FACTURACION_LABEL, type FacturaClienteCreate, type OrdenPorFacturar } from "../../types";
 
 const schema = z.object({
   orden_id: z.string().min(1, "Selecciona la orden a facturar."),
   numero_factura: z.string().trim().min(1, "El número de factura es obligatorio.").max(30),
   numero_pedido: z.string().trim().max(50).optional(),
   referencia_adicional: z.string().trim().max(150).optional(),
+  facturas_relacionadas_ids: z.array(z.string()).default([]),
   razon_social_facturacion: z.string().trim().min(1, "La razón social es obligatoria.").max(200),
   rfc_facturacion: z.string().trim().min(1, "El RFC es obligatorio.").max(13),
   direccion_facturacion: z.string().trim().optional(),
@@ -75,6 +81,7 @@ export function FacturaClienteForm({
   const ordenes = useOrdenesFacturables();
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
+  const facturasDelAnunciante = useFacturasDelAnunciante(orden?.anunciante_id);
 
   const {
     register,
@@ -92,10 +99,12 @@ export function FacturaClienteForm({
       direccion_facturacion: orden?.receptor_direccion ?? "",
       descripcion_factura: descripcionSugerida(orden),
       fecha_factura: hoy(),
+      facturas_relacionadas_ids: [],
     },
   });
 
   const ordenId = watch("orden_id");
+  const facturasRelacionadasIds = watch("facturas_relacionadas_ids");
 
   // IVA y total son PREVISUALIZACIÓN: los calcula el servicio sobre el subtotal heredado.
   const subtotal = Number(orden?.subtotal ?? 0);
@@ -182,6 +191,25 @@ export function FacturaClienteForm({
           className="fi"
           placeholder="Referencia para reconciliación con cliente"
           {...register("referencia_adicional")}
+        />
+
+        <div className="fl">Factura relacionada (si aplica)</div>
+        <MultiSearchableSelect
+          value={facturasRelacionadasIds ?? []}
+          onChange={(v) => setValue("facturas_relacionadas_ids", v)}
+          disabled={!orden}
+          placeholder={
+            !orden
+              ? "Elige primero la orden a facturar…"
+              : facturasDelAnunciante.isLoading
+                ? "Cargando facturas del anunciante…"
+                : "Busca por número de factura…"
+          }
+          emptyResultsLabel="Este anunciante no tiene otras facturas."
+          options={(facturasDelAnunciante.data?.items ?? []).map((f) => ({
+            value: f.factura_id,
+            label: `${f.numero_factura} · ${ESTADO_FACTURACION_LABEL[f.estado_facturacion]}`,
+          }))}
         />
       </div>
 

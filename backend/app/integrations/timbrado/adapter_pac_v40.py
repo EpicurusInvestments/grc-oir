@@ -37,7 +37,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.integrations.timbrado.port import DatosTimbrado
+from app.integrations.timbrado.port import DatosTimbrado, DomicilioFiscal
 
 #: Fin de línea del layout (medido en el ejemplo).
 CRLF = "\r\n"
@@ -233,6 +233,13 @@ _OBLIGATORIOS = {
     "forma_pago_clave": "AGREGADOS.MedioPago",
 }
 
+def _domicilio_incompleto(dom: DomicilioFiscal | None, legacy: str | None) -> bool:
+    """`True` si NI el domicilio desglosado (ADR-059) NI el texto libre legacy alcanzan
+    para llenar el bloque `Ex*DomFiscal` del layout."""
+    if dom is not None and dom.esta_completo():
+        return False
+    return not legacy
+
 
 class ErrorCodificacionTimbrado(ValueError):
     """Un carácter no cabe en la codificación del layout. Se falla en vez de mutilarlo."""
@@ -247,6 +254,33 @@ def _texto(valor: object) -> str:
 
 def _monto(valor: Decimal | None) -> str:
     return f"{valor:.2f}" if valor is not None else ""
+
+
+def _domicilio_valores(
+    prefijo: str, dom: DomicilioFiscal | None, legacy: str | None
+) -> dict[tuple[str, str], str]:
+    """Entradas de un bloque `Ex*DomFiscal`. Con domicilio desglosado COMPLETO (ADR-059,
+    `esta_completo()` — mismo criterio que `campos_faltantes()`) llena Calle/NroExterior/
+    …/CodigoPostal de verdad; si está vacío O a medias, cae al apaño anterior — el texto
+    libre completo va en `Referencia` (visible, no una equivalencia real; nunca se manda
+    un domicilio desglosado con huecos)."""
+    if dom is not None and dom.esta_completo():
+        return {
+            (prefijo, "Calle"): _texto(dom.calle),
+            (prefijo, "NroExterior"): _texto(dom.numero_exterior),
+            (prefijo, "NroInterior"): _texto(dom.numero_interior),
+            (prefijo, "Colonia"): _texto(dom.colonia),
+            (prefijo, "Localidad"): _texto(dom.localidad),
+            (prefijo, "Referencia"): _texto(dom.referencia),
+            (prefijo, "Municipio"): _texto(dom.municipio),
+            (prefijo, "Estado"): _texto(dom.estado),
+            (prefijo, "Pais"): _texto(dom.pais) or "MEX",
+            (prefijo, "CodigoPostal"): _texto(dom.codigo_postal),
+        }
+    return {
+        (prefijo, "Referencia"): _texto(legacy),
+        (prefijo, "Pais"): "MEX",
+    }
 
 
 def _fecha_hora(valor: datetime) -> str:
@@ -282,9 +316,9 @@ class TimbradoExportPacV40:
             for atributo, etiqueta in _OBLIGATORIOS.items()
             if not getattr(datos, atributo, None)
         ]
-        if not datos.emisor_direccion:
+        if _domicilio_incompleto(datos.emisor_domicilio, datos.emisor_direccion):
             faltantes.append("ExEmisorDomFiscal.* (domicilio del emisor)")
-        if not datos.receptor_direccion:
+        if _domicilio_incompleto(datos.receptor_domicilio, datos.receptor_direccion):
             faltantes.append("ExReceptorDomFiscal.* (domicilio del receptor)")
         return faltantes
 
@@ -365,11 +399,8 @@ class TimbradoExportPacV40:
     def _relacionados(self, datos: DatosTimbrado) -> list[str]:
         cabecera = "TipoRelacion".ljust(_COL_VALOR) + "UUID".ljust(36)
         filas = [cabecera]
-        if datos.folio_fiscal_relacionado:
-            filas.append(
-                _TIPO_RELACION_SUSTITUCION.ljust(_COL_VALOR)
-                + _texto(datos.folio_fiscal_relacionado)
-            )
+        for folio in datos.folios_fiscales_relacionados:
+            filas.append(_TIPO_RELACION_SUSTITUCION.ljust(_COL_VALOR) + _texto(folio))
         filas.extend(["", _FIN_RELACIONES])
         return filas
 
@@ -394,19 +425,16 @@ class TimbradoExportPacV40:
             # ── Emisor ──
             ("ExEmisor", "RFCEmisor"): _texto(d.emisor_rfc),
             ("ExEmisor", "NmbEmisor"): _texto(d.emisor_nombre),
-            # El domicilio del emisor va en `Referencia` porque el modelo lo guarda como
-            # texto libre y el layout lo pide desglosado (Calle/NroExterior/…). Es un
-            # apaño VISIBLE, no una equivalencia: se reporta en `campos_faltantes()`.
-            ("ExEmisorDomFiscal", "Referencia"): _texto(d.emisor_direccion),
-            ("ExEmisorDomFiscal", "Pais"): "MEX",
+            **_domicilio_valores("ExEmisorDomFiscal", d.emisor_domicilio, d.emisor_direccion),
             ("ExEmisorLugarExped", "CodigoPostal"): _texto(d.codigo_postal_expedicion),
             ("ExEmisorLugarExped", "Pais"): "MEX",
             # ── Receptor ──
             ("ExReceptor", "RFCRecep"): _texto(d.receptor_rfc),
             ("ExReceptor", "NmbRecep"): _texto(d.receptor_nombre),
             ("ExReceptor", "RegimenFiscal"): _texto(d.regimen_fiscal_receptor),
-            ("ExReceptorDomFiscal", "Referencia"): _texto(d.receptor_direccion),
-            ("ExReceptorDomFiscal", "Pais"): "MEX",
+            **_domicilio_valores(
+                "ExReceptorDomFiscal", d.receptor_domicilio, d.receptor_direccion
+            ),
             # ── Totales ──
             ("Totales", "Moneda"): _texto(d.moneda),
             ("Totales", "FctConv"): "1",

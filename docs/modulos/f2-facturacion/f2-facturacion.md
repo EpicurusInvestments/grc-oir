@@ -28,12 +28,12 @@ cliente. Si no se cumple, `400 error_dominio`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
-### FacturaCliente (33 campos spec, con 2 ajustes)
-PK `factura_id`. FKs a `OrdenCliente` (1:1), `FacturaCliente` (self-FK, para notas de
-crédito/complementos — nullable), `EmpresaFacturadora`/`Anunciante`/`Agencia` (heredados
-de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón social/RFC/
-dirección de facturación, fechas de transmisión, `subtotal_factura`. Calculados:
-`iva_factura = subtotal_factura * 0.16`, `total_factura = subtotal_factura + iva_factura`.
+### FacturaCliente (33 campos spec, con 3 ajustes)
+PK `factura_id`. FKs a `OrdenCliente` (1:1), `EmpresaFacturadora`/`Anunciante`/`Agencia`
+(heredados de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón
+social/RFC/dirección de facturación, fechas de transmisión, `subtotal_factura`.
+Calculados: `iva_factura = subtotal_factura * 0.16`,
+`total_factura = subtotal_factura + iva_factura`.
 
 **Ajuste 1 — `layout_factura_id` → `layout_factura` (texto libre).** El catálogo
 `LayoutFactura` nunca se construyó en F0. Se reemplaza el FK `NOT NULL` por un campo de
@@ -45,6 +45,15 @@ propia: vive dentro de `ConstantesSistema` (grupo `FormaPago`/`MetodoPago`, ya c
 en F0-05). Se guarda la **clave** directamente (ej. `"03"`, `"PUE"`), sin FK formal —
 el frontend puede seguir sugiriendo desde `ConstantesSistema` para poblar el combo, pero
 la relación no se valida a nivel de base de datos.
+
+**Ajuste 3 — `factura_relacionada_id` (self-FK único) → tabla N:N
+`factura_cliente_relacionada` (ADR-062).** La pantalla de "Nueva factura" necesitaba
+poder marcar VARIAS facturas del mismo anunciante como relacionadas (control de
+sustituciones/canceladas, no solo un CFDI previo), y CFDI 4.0 admite varios
+`CfdiRelacionado` bajo un mismo `TipoRelacion` — así que la cardinalidad de la spec se
+amplió de 1 a N. `FacturaClienteCreate.facturas_relacionadas_ids: list[UUID]`; el combo
+del frontend (`MultiSearchableSelect`) se filtra por `anunciante_id` de la orden y
+muestra también las facturas canceladas a propósito (es el control que pidió negocio).
 
 **Máquina de estados propia** (`estado_facturacion`, ya predefinida en `CLAUDE.md`):
 ```
@@ -375,13 +384,16 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 - **Codificación del archivo plano.** Se asume CP1252 (`TIMBRADO_ENCODING`), pero el
   ejemplo llegó con sus acentos ya corruptos, así que no se pudo deducir del archivo.
   **Confirmar con el PAC antes de producción.**
-- **Campos fiscales que el modelo no captura y el PAC exige.** El archivo se genera pero
-  saldría rechazado hasta que existan: régimen fiscal del emisor y del receptor,
-  `ClaveProdServ`, `ClaveUnidad`, `UsoCFDI`, serie, código postal de expedición, forma de
-  pago SAT y los domicilios DESGLOSADOS (hoy `EmpresaFacturadora.direccion_empresa` es
-  texto libre y el layout los pide campo por campo). Las que ya existen como catálogo se
-  resuelven solas en cuanto el grupo de `ConstantesSistema` tenga UNA constante activa;
-  el resto necesita columnas nuevas. La pantalla los lista al descargar.
+- **(Resuelto, ADR-061)** Campos fiscales que el modelo no capturaba y el PAC exigía:
+  régimen fiscal (ya se resolvía solo con UNA constante activa), serie (ya NO es
+  catálogo — se deriva del propio `numero_factura`, ADR-061), `ClaveProdServ`/
+  `ClaveUnidad`/`UsoCFDI`/forma de pago SAT (sembrados con valores reales de
+  producción, un único activo por grupo). Verificado en vivo: 0 campos faltantes.
+  **(Resuelto, ADR-060)** Los domicilios DESGLOSADOS de emisor/receptor y
+  `AGREGADOS.LugarExpedicion` (código postal de expedición) ya salen del domicilio
+  estructurado por CP de Anunciante/EmpresaFacturadora (ADR-059) — el receptor solo si
+  esta factura es de facturación DIRECTA (sin agencia), porque `Agencia` todavía no
+  captura domicilio así. La pantalla sigue listando lo que falte al descargar.
 - **Catálogo `LayoutFactura` real**, si el negocio termina necesitando más de una
   plantilla (hoy `layout_factura` es texto libre).
 - **Deriva de índices en tablas de F0** (ver hallazgo colateral arriba): decidir si se

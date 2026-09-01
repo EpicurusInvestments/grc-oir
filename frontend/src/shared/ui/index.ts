@@ -9,6 +9,7 @@ export { ExplorerLayout } from "./ExplorerLayout";
 export { FieldTag, type FieldOrigin } from "./FieldTag";
 export { DetailEmpty, ListDetailLayout } from "./ListDetailLayout";
 export { MoneyInput } from "./MoneyInput";
+export { MultiSearchableSelect } from "./MultiSearchableSelect";
 export { Paginator } from "./Paginator";
 export { SavingOverlay } from "./SavingOverlay";
 export { SearchableSelect, type OpcionBuscable } from "./SearchableSelect";

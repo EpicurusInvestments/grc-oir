@@ -58,7 +58,6 @@ export interface FacturaCliente {
   numero_pedido: string | null;
   referencia_adicional: string | null;
   orden_id: string;
-  factura_relacionada_id: string | null;
   empresa_facturadora_id: string;
   anunciante_id: string;
   agencia_id: string | null;
@@ -91,6 +90,8 @@ export interface FacturaCliente {
   empresa_facturadora: string | null;
   /** Folio de la OrdenCliente asociada, denormalizado por el backend (ADR-055). */
   folio_orden: string | null;
+  /** IDs de las facturas relacionadas (ADR-062: N:N, no columna de esta tabla). */
+  facturas_relacionadas_ids: string[];
 }
 
 /** Lo que Facturación captura. Lo derivado y lo calculado los pone el servicio. */
@@ -99,6 +100,8 @@ export interface FacturaClienteCreate {
   numero_factura: string;
   numero_pedido?: string | null;
   referencia_adicional?: string | null;
+  /** N:N (ADR-062): facturas del mismo anunciante marcadas como relacionadas. */
+  facturas_relacionadas_ids?: string[];
   descripcion_factura: string;
   observaciones_factura?: string | null;
   fecha_factura: string;
@@ -235,6 +238,7 @@ export interface OrdenPorFacturar {
   orden_id: string;
   folio_orden: string;
   numero_orden_cliente: string;
+  anunciante_id: string;
   anunciante: string;
   /** `null` = trato directo con el anunciante, sin agencia. */
   agencia: string | null;

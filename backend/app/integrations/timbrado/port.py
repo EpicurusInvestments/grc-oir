@@ -21,6 +21,34 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class DomicilioFiscal:
+    """Domicilio desglosado, igual a los grupos `ExEmisorDomFiscal`/`ExReceptorDomFiscal`
+    del layout del PAC (ADR-059: `Anunciante`/`EmpresaFacturadora` ya lo capturan así).
+    Todos opcionales: un domicilio a medio llenar sigue siendo mejor que nada, el layout
+    solo pide lo que tenga valor."""
+
+    calle: str | None = None
+    numero_exterior: str | None = None
+    numero_interior: str | None = None
+    colonia: str | None = None
+    localidad: str | None = None
+    referencia: str | None = None
+    municipio: str | None = None
+    estado: str | None = None
+    pais: str = "MEX"
+    codigo_postal: str | None = None
+
+    #: Con estos 5 llenos ya alcanza para el layout, aunque falten NroInterior/Referencia
+    #: (opcionales en cualquier dirección real). Única fuente de verdad de "completo":
+    #: la usan tanto `campos_faltantes()` como el mapeo a `Ex*DomFiscal` — un domicilio a
+    #: medias NUNCA se manda desglosado con huecos, cae entero al texto libre legacy.
+    _CAMPOS_MINIMOS = ("calle", "colonia", "municipio", "estado", "codigo_postal")
+
+    def esta_completo(self) -> bool:
+        return all(getattr(self, campo) for campo in self._CAMPOS_MINIMOS)
+
+
+@dataclass(frozen=True)
 class DatosTimbrado:
     """Todo lo que el layout del PAC necesita, resuelto por el servicio.
 
@@ -50,14 +78,21 @@ class DatosTimbrado:
     # ── Emisor (EmpresaFacturadora) ────────────────────────────────────────────
     emisor_nombre: str = ""
     emisor_rfc: str = ""
-    #: Dirección en TEXTO LIBRE: el modelo no la tiene desglosada y el layout sí la pide
-    #: campo por campo. Ver `campos_faltantes()`.
+    #: Dirección en TEXTO LIBRE (legacy, ADR-059): respaldo para registros que todavía
+    #: no tienen `emisor_domicilio` desglosado. Ver `campos_faltantes()`.
     emisor_direccion: str | None = None
+    #: Domicilio desglosado (ADR-059) — lo que el layout realmente pide campo por campo.
+    #: `None` si `EmpresaFacturadora` todavía no lo captura así (registro viejo).
+    emisor_domicilio: DomicilioFiscal | None = None
 
     # ── Receptor (anunciante o agencia, según facturación directa) ─────────────
     receptor_nombre: str = ""
     receptor_rfc: str = ""
+    #: Igual que `emisor_direccion`: texto libre, respaldo de `receptor_domicilio`.
     receptor_direccion: str | None = None
+    #: Domicilio desglosado (ADR-059). Solo se resuelve cuando el receptor de ESTA
+    #: factura es el Anunciante (`Agencia` todavía no tiene domicilio estructurado).
+    receptor_domicilio: DomicilioFiscal | None = None
 
     # ── Referencias comerciales (OrdenCliente) ─────────────────────────────────
     orden_folio: str | None = None
@@ -74,9 +109,10 @@ class DatosTimbrado:
     #: Clave SAT de FORMA de pago (01/03/99…). El layout la llama `MedioPago`.
     forma_pago_clave: str | None = None
 
-    # ── Sustitución de un CFDI previo (self-FK de FacturaCliente) ──────────────
-    #: Folio fiscal de la factura relacionada. Se envía como TipoRelacion 04.
-    folio_fiscal_relacionado: str | None = None
+    # ── Facturas relacionadas (N:N de FacturaCliente, ADR-062) ─────────────────
+    #: Folios fiscales de las facturas relacionadas. Se envían todos como TipoRelacion 04
+    #: — CFDI 4.0 permite varios `CfdiRelacionado` bajo un mismo tipo de relación.
+    folios_fiscales_relacionados: tuple[str, ...] = ()
 
     # ── Constantes fiscales (catálogo `ConstantesSistema`) ─────────────────────
     # El servicio las resuelve solo si el grupo tiene UNA constante activa: con varias, la

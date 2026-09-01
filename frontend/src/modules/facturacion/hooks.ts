@@ -252,3 +252,13 @@ export const useAfiliados = () =>
 
 export const useAgencias = () =>
   useQuery({ queryKey: ["facturacion:agencias-catalogo"], queryFn: agenciasActivas });
+
+/** Facturas del MISMO anunciante, para el combo de "Factura relacionada" (ADR-062):
+ *  incluye canceladas a propósito — el control que pide la pantalla es justo poder ver
+ *  que una factura de ese anunciante se canceló o quedó pendiente al generar la nueva. */
+export const useFacturasDelAnunciante = (anuncianteId: string | null | undefined) =>
+  useQuery({
+    queryKey: [K_CLIENTES, "por-anunciante", anuncianteId],
+    queryFn: () => facturaClienteApi.list({ anunciante_id: anuncianteId as string, size: 100 }),
+    enabled: !!anuncianteId,
+  });

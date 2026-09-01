@@ -35,6 +35,7 @@ const BASE = "/facturacion";
 export interface FiltrosFacturaCliente extends ListParams {
   estado_facturacion?: string;
   orden_id?: string;
+  anunciante_id?: string;
 }
 
 export const facturaClienteApi = {
