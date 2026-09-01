@@ -13,6 +13,7 @@ import { apiClient } from "@/shared/lib/apiClient";
 import type { ListParams, Page } from "@/shared/types";
 
 import type {
+  AnuncianteFacturable,
   CostoAdicional,
   CostoAdicionalCreate,
   EstatusProveedor,
@@ -232,10 +233,22 @@ export const costoApi = {
 /** Órdenes en `orden_cerrada` SIN FacturaCliente. El `total` alimenta el contador del
  *  sidebar. Cuelga de su propio prefijo, no de `/clientes/...`: ahí `{item_id}` capturaría
  *  el segmento literal e intentaría leerlo como UUID. */
-export async function ordenesPorFacturar(params?: ListParams) {
+export async function ordenesPorFacturar(
+  params?: ListParams & { anunciante_id?: string },
+) {
   const { data } = await apiClient.get<Page<OrdenPorFacturar>>(`${BASE}/ordenes-por-facturar`, {
     params,
   });
+  return data;
+}
+
+/** Anunciantes con al menos `minimo` órdenes disponibles: llena el combo de facturación
+ *  múltiple. Sin paginar — el backend lo devuelve completo porque es un combo. */
+export async function anunciantesFacturables(minimo = 2): Promise<AnuncianteFacturable[]> {
+  const { data } = await apiClient.get<AnuncianteFacturable[]>(
+    `${BASE}/ordenes-por-facturar/anunciantes`,
+    { params: { minimo } },
+  );
   return data;
 }
 

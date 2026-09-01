@@ -47,8 +47,13 @@ const schema = z.object({
 type Valores = z.infer<typeof schema>;
 
 interface Props {
-  /** Orden ya elegida (alta desde la bandeja): sus datos pre-cargan el formulario. */
+  /** Orden ya elegida (alta desde la bandeja): sus datos pre-cargan el formulario.
+   *  En facturación múltiple es la PRIMERA de `ordenes` — de ella salen los datos
+   *  compartidos (emisora, receptor, vendedor), que el backend ya validó idénticos. */
   orden?: OrdenPorFacturar | null;
+  /** Facturación múltiple (ADR-064): todas las órdenes que cubrirá la factura. Si viene,
+   *  el periodo y el subtotal se muestran CONSOLIDADOS, como los calculará el servicio. */
+  ordenes?: OrdenPorFacturar[];
   submitting?: boolean;
   submitError?: string | null;
   onSubmit: (data: FacturaClienteCreate) => void;
@@ -73,6 +78,9 @@ function descripcionSugerida(o: OrdenPorFacturar | null | undefined): string {
 
 export function FacturaClienteForm({
   orden = null,
+  // Se renombra al desestructurar: `ordenes` ya es, dentro de este componente, el combo de
+  // órdenes facturables que se usa cuando el alta NO viene de la bandeja.
+  ordenes: ordenesMultiples,
   submitting,
   submitError,
   onSubmit,
@@ -107,16 +115,23 @@ export function FacturaClienteForm({
   const facturasRelacionadasIds = watch("facturas_relacionadas_ids");
 
   // IVA y total son PREVISUALIZACIÓN: los calcula el servicio sobre el subtotal heredado.
-  const subtotal = Number(orden?.subtotal ?? 0);
+  // Con varias órdenes el subtotal es la SUMA, igual que hará el backend.
+  const incluidas = ordenesMultiples ?? (orden ? [orden] : []);
+  const subtotal = incluidas.reduce((suma, o) => suma + Number(o.subtotal), 0);
   const iva = subtotal * 0.16;
   const total = subtotal + iva;
 
   return (
     <form
       onSubmit={handleSubmit(({ orden_id, ...resto }) =>
-        // El formulario sigue eligiendo UNA orden; la API recibe `ordenes_ids` desde
-        // ADR-064. La pantalla de facturación múltiple mandará varias.
-        onSubmit({ ...resto, ordenes_ids: [orden_id] } as FacturaClienteCreate),
+        // La API recibe `ordenes_ids` (ADR-064): en facturación múltiple van todas las
+        // órdenes marcadas; si no, la única elegida en el combo o traída de la bandeja.
+        onSubmit({
+          ...resto,
+          ordenes_ids: ordenesMultiples
+            ? ordenesMultiples.map((o) => o.orden_id)
+            : [orden_id],
+        } as FacturaClienteCreate),
       )}
       style={{ maxWidth: 900 }}
     >
@@ -124,15 +139,25 @@ export function FacturaClienteForm({
 
       {orden && (
         <div className="heredado-block">
-          <div className="heredado-title">Datos heredados de la orden</div>
+          <div className="heredado-title">
+            {ordenesMultiples
+              ? `Datos heredados de ${ordenesMultiples.length} órdenes`
+              : "Datos heredados de la orden"}
+          </div>
           <div className="heredado-grid">
             <div className="heredado-row">
-              <span className="heredado-lbl">Orden origen</span>
-              <span className="heredado-val mono">{orden.folio_orden}</span>
+              <span className="heredado-lbl">
+                {ordenesMultiples ? "Órdenes origen" : "Orden origen"}
+              </span>
+              <span className="heredado-val mono">
+                {incluidas.map((o) => o.folio_orden).join(", ")}
+              </span>
             </div>
             <div className="heredado-row">
               <span className="heredado-lbl">Pedido</span>
-              <span className="heredado-val mono">{orden.numero_orden_cliente}</span>
+              <span className="heredado-val mono">
+                {incluidas.map((o) => o.numero_orden_cliente).join(", ")}
+              </span>
             </div>
             <div className="heredado-row">
               <span className="heredado-lbl">Empresa emisora</span>
@@ -145,12 +170,18 @@ export function FacturaClienteForm({
             <div className="heredado-row">
               <span className="heredado-lbl">Período transmisión</span>
               <span className="heredado-val mono">
-                {fmtFecha(orden.fecha_inicio_campania)} → {fmtFecha(orden.fecha_fin_campania)}
+                {/* Con varias órdenes el periodo ABARCA de la más temprana a la más
+                    tardía: es lo que calculará el servicio. Las fechas son ISO, así que
+                    ordenarlas como texto es correcto. */}
+                {fmtFecha(incluidas.map((o) => o.fecha_inicio_campania).sort()[0])} →{" "}
+                {fmtFecha(incluidas.map((o) => o.fecha_fin_campania).sort().slice(-1)[0])}
               </span>
             </div>
             <div className="heredado-row">
-              <span className="heredado-lbl">Subtotal</span>
-              <span className="heredado-val mono">{fmtMoneda(orden.subtotal)}</span>
+              <span className="heredado-lbl">
+                {ordenesMultiples ? "Subtotal sumado" : "Subtotal"}
+              </span>
+              <span className="heredado-val mono">{fmtMoneda(String(subtotal))}</span>
             </div>
           </div>
         </div>

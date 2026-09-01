@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   afiliadosActivos,
   agenciasActivas,
+  anunciantesFacturables,
   costoApi,
   cuentasContables,
   facturaAfiliadoApi,
@@ -179,10 +180,26 @@ export function useCostos(filtros: FiltrosCosto) {
  *  desde la pantalla que crea (ver `ListasParaFacturarPage`). */
 export const K_POR_FACTURAR = "facturacion:por-facturar";
 
-export function useOrdenesPorFacturar(params: { page?: number; size?: number; q?: string }) {
+export function useOrdenesPorFacturar(params: {
+  page?: number;
+  size?: number;
+  q?: string;
+  anunciante_id?: string;
+}) {
   return useQuery({
     queryKey: [K_POR_FACTURAR, "list", params],
     queryFn: () => ordenesPorFacturar(params),
+  });
+}
+
+/** Anunciantes con 2 o más órdenes disponibles — opciones del combo de facturación
+ *  múltiple. Solo se pide cuando el usuario marca el check: hasta entonces `enabled`
+ *  la mantiene apagada, para no gastar una consulta que nadie va a ver. */
+export function useAnunciantesFacturables(activo: boolean) {
+  return useQuery({
+    queryKey: [K_POR_FACTURAR, "anunciantes"],
+    queryFn: () => anunciantesFacturables(2),
+    enabled: activo,
   });
 }
 

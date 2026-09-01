@@ -52,6 +52,27 @@ De las órdenes incluidas se calcula:
 Se suman **subtotales**, no totales: sumar importes que ya traen IVA violaría los CHECK
 `ck_factura_cliente_iva_calculado` y `ck_factura_cliente_total_suma`.
 
+#### La pantalla
+
+La bandeja "Listas para facturar" tiene dos modos. El **normal** factura una orden por
+tarjeta. Al marcar **«Facturar Múltiples Órdenes»** aparecen, en el orden en que se
+trabaja: el combo **«Seleccionar Anunciante»** (con búsqueda; solo lista anunciantes con 2
+o más órdenes disponibles) y el botón **«Generar Factura Múltiple»** a su derecha.
+
+Mientras no se elija anunciante la bandeja no lista nada: muestra la invitación a elegirlo,
+porque listar todas las órdenes en modo múltiple invitaría a marcar órdenes de anunciantes
+distintos que el backend va a rechazar. Al elegirlo, las tarjetas se acotan a ese anunciante
+y cambian su acción: en vez de «Generar factura →» llevan la casilla **«Incluir en la
+factura»**. La tarjeta marcada se distingue por borde y fondo, no solo por su casilla.
+
+El botón **no se deshabilita** con menos de dos órdenes marcadas: valida al hacer clic y
+explica qué falta («Selecciona al menos 2 órdenes… Llevas 1»). Un botón muerto sin
+explicación deja al usuario adivinando.
+
+El formulario de alta es el mismo (`FacturaClienteForm`), con una prop `ordenes`: muestra
+los folios y pedidos concatenados, el periodo consolidado y el **subtotal sumado**, que es
+lo que calculará el servicio. Desmarcar el check devuelve todo al modo normal.
+
 Al timbrar, el handoff con F1 promueve **todas** las órdenes a `facturada`; al cancelar,
 las revierte todas. Si cualquiera está en `cobrada`, la cancelación entera se rechaza con
 **400** y no quedan órdenes revertidas a medias.
