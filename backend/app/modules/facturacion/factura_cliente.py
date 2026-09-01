@@ -36,7 +36,6 @@ from sqlalchemy import (
     case,
     func,
     select,
-    text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -91,23 +90,13 @@ def _serie_desde_numero(numero_factura: str) -> str | None:
 class FacturaCliente(Base):
     __tablename__ = "factura_cliente"
     __table_args__ = (
-        # 1:1 con OrdenCliente (spec), pero como índice único FILTRADO: la unicidad
-        # aplica solo entre facturas NO canceladas. Así una OC cuya factura se canceló
-        # puede volver a facturarse sin borrar el registro de la cancelada (decisión de
-        # negocio de la Tanda 4 — ver ADR-047).
-        #
-        # Portabilidad verificada en los DOS motores: SQL Server soporta índices
-        # filtrados y SQLite índices PARCIALES (desde 3.8; la del entorno es 3.53).
-        # SQLAlchemy emite el mismo DDL para ambos, así que NO hace falta un respaldo en
-        # el servicio para la unicidad. Lo que sí vive en el servicio es el chequeo que
-        # devuelve un 409 legible, y ese también ignora las canceladas.
-        Index(
-            "uq_factura_cliente_orden_vigente",
-            "orden_id",
-            unique=True,
-            mssql_where=text("estado_facturacion <> 'cancelada'"),
-            sqlite_where=text("estado_facturacion <> 'cancelada'"),
-        ),
+        # La relación con OrdenCliente vive en `factura_cliente_orden` (N:M, ADR-064),
+        # NO en una columna de esta tabla. Con ella se fue el índice único filtrado
+        # `uq_factura_cliente_orden_vigente` que garantizaba "una OC no puede tener dos
+        # facturas vigentes": esa regla no es expresable en la tabla puente, porque
+        # `estado_facturacion` vive AQUÍ. Ahora la valida el servicio con un 409 que
+        # nombra las órdenes en conflicto — consecuencia aceptada al autorizar la
+        # desviación, y la razón por la que ese chequeo tiene pruebas propias.
         CheckConstraint(
             f"estado_facturacion IN ({_ESTADOS_SQL})", name="ck_factura_cliente_estado"
         ),
@@ -143,11 +132,6 @@ class FacturaCliente(Base):
     numero_factura: Mapped[str] = mapped_column(Unicode(30))
     numero_pedido: Mapped[str | None] = mapped_column(Unicode(50), default=None)
     referencia_adicional: Mapped[str | None] = mapped_column(Unicode(150), default=None)
-
-    orden_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(),
-        ForeignKey("orden_cliente.orden_id", name="fk_factura_cliente_orden", ondelete="NO ACTION")
-    )
 
     # Heredados de la OrdenCliente al preparar (spec: origen "Derivado").
     empresa_facturadora_id: Mapped[uuid.UUID] = mapped_column(
@@ -259,6 +243,39 @@ class FacturaClienteRelacionada(Base):
     )
 
 
+class FacturaClienteOrden(Base):
+    """Órdenes que cubre una factura al cliente — N:M (ADR-064).
+
+    La spec BD v2 define `OrdenCliente → FacturaCliente` como 1:1 y lo resolvía con
+    `factura_cliente.orden_id`. El equipo autorizó la desviación para poder emitir UNA
+    factura que cubra VARIAS órdenes cerradas del mismo anunciante (facturación múltiple).
+
+    Sin columna de monto, a diferencia de `FacturaAfiliadoOrden`: allá la factura del
+    proveedor se REPARTE entre órdenes y hace falta saber cuánto toca a cada una; aquí
+    cada orden aporta su subtotal íntegro, así que guardarlo sería duplicar un dato que ya
+    vive en `orden_cliente.subtotal` y que podría quedar desincronizado.
+
+    El índice sobre `orden_id` NO es decorativo: la bandeja "Listas para facturar" hace
+    LEFT JOIN por esa columna contra todas las órdenes cerradas en cada carga.
+    """
+
+    __tablename__ = "factura_cliente_orden"
+    __table_args__ = (Index("ix_factura_cliente_orden_orden", "orden_id"),)
+
+    factura_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_cliente.factura_id", name="fk_fc_orden_factura", ondelete="NO ACTION"
+        ),
+        primary_key=True,
+    )
+    orden_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("orden_cliente.orden_id", name="fk_fc_orden_orden", ondelete="NO ACTION"),
+        primary_key=True,
+    )
+
+
 # ── Schemas de lectura (Tanda 1) ─────────────────────────────────────────────────
 class FacturaClienteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -267,7 +284,9 @@ class FacturaClienteRead(BaseModel):
     numero_factura: str
     numero_pedido: str | None = None
     referencia_adicional: str | None = None
-    orden_id: uuid.UUID
+    # Ya NO es columna de la tabla (ADR-064): lo rellena `_aplicar_ordenes` desde
+    # `factura_cliente_orden`. Opcional por eso — `from_attributes` no lo encuentra.
+    orden_id: uuid.UUID | None = None
     empresa_facturadora_id: uuid.UUID
     anunciante_id: uuid.UUID
     agencia_id: uuid.UUID | None = None
@@ -424,10 +443,23 @@ class FacturaClienteRepository(BaseRepository[FacturaCliente]):
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
         # NO se llama a super()._apply_filters: la base filtra por `model.activo`, columna
         # que esta entidad no tiene.
-        for campo in ("orden_id", "anunciante_id", "agencia_id", "empresa_facturadora_id"):
+        for campo in ("anunciante_id", "agencia_id", "empresa_facturadora_id"):
             valor = getattr(params, campo, None)
             if valor is not None:
                 stmt = stmt.where(getattr(FacturaCliente, campo) == valor)
+        # `orden_id` ya no es columna de esta tabla (ADR-064): se filtra por existencia en
+        # la puente. `EXISTS` y no `JOIN` para no duplicar filas cuando la factura cubre
+        # varias órdenes — con JOIN, una factura de 3 órdenes saldría 3 veces.
+        orden_id = getattr(params, "orden_id", None)
+        if orden_id is not None:
+            stmt = stmt.where(
+                select(FacturaClienteOrden.factura_id)
+                .where(
+                    FacturaClienteOrden.factura_id == FacturaCliente.factura_id,
+                    FacturaClienteOrden.orden_id == orden_id,
+                )
+                .exists()
+            )
         estado = getattr(params, "estado_facturacion", None)
         if estado is not None:
             stmt = stmt.where(FacturaCliente.estado_facturacion == estado)
@@ -473,19 +505,59 @@ class FacturaClienteService(
         ).all()
         return {fila[0]: fila[1] for fila in filas}
 
-    def _folios_orden(self, facturas: list[FacturaClienteRead]) -> dict[uuid.UUID, str]:
-        """Folio de la OrdenCliente asociada a cada factura, en UNA consulta (ADR-055)."""
+    def _ordenes_de(
+        self, facturas: list[FacturaClienteRead]
+    ) -> dict[uuid.UUID, list[tuple[uuid.UUID, str]]]:
+        """Órdenes (id + folio) de cada factura, en UNA consulta (ADR-055, ADR-064).
+
+        Antes esto resolvía el folio de LA orden desde `factura_cliente.orden_id`; ahora la
+        relación es N:M y vive en `factura_cliente_orden`, así que devuelve una LISTA por
+        factura. Ordenada por folio para que la salida sea estable entre llamadas.
+        """
         from app.modules.ordenes.orden_cliente import OrdenCliente
 
-        ids = {f.orden_id for f in facturas}
+        ids = {f.factura_id for f in facturas}
         if not ids:
             return {}
         filas = self._repo.db.execute(
-            select(OrdenCliente.orden_id, OrdenCliente.folio_orden).where(
-                OrdenCliente.orden_id.in_(ids)
+            select(
+                FacturaClienteOrden.factura_id,
+                FacturaClienteOrden.orden_id,
+                OrdenCliente.folio_orden,
             )
+            .join(OrdenCliente, OrdenCliente.orden_id == FacturaClienteOrden.orden_id)
+            .where(FacturaClienteOrden.factura_id.in_(ids))
+            .order_by(OrdenCliente.folio_orden)
         ).all()
-        return {fila[0]: fila[1] for fila in filas}
+        resultado: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
+        for factura_id, orden_id, folio in filas:
+            resultado.setdefault(factura_id, []).append((orden_id, folio))
+        return resultado
+
+    def _ordenes_de_factura(self, factura_id: uuid.UUID) -> list[uuid.UUID]:
+        """IDs de las órdenes que cubre una factura (ADR-064). Ordenado para que el
+        handoff con F1 recorra siempre en el mismo orden y los errores sean reproducibles."""
+        return list(
+            self._repo.db.scalars(
+                select(FacturaClienteOrden.orden_id)
+                .where(FacturaClienteOrden.factura_id == factura_id)
+                .order_by(FacturaClienteOrden.orden_id)
+            ).all()
+        )
+
+    @staticmethod
+    def _aplicar_ordenes(
+        leida: FacturaClienteRead, ordenes: dict[uuid.UUID, list[tuple[uuid.UUID, str]]]
+    ) -> None:
+        """Vuelca las órdenes de la factura sobre el schema de lectura.
+
+        `orden_id`/`folio_orden` siguen siendo escalares mientras el alta acepte una sola
+        orden: se exponen los de la PRIMERA (por folio). Cuando la API pase a `ordenes_ids`
+        este método es el único punto que hay que tocar.
+        """
+        de_esta = ordenes.get(leida.factura_id, [])
+        leida.orden_id = de_esta[0][0] if de_esta else None
+        leida.folio_orden = de_esta[0][1] if de_esta else None
 
     def _relacionadas_de(
         self, facturas: list[FacturaClienteRead]
@@ -512,7 +584,7 @@ class FacturaClienteService(
         de una transición (enviar a timbrado, timbrar, entregar, cancelar) mostraría
         `facturas_relacionadas_ids` vacío aunque la relación exista, hasta el próximo GET
         — mismo tipo de bug que `folio_orden` ya resolvía (ADR-055)."""
-        leida.folio_orden = self._folios_orden([leida]).get(leida.orden_id)
+        self._aplicar_ordenes(leida, self._ordenes_de([leida]))
         leida.facturas_relacionadas_ids = self._relacionadas_de([leida]).get(
             leida.factura_id, []
         )
@@ -521,11 +593,11 @@ class FacturaClienteService(
     def list(self, params: ListParams) -> Page[FacturaClienteRead]:
         pagina = super().list(params)
         nombres = self._nombres_emisoras(pagina.items)
-        folios = self._folios_orden(pagina.items)
+        ordenes = self._ordenes_de(pagina.items)
         relacionadas = self._relacionadas_de(pagina.items)
         for f in pagina.items:
             f.empresa_facturadora = nombres.get(f.empresa_facturadora_id)
-            f.folio_orden = folios.get(f.orden_id)
+            self._aplicar_ordenes(f, ordenes)
             f.facturas_relacionadas_ids = relacionadas.get(f.factura_id, [])
         return pagina
 
@@ -561,21 +633,27 @@ class FacturaClienteService(
                 "Solo se puede facturar una OrdenCliente en 'orden_cerrada'.",
                 detalles={"orden_id": str(data.orden_id), "estatus_orden": oc.estatus_orden},
             )
-        # 1:1 (spec) entre facturas VIGENTES. El índice único filtrado del esquema es la
-        # garantía dura; este chequeo existe para devolver un 409 legible en vez de un
-        # error de integridad. Ignora las CANCELADAS por la misma razón que el índice: una
-        # OC cuya factura se canceló vuelve a ser facturable (ADR-047).
+        # Una OC no puede estar en DOS facturas vigentes. Hasta ADR-064 esto lo garantizaba
+        # el índice único filtrado del esquema y este chequeo solo daba un 409 legible;
+        # ahora la relación vive en una tabla puente y `estado_facturacion` está en la otra
+        # tabla, así que un índice no puede expresarlo: este chequeo es la ÚNICA garantía.
+        # Ignora las CANCELADAS por el mismo motivo de negocio de siempre: una OC cuya
+        # factura se canceló vuelve a ser facturable (ADR-047).
         ya = db.scalar(
             select(FacturaCliente)
+            .join(
+                FacturaClienteOrden,
+                FacturaClienteOrden.factura_id == FacturaCliente.factura_id,
+            )
             .where(
-                FacturaCliente.orden_id == data.orden_id,
+                FacturaClienteOrden.orden_id == data.orden_id,
                 FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value,
             )
             .limit(1)
         )
         if ya is not None:
             raise ConflictError(
-                "La OrdenCliente ya tiene una factura de cliente vigente (relación 1:1).",
+                "La OrdenCliente ya tiene una factura de cliente vigente.",
                 detalles={"orden_id": str(data.orden_id), "factura_id": str(ya.factura_id)},
             )
         if db.get(CuentaContable, data.cuenta_contable_id) is None:
@@ -614,6 +692,8 @@ class FacturaClienteService(
                 "rfc_facturacion",
                 "direccion_facturacion",
                 "facturas_relacionadas_ids",
+                # Ya no es columna: se persiste como fila de `factura_cliente_orden`.
+                "orden_id",
             }
         )
         nuevo_id = uuid4()
@@ -637,6 +717,7 @@ class FacturaClienteService(
             created_by=resolver_usuario_id(db, usuario.username),
         )
         db.add(obj)
+        db.add(FacturaClienteOrden(factura_id=nuevo_id, orden_id=data.orden_id))
         for rid in relacionadas_ids:
             db.add(FacturaClienteRelacionada(factura_id=nuevo_id, relacionada_id=rid))
         db.commit()
@@ -722,7 +803,9 @@ class FacturaClienteService(
 
         db = self._repo.db
         emisor = db.get(EmpresaFacturadora, obj.empresa_facturadora_id)
-        orden = db.get(OrdenCliente, obj.orden_id)
+        # Una sola orden mientras el alta acepte una sola; la consulta ya está lista para N.
+        ordenes = self._ordenes_de_factura(obj.factura_id)
+        orden = db.get(OrdenCliente, ordenes[0]) if ordenes else None
 
         # El receptor de ESTA factura puede ser el Anunciante (directo) o la Agencia —
         # mismo criterio que `create()` para elegir razón social/RFC. El domicilio
@@ -861,7 +944,11 @@ class FacturaClienteService(
         obj.estado_facturacion = EstadoFacturacion.TIMBRADA.value
 
         # ── handoff con F1, misma sesión, antes del commit ──
-        OrdenClienteService(OrdenClienteRepository(db, OrdenCliente)).marcar_facturada(obj.orden_id)
+        # Sobre TODAS las órdenes de la factura: hoy es una, pero el bucle ya es la forma
+        # correcta y evita que la facturación múltiple deje órdenes sin promover.
+        servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
+        for orden_id in self._ordenes_de_factura(obj.factura_id):
+            servicio_oc.marcar_facturada(orden_id)
 
         db.commit()
         db.refresh(obj)
@@ -904,9 +991,11 @@ class FacturaClienteService(
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
 
         # ── reversión del handoff, misma transacción ──
-        OrdenClienteService(OrdenClienteRepository(db, OrdenCliente)).revertir_facturacion(
-            obj.orden_id
-        )
+        # Si CUALQUIERA de las órdenes está en `cobrada`, `revertir_facturacion` lanza 400
+        # y la cancelación entera no ocurre: nunca quedan órdenes revertidas a medias.
+        servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
+        for orden_id in self._ordenes_de_factura(obj.factura_id):
+            servicio_oc.revertir_facturacion(orden_id)
 
         db.commit()
         db.refresh(obj)
@@ -1160,13 +1249,20 @@ class OrdenesPorFacturarRepository:
             .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
             .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
             # El corazón de la bandeja: LEFT JOIN + IS NULL = "sin factura todavía".
+            # Con la relación N:M (ADR-064) son DOS LEFT JOIN encadenados: primero la
+            # puente, luego la factura. Ambos tienen que ser OUTER — si el segundo fuera
+            # INNER, una OC sin factura perdería la fila que el primero acaba de producir.
             # La condición de CANCELADA va en el JOIN, no en el WHERE: en el WHERE
             # convertiría el LEFT JOIN en un INNER y la bandeja saldría siempre vacía.
             # Sin ella, una OC con su factura cancelada sería re-facturable por el índice
             # filtrado pero INVISIBLE aquí — media decisión de negocio perdida (ADR-047).
             .outerjoin(
+                FacturaClienteOrden,
+                FacturaClienteOrden.orden_id == OrdenCliente.orden_id,
+            )
+            .outerjoin(
                 FacturaCliente,
-                (FacturaCliente.orden_id == OrdenCliente.orden_id)
+                (FacturaCliente.factura_id == FacturaClienteOrden.factura_id)
                 & (FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value),
             )
             .where(

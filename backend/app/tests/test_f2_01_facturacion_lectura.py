@@ -40,7 +40,7 @@ from app.modules.catalogos.vendedor import Vendedor
 from app.modules.facturacion.costo_adicional import CostoAdicional
 from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfiliadoOrden
 from app.modules.facturacion.factura_agencia import FacturaAgencia
-from app.modules.facturacion.factura_cliente import FacturaCliente
+from app.modules.facturacion.factura_cliente import FacturaCliente, FacturaClienteOrden
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion
@@ -187,7 +187,6 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
         FacturaCliente(
             factura_id=factura_id,
             numero_factura="F-0001",
-            orden_id=orden_id,
             empresa_facturadora_id=empresa_id,
             anunciante_id=anunciante_id,
             agencia_id=agencia_id,
@@ -206,6 +205,8 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
             created_by=ADMIN_ID,
         )
     )
+    # La orden ya no es columna de la factura (ADR-064): va en la tabla puente.
+    db.add(FacturaClienteOrden(factura_id=factura_id, orden_id=orden_id))
     fa_id = uuid.uuid4()
     db.add(
         FacturaAfiliado(
@@ -294,29 +295,38 @@ def _hdr(area: str) -> dict[str, str]:
 
 
 # ── Esquema: las restricciones que se revisaron a mano ────────────────────────
-def test_factura_cliente_es_1_a_1_con_la_orden(db: Session, datos: dict[str, uuid.UUID]) -> None:
-    """`uq_factura_cliente_orden`: una OC no puede tener dos facturas de cliente."""
-    db.add(
-        FacturaCliente(
-            factura_id=uuid.uuid4(),
-            numero_factura="F-0002",
-            orden_id=datos["orden_id"],  # misma OC que la factura ya sembrada
-            empresa_facturadora_id=datos["empresa_id"],
-            anunciante_id=datos["anunciante_id"],
-            razon_social_facturacion="Otra",
-            rfc_facturacion="AGU900101AB1",
-            descripcion_factura="Duplicada",
-            fecha_inicio_transmision=date(2026, 2, 1),
-            fecha_fin_transmision=date(2026, 2, 28),
-            fecha_factura=date(2026, 3, 5),
-            subtotal_factura=Decimal("100.00"),
-            iva_factura=Decimal("16.00"),
-            total_factura=Decimal("116.00"),
-            cuenta_contable_id=datos["cuenta_id"],
-            metodo_pago_clave="PUE",
-            created_by=ADMIN_ID,
-        )
+def test_una_factura_puede_cubrir_varias_ordenes(
+    db: Session, datos: dict[str, uuid.UUID]
+) -> None:
+    """El esquema ya NO impide que una factura cubra N órdenes (ADR-064).
+
+    Antes esto lo bloqueaba `uq_factura_cliente_orden_vigente`, un índice único sobre
+    `factura_cliente.orden_id`. Esa columna desapareció: la relación vive en
+    `factura_cliente_orden` con PK compuesta, que solo prohíbe repetir el MISMO par.
+    """
+    factura_id = db.query(FacturaCliente).one().factura_id
+    db.add(FacturaClienteOrden(factura_id=factura_id, orden_id=uuid.uuid4()))
+    db.commit()
+
+    assert (
+        db.query(FacturaClienteOrden)
+        .filter(FacturaClienteOrden.factura_id == factura_id)
+        .count()
+        == 2
     )
+
+
+def test_la_misma_orden_no_se_repite_en_la_misma_factura(
+    db: Session, datos: dict[str, uuid.UUID]
+) -> None:
+    """Lo único que la PK compuesta sigue garantizando: sin pares duplicados.
+
+    Que una OC no esté en DOS facturas VIGENTES ya no lo puede expresar el esquema
+    —`estado_facturacion` vive en la otra tabla— y lo valida el servicio con un 409;
+    ver `test_alta_rechaza_una_orden_ya_facturada` en las pruebas de escritura.
+    """
+    factura_id = db.query(FacturaCliente).one().factura_id
+    db.add(FacturaClienteOrden(factura_id=factura_id, orden_id=datos["orden_id"]))
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
@@ -401,7 +411,6 @@ def test_check_de_suma_rechaza_un_total_descuadrado(
         FacturaCliente(
             factura_id=uuid.uuid4(),
             numero_factura="F-0003",
-            orden_id=uuid.uuid4(),  # otra OC (no choca con la UNIQUE)
             empresa_facturadora_id=datos["empresa_id"],
             anunciante_id=datos["anunciante_id"],
             razon_social_facturacion="X",
@@ -431,7 +440,6 @@ def test_check_del_iva_rechaza_una_tasa_distinta_del_16(
         FacturaCliente(
             factura_id=uuid.uuid4(),
             numero_factura="F-0004",
-            orden_id=uuid.uuid4(),
             empresa_facturadora_id=datos["empresa_id"],
             anunciante_id=datos["anunciante_id"],
             razon_social_facturacion="X",

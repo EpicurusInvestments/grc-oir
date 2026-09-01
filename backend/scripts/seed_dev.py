@@ -50,7 +50,7 @@ from app.modules.catalogos.vendedor import Vendedor
 from app.modules.facturacion.costo_adicional import CostoAdicional
 from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfiliadoOrden
 from app.modules.facturacion.factura_agencia import FacturaAgencia
-from app.modules.facturacion.factura_cliente import FacturaCliente
+from app.modules.facturacion.factura_cliente import FacturaCliente, FacturaClienteOrden
 from app.modules.ordenes.incidencia import Incidencia
 from app.modules.ordenes.orden_cliente import ITEMS_VOBO, OrdenCliente, OrdenClienteVoBoItem
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
@@ -1602,7 +1602,6 @@ def seed_facturacion(
                 factura_id=uid(f"factura_cliente:{clave}"),
                 numero_factura=numero,
                 numero_pedido=oc.numero_orden_cliente,
-                orden_id=oc.orden_id,
                 empresa_facturadora_id=oc.empresa_facturadora_id,
                 anunciante_id=oc.anunciante_id,
                 agencia_id=oc.agencia_id,
@@ -1627,6 +1626,13 @@ def seed_facturacion(
                 folio_fiscal_sat=folio_fiscal,
                 fecha_timbrado=f_factura if folio_fiscal else None,
                 created_by=ADMIN_ID,
+            )
+        )
+        # La orden va en la tabla puente (ADR-064). `merge` para que re-sembrar sea
+        # idempotente, igual que el resto del seed.
+        db.merge(
+            FacturaClienteOrden(
+                factura_id=uid(f"factura_cliente:{clave}"), orden_id=oc.orden_id
             )
         )
 

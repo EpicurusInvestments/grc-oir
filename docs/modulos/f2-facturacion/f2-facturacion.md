@@ -23,13 +23,19 @@ de F4 y las Requisiciones de pago de F3.
 ## Precondición de alta
 
 Solo se puede generar una `FacturaCliente` para una `OrdenCliente` cuyo
-`estatus_orden = orden_cerrada`. Es 1:1 (spec): una OC genera como máximo una factura de
-cliente. Si no se cumple, `400 error_dominio`.
+`estatus_orden = orden_cerrada`. Si no se cumple, `400 error_dominio`.
+
+La relación es **N:M** desde ADR-064 (desviación de la spec autorizada por el equipo): una
+factura puede cubrir varias órdenes cerradas del mismo anunciante, y vive en la tabla
+puente `factura_cliente_orden`. Lo que sigue vigente es que una OC **no puede estar en dos
+facturas vigentes** (las canceladas no cuentan, ADR-047); con la columna `orden_id` se fue
+el índice que lo garantizaba, así que ahora lo valida el servicio con `409`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
 ### FacturaCliente (33 campos spec, con 3 ajustes)
-PK `factura_id`. FKs a `OrdenCliente` (1:1), `EmpresaFacturadora`/`Anunciante`/`Agencia`
+PK `factura_id`. Órdenes que cubre vía `factura_cliente_orden` (**N:M**, ADR-064 — la spec
+las ligaba con `orden_id` 1:1). FKs a `EmpresaFacturadora`/`Anunciante`/`Agencia`
 (heredados de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón
 social/RFC/dirección de facturación, fechas de transmisión, `subtotal_factura`.
 Calculados: `iva_factura = subtotal_factura * 0.16`,
@@ -75,7 +81,7 @@ de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacio
 
 ### FacturaAgencia (15 campos spec)
 PK `factura_agencia_id`. FK a `Agencia` y a `OrdenCliente` (**1:N** — una OC puede tener
-varias facturas de agencia, a diferencia de `FacturaCliente` que es 1:1). Captura manual
+varias facturas de agencia; `FacturaCliente` es N:M desde ADR-064). Captura manual
 o carga, por **CxP**. `porcentaje_comision_agencia` sugerido desde el catálogo Agencia
 (editable), `comision_agencia = OrdenCliente.total * porcentaje / 100` calculado. Mismos
 4 estados que `FacturaAfiliado`.
