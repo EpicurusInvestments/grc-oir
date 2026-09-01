@@ -35,7 +35,7 @@ from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
-from app.modules.facturacion.factura_cliente import FacturaCliente
+from app.modules.facturacion.factura_cliente import FacturaCliente, _serie_desde_numero
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion
@@ -315,6 +315,72 @@ def test_una_orden_solo_admite_una_factura(
     assert r.json()["error"]["codigo"] == "conflicto"
 
 
+# ── Facturas relacionadas (N:N, ADR-062) ───────────────────────────────────────
+def test_alta_admite_varias_facturas_relacionadas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    id_a, _ = _crear_factura(client, db, cat, "F-REL-A")
+    id_b, _ = _crear_factura(client, db, cat, "F-REL-B")
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-REL-C")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-REL-C")
+    payload["facturas_relacionadas_ids"] = [id_a, id_b]
+    r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+    assert r.status_code == 201, r.text
+    assert sorted(r.json()["facturas_relacionadas_ids"]) == sorted([id_a, id_b])
+
+    releida = client.get(
+        f"/api/v1/facturacion/clientes/{r.json()['factura_id']}", headers=_hdr("facturacion")
+    )
+    assert sorted(releida.json()["facturas_relacionadas_ids"]) == sorted([id_a, id_b])
+
+
+def test_alta_deduplica_facturas_relacionadas_repetidas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    id_a, _ = _crear_factura(client, db, cat, "F-REL-DUP-A")
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-REL-DUP-B")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-REL-DUP-B")
+    payload["facturas_relacionadas_ids"] = [id_a, id_a]
+    r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+    assert r.status_code == 201, r.text
+    assert r.json()["facturas_relacionadas_ids"] == [id_a]
+
+
+def test_las_transiciones_no_pierden_las_facturas_relacionadas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo bug que ADR-055 resolvió para `folio_orden`: la respuesta de una transición
+    debe traer `facturas_relacionadas_ids` ya resuelto, no vacío hasta el próximo GET."""
+    id_a, _ = _crear_factura(client, db, cat, "F-REL-TRANS-A")
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-REL-TRANS-B")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-REL-TRANS-B")
+    payload["facturas_relacionadas_ids"] = [id_a]
+    creada = client.post(
+        "/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion")
+    )
+    fid = creada.json()["factura_id"]
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{fid}/enviar-a-timbrado", headers=_hdr("facturacion")
+    )
+    assert r.json()["facturas_relacionadas_ids"] == [id_a]
+
+
+def test_alta_rechaza_una_factura_relacionada_inexistente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-REL-404")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-REL-404")
+    payload["facturas_relacionadas_ids"] = [str(uuid.uuid4())]
+    r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
 # ── EL HANDOFF ────────────────────────────────────────────────────────────────
 def test_timbrar_promueve_la_orden_a_facturada(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
@@ -447,7 +513,9 @@ def test_el_archivo_plano_sale_en_el_layout_del_pac(
     assert "XXXFINDO" in texto
     assert "RFCRecep         AGU900101AB1" in texto  # receptor = agencia de la OC
     assert "VlrPagar         11600.00" in texto
-    assert 'filename="FACTURA_33_SN_F-0001.txt"' in r.headers["content-disposition"]
+    assert "Serie            F" in texto  # ADR-060 bis: se deriva de "F-0001"
+    # El nombre del archivo usa esa misma Serie derivada (antes "SN" al no haber catálogo).
+    assert 'filename="FACTURA_33_F_F-0001.txt"' in r.headers["content-disposition"]
 
 
 def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
@@ -464,6 +532,133 @@ def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
     assert "AGREGADOS.UsoCFDI" in faltantes
     # La cabecera debe ser visible para el navegador, o la pantalla no podría avisar.
     assert "X-Campos-Faltantes" in r.headers["access-control-expose-headers"]
+
+
+# ── Serie derivada del número de factura (ADR-060 bis) ────────────────────────
+@pytest.mark.parametrize(
+    ("numero", "esperado"),
+    [
+        ("A-0010890", "A"),
+        ("B-001002TYU", "B"),
+        ("F-0001", "F"),
+        ("SINGUION", None),  # sin "-": no hay de dónde derivar la serie
+        ("-0001", None),  # prefijo vacío antes del guion
+        ("  C -0001", "C"),  # espacios alrededor del prefijo se recortan
+    ],
+)
+def test_serie_desde_numero(numero: str, esperado: str | None) -> None:
+    assert _serie_desde_numero(numero) == esperado
+
+
+# ── Domicilio estructurado en el archivo plano (ADR-059) ──────────────────────
+def test_domicilio_del_emisor_desglosado_si_empresa_facturadora_lo_tiene(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Con `EmpresaFacturadora` capturada por CP (ADR-059), el PAC recibe Calle/Colonia/
+    Municipio/… de verdad — y de paso resuelve AGREGADOS.LugarExpedicion (mismo CP)."""
+    empresa = db.get(EmpresaFacturadora, cat["empresa_id"])
+    empresa.calle = "Av. Constituyentes"
+    empresa.numero_exterior = "1154"
+    empresa.colonia = "Lomas Altas"
+    empresa.municipio = "Miguel Hidalgo"
+    empresa.estado = "Ciudad de México"
+    empresa.codigo_postal = "11950"
+    db.commit()
+
+    factura_id, _ = _crear_factura(client, db, cat)
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    assert "Calle            Av. Constituyentes" in texto
+    assert "Colonia          Lomas Altas" in texto
+    assert "CodigoPostal     11950" in texto  # ExEmisorDomFiscal
+    assert "LugarExpedicion    11950" in texto  # AGREGADOS (columna 19)
+    faltantes = r.headers["x-campos-faltantes"]
+    assert "domicilio del emisor" not in faltantes
+    assert "AGREGADOS.LugarExpedicion" not in faltantes
+
+
+def test_domicilio_del_receptor_desglosado_solo_si_es_directa(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El receptor de esta OC es la AGENCIA (fixture `cat` estándar) — `Agencia` todavía
+    no tiene domicilio estructurado (ADR-059 solo cubrió Anunciante/EmpresaFacturadora),
+    así que el receptor NO sale desglosado aunque el Anunciante sí tenga uno capturado."""
+    anunciante = db.get(Anunciante, cat["anunciante_id"])
+    anunciante.calle = "Insurgentes Sur"
+    anunciante.colonia = "Del Valle"
+    anunciante.municipio = "Benito Juárez"
+    anunciante.estado = "Ciudad de México"
+    anunciante.codigo_postal = "03100"
+    db.commit()
+
+    factura_id, _ = _crear_factura(client, db, cat)
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    assert "Insurgentes Sur" not in texto  # el receptor es la agencia, no el anunciante
+    assert "RFCRecep         AGU900101AB1" in texto  # sigue siendo la agencia
+
+
+def test_domicilio_del_receptor_desglosado_si_es_directa_y_anunciante_lo_tiene(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Facturación directa (sin agencia): el receptor SÍ es el Anunciante, y su domicilio
+    estructurado (ADR-059) sale desglosado en `ExReceptorDomFiscal`."""
+    anunciante = db.get(Anunciante, cat["anunciante_id"])
+    anunciante.calle = "Insurgentes Sur"
+    anunciante.numero_exterior = "800"
+    anunciante.colonia = "Del Valle"
+    anunciante.municipio = "Benito Juárez"
+    anunciante.estado = "Ciudad de México"
+    anunciante.codigo_postal = "03100"
+    db.commit()
+
+    orden_id = uuid.uuid4()
+    db.add(
+        OrdenCliente(
+            orden_id=orden_id,
+            folio_orden="OC-DIRECTA",
+            numero_orden_cliente="NUM-OC-DIRECTA",
+            fecha_venta=date(2026, 1, 10),
+            anio_venta=2026,
+            mes_venta=1,
+            empresa_facturadora_id=cat["empresa_id"],
+            vendedor_principal_id=cat["vendedor_id"],
+            anunciante_id=cat["anunciante_id"],
+            agencia_id=None,  # trato directo: el receptor es el Anunciante
+            fecha_inicio_campania=date(2026, 2, 1),
+            fecha_fin_campania=date(2026, 2, 28),
+            total_dias_campania=28,
+            duracion_spot="30s",
+            precio_unitario=Decimal("1000.00"),
+            total_spots=10,
+            subtotal=Decimal("10000.00"),
+            iva=Decimal("1600.00"),
+            total=Decimal("11600.00"),
+            estatus_orden="orden_cerrada",
+            created_by=ADMIN_ID,
+        )
+    )
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-DIRECTA"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    factura_id = r.json()["factura_id"]
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    assert "Insurgentes Sur" in texto
+    assert "CodigoPostal     03100" in texto
+    assert "domicilio del receptor" not in r.headers["x-campos-faltantes"]
 
 
 def test_una_factura_cancelada_no_se_exporta(
@@ -702,6 +897,9 @@ def test_bandeja_lista_ordenes_cerradas_sin_factura(
     fila = cuerpo["items"][0]
     assert fila["orden_id"] == str(cerrada_sin_factura)
     assert fila["folio_orden"] == "OC-SIN-FACTURA"
+    # anunciante_id viaja además del nombre (ADR-062): la pantalla lo necesita para
+    # filtrar el combo de "Factura relacionada" por anunciante.
+    assert fila["anunciante_id"] == str(cat["anunciante_id"])
     # Los nombres vienen resueltos por el JOIN, no como IDs.
     assert fila["anunciante"] == "Anunciante Uno"
     assert fila["agencia"] == "Agencia Uno"

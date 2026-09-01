@@ -23,7 +23,7 @@ from app.integrations.timbrado.adapter_pac_v40 import (
     ErrorCodificacionTimbrado,
     TimbradoExportPacV40,
 )
-from app.integrations.timbrado.port import DatosTimbrado
+from app.integrations.timbrado.port import DatosTimbrado, DomicilioFiscal
 
 REFERENCIA = (
     Path(__file__).resolve().parents[3]
@@ -221,11 +221,25 @@ def test_documento_relacionado_solo_si_sustituye_a_otro(datos: DatosTimbrado) ->
     uuid_previo = "71c9ab6e-0018-4010-9f6f-5b1c80aa8540"
     con_relacion = (
         TimbradoExportPacV40()
-        .exportar(_datos_completos(folio_fiscal_relacionado=uuid_previo))
+        .exportar(_datos_completos(folios_fiscales_relacionados=(uuid_previo,)))
         .decode("cp1252")
     )
     # TipoRelacion 04 = "Sustitución de los CFDI previos".
     assert f"04               {uuid_previo}" in con_relacion
+
+
+def test_documento_relacionado_admite_varios_uuid(datos: DatosTimbrado) -> None:
+    """ADR-062: selección múltiple en "Nueva factura" → una fila por UUID, mismo
+    TipoRelacion 04 — CFDI 4.0 admite varios `CfdiRelacionado` bajo un mismo tipo."""
+    uuid_a = "71c9ab6e-0018-4010-9f6f-5b1c80aa8540"
+    uuid_b = "a2b3c4d5-6e7f-4081-9a0b-1c2d3e4f5061"
+    texto = (
+        TimbradoExportPacV40()
+        .exportar(_datos_completos(folios_fiscales_relacionados=(uuid_a, uuid_b)))
+        .decode("cp1252")
+    )
+    assert f"04               {uuid_a}" in texto
+    assert f"04               {uuid_b}" in texto
 
 
 # ── Lo que NO se puede llenar todavía ─────────────────────────────────────────
@@ -252,6 +266,64 @@ def test_reporta_los_domicilios_cuando_faltan(datos: DatosTimbrado) -> None:
     faltantes = TimbradoExportPacV40().campos_faltantes(sin_domicilios)
     assert any("domicilio del emisor" in f for f in faltantes)
     assert any("domicilio del receptor" in f for f in faltantes)
+
+
+# ── Domicilio estructurado (ADR-059) ──────────────────────────────────────────
+_DOMICILIO = DomicilioFiscal(
+    calle="Av. Constituyentes",
+    numero_exterior="1154",
+    numero_interior="3",
+    colonia="Lomas Altas",
+    localidad="Ciudad de México",
+    referencia="Entre Reforma y Palmas",
+    municipio="Miguel Hidalgo",
+    estado="Ciudad de México",
+    pais="MEX",
+    codigo_postal="11950",
+)
+
+
+def test_domicilio_estructurado_llena_los_campos_desglosados() -> None:
+    """Con `emisor_domicilio`/`receptor_domicilio` (ADR-059), el layout deja de recibir
+    todo apachurrado en `Referencia` y llena Calle/Colonia/Municipio/… de verdad."""
+    datos = _datos_completos(emisor_domicilio=_DOMICILIO, receptor_domicilio=_DOMICILIO)
+    texto = TimbradoExportPacV40().exportar(datos).decode("cp1252")
+    assert "Calle            Av. Constituyentes" in texto
+    assert "NroExterior      1154" in texto
+    assert "Colonia          Lomas Altas" in texto
+    assert "Municipio        Miguel Hidalgo" in texto
+    assert "CodigoPostal     11950" in texto
+    # `campos_faltantes()` ya no reporta ninguno de los dos domicilios.
+    assert not [f for f in TimbradoExportPacV40().campos_faltantes(datos) if "domicilio" in f]
+
+
+def test_domicilio_estructurado_incompleto_sin_legacy_sigue_faltante() -> None:
+    """Si al domicilio desglosado le falta uno de los 5 campos mínimos (aquí `estado`) y
+    NO hay texto libre de respaldo, se sigue reportando como faltante."""
+    incompleto = DomicilioFiscal(
+        calle="Av. Constituyentes", colonia="Lomas Altas", municipio="Miguel Hidalgo",
+        codigo_postal="11950",
+    )
+    datos = _datos_completos(
+        emisor_domicilio=incompleto, emisor_direccion=None,
+        receptor_domicilio=None, receptor_direccion=None,
+    )
+    faltantes = TimbradoExportPacV40().campos_faltantes(datos)
+    assert any("domicilio del emisor" in f for f in faltantes)
+
+
+def test_domicilio_estructurado_incompleto_cae_al_texto_legacy() -> None:
+    """Sin los 5 campos mínimos, pero CON texto libre de respaldo, no se reporta faltante
+    — y el layout usa el texto libre en `Referencia` (mismo apaño de siempre)."""
+    incompleto = DomicilioFiscal(calle="Av. Constituyentes")  # le faltan 4 de los 5
+    datos = _datos_completos(
+        emisor_domicilio=incompleto, emisor_direccion="AV. CONSTITUYENTES 1154, CDMX",
+    )
+    assert not [
+        f for f in TimbradoExportPacV40().campos_faltantes(datos) if "domicilio del emisor" in f
+    ]
+    texto = TimbradoExportPacV40().exportar(datos).decode("cp1252")
+    assert "Referencia       AV. CONSTITUYENTES 1154, CDMX" in texto
 
 
 # ── Codificación: el punto abierto del layout ─────────────────────────────────

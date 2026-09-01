@@ -1866,4 +1866,143 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   planteó como un paso POSTERIOR: "esto lo usaremos para darle forma al archivo más
   adelante").
 
-[[Agregar aquí cada nueva decisión: ADR-060, ...]]
+### ADR-060 — El domicilio estructurado (ADR-059) llena de verdad `ExEmisorDomFiscal`/`ExReceptorDomFiscal` y `AGREGADOS.LugarExpedicion` (F2)
+- **Estado:** aceptada · **Fecha:** 2026-09-01 (F2).
+- **Contexto:** pendiente explícito de ADR-059 — el equipo pidió usar el domicilio
+  estructurado (Anunciante/EmpresaFacturadora, capturado por CP) para resolver 2 de
+  los "campos faltantes" del archivo plano: `ExEmisorDomFiscal.*` (antes SIEMPRE
+  reportado como faltante salvo que `direccion_empresa` — legacy, ya sin input —
+  tuviera algo) y `AGREGADOS.LugarExpedicion` (`codigo_postal_expedicion`, que
+  **nunca** se llenaba: no había ninguna fuente para él).
+- **Decisión:**
+  1. **Nuevo `DomicilioFiscal`** (`app/integrations/timbrado/port.py`), dataclass
+     congelado con los mismos 10 campos que `Ex*DomFiscal` del layout. `DatosTimbrado`
+     gana `emisor_domicilio`/`receptor_domicilio: DomicilioFiscal | None` — ADITIVOS,
+     `emisor_direccion`/`receptor_direccion` (texto libre) NO se quitan: siguen siendo
+     el respaldo para registros que aún no tienen domicilio estructurado.
+  2. **Un solo criterio de "completo"** (`DomicilioFiscal.esta_completo()`: calle,
+     colonia, municipio, estado y código postal — los 5 mínimos para que el layout
+     sirva; NroInterior/Referencia quedan opcionales, como en cualquier dirección
+     real): lo usan TANTO `campos_faltantes()` como el mapeo a `Ex*DomFiscal`, para
+     que nunca se mande un domicilio desglosado A MEDIAS — si no está completo, el
+     adaptador cae ENTERO al texto libre en `Referencia` (mismo apaño de ADR previos),
+     nunca mezcla ambos.
+  3. **`FacturaClienteService._datos_timbrado()`** arma `emisor_domicilio` siempre
+     desde `EmpresaFacturadora` (el emisor no cambia de identidad). El receptor es
+     más delicado: **solo se resuelve cuando el receptor de ESTA factura es el
+     Anunciante** (facturación directa, mismo criterio que `create()` para elegir
+     razón social/RFC) — si es la Agencia, `receptor_domicilio` queda `None` a
+     propósito, porque `Agencia` TODAVÍA no tiene domicilio estructurado (ADR-059
+     solo cubrió Anunciante/EmpresaFacturadora); cae al texto libre de
+     `direccion_facturacion`, sin cambios.
+  4. **`AGREGADOS.LugarExpedicion`** = el código postal del domicilio fiscal del
+     emisor (`emisor.codigo_postal`) — es un dato SAT estándar (de dónde se expide
+     el CFDI), no una constante nueva que capturar aparte. Se resuelve en el mismo
+     lugar que `emisor_domicilio`.
+- **Consecuencias:** cambios acotados a `port.py`/`adapter_pac_v40.py`/
+  `factura_cliente.py`. Backend: 195 pruebas (8 nuevas: 4 a nivel adaptador con
+  `DomicilioFiscal` directo, 3 a nivel servicio con `EmpresaFacturadora`/`Anunciante`
+  reales vía el endpoint `archivo-plano`, cubriendo emisor completo, receptor vía
+  agencia sin domicilio y receptor directo con domicilio) en verde, `ruff` limpio.
+  Verificado en vivo contra RDS con una factura real (`B-001002TYU`, "Radio Oro
+  México") cuyo emisor ya tenía domicilio capturado con el componente de ADR-059: el
+  archivo pasó de 7 campos faltantes a 5 (los que quedan —Serie, UsoCFDI,
+  ClaveProdServ, ClaveUnidad, MedioPago— son de catálogo, no de domicilio; corrección
+  aparte).
+
+### ADR-061 — Los últimos 5 campos faltantes del PAC: Serie derivada + catálogos sembrados con valores reales (F2)
+- **Estado:** aceptada · **Fecha:** 2026-09-01 (F2).
+- **Contexto:** con ADR-060 resuelto, quedaban 5 campos: `IdDoc.Serie`,
+  `AGREGADOS.UsoCFDI`, `Detalle.ClaveProdServ`, `Detalle.ClaveUnidad / U.MED`,
+  `AGREGADOS.MedioPago`. Investigación en vivo contra RDS: `Serie`/`ClaveProdServ`/
+  `ClaveUnidad` con el grupo de `ConstantesSistema` **vacío** (0 filas); `UsoCFDI` y
+  `FormaPago` (el grupo se llama así; el layout lo llama `MedioPago`) con **varias**
+  activas cada uno — por diseño (`_constante_unica()`, ADR previo) no se adivina entre
+  varias. Se confirmaron 3 decisiones con el equipo antes de tocar nada (no eran
+  ambigüedades que se resuelven solas):
+  1. **Serie: NO es una constante, se deriva del propio número de factura.** Las
+     facturas reales ya siguen la convención `<Serie>-<folio>` ("A-0010890",
+     "B-001002TYU") — la Serie SIEMPRE fue ese prefijo, solo que el sistema la
+     buscaba en el lugar equivocado (un catálogo vacío en vez del propio dato ya
+     capturado).
+  2. **ClaveProdServ (82101601) y ClaveUnidad (E48): sembrados con el valor REAL** del
+     archivo de producción de referencia de OIR
+     (`docs/referencias/ejemplo_archivo_plano_..._V40 (2).txt`), no inventados — OIR
+     solo vende un tipo de servicio (publicidad en radio/TV), así que un valor único
+     por catálogo es correcto, no una simplificación de conveniencia.
+  3. **UsoCFDI (G03 "Gastos en general") y MedioPago/FormaPago (01 "Efectivo") como
+     default único.** El equipo confirmó que prácticamente no varía por factura; se
+     desactivaron las demás constantes de cada grupo (G01/G07 de UsoCFDI; "03"
+     Transferencia de FormaPago) — y de paso se descubrió y desactivó una fila de
+     **datos de prueba** colada en el grupo FormaPago (clave `"G03"`, descripción
+     literal "Prueba misma clave otro grupo" — una clave con formato de UsoCFDI metida
+     en el catálogo equivocado).
+- **Decisión:**
+  1. Nueva función `_serie_desde_numero()` (`factura_cliente.py`): parte
+     `numero_factura` en el primer `"-"`, recorta espacios, `None` si no hay guion.
+     Reemplaza `self._constante_unica("Serie")` en `_datos_timbrado()` — el grupo
+     `Serie` de `GrupoConstante` se deja intacto (nadie lo borra ni deja de poder
+     usarlo), solo deja de ser la fuente de este campo.
+  2. Las 2 constantes nuevas y las 4 desactivaciones se hicieron **vía los endpoints
+     normales de `ConstantesSistema`** (`POST /constantes`,
+     `POST /constantes/{id}/estado`) contra RDS — nunca con SQL directo, mismo
+     criterio que el resto de correcciones de datos de esta sesión.
+- **Consecuencias:** cambio de código acotado a una función + una línea en
+  `_datos_timbrado()`. Backend: 201 pruebas (7 nuevas: 6 casos de
+  `_serie_desde_numero` parametrizados + 1 assert actualizado que ya no esperaba
+  Serie vacía) en verde, `ruff` limpio. **Verificado en vivo contra RDS con la misma
+  factura real de ADR-060 (`B-001002TYU`): el archivo pasó de 5 campos faltantes a
+  CERO** — `Serie=B` (derivada), `ClaveProdServ=82101601`, `ClaveUnidad=E48`,
+  `UsoCFDI=G03`, `MedioPago=01`, confirmados campo por campo en el archivo
+  descargado.
+
+### ADR-062 — "Factura relacionada" pasa de self-FK único a relación N:N (F2)
+- **Estado:** aceptada · **Fecha:** 2026-09-01 (F2).
+- **Contexto:** la pantalla aprobada de "Nueva factura" (`Fase_2_-_Facturacion.html`)
+  incluye un combo "Factura relacionada (si aplica)" que nunca se había construido en el
+  código real — el campo `factura_relacionada_id` solo existía en el modelo/tests, sin
+  UI. El equipo pidió el campo con dos requisitos: que muestre las facturas del MISMO
+  anunciante (buscable) y que permita **elegir varias a la vez** — el objetivo de negocio
+  es control/visibilidad (ver que una factura de ese cliente se canceló, o que hay más
+  facturas que contemplar), no solo la sustitución fiscal de un único CFDI previo que la
+  spec BD v2 modelaba con el self-FK.
+  Selección múltiple de verdad requiere cambiar la CARDINALIDAD de la relación (spec BD
+  v2 la define como un solo campo), así que se confirmó con el equipo antes de tocar el
+  esquema (regla de CLAUDE.md §2.3/§13): tabla N:N nueva, vs. mantener el FK único y solo
+  agregar buscador + filtro por anunciante (selección única). Se eligió la tabla N:N —
+  técnicamente respaldada porque **CFDI 4.0 sí admite varios `CfdiRelacionado` bajo un
+  mismo `TipoRelacion`**, y el layout del PAC (`adapter_pac_v40._relacionados()`) ya
+  emitía esa sección como una fila por documento (cabecera `TipoRelacion`/`UUID` +
+  filas), así que extenderla a N filas no cambió el formato, solo el bucle. Se verificó
+  en RDS que ninguna `FacturaCliente` real tenía `factura_relacionada_id` capturado (el
+  campo nunca se expuso en UI), así que no hubo datos que migrar.
+- **Decisión:**
+  1. Tabla nueva `factura_cliente_relacionada` (`factura_id`, `relacionada_id`, PK
+     compuesta, `CHECK factura_id <> relacionada_id`, 2 FK a `factura_cliente`).
+     Migración `55d7f36d93fd` elimina la columna/FK únicos y crea la tabla.
+  2. `FacturaClienteCreate.facturas_relacionadas_ids: list[UUID]` (antes
+     `factura_relacionada_id: UUID | None`); el servicio deduplica, valida que cada id
+     exista y, tras el alta, inserta las filas de la tabla N:N en la misma transacción.
+  3. `FacturaClienteRead.facturas_relacionadas_ids` se resuelve por lote (mismo patrón
+     que `empresa_facturadora`/`folio_orden`: una consulta por página, no N+1).
+  4. `DatosTimbrado.folio_fiscal_relacionado: str | None` → `folios_fiscales_relacionados:
+     tuple[str, ...]`; el servicio junta los `folio_fiscal_sat` de TODAS las relacionadas
+     (omite las que aún no tienen folio) y el adaptador V40 emite una fila `TipoRelacion
+     04` por cada una.
+  5. `OrdenPorFacturarRead` gana `anunciante_id` (antes solo el nombre resuelto): el
+     formulario lo necesita para filtrar el combo por el anunciante de la orden que se
+     está facturando (`GET /facturacion/clientes?anunciante_id=...`, filtro que YA
+     existía en el repositorio pero no se usaba desde el front).
+  6. Frontend: componente nuevo `MultiSearchableSelect` (`shared/ui`, mismo patrón que
+     `SearchableSelect` pero con chips removibles) + hook `useFacturasDelAnunciante`.
+     El combo NO filtra por `estado_facturacion` — muestra también las canceladas a
+     propósito, que es justo el control que pidió negocio.
+- **Consecuencias:** cambio de esquema real (migración aplicada en RDS: tabla nueva +
+  columna vieja eliminada, sin pérdida de datos porque estaba vacía). Backend: 3 pruebas
+  nuevas de alta (varias relacionadas, deduplicación, id inexistente → 400) + 1 de
+  `ordenes-por-facturar` (expone `anunciante_id`) + 2 del adaptador PAC (una y varias
+  `TipoRelacion 04`), todas en verde junto con las 210 preexistentes; `ruff` limpio.
+  Frontend: `tsc`/`eslint` limpios, 1 prueba nueva en `ListasParaFacturarPage.test.tsx`
+  que cubre el filtro por anunciante y la selección múltiple. El self-FK único que
+  describía la spec original queda reemplazado, no extendido — es la única desviación de
+  este ADR respecto al modelo de datos v2, documentada aquí como pide la regla de oro.

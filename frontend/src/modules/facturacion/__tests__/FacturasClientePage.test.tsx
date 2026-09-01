@@ -44,7 +44,6 @@ const base: FacturaCliente = {
   numero_pedido: null,
   referencia_adicional: null,
   orden_id: "oc-1",
-  factura_relacionada_id: null,
   empresa_facturadora_id: "e-1",
   anunciante_id: "an-1",
   agencia_id: null,
@@ -75,6 +74,7 @@ const base: FacturaCliente = {
   updated_at: null,
   empresa_facturadora: "OIR Comercial",
   folio_orden: "OC-2026-0041",
+  facturas_relacionadas_ids: [],
 };
 
 function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void = vi.fn()) {

@@ -16,10 +16,11 @@ from app.integrations.timbrado.adapter_pac_v40 import (
     ErrorCodificacionTimbrado,
     TimbradoExportPacV40,
 )
-from app.integrations.timbrado.port import DatosTimbrado, TimbradoExportPort
+from app.integrations.timbrado.port import DatosTimbrado, DomicilioFiscal, TimbradoExportPort
 
 __all__ = [
     "DatosTimbrado",
+    "DomicilioFiscal",
     "ErrorCodificacionTimbrado",
     "TimbradoExportPacV40",
     "TimbradoExportPort",

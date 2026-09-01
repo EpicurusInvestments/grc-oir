@@ -44,7 +44,7 @@ from app.core.config import settings
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
 from app.core.errors import ConflictError, DomainError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
-from app.integrations.timbrado import DatosTimbrado, get_timbrado_export
+from app.integrations.timbrado import DatosTimbrado, DomicilioFiscal, get_timbrado_export
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
@@ -76,6 +76,15 @@ _ESTADOS_SQL = ", ".join(f"'{e.value}'" for e in EstadoFacturacion)
 # la tasa de IVA desde configuración central, nunca repetida como literal en el código.
 CENTAVOS = Decimal("0.01")
 IVA_RATE = Decimal(str(settings.iva_rate))
+
+
+def _serie_desde_numero(numero_factura: str) -> str | None:
+    """`IdDoc.Serie` del PAC (ADR-060 bis): la letra/prefijo ANTES del guion en el propio
+    número de factura ("A-0010890" → "A"), no una constante aparte que mantener — las
+    facturas reales ya siguen esa convención. `None` si el número no trae guion (se
+    reporta como faltante igual que antes)."""
+    prefijo, guion, _resto = numero_factura.partition("-")
+    return prefijo.strip() or None if guion else None
 
 
 # ── Modelo ──────────────────────────────────────────────────────────────────────
@@ -138,16 +147,6 @@ class FacturaCliente(Base):
     orden_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
         ForeignKey("orden_cliente.orden_id", name="fk_factura_cliente_orden", ondelete="NO ACTION")
-    )
-    # Self-FK (spec): nota de crédito / complemento de una factura previa.
-    factura_relacionada_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(),
-        ForeignKey(
-            "factura_cliente.factura_id",
-            name="fk_factura_cliente_relacionada",
-            ondelete="NO ACTION",
-        ),
-        default=None,
     )
 
     # Heredados de la OrdenCliente al preparar (spec: origen "Derivado").
@@ -226,6 +225,40 @@ class FacturaCliente(Base):
     )
 
 
+class FacturaClienteRelacionada(Base):
+    """Relación N:N entre facturas del mismo anunciante (ADR-062).
+
+    Reemplaza el self-FK único que tenía la spec: la pantalla de "Nueva factura" necesita
+    marcar VARIAS facturas relacionadas (control de sustituciones/canceladas del cliente),
+    y CFDI 4.0 soporta varios `CfdiRelacionado` bajo un mismo `TipoRelacion` — el PAC recibe
+    una fila por cada una (ver `_relacionados()` en el adaptador V40).
+    """
+
+    __tablename__ = "factura_cliente_relacionada"
+    __table_args__ = (
+        CheckConstraint(
+            "factura_id <> relacionada_id", name="ck_factura_cliente_relacionada_distinta"
+        ),
+    )
+
+    factura_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_cliente.factura_id", name="fk_fc_relacionada_factura", ondelete="NO ACTION"
+        ),
+        primary_key=True,
+    )
+    relacionada_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_cliente.factura_id",
+            name="fk_fc_relacionada_relacionada",
+            ondelete="NO ACTION",
+        ),
+        primary_key=True,
+    )
+
+
 # ── Schemas de lectura (Tanda 1) ─────────────────────────────────────────────────
 class FacturaClienteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -235,7 +268,6 @@ class FacturaClienteRead(BaseModel):
     numero_pedido: str | None = None
     referencia_adicional: str | None = None
     orden_id: uuid.UUID
-    factura_relacionada_id: uuid.UUID | None = None
     empresa_facturadora_id: uuid.UUID
     anunciante_id: uuid.UUID
     agencia_id: uuid.UUID | None = None
@@ -272,6 +304,9 @@ class FacturaClienteRead(BaseModel):
     #: detalle (ADR-055) — mismo criterio que `empresa_facturadora`: se resuelve en el
     #: servicio, en una sola consulta por página, no es columna ni relación del ORM.
     folio_orden: str | None = None
+    #: IDs de las facturas relacionadas (ADR-062: N:N, no columna de esta tabla). Se
+    #: resuelve en el servicio con el mismo patrón por lote que `empresa_facturadora`.
+    facturas_relacionadas_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class FacturaClienteListParams(ListParams):
@@ -333,7 +368,9 @@ class FacturaClienteCreate(BaseModel):
     direccion_facturacion: str | None = None
     numero_pedido: str | None = Field(default=None, max_length=50)
     referencia_adicional: str | None = Field(default=None, max_length=150)
-    factura_relacionada_id: uuid.UUID | None = None
+    #: N:N (ADR-062): facturas del mismo anunciante que esta factura marca como
+    #: relacionadas (sustitución/control de canceladas). El servicio valida que existan.
+    facturas_relacionadas_ids: list[uuid.UUID] = Field(default_factory=list)
     descripcion_factura: str = Field(min_length=1)
     observaciones_factura: str | None = None
     fecha_factura: date
@@ -450,20 +487,46 @@ class FacturaClienteService(
         ).all()
         return {fila[0]: fila[1] for fila in filas}
 
-    def _con_folio_orden(self, leida: FacturaClienteRead) -> FacturaClienteRead:
-        """Enriquece UNA lectura (alta/transiciones) con el folio de su orden — mismo
-        dato que `list()`/`get()` resuelven en lote, aquí en una sola consulta porque
-        es un solo registro."""
+    def _relacionadas_de(
+        self, facturas: list[FacturaClienteRead]
+    ) -> dict[uuid.UUID, list[uuid.UUID]]:
+        """IDs de facturas relacionadas de una página, en UNA consulta (ADR-062: N:N, no
+        columna de esta tabla) — mismo patrón por lote que `_nombres_emisoras`."""
+        ids = {f.factura_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(
+                FacturaClienteRelacionada.factura_id, FacturaClienteRelacionada.relacionada_id
+            ).where(FacturaClienteRelacionada.factura_id.in_(ids))
+        ).all()
+        resultado: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for factura_id, relacionada_id in filas:
+            resultado.setdefault(factura_id, []).append(relacionada_id)
+        return resultado
+
+    def _enriquecida(self, leida: FacturaClienteRead) -> FacturaClienteRead:
+        """Enriquece UNA lectura (alta/transiciones) con el folio de su orden y sus
+        facturas relacionadas — mismos datos que `list()`/`get()` resuelven en lote, aquí
+        en una sola consulta cada uno porque es un solo registro. Sin esto, la respuesta
+        de una transición (enviar a timbrado, timbrar, entregar, cancelar) mostraría
+        `facturas_relacionadas_ids` vacío aunque la relación exista, hasta el próximo GET
+        — mismo tipo de bug que `folio_orden` ya resolvía (ADR-055)."""
         leida.folio_orden = self._folios_orden([leida]).get(leida.orden_id)
+        leida.facturas_relacionadas_ids = self._relacionadas_de([leida]).get(
+            leida.factura_id, []
+        )
         return leida
 
     def list(self, params: ListParams) -> Page[FacturaClienteRead]:
         pagina = super().list(params)
         nombres = self._nombres_emisoras(pagina.items)
         folios = self._folios_orden(pagina.items)
+        relacionadas = self._relacionadas_de(pagina.items)
         for f in pagina.items:
             f.empresa_facturadora = nombres.get(f.empresa_facturadora_id)
             f.folio_orden = folios.get(f.orden_id)
+            f.facturas_relacionadas_ids = relacionadas.get(f.factura_id, [])
         return pagina
 
     def get(self, id_: Any) -> FacturaClienteRead:
@@ -471,8 +534,7 @@ class FacturaClienteService(
         leida.empresa_facturadora = self._nombres_emisoras([leida]).get(
             leida.empresa_facturadora_id
         )
-        leida.folio_orden = self._folios_orden([leida]).get(leida.orden_id)
-        return leida
+        return self._enriquecida(leida)
 
     # ── Captura ───────────────────────────────────────────────────────────────
     def create(self, data: FacturaClienteCreate, usuario: CurrentUser) -> FacturaClienteRead:
@@ -521,13 +583,15 @@ class FacturaClienteService(
                 "La cuenta contable indicada no existe.",
                 detalles={"cuenta_contable_id": str(data.cuenta_contable_id)},
             )
-        if data.factura_relacionada_id is not None and (
-            db.get(FacturaCliente, data.factura_relacionada_id) is None
-        ):
-            raise DomainError(
-                "La factura relacionada indicada no existe.",
-                detalles={"factura_relacionada_id": str(data.factura_relacionada_id)},
-            )
+        # N:N (ADR-062): cada id debe existir. Se deduplica aquí (no en el schema) porque
+        # el orden de captura no importa y el combo del front ya evita repetidos.
+        relacionadas_ids = list(dict.fromkeys(data.facturas_relacionadas_ids))
+        for rid in relacionadas_ids:
+            if db.get(FacturaCliente, rid) is None:
+                raise DomainError(
+                    "Una de las facturas relacionadas indicadas no existe.",
+                    detalles={"factura_relacionada_id": str(rid)},
+                )
 
         # Receptor: anunciante o agencia según `facturacion_directa_cliente` (spec).
         if oc.facturacion_directa_cliente or oc.agencia_id is None:
@@ -545,10 +609,16 @@ class FacturaClienteService(
         iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
 
         capturado = data.model_dump(
-            exclude={"razon_social_facturacion", "rfc_facturacion", "direccion_facturacion"}
+            exclude={
+                "razon_social_facturacion",
+                "rfc_facturacion",
+                "direccion_facturacion",
+                "facturas_relacionadas_ids",
+            }
         )
+        nuevo_id = uuid4()
         obj = FacturaCliente(
-            factura_id=uuid4(),
+            factura_id=nuevo_id,
             **capturado,
             # ── heredados de la OC (spec: origen "Derivado") ──
             empresa_facturadora_id=oc.empresa_facturadora_id,
@@ -567,9 +637,11 @@ class FacturaClienteService(
             created_by=resolver_usuario_id(db, usuario.username),
         )
         db.add(obj)
+        for rid in relacionadas_ids:
+            db.add(FacturaClienteRelacionada(factura_id=nuevo_id, relacionada_id=rid))
         db.commit()
         db.refresh(obj)
-        return self._con_folio_orden(self._to_read(obj))
+        return self._enriquecida(self._to_read(obj))
 
     def update(
         self, id_: Any, data: FacturaClienteUpdate, usuario: CurrentUser
@@ -586,7 +658,7 @@ class FacturaClienteService(
                 detalles={"estado_facturacion": obj.estado_facturacion},
             )
         payload = data.model_dump(exclude_unset=True)
-        return self._con_folio_orden(self._to_read(self._repo.update(obj, payload)))
+        return self._enriquecida(self._to_read(self._repo.update(obj, payload)))
 
     # ── Máquina de estados ────────────────────────────────────────────────────
     def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
@@ -623,8 +695,28 @@ class FacturaClienteService(
         )
         return claves[0] if len(claves) == 1 else None
 
+    def _domicilio_de(self, entidad: Any) -> DomicilioFiscal | None:
+        """Domicilio estructurado (ADR-059) de un `Anunciante`/`EmpresaFacturadora`, o
+        `None` si el registro no lo tiene capturado así todavía (registro viejo, o el
+        objeto no existe) — el llamador cae al texto libre legacy en ese caso."""
+        if entidad is None:
+            return None
+        return DomicilioFiscal(
+            calle=entidad.calle,
+            numero_exterior=entidad.numero_exterior,
+            numero_interior=entidad.numero_interior,
+            colonia=entidad.colonia,
+            localidad=entidad.localidad,
+            referencia=entidad.referencia_domicilio,
+            municipio=entidad.municipio,
+            estado=entidad.estado,
+            pais=entidad.pais or "MEX",
+            codigo_postal=entidad.codigo_postal,
+        )
+
     def _datos_timbrado(self, obj: FacturaCliente) -> DatosTimbrado:
         """Resuelve TODO lo que el layout necesita. La integracion no consulta la base."""
+        from app.modules.catalogos.anunciante import Anunciante
         from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
         from app.modules.ordenes.orden_cliente import OrdenCliente
 
@@ -632,12 +724,32 @@ class FacturaClienteService(
         emisor = db.get(EmpresaFacturadora, obj.empresa_facturadora_id)
         orden = db.get(OrdenCliente, obj.orden_id)
 
-        # Folio fiscal de la factura sustituida (self-FK): al PAC va el UUID del CFDI
-        # previo, no nuestro identificador interno.
-        folio_relacionado = None
-        if obj.factura_relacionada_id is not None:
-            previa = db.get(FacturaCliente, obj.factura_relacionada_id)
-            folio_relacionado = previa.folio_fiscal_sat if previa else None
+        # El receptor de ESTA factura puede ser el Anunciante (directo) o la Agencia —
+        # mismo criterio que `create()` para elegir razón social/RFC. El domicilio
+        # estructurado (ADR-059) solo existe hoy en Anunciante/EmpresaFacturadora, NO en
+        # Agencia: si el receptor es la agencia, cae al texto libre de `direccion_facturacion`.
+        receptor_domicilio = None
+        if orden is not None and (orden.facturacion_directa_cliente or orden.agencia_id is None):
+            receptor_domicilio = self._domicilio_de(db.get(Anunciante, obj.anunciante_id))
+
+        # Folios fiscales de las facturas relacionadas (ADR-062: N:N): al PAC van los UUID
+        # de los CFDI previos, no nuestros identificadores internos. Una relacionada sin
+        # timbrar todavía (folio_fiscal_sat NULL) se omite: no hay UUID que mandar.
+        relacionadas_ids = [
+            r.relacionada_id
+            for r in db.scalars(
+                select(FacturaClienteRelacionada).where(
+                    FacturaClienteRelacionada.factura_id == obj.factura_id
+                )
+            ).all()
+        ]
+        folios_relacionados = tuple(
+            f.folio_fiscal_sat
+            for f in db.scalars(
+                select(FacturaCliente).where(FacturaCliente.factura_id.in_(relacionadas_ids))
+            ).all()
+            if f.folio_fiscal_sat
+        )
 
         return DatosTimbrado(
             numero_factura=obj.numero_factura,
@@ -656,9 +768,11 @@ class FacturaClienteService(
             emisor_nombre=emisor.nombre_empresa if emisor else "",
             emisor_rfc=emisor.rfc_empresa if emisor else "",
             emisor_direccion=emisor.direccion_empresa if emisor else None,
+            emisor_domicilio=self._domicilio_de(emisor),
             receptor_nombre=obj.razon_social_facturacion,
             receptor_rfc=obj.rfc_facturacion,
             receptor_direccion=obj.direccion_facturacion,
+            receptor_domicilio=receptor_domicilio,
             orden_folio=orden.folio_orden if orden else None,
             orden_numero_cliente=orden.numero_orden_cliente if orden else None,
             orden_producto=orden.producto if orden else None,
@@ -669,15 +783,20 @@ class FacturaClienteService(
             ),
             info_cuenta_pago=obj.info_cuenta_pago,
             metodo_pago_clave=obj.metodo_pago_clave,
-            folio_fiscal_relacionado=folio_relacionado,
+            folios_fiscales_relacionados=folios_relacionados,
+            # Serie: del propio número de factura, no de un catálogo (ADR-060 bis).
+            serie=_serie_desde_numero(obj.numero_factura),
             # Constantes fiscales: solo si el catalogo no deja lugar a dudas.
-            serie=self._constante_unica("Serie"),
             regimen_fiscal_emisor=self._constante_unica("RegimenFiscal"),
             regimen_fiscal_receptor=self._constante_unica("RegimenFiscal"),
             uso_cfdi=self._constante_unica("UsoCFDI"),
             clave_prod_serv=self._constante_unica("ClaveProdServ"),
             clave_unidad=self._constante_unica("ClaveUnidad"),
             forma_pago_clave=self._constante_unica("FormaPago"),
+            # AGREGADOS.LugarExpedicion = CP de dónde se expide el CFDI (catálogo SAT
+            # c_CodigoPostal) — el del domicilio fiscal del emisor (ADR-059), no una
+            # constante nueva que capturar aparte.
+            codigo_postal_expedicion=emisor.codigo_postal if emisor else None,
         )
 
     # `Sequence[str]` y no `list[str]`: dentro de esta clase el nombre `list` refiere al
@@ -707,7 +826,7 @@ class FacturaClienteService(
             obj.estado_facturacion = EstadoFacturacion.ENVIADA_A_TIMBRADO.value
             self._repo.db.commit()
             self._repo.db.refresh(obj)
-        return self._con_folio_orden(self._to_read(obj))
+        return self._enriquecida(self._to_read(obj))
 
     def timbrar(
         self, factura_id: uuid.UUID, input_: TimbrarIn, usuario: CurrentUser
@@ -730,7 +849,7 @@ class FacturaClienteService(
         db = self._repo.db
         if not self._validar_transicion(obj, EstadoFacturacion.TIMBRADA.value):
             # ya timbrada: idempotente, no re-dispara el handoff
-            return self._con_folio_orden(self._to_read(obj))
+            return self._enriquecida(self._to_read(obj))
 
         obj.folio_fiscal_sat = input_.folio_fiscal_sat
         obj.fecha_timbrado = input_.fecha_timbrado
@@ -746,7 +865,7 @@ class FacturaClienteService(
 
         db.commit()
         db.refresh(obj)
-        return self._con_folio_orden(self._to_read(obj))
+        return self._enriquecida(self._to_read(obj))
 
     def entregar(
         self, factura_id: uuid.UUID, input_: EntregarIn, usuario: CurrentUser
@@ -757,7 +876,7 @@ class FacturaClienteService(
             obj.fecha_entrega_factura = input_.fecha_entrega_factura or date.today()
             self._repo.db.commit()
             self._repo.db.refresh(obj)
-        return self._con_folio_orden(self._to_read(obj))
+        return self._enriquecida(self._to_read(obj))
 
     def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
         """Cancelación desde los 4 primeros estados, **revirtiendo el handoff** (ADR-047).
@@ -780,7 +899,7 @@ class FacturaClienteService(
         db = self._repo.db
         if not self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
             # ya cancelada: idempotente, no re-revierte
-            return self._con_folio_orden(self._to_read(obj))
+            return self._enriquecida(self._to_read(obj))
 
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
 
@@ -791,7 +910,7 @@ class FacturaClienteService(
 
         db.commit()
         db.refresh(obj)
-        return self._con_folio_orden(self._to_read(obj))
+        return self._enriquecida(self._to_read(obj))
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
@@ -959,6 +1078,7 @@ class OrdenPorFacturarRead(BaseModel):
     orden_id: uuid.UUID
     folio_orden: str
     numero_orden_cliente: str
+    anunciante_id: uuid.UUID
     anunciante: str
     #: `None` = trato directo con el anunciante, sin agencia de por medio.
     agencia: str | None = None
@@ -999,6 +1119,7 @@ class OrdenesPorFacturarRepository:
                 OrdenCliente.orden_id,
                 OrdenCliente.folio_orden,
                 OrdenCliente.numero_orden_cliente,
+                OrdenCliente.anunciante_id,
                 Anunciante.nombre_comercial.label("anunciante"),
                 Agencia.nombre_agencia.label("agencia"),
                 Vendedor.nombre_vendedor.label("vendedor"),
