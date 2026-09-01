@@ -107,6 +107,43 @@ def test_empresa_baja_logica(empresa_svc: EmpresaFacturadoraService) -> None:
     assert empresa_svc.list(ListParams(activo=False)).total == 1
 
 
+# ── Domicilio estructurado (ADR-059) ─────────────────────────────────────────────
+def test_empresa_domicilio_estructurado_se_captura_y_lee(
+    empresa_svc: EmpresaFacturadoraService,
+) -> None:
+    e = empresa_svc.create(
+        EmpresaFacturadoraCreate(
+            nombre_empresa="Radio México",
+            rfc_empresa="GRC950101AB1",
+            calle="Av. Constituyentes",
+            numero_exterior="1154",
+            colonia="Lomas Altas",
+            municipio="Miguel Hidalgo",
+            estado="Ciudad de México",
+            codigo_postal="11950",
+        ),
+        ADMIN,
+    )
+    leido = empresa_svc.get(e.empresa_facturadora_id)
+    assert leido.calle == "Av. Constituyentes"
+    assert leido.colonia == "Lomas Altas"
+    assert leido.codigo_postal == "11950"
+    assert leido.pais == "MEX"
+    # `direccion_empresa` (legacy) sigue existiendo y no interfiere con lo nuevo.
+    assert leido.direccion_empresa is None
+
+
+def test_empresa_direccion_legacy_convive_con_domicilio_estructurado(
+    empresa_svc: EmpresaFacturadoraService,
+) -> None:
+    """Un registro viejo (solo `direccion_empresa`, sin los campos nuevos) se sigue leyendo bien."""
+    e = _empresa(empresa_svc)  # usa direccion_empresa="CDMX", ver helper arriba
+    leido = empresa_svc.get(e.empresa_facturadora_id)
+    assert leido.direccion_empresa == "CDMX"
+    assert leido.calle is None
+    assert leido.codigo_postal is None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Vendedor (parámetro sensible → auditoría, reutilizando el mecanismo de F0-03)
 # ══════════════════════════════════════════════════════════════════════════════

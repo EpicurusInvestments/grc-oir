@@ -20,12 +20,16 @@ marcas y sus contratos. Es la base de la captura de órdenes (F1) y de la factur
 **`porcentaje_comision_agencia_default` (NUMERIC(5,2) · PARÁMETRO SENSIBLE)**, `activo`,
 `created_at`, `updated_at`. No accede al sistema.
 
-### Anunciante (14 campos)
+### Anunciante (14 campos + 10 de domicilio estructurado, ADR-059)
 `anunciante_id` (PK), `agencia_id` (FK NULL — null si trata directo), `nombre_comercial`
 (NOT NULL), `nombre_fiscal` (NOT NULL — el que aparece en la factura), `rfc_anunciante`
-(NOT NULL, 12-13), `localizacion`, `referencia_anunciante`, `contacto_nombre`,
-`contacto_email`, `contacto_telefono`, **`dias_credito_default` (INTEGER · PARÁMETRO
-SENSIBLE)**, `activo`, `created_at`, `updated_at`.
+(NOT NULL, 12-13), `localizacion` (legacy, ya no tiene input propio — ver abajo),
+`referencia_anunciante`, `contacto_nombre`, `contacto_email`, `contacto_telefono`,
+**`dias_credito_default` (INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
+`updated_at`. **Domicilio estructurado** (desviación aditiva, ADR-059): `calle`,
+`numero_exterior`, `numero_interior`, `colonia`, `localidad`, `referencia_domicilio`,
+`municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta al escribir el CP
+(catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a mano.
 
 ### Marca (5 campos + `updated_at`)
 `marca_id` (PK), `anunciante_id` (FK NOT NULL), `nombre_marca` (NOT NULL), `activo`,
@@ -144,6 +148,8 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 - **ADR-020** — Puerto de almacenamiento con subida S3 diferida (implementada por ADR-027).
 - **ADR-021** — Lectura acotada del historial de auditoría por entidad.
 - **ADR-027** — Integración REAL de S3: adaptador S3 + selección local/S3 por env + endpoints de adjuntos.
+- **ADR-059** — Domicilio estructurado con autocompletado por código postal (Anunciante,
+  EmpresaFacturadora): 10 columnas nuevas + catálogo `AsentamientoPostal` (SEPOMEX).
 
 ## Pendientes / dudas
 - (Resuelto) Marca → solo anidada en Anunciante, sin pantalla propia.

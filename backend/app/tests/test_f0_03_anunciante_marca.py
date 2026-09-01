@@ -297,6 +297,53 @@ def test_historial_anunciante(anunciante_svc: AnuncianteService) -> None:
     assert ("30", "45") in pares  # edición
 
 
+# ── Domicilio estructurado (ADR-059) ─────────────────────────────────────────────
+def test_domicilio_estructurado_se_captura_y_lee(anunciante_svc: AnuncianteService) -> None:
+    a = anunciante_svc.create(
+        AnuncianteCreate(
+            nombre_comercial="Refrescos SA",
+            nombre_fiscal="Refrescos SA de CV",
+            rfc_anunciante="RSA950101AB1",
+            calle="Av. Constituyentes",
+            numero_exterior="1154",
+            colonia="Lomas Altas",
+            municipio="Miguel Hidalgo",
+            estado="Ciudad de México",
+            codigo_postal="11950",
+        ),
+        ADMIN,
+    )
+    leido = anunciante_svc.get(a.anunciante_id)
+    assert leido.calle == "Av. Constituyentes"
+    assert leido.numero_exterior == "1154"
+    assert leido.colonia == "Lomas Altas"
+    assert leido.municipio == "Miguel Hidalgo"
+    assert leido.estado == "Ciudad de México"
+    assert leido.codigo_postal == "11950"
+    assert leido.pais == "MEX"  # default
+    # `localizacion` (legacy) sigue existiendo y no interfiere con lo nuevo.
+    assert leido.localizacion is None
+
+
+def test_localizacion_legacy_convive_con_domicilio_estructurado(
+    anunciante_svc: AnuncianteService,
+) -> None:
+    """Un registro viejo (solo `localizacion`, sin los campos nuevos) sigue leyéndose bien."""
+    a = anunciante_svc.create(
+        AnuncianteCreate(
+            nombre_comercial="Refrescos SA",
+            nombre_fiscal="Refrescos SA de CV",
+            rfc_anunciante="RSA950101AB1",
+            localizacion="Ciudad de México",
+        ),
+        ADMIN,
+    )
+    leido = anunciante_svc.get(a.anunciante_id)
+    assert leido.localizacion == "Ciudad de México"
+    assert leido.calle is None
+    assert leido.codigo_postal is None
+
+
 # ── Portabilidad a SQL Server (regresión ADR-014) ────────────────────────────────
 def test_filtro_directo_compila_is_null_para_sqlserver() -> None:
     """El filtro Directo usa `agencia_id IS NULL` (válido en SQL Server; ADR-014)."""

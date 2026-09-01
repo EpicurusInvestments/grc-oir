@@ -48,7 +48,10 @@ CAMPO_COMISION = "porcentaje_comision_agencia_default"
 def _normaliza_rfc(valor: str) -> str:
     v = valor.strip().upper()
     if not RFC_REGEX.match(v):
-        raise ValueError("RFC inválido: formato mexicano de 12-13 caracteres.")
+        raise ValueError(
+            "RFC inválido: debe ser 3-4 letras, 6 dígitos (fecha AAMMDD) y 3 caracteres "
+            "alfanuméricos (homoclave) — no cualquier texto de 12-13 caracteres."
+        )
     return v
 
 

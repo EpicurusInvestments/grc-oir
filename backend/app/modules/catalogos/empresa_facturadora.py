@@ -37,7 +37,10 @@ from app.shared.schemas import CatalogoReadBase
 def _normaliza_rfc(valor: str) -> str:
     v = valor.strip().upper()
     if not RFC_REGEX.match(v):
-        raise ValueError("RFC inválido: formato mexicano de 12-13 caracteres.")
+        raise ValueError(
+            "RFC inválido: debe ser 3-4 letras, 6 dígitos (fecha AAMMDD) y 3 caracteres "
+            "alfanuméricos (homoclave) — no cualquier texto de 12-13 caracteres."
+        )
     return v
 
 
@@ -48,8 +51,21 @@ class EmpresaFacturadora(Base):
     empresa_facturadora_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     nombre_empresa: Mapped[str] = mapped_column(Unicode(200), index=True)
     rfc_empresa: Mapped[str] = mapped_column(Unicode(13), unique=True, index=True)
-    # TEXT en la spec → NVARCHAR(MAX) en SQL Server (TEXT en SQLite).
+    # TEXT en la spec → NVARCHAR(MAX) en SQL Server (TEXT en SQLite). Queda SOLO para no
+    # perder lo ya capturado — desde ADR-059 la captura real es con los 10 campos
+    # estructurados de abajo (domicilio vía código postal, igual a los grupos
+    # ExEmisorDomFiscal/ExReceptorDomFiscal del layout del PAC). Ambos coexisten a propósito.
     direccion_empresa: Mapped[str | None] = mapped_column(UnicodeText(), default=None)
+    calle: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    numero_exterior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    numero_interior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    colonia: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    localidad: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    referencia_domicilio: Mapped[str | None] = mapped_column(Unicode(250), default=None)
+    municipio: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    estado: Mapped[str | None] = mapped_column(Unicode(100), default=None)
+    pais: Mapped[str | None] = mapped_column(Unicode(3), default="MEX")
+    codigo_postal: Mapped[str | None] = mapped_column(Unicode(5), default=None)
     activo: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
     # updated_at por uniformidad (ADR-011), como el resto de catálogos.
@@ -63,6 +79,16 @@ class EmpresaFacturadoraCreate(BaseModel):
     nombre_empresa: str = Field(min_length=1, max_length=200)
     rfc_empresa: str = Field(min_length=12, max_length=13)
     direccion_empresa: str | None = Field(default=None)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default="MEX", max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
 
     @field_validator("rfc_empresa")
     @classmethod
@@ -74,6 +100,16 @@ class EmpresaFacturadoraUpdate(BaseModel):
     nombre_empresa: str | None = Field(default=None, min_length=1, max_length=200)
     rfc_empresa: str | None = Field(default=None, min_length=12, max_length=13)
     direccion_empresa: str | None = Field(default=None)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default=None, max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
 
     @field_validator("rfc_empresa")
     @classmethod
@@ -88,6 +124,16 @@ class EmpresaFacturadoraRead(CatalogoReadBase):
     nombre_empresa: str
     rfc_empresa: str
     direccion_empresa: str | None = None
+    calle: str | None = None
+    numero_exterior: str | None = None
+    numero_interior: str | None = None
+    colonia: str | None = None
+    localidad: str | None = None
+    referencia_domicilio: str | None = None
+    municipio: str | None = None
+    estado: str | None = None
+    pais: str | None = None
+    codigo_postal: str | None = None
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────

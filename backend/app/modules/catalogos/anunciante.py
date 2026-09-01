@@ -53,7 +53,10 @@ CAMPO_DIAS_CREDITO = "dias_credito_default"
 def _normaliza_rfc(valor: str) -> str:
     v = valor.strip().upper()
     if not RFC_REGEX.match(v):
-        raise ValueError("RFC inválido: formato mexicano de 12-13 caracteres.")
+        raise ValueError(
+            "RFC inválido: debe ser 3-4 letras, 6 dígitos (fecha AAMMDD) y 3 caracteres "
+            "alfanuméricos (homoclave) — no cualquier texto de 12-13 caracteres."
+        )
     return v
 
 
@@ -75,7 +78,21 @@ class Anunciante(Base):
     # nombre_fiscal: el que aparece en la factura (puede diferir del comercial).
     nombre_fiscal: Mapped[str] = mapped_column(Unicode(250))
     rfc_anunciante: Mapped[str] = mapped_column(Unicode(13), index=True)
+    # `localizacion` (texto libre, spec original) queda SOLO para no perder lo ya
+    # capturado — desde ADR-059 la captura real es con los 10 campos estructurados de
+    # abajo (domicilio vía código postal, igual a los grupos ExEmisorDomFiscal/
+    # ExReceptorDomFiscal del layout del PAC). Ambos coexisten a propósito.
     localizacion: Mapped[str | None] = mapped_column(Unicode(250), default=None)
+    calle: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    numero_exterior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    numero_interior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    colonia: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    localidad: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    referencia_domicilio: Mapped[str | None] = mapped_column(Unicode(250), default=None)
+    municipio: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    estado: Mapped[str | None] = mapped_column(Unicode(100), default=None)
+    pais: Mapped[str | None] = mapped_column(Unicode(3), default="MEX")
+    codigo_postal: Mapped[str | None] = mapped_column(Unicode(5), default=None)
     referencia_anunciante: Mapped[str | None] = mapped_column(Unicode(250), default=None)
     contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
@@ -95,6 +112,16 @@ class AnuncianteCreate(BaseModel):
     nombre_fiscal: str = Field(min_length=1, max_length=250)
     rfc_anunciante: str = Field(min_length=12, max_length=13)
     localizacion: str | None = Field(default=None, max_length=250)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default="MEX", max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
@@ -113,6 +140,16 @@ class AnuncianteUpdate(BaseModel):
     nombre_fiscal: str | None = Field(default=None, min_length=1, max_length=250)
     rfc_anunciante: str | None = Field(default=None, min_length=12, max_length=13)
     localizacion: str | None = Field(default=None, max_length=250)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default=None, max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
@@ -136,6 +173,16 @@ class AnuncianteRead(CatalogoReadBase):
     nombre_fiscal: str
     rfc_anunciante: str
     localizacion: str | None = None
+    calle: str | None = None
+    numero_exterior: str | None = None
+    numero_interior: str | None = None
+    colonia: str | None = None
+    localidad: str | None = None
+    referencia_domicilio: str | None = None
+    municipio: str | None = None
+    estado: str | None = None
+    pais: str | None = None
+    codigo_postal: str | None = None
     referencia_anunciante: str | None = None
     contacto_nombre: str | None = None
     contacto_email: str | None = None
