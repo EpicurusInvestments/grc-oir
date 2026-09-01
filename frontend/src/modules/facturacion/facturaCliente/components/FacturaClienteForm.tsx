@@ -113,7 +113,11 @@ export function FacturaClienteForm({
 
   return (
     <form
-      onSubmit={handleSubmit((v) => onSubmit(v as FacturaClienteCreate))}
+      onSubmit={handleSubmit(({ orden_id, ...resto }) =>
+        // El formulario sigue eligiendo UNA orden; la API recibe `ordenes_ids` desde
+        // ADR-064. La pantalla de facturación múltiple mandará varias.
+        onSubmit({ ...resto, ordenes_ids: [orden_id] } as FacturaClienteCreate),
+      )}
       style={{ maxWidth: 900 }}
     >
       <SavingOverlay visible={!!submitting} />

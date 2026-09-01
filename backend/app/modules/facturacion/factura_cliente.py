@@ -77,6 +77,47 @@ CENTAVOS = Decimal("0.01")
 IVA_RATE = Decimal(str(settings.iva_rate))
 
 
+def _receptor_de(oc: Any) -> tuple[str, uuid.UUID]:
+    """Quién recibe el CFDI de esta orden: el anunciante o la agencia (spec).
+
+    Se devuelve como par comparable —(tipo, id)— para poder exigir que todas las órdenes de
+    una factura múltiple coincidan. No basta con comparar `agencia_id`: dos órdenes de la
+    misma agencia pueden diferir en `facturacion_directa_cliente`, y entonces una se factura
+    al anunciante y la otra a la agencia.
+    """
+    if oc.facturacion_directa_cliente or oc.agencia_id is None:
+        return ("anunciante", oc.anunciante_id)
+    return ("agencia", oc.agencia_id)
+
+
+def _tiene_factura_vigente(orden_id: Any) -> Any:
+    """Subconsulta `EXISTS`: ¿esta orden está en alguna factura NO cancelada?
+
+    Es la regla que dejó de poder expresar el esquema al pasar a N:M (ADR-064). La usan la
+    bandeja y el combo de anunciantes; el alta hace la consulta equivalente pero devolviendo
+    ADEMÁS qué factura ocupa cada orden, para poder nombrarla en el 409. Las tres deben
+    ignorar las canceladas (ADR-047): si una las contara y otra no, una orden aparecería en
+    la bandeja y sería rechazada al facturarla.
+    """
+    return (
+        select(FacturaClienteOrden.orden_id)
+        .join(
+            FacturaCliente, FacturaCliente.factura_id == FacturaClienteOrden.factura_id
+        )
+        .where(
+            FacturaClienteOrden.orden_id == orden_id,
+            FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value,
+        )
+        .exists()
+    )
+
+
+def _producto_comun(ordenes: list[Any]) -> str | None:
+    """Producto de las órdenes si TODAS coinciden; `None` si difieren o no hay ninguno."""
+    productos = {o.producto for o in ordenes if o.producto}
+    return productos.pop() if len(productos) == 1 else None
+
+
 def _serie_desde_numero(numero_factura: str) -> str | None:
     """`IdDoc.Serie` del PAC (ADR-060 bis): la letra/prefijo ANTES del guion en el propio
     número de factura ("A-0010890" → "A"), no una constante aparte que mantener — las
@@ -277,6 +318,23 @@ class FacturaClienteOrden(Base):
 
 
 # ── Schemas de lectura (Tanda 1) ─────────────────────────────────────────────────
+class OrdenDeFactura(BaseModel):
+    """Una de las órdenes que cubre la factura (ADR-064).
+
+    Trae ya resueltos folio, periodo y subtotal para que la sección "Órdenes de esta
+    factura" del panel de detalle no dispare una consulta por renglón.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_id: uuid.UUID
+    folio_orden: str
+    numero_orden_cliente: str
+    fecha_inicio_campania: date
+    fecha_fin_campania: date
+    subtotal: Decimal
+
+
 class FacturaClienteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -284,8 +342,13 @@ class FacturaClienteRead(BaseModel):
     numero_factura: str
     numero_pedido: str | None = None
     referencia_adicional: str | None = None
-    # Ya NO es columna de la tabla (ADR-064): lo rellena `_aplicar_ordenes` desde
-    # `factura_cliente_orden`. Opcional por eso — `from_attributes` no lo encuentra.
+    # Órdenes que cubre la factura (ADR-064). Ya NO son columnas de la tabla: las rellena
+    # `_aplicar_ordenes` desde `factura_cliente_orden`, por eso nada de esto lo encuentra
+    # `from_attributes`.
+    ordenes: list[OrdenDeFactura] = Field(default_factory=list)
+    # Escalares de la PRIMERA orden (por folio). Se conservan porque la lista y el panel
+    # los muestran como identificador corto de la factura; con varias órdenes la UI
+    # completa con "+N" a partir de `ordenes`.
     orden_id: uuid.UUID | None = None
     empresa_facturadora_id: uuid.UUID
     anunciante_id: uuid.UUID
@@ -376,7 +439,10 @@ class FacturaClienteCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    orden_id: uuid.UUID
+    # Órdenes que cubrirá la factura (ADR-064). Una sola = el flujo de siempre; varias =
+    # facturación múltiple. El servicio exige que compartan emisora y receptor, porque un
+    # CFDI tiene un único emisor y un único receptor.
+    ordenes_ids: list[uuid.UUID] = Field(min_length=1)
     numero_factura: str = Field(min_length=1, max_length=30)
     # Receptor: se DERIVA de la orden, pero la pantalla aprobada lo muestra editable
     # (etiqueta "EDITABLE" en el panel de detalle). Si vienen, mandan sobre lo derivado;
@@ -507,12 +573,13 @@ class FacturaClienteService(
 
     def _ordenes_de(
         self, facturas: list[FacturaClienteRead]
-    ) -> dict[uuid.UUID, list[tuple[uuid.UUID, str]]]:
-        """Órdenes (id + folio) de cada factura, en UNA consulta (ADR-055, ADR-064).
+    ) -> dict[uuid.UUID, list[OrdenDeFactura]]:
+        """Órdenes de cada factura, en UNA consulta (ADR-055, ADR-064).
 
         Antes esto resolvía el folio de LA orden desde `factura_cliente.orden_id`; ahora la
         relación es N:M y vive en `factura_cliente_orden`, así que devuelve una LISTA por
-        factura. Ordenada por folio para que la salida sea estable entre llamadas.
+        factura. Ordenada por folio para que la salida sea estable entre llamadas y para
+        que "la primera orden" signifique siempre lo mismo.
         """
         from app.modules.ordenes.orden_cliente import OrdenCliente
 
@@ -522,16 +589,29 @@ class FacturaClienteService(
         filas = self._repo.db.execute(
             select(
                 FacturaClienteOrden.factura_id,
-                FacturaClienteOrden.orden_id,
+                OrdenCliente.orden_id,
                 OrdenCliente.folio_orden,
+                OrdenCliente.numero_orden_cliente,
+                OrdenCliente.fecha_inicio_campania,
+                OrdenCliente.fecha_fin_campania,
+                OrdenCliente.subtotal,
             )
             .join(OrdenCliente, OrdenCliente.orden_id == FacturaClienteOrden.orden_id)
             .where(FacturaClienteOrden.factura_id.in_(ids))
             .order_by(OrdenCliente.folio_orden)
         ).all()
-        resultado: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
-        for factura_id, orden_id, folio in filas:
-            resultado.setdefault(factura_id, []).append((orden_id, folio))
+        resultado: dict[uuid.UUID, list[OrdenDeFactura]] = {}
+        for factura_id, *datos in filas:
+            resultado.setdefault(factura_id, []).append(
+                OrdenDeFactura(
+                    orden_id=datos[0],
+                    folio_orden=datos[1],
+                    numero_orden_cliente=datos[2],
+                    fecha_inicio_campania=datos[3],
+                    fecha_fin_campania=datos[4],
+                    subtotal=datos[5],
+                )
+            )
         return resultado
 
     def _ordenes_de_factura(self, factura_id: uuid.UUID) -> list[uuid.UUID]:
@@ -547,17 +627,18 @@ class FacturaClienteService(
 
     @staticmethod
     def _aplicar_ordenes(
-        leida: FacturaClienteRead, ordenes: dict[uuid.UUID, list[tuple[uuid.UUID, str]]]
+        leida: FacturaClienteRead, ordenes: dict[uuid.UUID, list[OrdenDeFactura]]
     ) -> None:
         """Vuelca las órdenes de la factura sobre el schema de lectura.
 
-        `orden_id`/`folio_orden` siguen siendo escalares mientras el alta acepte una sola
-        orden: se exponen los de la PRIMERA (por folio). Cuando la API pase a `ordenes_ids`
-        este método es el único punto que hay que tocar.
+        `orden_id`/`folio_orden` quedan como escalares de la PRIMERA orden: la lista y el
+        encabezado del panel los usan como identificador corto. Con varias órdenes, la UI
+        completa con "+N" leyendo `ordenes`.
         """
         de_esta = ordenes.get(leida.factura_id, [])
-        leida.orden_id = de_esta[0][0] if de_esta else None
-        leida.folio_orden = de_esta[0][1] if de_esta else None
+        leida.ordenes = de_esta
+        leida.orden_id = de_esta[0].orden_id if de_esta else None
+        leida.folio_orden = de_esta[0].folio_orden if de_esta else None
 
     def _relacionadas_de(
         self, facturas: list[FacturaClienteRead]
@@ -622,39 +703,90 @@ class FacturaClienteService(
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
-        oc = db.get(OrdenCliente, data.orden_id)
-        if oc is None:
-            raise DomainError(
-                "La OrdenCliente indicada no existe.", detalles={"orden_id": str(data.orden_id)}
-            )
-        # PRECONDICIÓN de la ficha: solo se factura lo que F1 ya cerró.
-        if oc.estatus_orden != EstatusOrden.ORDEN_CERRADA.value:
+
+        # Se deduplica conservando el orden de captura; luego se ordena por folio para que
+        # "la primera orden" (de la que se heredan los datos) sea siempre la misma
+        # independientemente de en qué orden las haya marcado el usuario.
+        ordenes_ids = list(dict.fromkeys(data.ordenes_ids))
+        ordenes: list[OrdenCliente] = []
+        for oid in ordenes_ids:
+            oc_i = db.get(OrdenCliente, oid)
+            if oc_i is None:
+                raise DomainError(
+                    "La OrdenCliente indicada no existe.", detalles={"orden_id": str(oid)}
+                )
+            ordenes.append(oc_i)
+        ordenes.sort(key=lambda o: o.folio_orden)
+
+        # PRECONDICIÓN de la ficha: solo se factura lo que F1 ya cerró. Se reportan TODAS
+        # las que fallan, no solo la primera: con diez órdenes marcadas, corregirlas de una
+        # en una sería exasperante.
+        no_cerradas = [
+            o for o in ordenes if o.estatus_orden != EstatusOrden.ORDEN_CERRADA.value
+        ]
+        if no_cerradas:
             raise DomainError(
                 "Solo se puede facturar una OrdenCliente en 'orden_cerrada'.",
-                detalles={"orden_id": str(data.orden_id), "estatus_orden": oc.estatus_orden},
+                detalles={
+                    "ordenes": [
+                        {"folio_orden": o.folio_orden, "estatus_orden": o.estatus_orden}
+                        for o in no_cerradas
+                    ]
+                },
             )
+
         # Una OC no puede estar en DOS facturas vigentes. Hasta ADR-064 esto lo garantizaba
         # el índice único filtrado del esquema y este chequeo solo daba un 409 legible;
         # ahora la relación vive en una tabla puente y `estado_facturacion` está en la otra
         # tabla, así que un índice no puede expresarlo: este chequeo es la ÚNICA garantía.
         # Ignora las CANCELADAS por el mismo motivo de negocio de siempre: una OC cuya
         # factura se canceló vuelve a ser facturable (ADR-047).
-        ya = db.scalar(
-            select(FacturaCliente)
+        ocupadas = db.execute(
+            select(FacturaClienteOrden.orden_id, FacturaCliente.numero_factura)
             .join(
-                FacturaClienteOrden,
-                FacturaClienteOrden.factura_id == FacturaCliente.factura_id,
+                FacturaCliente,
+                FacturaCliente.factura_id == FacturaClienteOrden.factura_id,
             )
             .where(
-                FacturaClienteOrden.orden_id == data.orden_id,
+                FacturaClienteOrden.orden_id.in_(ordenes_ids),
                 FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value,
             )
-            .limit(1)
-        )
-        if ya is not None:
+        ).all()
+        if ocupadas:
+            folios = {o.orden_id: o.folio_orden for o in ordenes}
             raise ConflictError(
-                "La OrdenCliente ya tiene una factura de cliente vigente.",
-                detalles={"orden_id": str(data.orden_id), "factura_id": str(ya.factura_id)},
+                "Alguna de las órdenes ya tiene una factura de cliente vigente.",
+                detalles={
+                    "ordenes": [
+                        {"folio_orden": folios[oid], "numero_factura": numero}
+                        for oid, numero in ocupadas
+                    ]
+                },
+            )
+
+        # ── Un CFDI tiene UN emisor y UN receptor ──
+        # Dos órdenes del mismo anunciante pueden salir por emisoras distintas, o una
+        # facturarse directo al cliente y otra vía agencia. Timbrar eso junto es imposible,
+        # así que se rechaza aquí en vez de fallar al exportar el archivo del PAC.
+        oc = ordenes[0]
+        distintas_emisoras = {o.empresa_facturadora_id for o in ordenes}
+        if len(distintas_emisoras) > 1:
+            raise DomainError(
+                "Todas las órdenes de una misma factura deben salir por la misma empresa "
+                "facturadora: un CFDI tiene un solo emisor.",
+                detalles={"ordenes": [o.folio_orden for o in ordenes]},
+            )
+        if len({o.anunciante_id for o in ordenes}) > 1:
+            raise DomainError(
+                "Todas las órdenes de una misma factura deben ser del mismo anunciante.",
+                detalles={"ordenes": [o.folio_orden for o in ordenes]},
+            )
+        if len({_receptor_de(o) for o in ordenes}) > 1:
+            raise DomainError(
+                "Todas las órdenes de una misma factura deben tener el mismo receptor: "
+                "no se pueden mezclar órdenes facturadas a la agencia con otras facturadas "
+                "directo al anunciante.",
+                detalles={"ordenes": [o.folio_orden for o in ordenes]},
             )
         if db.get(CuentaContable, data.cuenta_contable_id) is None:
             raise DomainError(
@@ -683,8 +815,16 @@ class FacturaClienteService(
                 raise DomainError("La agencia de la orden no existe.")
             razon_social, rfc = agencia.nombre_agencia, agencia.rfc_agencia
 
-        subtotal = Decimal(oc.subtotal).quantize(CENTAVOS)
+        # Suma de los SUBTOTALES (no de los totales): el IVA se recalcula sobre la suma,
+        # que es lo que exigen los CHECK `ck_factura_cliente_iva_calculado` y
+        # `ck_factura_cliente_total_suma`. Sumar totales ya con IVA los violaría.
+        subtotal = sum(
+            (Decimal(o.subtotal) for o in ordenes), Decimal("0")
+        ).quantize(CENTAVOS)
         iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+        # El periodo de transmisión de la factura ABARCA el de todas sus órdenes.
+        periodo_inicio = min(o.fecha_inicio_campania for o in ordenes)
+        periodo_fin = max(o.fecha_fin_campania for o in ordenes)
 
         capturado = data.model_dump(
             exclude={
@@ -692,8 +832,8 @@ class FacturaClienteService(
                 "rfc_facturacion",
                 "direccion_facturacion",
                 "facturas_relacionadas_ids",
-                # Ya no es columna: se persiste como fila de `factura_cliente_orden`.
-                "orden_id",
+                # Ya no son columnas: se persisten como filas de `factura_cliente_orden`.
+                "ordenes_ids",
             }
         )
         nuevo_id = uuid4()
@@ -707,8 +847,8 @@ class FacturaClienteService(
             razon_social_facturacion=data.razon_social_facturacion or razon_social,
             rfc_facturacion=data.rfc_facturacion or rfc,
             direccion_facturacion=data.direccion_facturacion or oc.direccion_facturacion,
-            fecha_inicio_transmision=oc.fecha_inicio_campania,
-            fecha_fin_transmision=oc.fecha_fin_campania,
+            fecha_inicio_transmision=periodo_inicio,
+            fecha_fin_transmision=periodo_fin,
             # ── calculados ──
             subtotal_factura=subtotal,
             iva_factura=iva,
@@ -717,7 +857,8 @@ class FacturaClienteService(
             created_by=resolver_usuario_id(db, usuario.username),
         )
         db.add(obj)
-        db.add(FacturaClienteOrden(factura_id=nuevo_id, orden_id=data.orden_id))
+        for o in ordenes:
+            db.add(FacturaClienteOrden(factura_id=nuevo_id, orden_id=o.orden_id))
         for rid in relacionadas_ids:
             db.add(FacturaClienteRelacionada(factura_id=nuevo_id, relacionada_id=rid))
         db.commit()
@@ -803,9 +944,18 @@ class FacturaClienteService(
 
         db = self._repo.db
         emisor = db.get(EmpresaFacturadora, obj.empresa_facturadora_id)
-        # Una sola orden mientras el alta acepte una sola; la consulta ya está lista para N.
-        ordenes = self._ordenes_de_factura(obj.factura_id)
-        orden = db.get(OrdenCliente, ordenes[0]) if ordenes else None
+        # TODAS las órdenes de la factura, ordenadas por folio. El receptor y los campos
+        # de campaña se resuelven sobre este conjunto; el servicio ya garantizó en el alta
+        # que comparten emisora y receptor, así que la primera es representativa de ambos.
+        ordenes = [
+            oc
+            for oc in (
+                db.get(OrdenCliente, oid) for oid in self._ordenes_de_factura(obj.factura_id)
+            )
+            if oc is not None
+        ]
+        ordenes.sort(key=lambda o: o.folio_orden)
+        orden = ordenes[0] if ordenes else None
 
         # El receptor de ESTA factura puede ser el Anunciante (directo) o la Agencia —
         # mismo criterio que `create()` para elegir razón social/RFC. El domicilio
@@ -856,9 +1006,19 @@ class FacturaClienteService(
             receptor_rfc=obj.rfc_facturacion,
             receptor_direccion=obj.direccion_facturacion,
             receptor_domicilio=receptor_domicilio,
-            orden_folio=orden.folio_orden if orden else None,
-            orden_numero_cliente=orden.numero_orden_cliente if orden else None,
-            orden_producto=orden.producto if orden else None,
+            # Detalle CONSOLIDADO (decisión del equipo): una sola línea de concepto por
+            # el total de la factura, no una por orden. Los campos de campaña, que en el
+            # layout son de una sola orden, se concatenan; van en la sección
+            # `Personalizados`, que es clave-valor y no de ancho fijo, así que no los
+            # trunca el formato. Queda abierto si el PAC les impone un largo máximo.
+            orden_folio=", ".join(o.folio_orden for o in ordenes) or None,
+            orden_numero_cliente=", ".join(
+                o.numero_orden_cliente for o in ordenes if o.numero_orden_cliente
+            )
+            or None,
+            # El producto solo se emite si TODAS coinciden; si no, describir una campaña
+            # inventada sería peor que caer a la descripción que capturó Facturación.
+            orden_producto=_producto_comun(ordenes) or obj.descripcion_factura,
             porcentaje_comision_agencia=(
                 Decimal(orden.porcentaje_comision_agencia_snap)
                 if orden and orden.porcentaje_comision_agencia_snap is not None
@@ -1155,6 +1315,16 @@ def cancelar_factura(
 # devolviendo un 422 al intentar leerlo como UUID.
 
 
+class AnuncianteFacturable(BaseModel):
+    """Opción del combo de facturación múltiple: anunciante + cuántas órdenes tiene listas."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    anunciante_id: uuid.UUID
+    anunciante: str
+    ordenes: int
+
+
 class OrdenPorFacturarRead(BaseModel):
     """Los datos que la tarjeta de la bandeja necesita, ya resueltos.
 
@@ -1196,7 +1366,13 @@ class OrdenesPorFacturarRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def listar(self, page: int, size: int, q: str | None) -> tuple[list[Any], int]:
+    def listar(
+        self,
+        page: int,
+        size: int,
+        q: str | None,
+        anunciante_id: uuid.UUID | None = None,
+    ) -> tuple[list[Any], int]:
         from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
         from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
@@ -1248,28 +1424,22 @@ class OrdenesPorFacturarRepository:
             )
             .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
             .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
-            # El corazón de la bandeja: LEFT JOIN + IS NULL = "sin factura todavía".
-            # Con la relación N:M (ADR-064) son DOS LEFT JOIN encadenados: primero la
-            # puente, luego la factura. Ambos tienen que ser OUTER — si el segundo fuera
-            # INNER, una OC sin factura perdería la fila que el primero acaba de producir.
-            # La condición de CANCELADA va en el JOIN, no en el WHERE: en el WHERE
-            # convertiría el LEFT JOIN en un INNER y la bandeja saldría siempre vacía.
-            # Sin ella, una OC con su factura cancelada sería re-facturable por el índice
-            # filtrado pero INVISIBLE aquí — media decisión de negocio perdida (ADR-047).
-            .outerjoin(
-                FacturaClienteOrden,
-                FacturaClienteOrden.orden_id == OrdenCliente.orden_id,
-            )
-            .outerjoin(
-                FacturaCliente,
-                (FacturaCliente.factura_id == FacturaClienteOrden.factura_id)
-                & (FacturaCliente.estado_facturacion != EstadoFacturacion.CANCELADA.value),
-            )
+            # El corazón de la bandeja: "cerrada y sin factura VIGENTE".
+            # Se expresa con NOT EXISTS y no con LEFT JOIN + IS NULL. Con la relación N:M
+            # (ADR-064) el LEFT JOIN encadenado produce UNA FILA POR FACTURA de la orden,
+            # y las canceladas no casan con la condición del segundo join: una OC ya
+            # facturada que además tuviera dos facturas canceladas reaparecía en la bandeja
+            # —dos veces— pese a tener su factura vigente. NOT EXISTS pregunta por la
+            # existencia, no multiplica filas, y conserva la regla de ADR-047: las
+            # canceladas NO cuentan, así que una OC cuya factura se canceló vuelve a la
+            # bandeja.
             .where(
                 OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
-                FacturaCliente.factura_id.is_(None),
+                ~_tiene_factura_vigente(OrdenCliente.orden_id),
             )
         )
+        if anunciante_id is not None:
+            base = base.where(OrdenCliente.anunciante_id == anunciante_id)
         if q:
             patron = f"%{q.strip()}%"
             base = base.where(
@@ -1285,14 +1455,48 @@ class OrdenesPorFacturarRepository:
         return list(filas), int(total)
 
 
+    def anunciantes_facturables(self, minimo: int) -> list[Any]:
+        """Anunciantes con al menos `minimo` órdenes DISPONIBLES para facturar.
+
+        "Disponibles" y no "cerradas" a secas: si contara las ya facturadas, el combo
+        ofrecería anunciantes cuya bandeja sale vacía al seleccionarlos. Reproduce por eso
+        las mismas condiciones que `listar()`.
+        """
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        stmt = (
+            select(
+                OrdenCliente.anunciante_id,
+                Anunciante.nombre_comercial.label("anunciante"),
+                func.count().label("ordenes"),
+            )
+            .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
+            .where(
+                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+                ~_tiene_factura_vigente(OrdenCliente.orden_id),
+            )
+            .group_by(OrdenCliente.anunciante_id, Anunciante.nombre_comercial)
+            .having(func.count() >= minimo)
+            .order_by(Anunciante.nombre_comercial)
+        )
+        return list(self.db.execute(stmt).all())
+
+
 class OrdenesPorFacturarService:
     """Solo lectura. No muta nada: el alta de la factura sigue siendo `POST /clientes`."""
 
     def __init__(self, repo: OrdenesPorFacturarRepository) -> None:
         self._repo = repo
 
-    def listar(self, page: int, size: int, q: str | None) -> Page[OrdenPorFacturarRead]:
-        filas, total = self._repo.listar(page, size, q)
+    def listar(
+        self,
+        page: int,
+        size: int,
+        q: str | None,
+        anunciante_id: uuid.UUID | None = None,
+    ) -> Page[OrdenPorFacturarRead]:
+        filas, total = self._repo.listar(page, size, q, anunciante_id)
         return Page[OrdenPorFacturarRead](
             items=[OrdenPorFacturarRead.model_validate(f._mapping) for f in filas],
             total=total,
@@ -1300,6 +1504,13 @@ class OrdenesPorFacturarService:
             size=size,
             pages=ceil(total / size) if size else 0,
         )
+
+
+    def anunciantes_facturables(self, minimo: int) -> list[AnuncianteFacturable]:
+        return [
+            AnuncianteFacturable.model_validate(f._mapping)
+            for f in self._repo.anunciantes_facturables(minimo)
+        ]
 
 
 def get_ordenes_por_facturar_service(
@@ -1318,11 +1529,30 @@ def listar_ordenes_por_facturar(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None, description="Busca en folio, número de orden y anunciante"),
+    anunciante_id: uuid.UUID | None = Query(
+        None, description="Solo las órdenes de este anunciante (facturación múltiple)"
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
     svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
 ) -> Page[OrdenPorFacturarRead]:
     """Órdenes en `orden_cerrada` que aún no tienen `FacturaCliente`.
 
-    El `total` de la respuesta es el contador que la pantalla muestra en el sidebar.
+    El `total` de la respuesta SIN filtros es el contador que la pantalla muestra en el
+    sidebar; con `anunciante_id` es la bandeja acotada de la facturación múltiple.
     """
-    return svc.listar(page, size, q)
+    return svc.listar(page, size, q, anunciante_id)
+
+
+@router_por_facturar.get("/anunciantes", response_model=list[AnuncianteFacturable])
+def listar_anunciantes_facturables(
+    minimo: int = Query(2, ge=1, description="Mínimo de órdenes disponibles para aparecer"),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
+) -> list[AnuncianteFacturable]:
+    """Llena el combo de facturación múltiple.
+
+    Por defecto solo los anunciantes con **2 o más** órdenes disponibles: con una sola no
+    hay nada que agrupar y ofrecerlo sería una vía muerta. Sin paginar a propósito — es un
+    combo con búsqueda en el cliente, no una lista.
+    """
+    return svc.anunciantes_facturables(minimo)

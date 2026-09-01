@@ -44,6 +44,7 @@ const base: FacturaCliente = {
   numero_pedido: null,
   referencia_adicional: null,
   orden_id: "oc-1",
+  ordenes: [],
   empresa_facturadora_id: "e-1",
   anunciante_id: "an-1",
   agencia_id: null,

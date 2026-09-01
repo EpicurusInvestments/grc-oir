@@ -129,8 +129,24 @@ def _catalogos(db: Session) -> dict[str, uuid.UUID]:
     }
 
 
-def _orden(db: Session, cat: dict[str, uuid.UUID], estatus: str, folio: str) -> uuid.UUID:
+def _orden(
+    db: Session,
+    cat: dict[str, uuid.UUID],
+    estatus: str,
+    folio: str,
+    *,
+    subtotal: Decimal = Decimal("10000.00"),
+    inicio: date = date(2026, 2, 1),
+    fin: date = date(2026, 2, 28),
+    empresa_id: uuid.UUID | None = None,
+    anunciante_id: uuid.UUID | None = None,
+    directa: bool = False,
+    producto: str | None = None,
+) -> uuid.UUID:
+    """Los parámetros opcionales existen para las pruebas de facturación múltiple, que
+    necesitan órdenes que difieran en importe, periodo, emisora o receptor."""
     orden_id = uuid.uuid4()
+    iva = (subtotal * Decimal("0.16")).quantize(Decimal("0.01"))
     db.add(
         OrdenCliente(
             orden_id=orden_id,
@@ -139,19 +155,21 @@ def _orden(db: Session, cat: dict[str, uuid.UUID], estatus: str, folio: str) -> 
             fecha_venta=date(2026, 1, 10),
             anio_venta=2026,
             mes_venta=1,
-            empresa_facturadora_id=cat["empresa_id"],
+            empresa_facturadora_id=empresa_id or cat["empresa_id"],
             vendedor_principal_id=cat["vendedor_id"],
-            anunciante_id=cat["anunciante_id"],
+            anunciante_id=anunciante_id or cat["anunciante_id"],
             agencia_id=cat["agencia_id"],
-            fecha_inicio_campania=date(2026, 2, 1),
-            fecha_fin_campania=date(2026, 2, 28),
+            facturacion_directa_cliente=directa,
+            producto=producto,
+            fecha_inicio_campania=inicio,
+            fecha_fin_campania=fin,
             total_dias_campania=28,
             duracion_spot="30s",
             precio_unitario=Decimal("1000.00"),
             total_spots=10,
-            subtotal=Decimal("10000.00"),
-            iva=Decimal("1600.00"),
-            total=Decimal("11600.00"),
+            subtotal=subtotal,
+            iva=iva,
+            total=(subtotal + iva).quantize(Decimal("0.01")),
             estatus_orden=estatus,
             created_by=ADMIN_ID,
         )
@@ -215,9 +233,13 @@ def _hdr(area: str) -> dict[str, str]:
     return {"X-Dev-User": "tester", "X-Dev-Area": area}
 
 
-def _payload_factura(orden_id: uuid.UUID, cuenta_id: uuid.UUID, numero: str) -> dict[str, object]:
+def _payload_factura(
+    orden_id: uuid.UUID | list[uuid.UUID], cuenta_id: uuid.UUID, numero: str
+) -> dict[str, object]:
+    """Acepta una orden o varias: el alta recibe `ordenes_ids` desde ADR-064."""
+    ids = orden_id if isinstance(orden_id, list) else [orden_id]
     return {
-        "orden_id": str(orden_id),
+        "ordenes_ids": [str(o) for o in ids],
         "numero_factura": numero,
         "descripcion_factura": "Servicios de transmisión febrero 2026",
         "fecha_factura": "2026-03-01",
@@ -1087,3 +1109,365 @@ def test_la_orden_reaparece_en_la_bandeja_tras_cancelar(
     ).json()
     assert cuerpo["total"] == 1
     assert cuerpo["items"][0]["orden_id"] == str(orden_id)
+
+
+# ── Facturación múltiple: una factura sobre VARIAS órdenes (ADR-064) ──────────
+def test_alta_con_varias_ordenes_suma_subtotales_y_abarca_el_periodo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El subtotal es la SUMA de subtotales y el periodo abarca de la más temprana a la
+    más tardía. El IVA se recalcula sobre la suma, no se suman IVAs ya redondeados."""
+    a = _orden(
+        db, cat, "orden_cerrada", "OC-M1",
+        subtotal=Decimal("10000.00"), inicio=date(2026, 2, 1), fin=date(2026, 2, 15),
+    )
+    b = _orden(
+        db, cat, "orden_cerrada", "OC-M2",
+        subtotal=Decimal("5000.50"), inicio=date(2026, 1, 20), fin=date(2026, 3, 10),
+    )
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-MULTI"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    cuerpo = r.json()
+    assert Decimal(cuerpo["subtotal_factura"]) == Decimal("15000.50")
+    assert Decimal(cuerpo["iva_factura"]) == Decimal("2400.08")
+    assert Decimal(cuerpo["total_factura"]) == Decimal("17400.58")
+    # El periodo va del inicio más temprano al fin más tardío, no del de la primera orden.
+    assert cuerpo["fecha_inicio_transmision"] == "2026-01-20"
+    assert cuerpo["fecha_fin_transmision"] == "2026-03-10"
+    assert [o["folio_orden"] for o in cuerpo["ordenes"]] == ["OC-M1", "OC-M2"]
+
+
+def test_alta_rechaza_ordenes_de_distinta_empresa_facturadora(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Un CFDI tiene UN emisor: no se pueden mezclar emisoras."""
+    otra_empresa = uuid.uuid4()
+    db.add(
+        EmpresaFacturadora(
+            empresa_facturadora_id=otra_empresa,
+            nombre_empresa="Otra Emisora SA",
+            rfc_empresa="OEM900101AB1",
+        )
+    )
+    db.flush()
+    a = _orden(db, cat, "orden_cerrada", "OC-E1")
+    b = _orden(db, cat, "orden_cerrada", "OC-E2", empresa_id=otra_empresa)
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-EMI"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 400
+    assert "misma empresa facturadora" in r.json()["error"]["mensaje"]
+
+
+def test_alta_rechaza_mezclar_receptor_agencia_con_directo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo anunciante y misma agencia, pero una se factura directo: el receptor difiere.
+
+    Es el caso que `agencia_id` por sí solo NO detecta — por eso el receptor se compara
+    como par (tipo, id) y no por la columna.
+    """
+    a = _orden(db, cat, "orden_cerrada", "OC-R1", directa=False)
+    b = _orden(db, cat, "orden_cerrada", "OC-R2", directa=True)
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-REC"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 400
+    assert "mismo receptor" in r.json()["error"]["mensaje"]
+
+
+def test_alta_reporta_todas_las_ordenes_no_cerradas_no_solo_la_primera(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Con varias marcadas, corregirlas de una en una sería exasperante."""
+    ok = _orden(db, cat, "orden_cerrada", "OC-OK")
+    mala1 = _orden(db, cat, "en_verificacion", "OC-MALA1")
+    mala2 = _orden(db, cat, "capturada", "OC-MALA2")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([ok, mala1, mala2], cat["cuenta_id"], "F-NC"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 400
+    folios = {o["folio_orden"] for o in r.json()["error"]["detalles"]["ordenes"]}
+    assert folios == {"OC-MALA1", "OC-MALA2"}
+
+
+def test_alta_rechaza_si_alguna_orden_ya_tiene_factura_vigente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """409 nombrando la orden y la factura que la ocupa."""
+    ocupada = _orden(db, cat, "orden_cerrada", "OC-OCUPADA")
+    db.commit()
+    primera = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(ocupada, cat["cuenta_id"], "F-PRIM"),
+        headers=_hdr("facturacion"),
+    )
+    assert primera.status_code == 201
+
+    libre = _orden(db, cat, "orden_cerrada", "OC-LIBRE")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([libre, ocupada], cat["cuenta_id"], "F-CHOCA"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 409
+    detalle = r.json()["error"]["detalles"]["ordenes"]
+    assert detalle == [{"folio_orden": "OC-OCUPADA", "numero_factura": "F-PRIM"}]
+
+
+def test_alta_deduplica_la_misma_orden_repetida(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mandar dos veces la misma orden no la cobra dos veces ni rompe la PK compuesta."""
+    a = _orden(db, cat, "orden_cerrada", "OC-DUP", subtotal=Decimal("10000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, a], cat["cuenta_id"], "F-DEDUP"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    assert Decimal(r.json()["subtotal_factura"]) == Decimal("10000.00")
+    assert len(r.json()["ordenes"]) == 1
+
+
+def test_timbrar_y_cancelar_mueven_todas_las_ordenes(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El handoff con F1 recorre las N órdenes, en los dos sentidos."""
+    a = _orden(db, cat, "orden_cerrada", "OC-H1")
+    b = _orden(db, cat, "orden_cerrada", "OC-H2")
+    db.commit()
+    factura_id = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-HAND"),
+        headers=_hdr("facturacion"),
+    ).json()["factura_id"]
+
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/enviar-a-timbrado",
+        headers=_hdr("facturacion"),
+    )
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
+        json={"folio_fiscal_sat": "F" * 36, "fecha_timbrado": "2026-03-02"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert [db.get(OrdenCliente, o).estatus_orden for o in (a, b)] == ["facturada"] * 2
+
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/cancelar", headers=_hdr("facturacion")
+    )
+    db.expire_all()
+    assert [db.get(OrdenCliente, o).estatus_orden for o in (a, b)] == ["orden_cerrada"] * 2
+
+
+def test_el_archivo_plano_consolida_los_folios_de_todas_las_ordenes(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Decisión del equipo: UNA línea de detalle, con los campos de campaña concatenados."""
+    a = _orden(db, cat, "orden_cerrada", "OC-P1", producto="SPOT RADIO")
+    b = _orden(db, cat, "orden_cerrada", "OC-P2", producto="SPOT RADIO")
+    db.commit()
+    factura_id = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-PAC"),
+        headers=_hdr("facturacion"),
+    ).json()["factura_id"]
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    texto = r.content.decode("cp1252")
+    assert "OC-P1, OC-P2" in texto
+    assert "NUM-OC-P1, NUM-OC-P2" in texto
+    # Producto común: se emite tal cual, no la descripción de la factura.
+    assert "SPOT RADIO" in texto
+    # Una sola línea de detalle pese a ser dos órdenes: cabecera + 1 fila.
+    detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
+    assert len([ln for ln in detalle.split("\r\n") if ln.strip()]) == 2
+
+
+def test_el_archivo_plano_cae_a_la_descripcion_si_los_productos_difieren(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Inventar una campaña común sería peor que usar lo que capturó Facturación."""
+    a = _orden(db, cat, "orden_cerrada", "OC-Q1", producto="SPOT RADIO")
+    b = _orden(db, cat, "orden_cerrada", "OC-Q2", producto="MENCION EN VIVO")
+    db.commit()
+    factura_id = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura([a, b], cat["cuenta_id"], "F-PAC2"),
+        headers=_hdr("facturacion"),
+    ).json()["factura_id"]
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    assert "Servicios de transmisión febrero 2026" in texto
+
+
+def test_la_bandeja_se_filtra_por_anunciante(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    otro_anunciante = uuid.uuid4()
+    db.add(
+        Anunciante(
+            anunciante_id=otro_anunciante,
+            nombre_comercial="Otro Anunciante",
+            nombre_fiscal="Otro Anunciante SA",
+            rfc_anunciante="OAN900101AB1",
+        )
+    )
+    db.flush()
+    _orden(db, cat, "orden_cerrada", "OC-A1")
+    _orden(db, cat, "orden_cerrada", "OC-A2")
+    _orden(db, cat, "orden_cerrada", "OC-B1", anunciante_id=otro_anunciante)
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar",
+        params={"anunciante_id": str(otro_anunciante)},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200
+    assert [o["folio_orden"] for o in r.json()["items"]] == ["OC-B1"]
+
+
+def test_el_combo_solo_ofrece_anunciantes_con_dos_o_mas_ordenes_disponibles(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Con una sola orden no hay nada que agrupar; y las ya facturadas no cuentan."""
+    a = _orden(db, cat, "orden_cerrada", "OC-C1")
+    _orden(db, cat, "orden_cerrada", "OC-C2")
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar/anunciantes", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    combos = [(x["anunciante"], x["ordenes"]) for x in r.json()]
+    assert len(combos) == 1 and combos[0][1] == 2
+
+    # Al facturar una de las dos, el anunciante baja a 1 disponible y sale del combo.
+    client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(a, cat["cuenta_id"], "F-COMBO"),
+        headers=_hdr("facturacion"),
+    )
+    r2 = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar/anunciantes", headers=_hdr("facturacion")
+    )
+    assert r2.json() == []
+
+
+def test_una_orden_con_facturas_canceladas_y_una_vigente_no_vuelve_a_la_bandeja(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Regresión: la bandeja preguntaba por EXISTENCIA con LEFT JOIN, y eso multiplicaba.
+
+    Con la relación N:M, un LEFT JOIN a la puente produce una fila por cada factura de la
+    orden. Las canceladas no casan con la condición del join a `factura_cliente`, así que
+    dejaban su fila con la factura en NULL y la orden pasaba el filtro "sin factura" —
+    apareciendo en la bandeja UNA VEZ POR CANCELADA, aunque tuviera su factura vigente.
+    """
+    orden = _orden(db, cat, "orden_cerrada", "OC-ZOMBI")
+    db.commit()
+
+    # Dos facturas canceladas sobre la misma orden...
+    for numero in ("F-CANC1", "F-CANC2"):
+        fid = client.post(
+            "/api/v1/facturacion/clientes",
+            json=_payload_factura(orden, cat["cuenta_id"], numero),
+            headers=_hdr("facturacion"),
+        ).json()["factura_id"]
+        client.post(
+            f"/api/v1/facturacion/clientes/{fid}/cancelar", headers=_hdr("facturacion")
+        )
+
+    # ...y ahora sí, una vigente.
+    assert (
+        client.post(
+            "/api/v1/facturacion/clientes",
+            json=_payload_factura(orden, cat["cuenta_id"], "F-VIGENTE"),
+            headers=_hdr("facturacion"),
+        ).status_code
+        == 201
+    )
+
+    bandeja = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
+    ).json()
+    folios = [o["folio_orden"] for o in bandeja["items"]]
+    assert "OC-ZOMBI" not in folios, "una orden ya facturada reapareció en la bandeja"
+    assert bandeja["total"] == 0
+
+
+def test_el_combo_no_cuenta_dos_veces_una_orden_con_varias_canceladas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El mismo defecto inflaba el conteo del combo: contaba filas, no órdenes."""
+    a = _orden(db, cat, "orden_cerrada", "OC-N1")
+    _orden(db, cat, "orden_cerrada", "OC-N2")
+    db.commit()
+
+    fid = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(a, cat["cuenta_id"], "F-N1"),
+        headers=_hdr("facturacion"),
+    ).json()["factura_id"]
+    client.post(f"/api/v1/facturacion/clientes/{fid}/cancelar", headers=_hdr("facturacion"))
+
+    combo = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar/anunciantes", headers=_hdr("facturacion")
+    ).json()
+    # La orden cancelada vuelve a estar disponible: son 2 órdenes, no 3 filas.
+    assert [x["ordenes"] for x in combo] == [2]
+
+
+def test_una_orden_con_su_factura_cancelada_vuelve_a_la_bandeja(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """La otra mitad de ADR-047, para que el arreglo anterior no se pase de estricto."""
+    orden = _orden(db, cat, "orden_cerrada", "OC-VUELVE")
+    db.commit()
+    fid = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden, cat["cuenta_id"], "F-SEVA"),
+        headers=_hdr("facturacion"),
+    ).json()["factura_id"]
+
+    despues_de_facturar = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
+    ).json()
+    assert "OC-VUELVE" not in [o["folio_orden"] for o in despues_de_facturar["items"]]
+
+    client.post(f"/api/v1/facturacion/clientes/{fid}/cancelar", headers=_hdr("facturacion"))
+    despues_de_cancelar = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
+    ).json()
+    assert [o["folio_orden"] for o in despues_de_cancelar["items"]] == ["OC-VUELVE"]

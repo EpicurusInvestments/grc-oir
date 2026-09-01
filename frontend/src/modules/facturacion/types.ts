@@ -52,12 +52,32 @@ export const TIPO_COSTO_LABEL: Record<TipoCosto, string> = {
 };
 
 // ── FacturaCliente ────────────────────────────────────────────────────────────
+/** Una de las órdenes que cubre la factura (ADR-064). */
+export interface OrdenDeFactura {
+  orden_id: string;
+  folio_orden: string;
+  numero_orden_cliente: string;
+  fecha_inicio_campania: string;
+  fecha_fin_campania: string;
+  subtotal: string;
+}
+
+/** Opción del combo de facturación múltiple: anunciante y cuántas órdenes tiene listas. */
+export interface AnuncianteFacturable {
+  anunciante_id: string;
+  anunciante: string;
+  ordenes: number;
+}
+
 export interface FacturaCliente {
   factura_id: string;
   numero_factura: string;
   numero_pedido: string | null;
   referencia_adicional: string | null;
-  orden_id: string;
+  /** Todas las órdenes que cubre (ADR-064). */
+  ordenes: OrdenDeFactura[];
+  /** De la PRIMERA orden: identificador corto para la lista y el encabezado. */
+  orden_id: string | null;
   empresa_facturadora_id: string;
   anunciante_id: string;
   agencia_id: string | null;
@@ -96,7 +116,8 @@ export interface FacturaCliente {
 
 /** Lo que Facturación captura. Lo derivado y lo calculado los pone el servicio. */
 export interface FacturaClienteCreate {
-  orden_id: string;
+  /** Órdenes que cubrirá la factura (ADR-064). Una sola = flujo de siempre. */
+  ordenes_ids: string[];
   numero_factura: string;
   numero_pedido?: string | null;
   referencia_adicional?: string | null;

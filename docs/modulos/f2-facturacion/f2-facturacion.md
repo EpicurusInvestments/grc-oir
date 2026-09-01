@@ -31,6 +31,35 @@ puente `factura_cliente_orden`. Lo que sigue vigente es que una OC **no puede es
 facturas vigentes** (las canceladas no cuentan, ADR-047); con la columna `orden_id` se fue
 el índice que lo garantizaba, así que ahora lo valida el servicio con `409`.
 
+### Facturación múltiple
+
+El alta recibe `ordenes_ids`. Con **una** orden es el flujo de siempre; con **varias**, el
+servicio exige que compartan **empresa facturadora**, **anunciante** y **receptor** — un
+CFDI tiene un solo emisor y un solo receptor, así que mezclarlos es imposible de timbrar.
+El receptor se compara como par `(tipo, id)` y no por `agencia_id`: dos órdenes de la misma
+agencia pueden diferir en `facturacion_directa_cliente`, y entonces una se factura a la
+agencia y la otra al anunciante.
+
+De las órdenes incluidas se calcula:
+
+| Campo | Regla |
+|---|---|
+| `subtotal_factura` | suma de los `subtotal` de las órdenes |
+| `iva_factura` / `total_factura` | sobre esa suma, como siempre (16 %) |
+| `fecha_inicio_transmision` | la más temprana de las órdenes |
+| `fecha_fin_transmision` | la más tardía |
+
+Se suman **subtotales**, no totales: sumar importes que ya traen IVA violaría los CHECK
+`ck_factura_cliente_iva_calculado` y `ck_factura_cliente_total_suma`.
+
+Al timbrar, el handoff con F1 promueve **todas** las órdenes a `facturada`; al cancelar,
+las revierte todas. Si cualquiera está en `cobrada`, la cancelación entera se rechaza con
+**400** y no quedan órdenes revertidas a medias.
+
+En el archivo del PAC va **una sola línea de detalle consolidada** (decisión del equipo),
+con los folios y números de orden concatenados por coma. El producto solo se emite si todas
+las órdenes coinciden; si difieren, cae a `descripcion_factura`.
+
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
 ### FacturaCliente (33 campos spec, con 3 ajustes)

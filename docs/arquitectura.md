@@ -2082,9 +2082,23 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   sobre una columna ya inexistente. El `downgrade` **aborta con un error explícito** si
   alguna factura cubre más de una orden: volver a 1:1 exigiría elegir cuál conservar, y
   descartar datos en silencio sería peor que fallar.
-- **Alcance de esta tanda:** el esquema ya es N:M pero **el comportamiento no cambia** — el
-  alta sigue aceptando una sola orden (`orden_id`) y la lectura sigue exponiendo escalares
-  `orden_id`/`folio_orden`, resueltos desde la puente por `_aplicar_ordenes`. La apertura a
-  varias órdenes (validaciones de emisora/receptor común, suma de subtotales, periodo
-  mínimo-máximo, archivo del PAC consolidado y los endpoints de la bandeja) es la tanda
-  siguiente.
+- **Reglas de la factura múltiple** (segunda tanda, ya implementadas): el alta recibe
+  `ordenes_ids` y exige que todas las órdenes compartan **empresa facturadora**,
+  **anunciante** y **receptor** —comparado como par `(tipo, id)`, porque dos órdenes de la
+  misma agencia pueden diferir en `facturacion_directa_cliente` y entonces una se factura a
+  la agencia y la otra al anunciante—. `subtotal_factura` es la **suma de subtotales** (no
+  de totales: sumar importes ya con IVA violaría `ck_factura_cliente_iva_calculado`), y el
+  periodo abarca de la fecha de inicio más temprana a la de fin más tardía. Los errores
+  nombran **todas** las órdenes que fallan, no solo la primera.
+- **Archivo del PAC:** una sola línea de detalle **consolidada** (decisión del equipo), con
+  los campos de campaña concatenados por coma. Van en la sección `Personalizados`, que es
+  clave-valor y no de ancho fijo, así que el formato no los trunca; queda abierto si el PAC
+  les impone un largo máximo. El producto solo se emite si **todas** las órdenes coinciden;
+  si difieren cae a `descripcion_factura`, porque inventar una campaña común sería peor.
+- **Defecto encontrado al integrar:** la bandeja resolvía "sin factura" con `LEFT JOIN` +
+  `IS NULL`. Con la relación N:M eso produce **una fila por factura** de la orden, y las
+  canceladas no casan con la condición del join, así que una OC **ya facturada** que además
+  tuviera dos facturas canceladas **reaparecía en la bandeja, dos veces**. Se sustituyó por
+  `NOT EXISTS` en una función compartida (`_tiene_factura_vigente`), que pregunta por
+  existencia sin multiplicar filas. Tiene tres pruebas de regresión, verificadas contra la
+  versión defectuosa.

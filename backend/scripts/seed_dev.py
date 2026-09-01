@@ -863,6 +863,42 @@ OC_MOCKS: list[dict[str, Any]] = [
         estatus_v5="orden_cerrada",
         created_by="ve3",
     ),
+    # 12.ª orden: MISMO anunciante, misma emisora y mismo receptor que oc11, y también
+    # cerrada sin factura. Existe para que la facturación MÚLTIPLE (ADR-064) se pueda
+    # probar: el combo solo ofrece anunciantes con 2 o más órdenes disponibles, así que
+    # con una sola saldría siempre vacío. Periodo e importe distintos a propósito, para
+    # que se note que la factura suma subtotales y abarca de la fecha más temprana a la
+    # más tardía.
+    dict(
+        clave="oc12",
+        folio="OC-2025-0052",
+        numero="LALA-YOG-12",
+        fecha_venta=date(2025, 5, 20),
+        empresa="ef1",
+        vp="ve3",
+        vs=None,
+        anunciante="an3",
+        agencia=None,
+        contrato=None,
+        marca=None,
+        producto="Yoghurt Lala Bebible 1L",
+        categoria="cat2",
+        direccion="CDMX, Insurgentes Sur 800",
+        fact_directa=True,
+        af_directo=False,
+        f_ini=date(2025, 7, 1),
+        f_fin=date(2025, 7, 31),
+        total_spots=40,
+        precio_unitario=Decimal("7500"),
+        comision_vp=Decimal("4"),
+        comision_vs=None,
+        comision_ag=None,
+        obs_libres="Segunda orden cerrada del mismo anunciante: habilita la prueba de "
+        "facturación múltiple.",
+        checklist=set(ITEMS_VOBO),
+        estatus_v5="orden_cerrada",
+        created_by="ve3",
+    ),
 ]
 
 # OE agrupadas por OC (clave) — para resolver_estatus_oc necesitamos saber, para cada OC,
