@@ -183,7 +183,13 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                 </span>
                 <span className="badge b-blue">{selected.razon_social_facturacion}</span>
                 {selected.folio_orden && (
-                  <span className="badge b-blue mono">{selected.folio_orden}</span>
+                  // Identificador corto: el folio de la primera orden y, si la factura
+                  // cubre varias, cuántas más (ADR-064). El detalle está más abajo, en
+                  // «Órdenes relacionadas».
+                  <span className="badge b-blue mono">
+                    {selected.folio_orden}
+                    {selected.ordenes.length > 1 && ` +${selected.ordenes.length - 1}`}
+                  </span>
                 )}
               </div>
             </div>
@@ -207,6 +213,44 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               <div className="mc-val total">{fmtMoneda(selected.total_factura)}</div>
             </div>
           </div>
+
+          {/* Órdenes relacionadas: de dónde sale el monto de arriba. Se muestra SIEMPRE,
+              también con una sola orden — una sección que aparece y desaparece obliga a
+              recordar por qué, y con una orden la respuesta sigue siendo útil. */}
+          <div className="sec">
+            Órdenes relacionadas <FieldTag origin="derivado" />
+          </div>
+          {selected.ordenes.length === 0 ? (
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Sin órdenes asociadas.
+            </div>
+          ) : (
+            <div className="ordenes-rel">
+              {selected.ordenes.map((o) => (
+                <div key={o.orden_id} className="ordenes-rel-row">
+                  <div className="ordenes-rel-top">
+                    <span className="mono" style={{ fontWeight: 600 }}>
+                      {o.folio_orden}
+                    </span>
+                    <span className="mono">{fmtMoneda(o.subtotal)}</span>
+                  </div>
+                  <div className="ordenes-rel-sub">
+                    <span className="mono">{o.numero_orden_cliente}</span>
+                    {" · "}
+                    <span className="mono">
+                      {fmtFecha(o.fecha_inicio_campania)} → {fmtFecha(o.fecha_fin_campania)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {selected.ordenes.length > 1 && (
+                <div className="ordenes-rel-total">
+                  {selected.ordenes.length} órdenes · suma de subtotales{" "}
+                  <span className="mono">{fmtMoneda(selected.subtotal_factura)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="sec">Identificación</div>
           <div className="r2">

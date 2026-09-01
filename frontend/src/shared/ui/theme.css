@@ -1941,3 +1941,41 @@ body {
   border-color: var(--blue-border) !important;
   background: var(--blue-bg) !important;
 }
+
+/* Sección "Órdenes relacionadas" del panel de detalle de factura (F2, ADR-064).
+   Lista y no `r2`: el número de órdenes es variable, y con una sola tiene que verse igual
+   de natural que con seis. */
+.ordenes-rel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+
+.ordenes-rel-row {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue-border);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  background: var(--surface);
+}
+
+.ordenes-rel-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.ordenes-rel-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text3);
+}
+
+.ordenes-rel-total {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text2);
+}

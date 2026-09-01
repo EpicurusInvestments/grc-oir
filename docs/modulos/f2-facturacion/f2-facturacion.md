@@ -73,6 +73,22 @@ El formulario de alta es el mismo (`FacturaClienteForm`), con una prop `ordenes`
 los folios y pedidos concatenados, el periodo consolidado y el **subtotal sumado**, que es
 lo que calculará el servicio. Desmarcar el check devuelve todo al modo normal.
 
+#### «Órdenes relacionadas» en el panel de detalle
+
+El panel de *Facturas al cliente* abre con el timeline y las tres tarjetas de importes, y
+justo después lleva la sección **«Órdenes relacionadas»** (tag *Derivado*): una fila por
+orden con folio, número de pedido del cliente, periodo y **su** subtotal. Con más de una
+cierra con el resumen «N órdenes · suma de subtotales».
+
+Se muestra **siempre**, también en facturas de una sola orden: una sección que aparece y
+desaparece obliga a recordar por qué, y con una orden la respuesta sigue siendo útil. Si no
+hubiera ninguna, lo dice en vez de dejar el hueco.
+
+El badge del encabezado sigue siendo el identificador corto: el folio de la **primera**
+orden y, si cubre varias, cuántas más (`OC-2025-0051 +1`). El detalle está en la sección.
+
+Los datos llegan resueltos en la misma respuesta (`ordenes`), sin una consulta por renglón.
+
 Al timbrar, el handoff con F1 promueve **todas** las órdenes a `facturada`; al cancelar,
 las revierte todas. Si cualquiera está en `cobrada`, la cancelación entera se rechaza con
 **400** y no quedan órdenes revertidas a medias.
