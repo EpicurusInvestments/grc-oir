@@ -4,6 +4,7 @@ export { AppHeader } from "./AppHeader";
 export { AppNavDrawer } from "./AppNavDrawer";
 export { CatalogToolbar, type FilterPill } from "./CatalogToolbar";
 export { ConfirmDialog } from "./ConfirmDialog";
+export { DomicilioPostalInput, type DomicilioPostalValues } from "./DomicilioPostalInput";
 export { ExplorerLayout } from "./ExplorerLayout";
 export { FieldTag, type FieldOrigin } from "./FieldTag";
 export { DetailEmpty, ListDetailLayout } from "./ListDetailLayout";

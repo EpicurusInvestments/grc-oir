@@ -13,7 +13,19 @@ export interface Anunciante extends CatalogoBase {
   nombre_comercial: string;
   nombre_fiscal: string;
   rfc_anunciante: string;
+  // `localizacion` (texto libre) queda solo por compatibilidad con lo ya capturado —
+  // desde ADR-059 la captura real es con el domicilio estructurado de abajo.
   localizacion: string | null;
+  calle: string | null;
+  numero_exterior: string | null;
+  numero_interior: string | null;
+  colonia: string | null;
+  localidad: string | null;
+  referencia_domicilio: string | null;
+  municipio: string | null;
+  estado: string | null;
+  pais: string | null;
+  codigo_postal: string | null;
   referencia_anunciante: string | null;
   contacto_nombre: string | null;
   contacto_email: string | null;
@@ -30,6 +42,16 @@ export interface AnuncianteCreate {
   nombre_fiscal: string;
   rfc_anunciante: string;
   localizacion?: string | null;
+  calle?: string | null;
+  numero_exterior?: string | null;
+  numero_interior?: string | null;
+  colonia?: string | null;
+  localidad?: string | null;
+  referencia_domicilio?: string | null;
+  municipio?: string | null;
+  estado?: string | null;
+  pais?: string | null;
+  codigo_postal?: string | null;
   referencia_anunciante?: string | null;
   contacto_nombre?: string | null;
   contacto_email?: string | null;

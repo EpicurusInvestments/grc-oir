@@ -43,7 +43,10 @@ RFC_REGEX = re.compile(r"^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$")
 def _normaliza_rfc(valor: str) -> str:
     v = valor.strip().upper()
     if not RFC_REGEX.match(v):
-        raise ValueError("RFC inválido: formato mexicano de 12-13 caracteres.")
+        raise ValueError(
+            "RFC inválido: debe ser 3-4 letras, 6 dígitos (fecha AAMMDD) y 3 caracteres "
+            "alfanuméricos (homoclave) — no cualquier texto de 12-13 caracteres."
+        )
     return v
 
 

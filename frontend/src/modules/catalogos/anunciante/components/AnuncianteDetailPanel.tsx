@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 
+import { formatDomicilio } from "@/shared/lib/formatDomicilio";
 import { FieldTag, StatusBadge } from "@/shared/ui";
 
 import { useContratosPorAnunciante, useHistorialAnunciante, useMarcas } from "../hooks";
@@ -107,8 +108,8 @@ export function AnuncianteDetailPanel({
         <div className="fv">{anunciante.nombre_fiscal}</div>
         <div className="fl">RFC</div>
         <div className="fv mono">{anunciante.rfc_anunciante}</div>
-        <div className="fl">Localización</div>
-        <div className="fv">{oGuion(anunciante.localizacion)}</div>
+        <div className="fl">Domicilio</div>
+        <div className="fv">{formatDomicilio(anunciante) ?? oGuion(anunciante.localizacion)}</div>
         <div className="fl">Referencia interna</div>
         <div className="fv mono">{oGuion(anunciante.referencia_anunciante)}</div>
 

@@ -1787,4 +1787,83 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   verificado visualmente regenerando "servicio" y "reales" contra el backend
   corriendo.
 
-[[Agregar aquí cada nueva decisión: ADR-059, ...]]
+### ADR-059 — Domicilio estructurado con autocompletado por código postal (Anunciante, EmpresaFacturadora) (F0)
+- **Estado:** aceptada · **Fecha:** 2026-08-31 (F0).
+- **Contexto:** el equipo pidió dejar de capturar la dirección de Anunciante y
+  EmpresaFacturadora como texto libre (`localizacion`/`direccion_empresa`) y en su lugar
+  capturarla con 10 campos estructurados — los mismos que usan los grupos
+  `ExEmisorDomFiscal`/`ExReceptorDomFiscal` del layout del PAC (V40, ver
+  `adapter_pac_v40.py`): Calle, No. exterior, No. interior, Colonia, Localidad,
+  Referencia, Municipio, Estado, País, Código Postal — con el código postal
+  autocompletando el resto (colonia, municipio, estado, ciudad) y **siempre** con la
+  posibilidad de corregir cualquier campo a mano. El motivo explícito: esto alimentará
+  más adelante el llenado real de esos 2 grupos del archivo plano (hoy 2 de los "9
+  campos faltantes" que quedaron documentados y diferidos — investigación previa de
+  la sesión).
+- **Decisión:**
+  1. **Fuente del CP: catálogo SEPOMEX propio, sembrado en la BD** (no una API externa
+     en vivo) — decisión explícita del equipo tras comparar ambas opciones: sin
+     dependencia externa en producción, sin costo ni límite de consultas, alineado al
+     principio de "catálogos como fuente única" del proyecto. Se usa el catálogo
+     oficial de Correos de México (abril 2016, 145,908 filas), obtenido de
+     <https://github.com/redrbrt/sepomex-zip-codes> (dato público de gobierno,
+     redistribuido en CSV limpio) — commiteado en
+     `backend/app/data/sepomex_codigos_postales.csv` (ver su propio README).
+     **Cuidado detectado y corregido al cargarlo:** el CSV pierde el cero a la
+     izquierda de los CP de Ciudad de México que empiezan en "0" (p. ej. "06700" llega
+     como "6700") — se restaura con `.zfill(5)` en el script de carga.
+  2. **Nuevo catálogo de SOLO LECTURA `AsentamientoPostal`** (tabla
+     `asentamiento_postal`, módulo `backend/app/modules/catalogos/codigo_postal.py`):
+     sin alta/edición/baja por API (nadie lo captura a mano), un único endpoint
+     `GET /catalogos/codigos-postales/{cp}` (permiso `catalogos:leer`) que devuelve
+     TODAS las colonias de ese CP — puede haber varias, y el front las ofrece para
+     elegir. Índice no-único en `codigo_postal` (145,908 filas, muchas comparten CP).
+     Se siembra con `backend/scripts/cargar_codigos_postales.py` (NO es una migración:
+     demasiadas filas para vivir en un `upgrade()` de Alembic) — idempotente por
+     reemplazo completo (borra todo y recarga desde el CSV), para poder refrescar el
+     catálogo sin escribir una migración nueva cada vez.
+  3. **10 columnas nuevas, nullable, en `Anunciante` y `EmpresaFacturadora`** (mismas
+     en ambas: `calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
+     `referencia_domicilio`, `municipio`, `estado`, `pais` (default `"MEX"`),
+     `codigo_postal`) — **desviación aditiva aprobada** respecto a la spec BD v2 (que
+     define esos 2 campos como texto libre único), mismo criterio que
+     `layout_factura`/`metodo_pago_clave` en F2. `referencia_domicilio` (no
+     `referencia`, para no chocar con `referencia_anunciante`, un campo YA existente
+     y de otro concepto — nota interna, no del domicilio). **`localizacion`/
+     `direccion_empresa` (legacy) se conservan intactos**, sin migrar/backfillear su
+     contenido a los campos nuevos: no se pierde lo ya capturado, pero la captura real
+     desde ahora es 100% con los campos estructurados. Ambas migraciones son
+     aditivas (tabla nueva + columnas nullable) — se aplicaron directo a RDS sin
+     downtime.
+  4. **Frontend:** nuevo componente compartido
+     `DomicilioPostalInput` (`shared/ui/`, mismo patrón de barrel que
+     `SearchableSelect`/`MoneyInput`) — un solo componente, usado por
+     `AnuncianteForm.tsx` y `EmpresaFacturadoraForm.tsx`. Al completar un CP de 5
+     dígitos (`useBuscarCodigoPostal`, TanStack Query): con 1 sola colonia se
+     autocompleta sola; con varias, aparece una lista para elegir (reutiliza las
+     clases `.ssel-list`/`.ssel-item` de `SearchableSelect`, no CSS nuevo); sin
+     resultados, aviso y captura 100% manual. **Todos los campos son inputs
+     editables siempre** —incluidos los que se autocompletaron— así que un domicilio
+     mal autocompletado se corrige a mano sin pelear con el componente. Calle/No.
+     exterior/No. interior/Referencia NUNCA se autocompletan (SEPOMEX no baja a ese
+     nivel de detalle). Nuevo helper `formatDomicilio()` (`shared/lib/`) concentra el
+     domicilio estructurado en una sola línea legible para los paneles de detalle,
+     cayendo al campo legacy cuando el registro es viejo y no tiene nada estructurado
+     todavía.
+  5. Los formularios de alta/edición ya NO muestran el input de `localizacion`/
+     `direccion_empresa` (RHF sigue cargando su valor en `defaultValues` para que un
+     registro viejo no se vacíe al guardar, simplemente no hay UI para tocarlo).
+- **Consecuencias:** 2 migraciones nuevas + 1 script de siembra (aplicados a RDS:
+  `alembic upgrade head` limpio, 145,908 filas cargadas, verificado en vivo con un
+  `PUT` real sobre un Anunciante sembrado — el domicilio estructurado se guarda y
+  `localizacion` no se toca). Backend: 187 pruebas (12 nuevas) en verde, `ruff` limpio.
+  Frontend: `tsc --noEmit`/`eslint` limpios, 4 pruebas nuevas de
+  `DomicilioPostalInput` (una sola colonia, varias colonias, sin resultados,
+  corrección manual tras autocompletar). **Pendiente, fuera de alcance de esta
+  tarea:** usar estos campos para llenar de verdad `ExEmisorDomFiscal`/
+  `ExReceptorDomFiscal` en `adapter_pac_v40.py` — hoy `_datos_timbrado()` sigue
+  leyendo `direccion_empresa`/`direccion_facturacion` tal cual (el propio equipo lo
+  planteó como un paso POSTERIOR: "esto lo usaremos para darle forma al archivo más
+  adelante").
+
+[[Agregar aquí cada nueva decisión: ADR-060, ...]]

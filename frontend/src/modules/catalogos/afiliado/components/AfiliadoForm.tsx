@@ -21,7 +21,10 @@ const schema = z.object({
   rfc_afiliado: z
     .string()
     .trim()
-    .regex(RFC_REGEX, "RFC inválido (formato mexicano de 12-13 caracteres)."),
+    .regex(
+      RFC_REGEX,
+      "RFC inválido: 3-4 letras + 6 dígitos (fecha AAMMDD) + 3 alfanuméricos (homoclave).",
+    ),
   plaza_id: z.string().min(1, "Selecciona una plaza."),
   contacto_nombre: z.string().trim().max(160).optional(),
   contacto_email: z

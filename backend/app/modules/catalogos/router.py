@@ -14,6 +14,7 @@ from app.modules.catalogos.agencia import router as agencia_router
 from app.modules.catalogos.anunciante import marca_router
 from app.modules.catalogos.anunciante import router as anunciante_router
 from app.modules.catalogos.categoria import router as categoria_router
+from app.modules.catalogos.codigo_postal import router as codigo_postal_router
 from app.modules.catalogos.constantes_sistema import router as constantes_router
 from app.modules.catalogos.contrato import router as contrato_router
 from app.modules.catalogos.cuenta_contable import router as cuenta_contable_router
@@ -49,3 +50,6 @@ router.include_router(categoria_router)
 # contable (tabla propia; menú "Soporte"). MetodoPago vive como grupo de ConstantesSistema.
 router.include_router(constantes_router)
 router.include_router(cuenta_contable_router)
+
+# Domicilio estructurado (Anunciante/EmpresaFacturadora): CP → colonia/municipio/estado.
+router.include_router(codigo_postal_router)

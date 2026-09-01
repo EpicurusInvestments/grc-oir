@@ -20,10 +20,14 @@ Usuario/área para el control de acceso.
 
 > Los 3 catálogos llevan además `updated_at` (ADR-011), como el resto de catálogos previos.
 
-### EmpresaFacturadora (6 campos + `updated_at`)
+### EmpresaFacturadora (6 campos + `updated_at` + 10 de domicilio estructurado, ADR-059)
 `empresa_facturadora_id` (PK), `nombre_empresa` (NVARCHAR(200), NOT NULL), `rfc_empresa`
-(NVARCHAR(13), NOT NULL, **único**), `direccion_empresa` (**TEXT → NVARCHAR(MAX)**), `activo`,
-`created_at`, `updated_at`. (El grupo puede tener varias razones sociales.)
+(NVARCHAR(13), NOT NULL, **único**), `direccion_empresa` (**TEXT → NVARCHAR(MAX)**, legacy —
+ya no tiene input propio, ver abajo), `activo`, `created_at`, `updated_at`. (El grupo puede
+tener varias razones sociales.) **Domicilio estructurado** (desviación aditiva, ADR-059):
+`calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
+`referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta al
+escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a mano.
 - **Pantalla:** catálogo simple, en el menú **"Soporte"**. Lista: Empresa · RFC · Estatus;
   dirección en el detalle.
 

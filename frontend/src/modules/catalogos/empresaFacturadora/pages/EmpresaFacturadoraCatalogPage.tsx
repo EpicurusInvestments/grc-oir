@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
+import { formatDomicilio } from "@/shared/lib/formatDomicilio";
 import type { ListParams } from "@/shared/types";
 import {
   CatalogToolbar,
@@ -124,6 +125,16 @@ export function EmpresaFacturadoraCatalogPage() {
           nombre_empresa: selected.nombre_empresa,
           rfc_empresa: selected.rfc_empresa,
           direccion_empresa: selected.direccion_empresa ?? "",
+          calle: selected.calle ?? "",
+          numero_exterior: selected.numero_exterior ?? "",
+          numero_interior: selected.numero_interior ?? "",
+          colonia: selected.colonia ?? "",
+          localidad: selected.localidad ?? "",
+          referencia_domicilio: selected.referencia_domicilio ?? "",
+          municipio: selected.municipio ?? "",
+          estado: selected.estado ?? "",
+          pais: selected.pais ?? "MEX",
+          codigo_postal: selected.codigo_postal ?? "",
         }}
         submitting={actualizar.isPending}
         submitError={submitError}
@@ -157,8 +168,10 @@ export function EmpresaFacturadoraCatalogPage() {
           <div className="sec">Datos fiscales</div>
           <div className="fl">RFC</div>
           <div className="fv mono">{selected.rfc_empresa}</div>
-          <div className="fl">Dirección</div>
-          <div className="fv muted">{oGuion(selected.direccion_empresa)}</div>
+          <div className="fl">Domicilio</div>
+          <div className="fv muted">
+            {formatDomicilio(selected) ?? oGuion(selected.direccion_empresa)}
+          </div>
         </div>
         {canWrite && (
           <div className="df">

@@ -10,7 +10,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { SavingOverlay, SensitiveField } from "@/shared/ui";
+import {
+  DomicilioPostalInput,
+  type DomicilioPostalValues,
+  SavingOverlay,
+  SensitiveField,
+} from "@/shared/ui";
 
 import type { AnuncianteCreate } from "../types";
 
@@ -37,9 +42,25 @@ function buildSchema(isEdit: boolean, diasOriginal?: string) {
       rfc_anunciante: z
         .string()
         .trim()
-        .regex(RFC_REGEX, "RFC inválido (formato mexicano de 12-13 caracteres)."),
+        .regex(
+          RFC_REGEX,
+          "RFC inválido: 3-4 letras + 6 dígitos (fecha AAMMDD) + 3 alfanuméricos (homoclave).",
+        ),
       agencia_id: z.string().optional(), // "" = directo
+      // `localizacion` (legacy): ya no tiene input propio, ver el domicilio estructurado
+      // de abajo. Se conserva en el schema para no perder lo ya capturado en registros
+      // viejos (ADR-059).
       localizacion: z.string().trim().max(250).optional(),
+      calle: z.string().trim().max(150).optional(),
+      numero_exterior: z.string().trim().max(20).optional(),
+      numero_interior: z.string().trim().max(20).optional(),
+      colonia: z.string().trim().max(150).optional(),
+      localidad: z.string().trim().max(150).optional(),
+      referencia_domicilio: z.string().trim().max(250).optional(),
+      municipio: z.string().trim().max(150).optional(),
+      estado: z.string().trim().max(100).optional(),
+      pais: z.string().trim().max(3).optional(),
+      codigo_postal: z.string().trim().max(5).optional(),
       referencia_anunciante: z.string().trim().max(250).optional(),
       contacto_nombre: z.string().trim().max(160).optional(),
       contacto_email: z
@@ -104,6 +125,7 @@ export function AnuncianteForm({
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<AnuncianteFormValues>({
     resolver: zodResolver(buildSchema(isEdit, diasOriginal)),
@@ -113,6 +135,16 @@ export function AnuncianteForm({
       rfc_anunciante: "",
       agencia_id: "",
       localizacion: "",
+      calle: "",
+      numero_exterior: "",
+      numero_interior: "",
+      colonia: "",
+      localidad: "",
+      referencia_domicilio: "",
+      municipio: "",
+      estado: "",
+      pais: "MEX",
+      codigo_postal: "",
       referencia_anunciante: "",
       contacto_nombre: "",
       contacto_email: "",
@@ -126,6 +158,24 @@ export function AnuncianteForm({
   const diasCambiados =
     isEdit && diasOriginal !== undefined && watch("dias_credito_default") !== diasOriginal;
 
+  const domicilio: DomicilioPostalValues = {
+    calle: watch("calle") ?? "",
+    numero_exterior: watch("numero_exterior") ?? "",
+    numero_interior: watch("numero_interior") ?? "",
+    colonia: watch("colonia") ?? "",
+    localidad: watch("localidad") ?? "",
+    referencia_domicilio: watch("referencia_domicilio") ?? "",
+    municipio: watch("municipio") ?? "",
+    estado: watch("estado") ?? "",
+    pais: watch("pais") ?? "",
+    codigo_postal: watch("codigo_postal") ?? "",
+  };
+  const onDomicilioChange = (patch: Partial<DomicilioPostalValues>) => {
+    for (const [campo, valor] of Object.entries(patch)) {
+      setValue(campo as keyof DomicilioPostalValues, valor, { shouldDirty: true });
+    }
+  };
+
   const submit = handleSubmit((data) => {
     const motivo = data.motivo_cambio?.trim();
     onSubmit({
@@ -134,6 +184,16 @@ export function AnuncianteForm({
       rfc_anunciante: data.rfc_anunciante.toUpperCase(),
       agencia_id: data.agencia_id?.trim() ? data.agencia_id : null,
       localizacion: data.localizacion?.trim() || null,
+      calle: data.calle?.trim() || null,
+      numero_exterior: data.numero_exterior?.trim() || null,
+      numero_interior: data.numero_interior?.trim() || null,
+      colonia: data.colonia?.trim() || null,
+      localidad: data.localidad?.trim() || null,
+      referencia_domicilio: data.referencia_domicilio?.trim() || null,
+      municipio: data.municipio?.trim() || null,
+      estado: data.estado?.trim() || null,
+      pais: data.pais?.trim() || null,
+      codigo_postal: data.codigo_postal?.trim() || null,
       referencia_anunciante: data.referencia_anunciante?.trim() || null,
       contacto_nombre: data.contacto_nombre?.trim() || null,
       contacto_email: data.contacto_email?.trim() || null,
@@ -178,13 +238,8 @@ export function AnuncianteForm({
           </div>
         </div>
 
-        <div className="fl">Localización</div>
-        <input
-          className="fi"
-          placeholder="Ciudad, estado o dirección"
-          {...register("localizacion")}
-        />
-        <div className="fe">{errors.localizacion?.message}</div>
+        <div className="sec">Domicilio</div>
+        <DomicilioPostalInput values={domicilio} onChange={onDomicilioChange} disabled={submitting} />
 
         <div className="sec">Relación comercial</div>
         <div className="fl">Agencia que lo representa</div>
