@@ -769,9 +769,12 @@ patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
 
 ### Reglas de negocio del esquema
 
-- **1:1 OC ↔ FacturaCliente** (`uq_factura_cliente_orden`): una `OrdenCliente` no puede
-  tener dos facturas de cliente → 409 `conflicto`. `FacturaAgencia` **sí** es 1:N sobre la
-  misma OC (no lleva esa restricción).
+- **N:M OC ↔ FacturaCliente** (`factura_cliente_orden`, ADR-064): una factura puede cubrir
+  varias órdenes. Lo que sigue prohibido es que una `OrdenCliente` esté en **dos facturas
+  vigentes** → 409 `conflicto`; las canceladas no cuentan (ADR-047). Ojo: esa regla ya
+  **no** la sostiene el esquema —no es expresable sobre la tabla puente, porque
+  `estado_facturacion` vive en `factura_cliente`— sino el servicio, tanto al dar de alta
+  como al armar la bandeja. `FacturaAgencia` es 1:N sobre la misma OC.
 - **Una OE no se asigna dos veces a la misma factura de afiliado**
   (`uq_factura_afiliado_orden_factura_oe`); la misma OE sí puede repartirse entre facturas
   distintas (parcialidades de la emisora).

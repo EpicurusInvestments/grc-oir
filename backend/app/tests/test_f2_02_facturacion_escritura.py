@@ -1358,6 +1358,15 @@ def test_la_bandeja_se_filtra_por_anunciante(
     assert [o["folio_orden"] for o in r.json()["items"]] == ["OC-B1"]
 
 
+def test_el_combo_de_anunciantes_exige_permiso_de_facturacion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo RBAC que la bandeja de la que cuelga: no basta con que el dato sea inocuo."""
+    ruta = "/api/v1/facturacion/ordenes-por-facturar/anunciantes"
+    assert client.get(ruta, headers=_hdr("ventas")).status_code == 200
+    assert client.get(ruta, headers=_hdr("marketing")).status_code in (401, 403, 422)
+
+
 def test_el_combo_solo_ofrece_anunciantes_con_dos_o_mas_ordenes_disponibles(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

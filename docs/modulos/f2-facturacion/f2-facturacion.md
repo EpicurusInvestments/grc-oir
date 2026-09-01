@@ -267,7 +267,8 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   - Las 2 UNIQUE (1:1 de `factura_cliente.orden_id` y la compuesta de
     `FacturaAfiliadoOrden`) están probadas por ambos lados: que el duplicado falla y que
     el caso legítimo pasa (varias facturas de agencia por OC; la misma OE repartida entre
-    facturas de afiliado distintas).
+    facturas de afiliado distintas). **Nota (ADR-064):** la primera de esas dos
+      UNIQUE ya no existe — la relación pasó a N:M y la regla vive ahora en el servicio.
   - **Hallazgo (ADR-045):** el CHECK de formato de `periodo_contable` se escribió primero
     con `LIKE '[0-9]...'` (T-SQL) y SQLite lo rechaza todo, incluido el valor válido. Se
     cambió a `LIKE '____-__'`, portable. Lo encontró la prueba, no la revisión visual.
