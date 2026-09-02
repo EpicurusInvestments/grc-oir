@@ -127,6 +127,13 @@ propuesta no le da captura sobre Órdenes.
   spots_programados_efectivo`; `monto_ajuste = diferencia_spots * precio_spot` de la OE;
   se crea una `Verificacion` por CADA día de la OE (spec), pero solo se genera
   `Incidencia` en los días con diferencia.
+- Editar `precio_unitario` (tarifa cliente) de una OC con OE ya creadas es libre — cada
+  `OrdenEstacion` ya guarda su propio `precio_spot`, así que las existentes no se ven
+  afectadas. Es **aviso, no candado** (a diferencia de otras ediciones de la OC que sí
+  validan contra las OE hijas): `OrdenClienteForm.tsx` muestra un banner ámbar si la OC
+  en edición ya tiene ≥1 OE, explicando que las existentes quedan con la tarifa anterior
+  y las
+  nuevas usarán la actualizada. No hay validación de backend — es puramente informativo.
 
 ## Integraciones
 
