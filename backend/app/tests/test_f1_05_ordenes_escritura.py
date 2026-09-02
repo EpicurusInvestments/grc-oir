@@ -412,6 +412,85 @@ def test_editar_oc_permite_cambiar_fecha_inicio_a_futura(
     assert editada.fecha_inicio_campania == nueva_fecha
 
 
+def test_editar_oc_amplia_rango_libremente_aunque_haya_dias_de_oe(
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Ampliar el rango de campaña NUNCA rompe nada: todo día ya capturado seguía
+    cabiendo, así que no se valida contra las OE hijas."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)  # -> capturada
+    oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
+
+    editada = oc_svc.update(
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=date.today() + timedelta(days=20),
+            fecha_fin_campania=date.today() + timedelta(days=70),
+        ),
+        VENTAS,
+    )
+    assert editada.fecha_fin_campania == date.today() + timedelta(days=70)
+
+
+def test_editar_oc_angosta_rango_sin_tocar_dias_de_oe_se_permite(
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Angostar es válido en tanto ningún día ya capturado quede fuera del nuevo rango."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
+
+    editada = oc_svc.update(
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=date.today() + timedelta(days=31),
+            fecha_fin_campania=date.today() + timedelta(days=45),
+        ),
+        VENTAS,
+    )
+    assert editada.fecha_inicio_campania == date.today() + timedelta(days=31)
+
+
+def test_editar_oc_angosta_fecha_fin_dejando_fuera_un_dia_de_oe_400(
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
+
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            # Deja fuera el día de hoy+39.
+            OrdenClienteUpdate(fecha_fin_campania=date.today() + timedelta(days=35)),
+            VENTAS,
+        )
+
+
+def test_editar_oc_angosta_fecha_inicio_dejando_fuera_un_dia_de_oe_400(
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
+
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            # Deja fuera el día de hoy+32.
+            OrdenClienteUpdate(fecha_inicio_campania=date.today() + timedelta(days=33)),
+            VENTAS,
+        )
+
+
 def test_editar_oc_congelada_409(
     db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:

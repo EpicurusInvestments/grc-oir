@@ -127,6 +127,12 @@ propuesta no le da captura sobre Órdenes.
   spots_programados_efectivo`; `monto_ajuste = diferencia_spots * precio_spot` de la OE;
   se crea una `Verificacion` por CADA día de la OE (spec), pero solo se genera
   `Incidencia` en los días con diferencia.
+- Editar `fecha_inicio_campania`/`fecha_fin_campania` de una OC (`_pre_update`) es
+  **direccional**: AMPLIAR el rango se permite siempre (todo día ya capturado en las OE
+  hijas seguía cabiendo); ANGOSTARLO (inicio más tarde o fin más temprano que el
+  guardado) se valida contra `OrdenEstacionDia.fecha_transmision` de esas OE — si algún
+  día ya capturado quedaría fuera del nuevo rango, `400 error_dominio`. No es un bloqueo
+  en bloque: solo se dispara cuando de verdad se angosta al menos un lado.
 - Editar `precio_unitario` (tarifa cliente) de una OC con OE ya creadas es libre — cada
   `OrdenEstacion` ya guarda su propio `precio_spot`, así que las existentes no se ven
   afectadas. Es **aviso, no candado** (a diferencia de otras ediciones de la OC que sí
