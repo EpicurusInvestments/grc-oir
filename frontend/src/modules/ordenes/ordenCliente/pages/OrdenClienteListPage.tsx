@@ -105,6 +105,7 @@ export function OrdenClienteListPage({
         isEdit={modo === "edit"}
         estatusActual={selected?.estatus_orden}
         defaultValues={modo === "edit" ? selected ?? undefined : undefined}
+        oeCount={modo === "edit" && selected ? oesDeOC(state.ordenesEstacion, selected.id).length : 0}
         submitError={submitError}
         submitting={submitting}
         onGuardar={onGuardar}

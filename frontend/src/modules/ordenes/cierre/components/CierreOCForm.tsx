@@ -79,75 +79,102 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
         <div className="cat-title">Cerrar orden — {oc.folio_orden}</div>
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", padding: 22, maxWidth: 640 }}>
-        <div className="sec">Transmitido vs. vendido</div>
-        <div className="mc-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-          <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", fontWeight: 600 }}>Vendido</div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 18, fontWeight: 600 }}>{totalVendido}</div>
+      {/* Dos columnas, como "Nueva orden del cliente": lo calculado/derivado (resumen) a la
+          derecha, la captura real (documentos + confirmación) a la izquierda. Evita la
+          columna angosta de antes (maxWidth 640 en el propio contenedor con scroll), que
+          dejaba media pantalla vacía y forzaba un scroll vertical largo. */}
+      <div style={{ flex: 1, overflow: "auto", padding: 22 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 320px",
+            gap: 20,
+            alignItems: "start",
+            maxWidth: 1100,
+          }}
+        >
+          <div>
+            <div className="form-card">
+              <div className="form-card-title">Documentos de cierre</div>
+              <div className="fl">ODC cerrada del cliente</div>
+              <AdjuntoOrdenInput tipo="cierre_odc" value={odcCerradaRef} onChange={setOdcCerradaRef} />
+              <div className="fl" style={{ marginTop: 8 }}>
+                Carta de Conciliación firmada
+              </div>
+              <AdjuntoOrdenInput tipo="cierre_carta" value={cartaRef} onChange={setCartaRef} />
+
+              {faltantes.length > 0 && (
+                <div style={{ background: "var(--amber-bg)", color: "var(--amber-text)", borderRadius: "var(--r)", padding: "8px 11px", fontSize: 12, marginTop: 12 }}>
+                  ⚠ Se cerrará sin {faltantes.map((f) => (f === "odc_cerrada" ? "la ODC cerrada" : "la Carta de Conciliación")).join(" ni ")}. Quedará
+                  registro de que faltó.
+                </div>
+              )}
+            </div>
+
+            <label className="check-box" style={{ marginBottom: 0 }}>
+              <input type="checkbox" checked={confirmado} onChange={(e) => setConfirmado(e.target.checked)} />
+              <div className="check-box-title">Confirmo que la información de cierre es correcta.</div>
+            </label>
           </div>
-          <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", fontWeight: 600 }}>Transmitido (real)</div>
-            <div
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 18,
-                fontWeight: 600,
-                color: totalTransmitido === totalVendido ? "var(--green-text)" : "var(--amber-text)",
-              }}
-            >
-              {totalTransmitido}
+
+          <div>
+            <div className="form-card">
+              <div className="form-card-title">Transmitido vs. vendido</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", fontWeight: 600 }}>Vendido</div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 18, fontWeight: 600 }}>{totalVendido}</div>
+                </div>
+                <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", fontWeight: 600 }}>Transmitido (real)</div>
+                  <div
+                    style={{
+                      fontFamily: "var(--mono)",
+                      fontSize: 18,
+                      fontWeight: 600,
+                      color: totalTransmitido === totalVendido ? "var(--green-text)" : "var(--amber-text)",
+                    }}
+                  >
+                    {totalTransmitido}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="form-card">
+              <div className="form-card-title">Ajuste por incidencias</div>
+              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600, marginBottom: 0, color: ajusteIncidencias >= 0 ? "var(--green-text)" : "var(--red-text)" }}>
+                {ajusteIncidencias >= 0 ? "+" : ""}
+                {fmtMonto(ajusteIncidencias)}
+              </div>
+            </div>
+
+            <div className="form-card" style={{ marginBottom: 0 }}>
+              <div className="form-card-title">Montos de comisión</div>
+              <div className="form-card-sub">IVA {(IVA_RATE * 100).toFixed(0)}% incluido en el total.</div>
+              {fixes.length > 0 && (
+                <div style={{ background: "var(--amber-bg)", color: "var(--amber-text)", borderRadius: "var(--r)", padding: "8px 11px", fontSize: 12, marginBottom: 10 }}>
+                  ⚠ Snapshots de comisión llenados automáticamente: {fixes.join(" · ")}
+                </div>
+              )}
+              {montoVp != null && (
+                <div className="fv" style={{ fontSize: 13 }}>
+                  Vendedor principal ({comisionVp}%): <span className="mono">{fmtMonto(montoVp)}</span>
+                </div>
+              )}
+              {montoVs != null && (
+                <div className="fv" style={{ fontSize: 13 }}>
+                  Vendedor secundario ({comisionVs}%): <span className="mono">{fmtMonto(montoVs)}</span>
+                </div>
+              )}
+              {montoAg != null && (
+                <div className="fv" style={{ fontSize: 13, marginBottom: 0 }}>
+                  Agencia ({comisionAg}%): <span className="mono">{fmtMonto(montoAg)}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        <div className="sec">Ajuste por incidencias</div>
-        <div className="fv mono" style={{ fontSize: 16, fontWeight: 600, color: ajusteIncidencias >= 0 ? "var(--green-text)" : "var(--red-text)" }}>
-          {ajusteIncidencias >= 0 ? "+" : ""}
-          {fmtMonto(ajusteIncidencias)}
-        </div>
-
-        <div className="sec">Montos de comisión (IVA {(IVA_RATE * 100).toFixed(0)}% incluido en el total)</div>
-        {fixes.length > 0 && (
-          <div style={{ background: "var(--amber-bg)", color: "var(--amber-text)", borderRadius: "var(--r)", padding: "8px 11px", fontSize: 12, marginBottom: 10 }}>
-            ⚠ Snapshots de comisión llenados automáticamente: {fixes.join(" · ")}
-          </div>
-        )}
-        {montoVp != null && (
-          <div className="fv" style={{ fontSize: 13 }}>
-            Vendedor principal ({comisionVp}%): <span className="mono">{fmtMonto(montoVp)}</span>
-          </div>
-        )}
-        {montoVs != null && (
-          <div className="fv" style={{ fontSize: 13 }}>
-            Vendedor secundario ({comisionVs}%): <span className="mono">{fmtMonto(montoVs)}</span>
-          </div>
-        )}
-        {montoAg != null && (
-          <div className="fv" style={{ fontSize: 13 }}>
-            Agencia ({comisionAg}%): <span className="mono">{fmtMonto(montoAg)}</span>
-          </div>
-        )}
-
-        <div className="sec">Documentos de cierre</div>
-        <div className="fl">ODC cerrada del cliente</div>
-        <AdjuntoOrdenInput tipo="cierre_odc" value={odcCerradaRef} onChange={setOdcCerradaRef} />
-        <div className="fl" style={{ marginTop: 8 }}>
-          Carta de Conciliación firmada
-        </div>
-        <AdjuntoOrdenInput tipo="cierre_carta" value={cartaRef} onChange={setCartaRef} />
-
-        {faltantes.length > 0 && (
-          <div style={{ background: "var(--amber-bg)", color: "var(--amber-text)", borderRadius: "var(--r)", padding: "8px 11px", fontSize: 12, marginTop: 12 }}>
-            ⚠ Se cerrará sin {faltantes.map((f) => (f === "odc_cerrada" ? "la ODC cerrada" : "la Carta de Conciliación")).join(" ni ")}. Quedará
-            registro de que faltó.
-          </div>
-        )}
-
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 16, cursor: "pointer" }}>
-          <input type="checkbox" checked={confirmado} onChange={(e) => setConfirmado(e.target.checked)} />
-          Confirmo que la información de cierre es correcta.
-        </label>
       </div>
 
       <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>

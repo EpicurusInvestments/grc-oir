@@ -187,50 +187,64 @@ export function ListasParaFacturarPage() {
         </div>
       </div>
 
-      {/* Barra del modo múltiple: check → combo → botón, en el orden en que se trabaja. */}
-      <div className="barra-multiple">
-        <label className="check-multiple">
-          <input
-            type="checkbox"
-            checked={multiple}
-            onChange={(e) => (e.target.checked ? setMultiple(true) : salirDeMultiple())}
-          />
-          <span>Facturar Múltiples Órdenes</span>
-        </label>
-
-        {multiple && (
-          <>
-            <div className="combo-anunciante">
-              <SearchableSelect
-                value={anuncianteId}
-                onChange={(v) => {
-                  setAnuncianteId(v);
-                  setMarcadas([]);
-                  setErrorSeleccion(null);
-                  setPage(1);
-                }}
-                options={(anunciantes.data ?? []).map((a) => ({
-                  value: a.anunciante_id,
-                  label: `${a.anunciante} · ${a.ordenes} órdenes`,
-                }))}
-                placeholder="Seleccionar Anunciante"
-                emptyOptionLabel="Seleccionar Anunciante"
-                emptyResultsLabel="Ningún anunciante coincide"
-              />
+      {/* Tarjeta del modo múltiple: mismo look que las secciones de "Nueva orden del
+          cliente" (`.form-card` + `.check-box`), en vez de la barra plana anterior. Vive
+          fuera del scroll de las tarjetas para que siga visible al marcar órdenes en una
+          lista larga. */}
+      <div style={{ padding: "16px 22px 0" }}>
+        <div className="form-card" style={{ marginBottom: 0 }}>
+          <div className="form-card-title">Facturación múltiple</div>
+          <label className="check-box" style={{ marginBottom: multiple ? 16 : 0 }}>
+            <input
+              type="checkbox"
+              checked={multiple}
+              onChange={(e) => (e.target.checked ? setMultiple(true) : salirDeMultiple())}
+            />
+            <div>
+              <div className="check-box-title">Facturar Múltiples Órdenes</div>
+              <div className="check-box-desc">
+                Agrupa varias órdenes cerradas del mismo anunciante en una sola factura.
+              </div>
             </div>
+          </label>
 
-            <button type="button" className="btn btn-primary" onClick={generarMultiple}>
-              Generar Factura Múltiple
-            </button>
+          {multiple && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div className="fl" style={{ width: "100%", marginBottom: -6 }}>
+                Anunciante
+              </div>
+              <div className="combo-anunciante">
+                <SearchableSelect
+                  value={anuncianteId}
+                  onChange={(v) => {
+                    setAnuncianteId(v);
+                    setMarcadas([]);
+                    setErrorSeleccion(null);
+                    setPage(1);
+                  }}
+                  options={(anunciantes.data ?? []).map((a) => ({
+                    value: a.anunciante_id,
+                    label: `${a.anunciante} · ${a.ordenes} órdenes`,
+                  }))}
+                  placeholder="Seleccionar Anunciante"
+                  emptyOptionLabel="Seleccionar Anunciante"
+                  emptyResultsLabel="Ningún anunciante coincide"
+                />
+              </div>
 
-            {seleccionadas.length > 0 && (
-              <span className="resumen-multiple">
-                {seleccionadas.length} seleccionadas ·{" "}
-                <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
-              </span>
-            )}
-          </>
-        )}
+              <button type="button" className="btn btn-primary" onClick={generarMultiple}>
+                Generar Factura Múltiple
+              </button>
+
+              {seleccionadas.length > 0 && (
+                <span className="resumen-multiple">
+                  {seleccionadas.length} seleccionadas ·{" "}
+                  <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {multiple && anunciantes.isSuccess && anunciantes.data.length === 0 && (

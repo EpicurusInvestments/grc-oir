@@ -266,6 +266,37 @@ describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
   });
 });
 
+describe("Aviso de tarifa cuando la OC ya tiene OE creadas", () => {
+  it("con OE ya creadas, avisa que las existentes quedan con la tarifa anterior", () => {
+    renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 2 });
+    expect(
+      screen.getByText(/Esta OC ya tiene 2 órdenes internas creadas con la tarifa anterior/),
+    ).toBeInTheDocument();
+  });
+
+  it("con una sola OE, usa singular en vez de '1 órdenes'", () => {
+    renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 1 });
+    expect(
+      screen.getByText(/Esta OC ya tiene 1 orden interna creada con la tarifa anterior/),
+    ).toBeInTheDocument();
+  });
+
+  it("sin OE creadas, no muestra ningún aviso", () => {
+    renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 0 });
+    expect(screen.queryByText(/tarifa anterior/)).toBeNull();
+  });
+
+  it("al crear (no editar) tampoco muestra el aviso, aunque venga un oeCount", () => {
+    renderForm({ oeCount: 3 });
+    expect(screen.queryByText(/tarifa anterior/)).toBeNull();
+  });
+
+  it("con la OC congelada, no muestra el aviso: el formulario ya es de solo lectura", () => {
+    renderForm({ isEdit: true, estatusActual: "orden_cerrada", defaultValues: makeOCInput(), oeCount: 2 });
+    expect(screen.queryByText(/tarifa anterior/)).toBeNull();
+  });
+});
+
 describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
   it("al crear, una fecha de inicio pasada muestra error y no llama a onGuardar", async () => {
     const { container, onGuardar } = renderForm();

@@ -124,6 +124,11 @@ interface OrdenClienteFormProps {
   isEdit?: boolean;
   estatusActual?: EstadoOC;
   defaultValues?: Partial<OrdenClienteInput> & { revision_checklist?: Record<string, boolean> };
+  /** Nº de OrdenEstacion YA creadas para esta OC (solo aplica en edición). Aviso, no
+   *  candado: cambiar la tarifa aquí no toca las OE existentes (cada una guarda su
+   *  propio `precio_spot`), pero conviene que quien edita sepa que ya hay órdenes
+   *  internas con la tarifa vieja antes de tocarla. */
+  oeCount?: number;
   submitting?: boolean;
   submitError?: string | null;
   onGuardar: (input: OrdenClienteInput, opts: { darVobo: boolean; motivoComision?: string }) => void;
@@ -137,6 +142,7 @@ export function OrdenClienteForm({
   isEdit = false,
   estatusActual,
   defaultValues,
+  oeCount = 0,
   submitting,
   submitError,
   onGuardar,
@@ -573,6 +579,24 @@ export function OrdenClienteForm({
                 <div className="fe">{errors.precio_unitario?.message}</div>
               </div>
             </div>
+
+            {isEdit && !congelado && oeCount > 0 && (
+              <div
+                style={{
+                  background: "var(--amber-bg)",
+                  color: "var(--amber-text)",
+                  borderRadius: "var(--r)",
+                  padding: "8px 11px",
+                  fontSize: 12,
+                  marginBottom: 10,
+                }}
+              >
+                ⚠ Esta OC ya tiene {oeCount}{" "}
+                {oeCount === 1 ? "orden interna creada" : "órdenes internas creadas"} con la
+                tarifa anterior; las nuevas usarán la tarifa actualizada.
+              </div>
+            )}
+
             <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "12px 14px", marginTop: 4 }} className="r3">
               <div>
                 <div className="fl">

@@ -777,6 +777,40 @@ class OrdenClienteService(
                     "fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.",
                     detalles={"fecha_inicio": str(f_ini), "fecha_fin": str(f_fin)},
                 )
+
+            # Angostar el rango (inicio más tarde o fin más temprano que el guardado)
+            # puede dejar fuera días de OrdenEstacionDia ya capturados en las OE hijas de
+            # esta OC. Ampliarlo NUNCA rompe nada: todo día existente ya cabía en el rango
+            # viejo, y por lo tanto cabe en uno más amplio — por eso solo se valida cuando
+            # de verdad se angosta al menos un lado, no en bloque.
+            if f_ini > obj.fecha_inicio_campania or f_fin < obj.fecha_fin_campania:
+                from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
+
+                fuera_de_rango = db.scalar(
+                    select(OrdenEstacionDia.orden_estacion_dia_id)
+                    .join(
+                        OrdenEstacion,
+                        OrdenEstacion.orden_estacion_id == OrdenEstacionDia.orden_estacion_id,
+                    )
+                    .where(
+                        OrdenEstacion.orden_id == obj.orden_id,
+                        or_(
+                            OrdenEstacionDia.fecha_transmision < f_ini,
+                            OrdenEstacionDia.fecha_transmision > f_fin,
+                        ),
+                    )
+                    .limit(1)
+                )
+                if fuera_de_rango is not None:
+                    raise DomainError(
+                        "El nuevo rango de campaña deja fuera días ya capturados en "
+                        "órdenes estación de esta orden.",
+                        detalles={
+                            "fecha_inicio_campania": str(f_ini),
+                            "fecha_fin_campania": str(f_fin),
+                        },
+                    )
+
             payload["total_dias_campania"] = (f_fin - f_ini).days + 1
 
         if "fecha_venta" in payload:
