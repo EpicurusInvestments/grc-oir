@@ -90,8 +90,13 @@ body {
 }
 
 /* ── App shell ── */
+/* `height: 100%` (no `100vh`): toda la cadena de ancestros (`html, body, #root`) ya usa
+   `height: 100%`. Mezclar unidad de viewport con unidad de porcentaje aquí redondea a un
+   px distinto según el zoom del navegador, y ese desfase de 1px es justo lo que hacía
+   aparecer un scroll fantasma en el contenido a ciertos niveles de zoom (p.ej. arriba del
+   80%) aunque el contenido cupiera perfectamente. */
 .app-shell {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;

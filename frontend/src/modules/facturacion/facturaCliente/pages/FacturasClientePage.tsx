@@ -23,7 +23,7 @@ import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } fr
 import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
 import { facturaClienteApi } from "../../api";
 import { badgeEstadoFactura, fmtFecha, fmtMoneda, oGuion } from "../../format";
-import { useFacturasCliente, useOrdenesPorFacturar } from "../../hooks";
+import { useFacturasCliente, useFacturasDelAnunciante, useOrdenesPorFacturar } from "../../hooks";
 import {
   ESTADO_FACTURACION_LABEL,
   FLUJO_FACTURACION,
@@ -110,6 +110,9 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
   // header — la bandeja en sí vive en «Listas para facturar» (ADR pendiente de numerar).
   const porFacturar = useOrdenesPorFacturar({ page: 1, size: 1 });
   const hayOrdenesPorFacturar = (porFacturar.data?.total ?? 0) > 0;
+  // Facturas relacionadas (ADR-062): mismo catálogo que alimenta el combo del alta, para
+  // resolver número/estado de cada id sin pedirlas una por una.
+  const facturasDelAnunciante = useFacturasDelAnunciante(selected?.anunciante_id);
 
   const mensajeDeError = (e: unknown): string =>
     e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
@@ -265,6 +268,44 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
           </div>
           <div className="fl">Referencia adicional</div>
           <div className="fv">{oGuion(selected.referencia_adicional)}</div>
+
+          {selected.facturas_relacionadas_ids.length > 0 && (
+            <>
+              <div className="sec">Facturas relacionadas</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 11 }}>
+                {selected.facturas_relacionadas_ids.map((id) => {
+                  const relacionada = facturasDelAnunciante.data?.items.find(
+                    (f) => f.factura_id === id,
+                  );
+                  if (!relacionada) {
+                    return (
+                      <span key={id} className="badge b-gray mono" style={{ fontSize: 11 }}>
+                        {id.slice(0, 8)}…
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className="badge b-blue"
+                      style={{
+                        border: "none",
+                        cursor: "pointer",
+                        font: "inherit",
+                        fontWeight: 500,
+                      }}
+                      onClick={() => seleccionar(relacionada)}
+                      title="Ver el detalle de esta factura"
+                    >
+                      {relacionada.numero_factura} ·{" "}
+                      {ESTADO_FACTURACION_LABEL[relacionada.estado_facturacion]}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
 
           <div className="sec">
             Receptor <FieldTag origin="heredado" />

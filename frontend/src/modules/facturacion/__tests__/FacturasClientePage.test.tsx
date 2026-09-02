@@ -124,6 +124,43 @@ describe("FacturasClientePage", () => {
     expect(screen.queryByText("OC-2026-0041")).not.toBeInTheDocument();
   });
 
+  it('el detalle muestra las "Facturas relacionadas" elegidas al crear la factura (ADR-062)', async () => {
+    const relacionada: FacturaCliente = {
+      ...base,
+      factura_id: "f-2",
+      numero_factura: "A-1020",
+      estado_facturacion: "timbrada",
+    };
+    const conRelacionada = { ...base, facturas_relacionadas_ids: ["f-2"] };
+    listMock.mockImplementation((params: { anunciante_id?: string } = {}) =>
+      Promise.resolve(
+        params.anunciante_id
+          ? { items: [relacionada], total: 1, page: 1, size: 100, pages: 1 }
+          : { items: [conRelacionada], total: 1, page: 1, size: 20, pages: 1 },
+      ),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <FacturasClientePage onIrAListasParaFacturar={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    (await screen.findByText("A-1041")).click();
+    expect(await screen.findByText("Facturas relacionadas")).toBeInTheDocument();
+    expect(await screen.findByText("A-1020 · Timbrada")).toBeInTheDocument();
+
+    // Es clicable: lleva al detalle de la factura relacionada.
+    screen.getByText("A-1020 · Timbrada").click();
+    await waitFor(() => expect(screen.getAllByText("A-1020").length).toBeGreaterThan(0));
+  });
+
+  it('sin facturas relacionadas no muestra la sección "Facturas relacionadas"', async () => {
+    renderCon(base);
+    (await screen.findByText("A-1041")).click();
+    await waitFor(() => expect(screen.getByText("Agencia Uno SA de CV")).toBeInTheDocument());
+    expect(screen.queryByText("Facturas relacionadas")).not.toBeInTheDocument();
+  });
+
   it("en 'preparada' ofrece enviar a timbrado, pero NO registrar timbrado", async () => {
     renderCon(base);
     (await screen.findByText("A-1041")).click();
