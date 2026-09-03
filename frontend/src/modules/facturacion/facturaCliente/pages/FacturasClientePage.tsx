@@ -15,7 +15,7 @@
  * que se está moviendo.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
@@ -144,6 +144,15 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
       setErrorAccion(mensajeDeError(e));
     }
   };
+
+  // El aviso "archivo completo" es una confirmación, no algo que haya que leer con calma
+  // (a diferencia del de "incompleto", que lista los campos que faltan y sí debe quedarse
+  // hasta que el usuario lo cierre o cambie de factura): se autocierra solo, como un toast.
+  useEffect(() => {
+    if (faltantes?.length !== 0) return;
+    const id = setTimeout(() => setFaltantes(null), 4000);
+    return () => clearTimeout(id);
+  }, [faltantes]);
 
   const onTimbrar = async (data: TimbrarInput) => {
     if (!selected) return;
@@ -424,11 +433,27 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
           )}
           {faltantes !== null &&
             (faltantes.length === 0 ? (
-              <div className="state-msg" style={{ margin: 0, textAlign: "left" }}>
-                Archivo generado y completo.
+              <div
+                style={{
+                  background: "var(--green-bg)",
+                  color: "var(--green-text)",
+                  borderRadius: "var(--r)",
+                  padding: "8px 11px",
+                  fontSize: 12,
+                }}
+              >
+                ✓ Archivo generado y completo.
               </div>
             ) : (
-              <div className="state-msg error" style={{ margin: 0, textAlign: "left" }}>
+              <div
+                style={{
+                  background: "var(--amber-bg)",
+                  color: "var(--amber-text)",
+                  borderRadius: "var(--r)",
+                  padding: "8px 11px",
+                  fontSize: 12,
+                }}
+              >
                 <strong>Archivo generado, pero INCOMPLETO.</strong> El PAC lo rechazaría:
                 faltan {faltantes.length} campos que el sistema todavía no captura (
                 {faltantes.join(", ")}).
