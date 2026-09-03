@@ -25,6 +25,7 @@ from app.modules.catalogos import (  # noqa: F401
     agencia,
     anunciante,
     categoria,
+    codigo_postal,
     constantes_sistema,
     contrato,
     cuenta_contable,
