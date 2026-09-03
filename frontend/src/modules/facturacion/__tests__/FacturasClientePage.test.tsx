@@ -274,6 +274,26 @@ describe("FacturasClientePage", () => {
     expect(await screen.findByText(/Archivo generado y completo/)).toBeInTheDocument();
   });
 
+  it(
+    "fix: el aviso de 'archivo completo' se autocierra solo, como un toast",
+    async () => {
+      const { facturaClienteApi } = await import("../api");
+      vi.mocked(facturaClienteApi.descargarArchivoPlano).mockResolvedValue([]);
+      renderCon(base);
+      (await screen.findByText("A-1041")).click();
+      (await screen.findByText(/Archivo plano/)).click();
+      expect(await screen.findByText(/Archivo generado y completo/)).toBeInTheDocument();
+
+      // Tiempo real (no fake timers): RTL sondea con sus propios timers y no conviene
+      // mezclarlos. El aviso se autocierra a los 4s; se da margen hasta 6s de sondeo.
+      await waitFor(
+        () => expect(screen.queryByText(/Archivo generado y completo/)).not.toBeInTheDocument(),
+        { timeout: 6000 },
+      );
+    },
+    8000,
+  );
+
   // ── Sección "Órdenes relacionadas" (ADR-064) ────────────────────────────────
   const ordenUna: OrdenDeFactura = {
     orden_id: "oc-1",
