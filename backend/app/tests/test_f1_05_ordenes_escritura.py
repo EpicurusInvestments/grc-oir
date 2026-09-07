@@ -876,6 +876,58 @@ def test_cascada_solo_al_cerrar_la_ultima_oe(
     assert oc_svc.get(oc.orden_id).estatus_orden == EstatusOrden.EN_VERIFICACION
 
 
+def test_crear_oe_permitido_en_verificacion_si_quedan_spots_sin_asignar(
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Bug real: `en_verificacion` se alcanza automáticamente en cuanto la ÚLTIMA OE que
+    existe EN ESE MOMENTO cierra — no cuando ya no quedan spots de la OC por asignar. Si
+    la primera OE no agotó el total_spots, debe poder seguir agregándose otra."""
+    oc = oc_svc.create(_oc_payload(cat, total_spots=30), VENTAS)  # 20 en la 1a OE, 10 sobran
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(oe.orden_estacion_id, OrdenEstacionRealesIn(), VENTAS)
+    assert oc_svc.get(oc.orden_id).estatus_orden == EstatusOrden.EN_VERIFICACION
+
+    segunda = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=date.today() + timedelta(days=45),
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(9, 0),
+                    spots_asignados=10,
+                )
+            ],
+        ),
+        VENTAS,
+    )
+    assert segunda.folio_orden_estacion == oc.folio_orden.replace("OC-", "OE-") + "B"
+
+
+def test_crear_oe_rechaza_orden_cerrada(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """A diferencia de 'en_verificacion', esto NO se relaja: orden_cerrada/facturada/
+    cobrada/cancelada son estados asentados, no un efecto colateral de cuántas OE
+    existían al momento en que la última cerró."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    obj = db.get(OrdenCliente, oc.orden_id)
+    assert obj is not None
+    obj.estatus_orden = EstatusOrden.ORDEN_CERRADA.value
+    db.commit()
+
+    with pytest.raises(StateTransitionError):
+        oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+
+
 # ── Cierre ────────────────────────────────────────────────────────────────────
 def test_cerrar_sin_orden_estacion_409(
     oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]

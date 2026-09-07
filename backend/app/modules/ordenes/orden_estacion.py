@@ -555,9 +555,19 @@ class OrdenEstacionService(
         if oc.estatus_orden not in (
             EstatusOrden.CAPTURADA.value,
             EstatusOrden.EN_TRANSMISION.value,
+            # `en_verificacion` se alcanza automáticamente en cuanto la ÚLTIMA OE que
+            # existe EN ESE MOMENTO cierra (avanzar_reales) — no cuando de verdad ya no
+            # queda ningún spot de la OC por asignar. Si esa primera OE no agotó el
+            # total_spots de la OC, hay que poder seguir agregando OE para lo que falta;
+            # bloquearlo aquí dejaría spots comprados sin ninguna forma de asignarlos.
+            # Sigue bloqueado desde `orden_cerrada` en adelante (facturada/cobrada/
+            # cancelada): ahí sí es un estado asentado, no un efecto colateral de cuántas
+            # OE se crearon antes.
+            EstatusOrden.EN_VERIFICACION.value,
         ):
             raise StateTransitionError(
-                "Solo se pueden asignar estaciones a una orden en 'capturada' o 'en_transmision'.",
+                "Solo se pueden asignar estaciones a una orden en 'capturada', "
+                "'en_transmision' o 'en_verificacion'.",
                 detalles={"estatus_orden": oc.estatus_orden},
             )
         estacion = db.get(Estacion, data.estacion_id)

@@ -152,6 +152,17 @@ propuesta no le da captura sobre Órdenes.
   (`adapters/vocabulario.ts`) colapsa `borrador`/`asignada` en el único sub-estado
   `asignada_afiliado`, así que el botón "Editar" de `OrdenEstacionDetailPanel` se
   condiciona a ese sub-estado.
+- **Crear una `OrdenEstacion` también se permite con la OC en `en_verificacion`**
+  (`OrdenEstacionService.create`), no solo en `capturada`/`en_transmision` (bug real).
+  `en_verificacion` se alcanza AUTOMÁTICAMENTE en cuanto la ÚLTIMA OE que existe EN ESE
+  MOMENTO cierra (`avanzar_reales`) — no cuando de verdad ya no quedan spots de la OC por
+  asignar. Si la primera OE capturada no agotó `total_spots`, la OC ya saltó a
+  `en_verificacion` sin que quedara ninguna forma de asignar el resto. Sigue bloqueado
+  desde `orden_cerrada` en adelante (facturada/cobrada/cancelada): esos sí son estados
+  asentados, no un efecto colateral de cuántas OE existían al momento del cierre
+  automático. El frontend no necesitó cambios: su vocabulario v5 ya agrupaba
+  `en_transmision`/`en_verificacion` en el mismo estado `"orden_interna"` para el filtro
+  de "OC elegible" — el bloqueo era puramente del backend.
 
 ## Integraciones
 
