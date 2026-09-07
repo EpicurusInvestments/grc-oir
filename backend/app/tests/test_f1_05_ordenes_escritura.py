@@ -59,6 +59,7 @@ from app.modules.ordenes.orden_estacion import (
     OrdenEstacionRealesIn,
     OrdenEstacionRepository,
     OrdenEstacionService,
+    OrdenEstacionUpdate,
 )
 from app.modules.ordenes.router import router as ordenes_router
 from app.modules.ordenes.verificacion import Verificacion
@@ -666,6 +667,133 @@ def test_crear_oe_fecha_fuera_de_campania_400(
                 ],
             ),
             VENTAS,
+        )
+
+
+# ── Edición de OE (corrección de errores de captura, antes de transmitir) ──────
+def test_editar_oe_en_asignada_permite_corregir_tarifa_y_dias(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800
+
+    editada = oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            precio_spot=Decimal("700.00"),
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=date.today() + timedelta(days=33),
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(9, 0),
+                    spots_asignados=15,
+                )
+            ],
+        ),
+        VENTAS,
+    )
+    # 15 spots * 700 = 10500; % OIR = (1000-700)/1000*100 = 30.0
+    assert editada.precio_spot == Decimal("700.00")
+    assert editada.importe_estacion == Decimal("10500.00")
+    assert editada.porcentaje_participacion_oir == Decimal("30.0")
+    assert editada.importe_oir == Decimal("3150.00")
+
+    dias_tras = oe_svc.dias(oe.orden_estacion_id)
+    assert len(dias_tras) == 1
+    assert dias_tras[0].spots_asignados == 15
+
+
+def test_editar_oe_solo_tarifa_conserva_los_dias_existentes(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800
+
+    editada = oe_svc.update(
+        oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("900.00")), VENTAS
+    )
+    # Los días no se tocaron: siguen siendo 20 spots en total. 20 * 900 = 18000.
+    assert editada.importe_estacion == Decimal("18000.00")
+    assert len(oe_svc.dias(oe.orden_estacion_id)) == 2
+
+
+def test_editar_oe_rechaza_tarifa_mayor_a_la_de_la_oc(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("1500.00")), VENTAS
+        )
+
+
+def test_editar_oe_rechaza_dia_fuera_de_campania(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id,
+            OrdenEstacionUpdate(
+                dias=[
+                    OrdenEstacionDiaCreate(
+                        fecha_transmision=date.today() + timedelta(days=100),
+                        hora_inicio=time(7, 0),
+                        hora_fin=time(9, 0),
+                        spots_asignados=10,
+                    )
+                ]
+            ),
+            VENTAS,
+        )
+
+
+def test_editar_oe_rechaza_exceder_balance_de_spots_de_la_oc(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat, total_spots=25), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 de 25 ya asignados
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id,
+            OrdenEstacionUpdate(
+                dias=[
+                    OrdenEstacionDiaCreate(
+                        fecha_transmision=date.today() + timedelta(days=33),
+                        hora_inicio=time(7, 0),
+                        hora_fin=time(9, 0),
+                        spots_asignados=30,  # excede los 25 de la OC
+                    )
+                ]
+            ),
+            VENTAS,
+        )
+
+
+def test_editar_oe_congelada_en_transmision_409(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    obj = db.get(OrdenEstacion, oe.orden_estacion_id)
+    assert obj is not None
+    obj.estatus = EstatusOrdenEstacion.EN_TRANSMISION.value
+    db.commit()
+
+    with pytest.raises(StateTransitionError):
+        oe_svc.update(
+            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("700.00")), VENTAS
         )
 
 

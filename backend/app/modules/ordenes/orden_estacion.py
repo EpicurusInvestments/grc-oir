@@ -51,6 +51,7 @@ from sqlalchemy import (
     Numeric,
     Unicode,
     UniqueConstraint,
+    delete,
     func,
     select,
 )
@@ -78,6 +79,21 @@ class EstatusOrdenEstacion(StrEnum):
     EN_REVISION = "en_revision"
     CERRADA = "cerrada"
     CANCELADA = "cancelada"
+
+
+# Estados "congelados" para edición (mismo criterio que `FROZEN_STATES_OC` en
+# orden_cliente.py): desde 'en_transmision' en adelante ya existen `Verificacion` ligadas
+# a los días exactos de esta OE (spec: una por día) — permitir tocar tarifa/días ahí
+# arriesgaría dejarlas huérfanas o desalineadas. Antes de eso, la OE no ha dejado ningún
+# rastro fuera de sí misma todavía, así que corregirla es seguro.
+FROZEN_STATES_OE: frozenset[str] = frozenset(
+    {
+        EstatusOrdenEstacion.EN_TRANSMISION.value,
+        EstatusOrdenEstacion.EN_REVISION.value,
+        EstatusOrdenEstacion.CERRADA.value,
+        EstatusOrdenEstacion.CANCELADA.value,
+    }
+)
 
 
 # ── Modelo ──────────────────────────────────────────────────────────────────────
@@ -424,6 +440,19 @@ class OrdenEstacionCreate(BaseModel):
     dias: list[OrdenEstacionDiaCreate] = Field(min_length=1)
 
 
+class OrdenEstacionUpdate(BaseModel):
+    """Corrección de una OE que TODAVÍA no empezó a transmitir (`FROZEN_STATES_OE`).
+    Mismos campos que `OrdenEstacionCreate` salvo `orden_id`/`estacion_id` (no se
+    reasigna la OE a otra OC ni a otra estación por esta vía — sería, en la práctica,
+    otra OE distinta). Todos opcionales: se manda solo lo que se corrige."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    precio_spot: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    observaciones_estacion: str | None = Field(default=None, max_length=2000)
+    dias: list[OrdenEstacionDiaCreate] | None = Field(default=None, min_length=1)
+
+
 class OrdenEstacionDiaProgramadoIn(BaseModel):
     fecha_transmision: date
     spots_programados: int = Field(ge=0)
@@ -488,12 +517,14 @@ class OrdenEstacionRepository(BaseRepository[OrdenEstacion]):
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
 class OrdenEstacionService(
-    BaseService[OrdenEstacion, OrdenEstacionCreate, BaseModel, OrdenEstacionRead]
+    BaseService[OrdenEstacion, OrdenEstacionCreate, OrdenEstacionUpdate, OrdenEstacionRead]
 ):
     """`create` asigna una estación a una OrdenCliente (Ventas). Las transiciones
     2.1→2.2→2.3 (`avanzar_programados`/`avanzar_reales`) son métodos dedicados, no
     `update` genérico: cada una tiene su propia forma de entrada y efectos (generación
-    de `Verificacion`/`Incidencia`, cascada de estatus a la OC)."""
+    de `Verificacion`/`Incidencia`, cascada de estatus a la OC). `update()` sí existe,
+    pero acotado a corregir errores de captura ANTES de transmitir (`FROZEN_STATES_OE`)
+    — no es un canal para editar libremente en cualquier momento."""
 
     read_schema = OrdenEstacionRead
     entidad = "OrdenEstacion"
@@ -637,6 +668,142 @@ class OrdenEstacionService(
             )
         if oc.estatus_orden == EstatusOrden.CAPTURADA.value:
             oc.estatus_orden = EstatusOrden.EN_TRANSMISION.value
+
+        db.commit()
+        db.refresh(obj)
+        return self._to_read(obj)
+
+    # ── edición (corrección de errores de captura, antes de transmitir) ────────────
+    def update(
+        self, orden_estacion_id: uuid.UUID, data: OrdenEstacionUpdate, usuario: CurrentUser
+    ) -> OrdenEstacionRead:
+        """Revalida TODO lo que ya valida `create()` (tarifa vs. OC, días dentro de la
+        campaña, balance de spots de la OC) y recalcula % OIR e importes — en la
+        práctica es lo mismo que un alta nueva, porque hasta 'asignada' la OE no ha
+        dejado ningún rastro fuera de sí misma. 409 si ya está en `FROZEN_STATES_OE`."""
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+
+        db = self._repo.db
+        obj = self._get_or_404(orden_estacion_id)
+        if obj.estatus in FROZEN_STATES_OE:
+            raise StateTransitionError(
+                f"No se puede editar una orden estación en estado '{obj.estatus}'.",
+                detalles={"estatus": obj.estatus},
+            )
+        oc = db.get(OrdenCliente, obj.orden_id)
+        if oc is None:  # pragma: no cover — la FK de la OE lo garantiza
+            raise DomainError("La OrdenCliente de esta orden estación no existe.")
+
+        campos = data.model_fields_set
+        precio_spot = data.precio_spot if "precio_spot" in campos else obj.precio_spot
+        if precio_spot > oc.precio_unitario:
+            raise DomainError(
+                "La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.",
+                detalles={
+                    "precio_spot": str(precio_spot),
+                    "precio_unitario_oc": str(oc.precio_unitario),
+                },
+            )
+
+        dias_nuevos = data.dias if "dias" in campos else None
+        if dias_nuevos is not None:
+            for dia in dias_nuevos:
+                if not (oc.fecha_inicio_campania <= dia.fecha_transmision <= oc.fecha_fin_campania):
+                    raise DomainError(
+                        "Hay días fuera del rango de campaña de la orden.",
+                        detalles={
+                            "fecha": str(dia.fecha_transmision),
+                            "campania": [str(oc.fecha_inicio_campania), str(oc.fecha_fin_campania)],
+                        },
+                    )
+            nuevos = sum(d.spots_asignados for d in dias_nuevos)
+        else:
+            nuevos = (
+                db.scalar(
+                    select(func.coalesce(func.sum(OrdenEstacionDia.spots_asignados), 0)).where(
+                        OrdenEstacionDia.orden_estacion_id == obj.orden_estacion_id
+                    )
+                )
+                or 0
+            )
+
+        # Balance de spots de la OC: las OE HERMANAS, sin contar esta misma (que se está
+        # recalculando aparte, con `nuevos`).
+        hermanas_ids = db.scalars(
+            select(OrdenEstacion.orden_estacion_id).where(
+                OrdenEstacion.orden_id == oc.orden_id,
+                OrdenEstacion.orden_estacion_id != obj.orden_estacion_id,
+            )
+        ).all()
+        asignados_otras = 0
+        if hermanas_ids:
+            asignados_otras = (
+                db.scalar(
+                    select(func.coalesce(func.sum(OrdenEstacionDia.spots_asignados), 0)).where(
+                        OrdenEstacionDia.orden_estacion_id.in_(hermanas_ids)
+                    )
+                )
+                or 0
+            )
+        if asignados_otras + nuevos > oc.total_spots:
+            raise DomainError(
+                "Excede el total de spots de la orden.",
+                detalles={
+                    "total_oc": oc.total_spots,
+                    "otras_oe": asignados_otras,
+                    "nuevos": nuevos,
+                },
+            )
+
+        pct_oir = Decimal("0")
+        if oc.precio_unitario > 0:
+            pct_oir = (
+                (oc.precio_unitario - precio_spot) / oc.precio_unitario * Decimal(100)
+            ).quantize(Decimal("0.1"))
+        importe_estacion = (Decimal(nuevos) * precio_spot).quantize(CENTAVOS)
+        importe_oir = (importe_estacion * pct_oir / Decimal(100)).quantize(CENTAVOS)
+        iva_oir = (importe_oir * IVA_RATE).quantize(CENTAVOS)
+        importe_emisora = importe_estacion - importe_oir
+        iva_emisora = (importe_emisora * IVA_RATE).quantize(CENTAVOS)
+
+        obj.precio_spot = precio_spot
+        obj.importe_estacion = importe_estacion
+        obj.porcentaje_participacion_oir = pct_oir
+        obj.importe_oir = importe_oir
+        obj.iva_oir = iva_oir
+        obj.total_oir = importe_oir + iva_oir
+        obj.importe_emisora = importe_emisora
+        obj.iva_emisora = iva_emisora
+        obj.total_emisora = importe_emisora + iva_emisora
+        if "observaciones_estacion" in campos:
+            obj.observaciones_estacion = data.observaciones_estacion
+
+        if dias_nuevos is not None:
+            # Reemplazo completo (mismo criterio que el combo de días al dar de alta):
+            # más simple y menos propenso a error que un diff campo por campo contra lo
+            # que ya existía, y a estas alturas (antes de transmitir) no hay nada que
+            # referencie un `orden_estacion_dia_id` en particular todavía.
+            db.execute(
+                delete(OrdenEstacionDia).where(
+                    OrdenEstacionDia.orden_estacion_id == obj.orden_estacion_id
+                )
+            )
+            for dia in dias_nuevos:
+                db.add(
+                    OrdenEstacionDia(
+                        orden_estacion_dia_id=uuid4(),
+                        orden_estacion_id=obj.orden_estacion_id,
+                        fecha_transmision=dia.fecha_transmision,
+                        hora_inicio=dia.hora_inicio,
+                        hora_fin=dia.hora_fin,
+                        spots_solicitados=(
+                            dia.spots_solicitados
+                            if dia.spots_solicitados is not None
+                            else dia.spots_asignados
+                        ),
+                        spots_asignados=dia.spots_asignados,
+                    )
+                )
 
         db.commit()
         db.refresh(obj)
@@ -826,6 +993,20 @@ def crear_orden_estacion(
     Estación (plaza); calcula % de participación OIR e importes. 400 si la tarifa de
     estación excede la tarifa cliente o si excede el balance de spots de la orden."""
     return svc.create(payload, usuario)
+
+
+@router_estaciones.put("/{item_id}", response_model=OrdenEstacionRead)
+def editar_orden_estacion(
+    item_id: uuid.UUID,
+    payload: OrdenEstacionUpdate,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+) -> OrdenEstacionRead:
+    """Corrige tarifa/días/observaciones de una OE en 'borrador' o 'asignada' (antes de
+    transmitir). Revalida como si fuera un alta nueva: tarifa vs. OC, días dentro de la
+    campaña, balance de spots. 409 si ya avanzó a 'en_transmision' o después
+    (`FROZEN_STATES_OE`)."""
+    return svc.update(item_id, payload, usuario)
 
 
 @router_estaciones.post("/{item_id}/programados", response_model=OrdenEstacionRead)
