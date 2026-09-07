@@ -323,13 +323,24 @@ export function ListasParaFacturarPage() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
+                      flexWrap: "wrap",
+                      gap: 6,
                       marginBottom: 8,
                     }}
                   >
                     <span className="mono" style={{ fontWeight: 600 }}>
                       {o.folio_orden}
                     </span>
-                    <span className="badge b-teal">Orden cerrada</span>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {/* Necesario para armar una factura múltiple: todas las órdenes que
+                          se agrupen tienen que compartir empresa facturadora (un CFDI
+                          tiene un solo emisor) — sin esto no había forma de saberlo antes
+                          de intentar generar la factura y que el backend la rechazara. */}
+                      <span className="badge b-blue" style={{ fontSize: 10 }}>
+                        {oGuion(o.empresa_emisora)}
+                      </span>
+                      <span className="badge b-teal">Orden cerrada</span>
+                    </div>
                   </div>
 
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 3 }}>
