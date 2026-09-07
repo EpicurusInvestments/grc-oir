@@ -25,13 +25,18 @@ tarifas.push({ id: "ta1", plaza_id: "pl1", tipo_senal: "fm", duracion_spot: "30s
 // Nota: SIN valor por defecto para `oc` a propósito — un parámetro con default no puede
 // distinguir "no lo pasé" de "pasé undefined a propósito" (ambos casos activan el default),
 // y la prueba de "sin OrdenCliente asociada" necesita que oc llegue como undefined de verdad.
-function renderPanel(oe: ReturnType<typeof makeOE>, oc: ReturnType<typeof makeOC> | undefined) {
+function renderPanel(
+  oe: ReturnType<typeof makeOE>,
+  oc: ReturnType<typeof makeOC> | undefined,
+  onEditar: () => void = vi.fn(),
+) {
   return render(
     <OrdenEstacionDetailPanel
       oe={oe}
       oc={oc}
       incidencias={[]}
       onVerOC={vi.fn()}
+      onEditar={onEditar}
       onCapturarProgramados={vi.fn()}
       onCapturarReales={vi.fn()}
       onVerVerificacion={vi.fn()}
@@ -82,6 +87,29 @@ describe("Desvío contra tarifa de referencia — 1.4", () => {
     const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1" });
     expect(() => renderPanel(oe, undefined)).not.toThrow();
     expect(screen.getByText("La orden del cliente ya no existe.")).toBeInTheDocument();
+  });
+});
+
+describe('Botón "Editar" — corrección de errores de captura antes de transmitir', () => {
+  it("en 'asignada_afiliado' (borrador/asignada real), el botón aparece y llama a onEditar", () => {
+    const onEditar = vi.fn();
+    const oe = makeOE({ estatus: "asignada_afiliado" });
+    renderPanel(oe, makeOC(), onEditar);
+
+    fireEvent.click(screen.getByText("Editar"));
+    expect(onEditar).toHaveBeenCalledOnce();
+  });
+
+  it("en 'programados_conciliados' (ya transmitiendo), el botón NO aparece", () => {
+    const oe = makeOE({ estatus: "programados_conciliados" });
+    renderPanel(oe, makeOC());
+    expect(screen.queryByText("Editar")).toBeNull();
+  });
+
+  it("en 'reales_conciliados' (ya cerrada), el botón NO aparece", () => {
+    const oe = makeOE({ estatus: "reales_conciliados" });
+    renderPanel(oe, makeOC());
+    expect(screen.queryByText("Editar")).toBeNull();
   });
 });
 

@@ -106,6 +106,23 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
   };
 }
 
+// ── OrdenEstacion: edición (corrige errores de captura, antes de transmitir) ────
+// `estacion_id`/`plaza_id` del `OrdenEstacionInput` se ignoran a propósito: el backend
+// real (`OrdenEstacionUpdate`) no los acepta — reasignar la OE a otra estación/OC sería,
+// en la práctica, otra OE distinta.
+export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
+  return {
+    precio_spot: input.precio_spot,
+    observaciones_estacion: input.observaciones_estacion || null,
+    dias: input.periodo_transmision.map((row) => ({
+      fecha_transmision: row.fecha,
+      hora_inicio: row.hora_inicio,
+      hora_fin: row.hora_termino,
+      spots_asignados: row.spots_diarios,
+    })),
+  };
+}
+
 // ── OrdenEstacion: 2.1 → 2.2 ────────────────────────────────────────────────────
 export function programadosToApi(horarios: PeriodoTransmisionRow[], reporteRef: string | null | undefined) {
   return {

@@ -140,6 +140,29 @@ propuesta no le da captura sobre Órdenes.
   en edición ya tiene ≥1 OE, explicando que las existentes quedan con la tarifa anterior
   y las
   nuevas usarán la actualizada. No hay validación de backend — es puramente informativo.
+- **Editar una `OrdenEstacion`** (`OrdenEstacionService.update`, `PUT
+  /estaciones/{id}`) corrige errores de captura de tarifa/días/observaciones. Solo
+  mientras la OE siga en `borrador`/`asignada` (`FROZEN_STATES_OE`) — desde
+  `en_transmision` en adelante ya existen `Verificacion` ligadas a sus días exactos
+  (spec: una por día), así que se bloquea con `409` para no dejarlas huérfanas o
+  desalineadas. No reasigna `orden_id` ni `estacion_id` (eso sería, en la práctica, otra
+  OE distinta) y revalida TODO lo que ya valida el alta: tarifa vs. OC, días dentro de la
+  campaña, balance de spots de las OE hermanas (excluyendo a la propia OE que se edita),
+  recalculando % OIR e importes desde cero. En el frontend, el vocabulario v5
+  (`adapters/vocabulario.ts`) colapsa `borrador`/`asignada` en el único sub-estado
+  `asignada_afiliado`, así que el botón "Editar" de `OrdenEstacionDetailPanel` se
+  condiciona a ese sub-estado.
+- **Crear una `OrdenEstacion` también se permite con la OC en `en_verificacion`**
+  (`OrdenEstacionService.create`), no solo en `capturada`/`en_transmision` (bug real).
+  `en_verificacion` se alcanza AUTOMÁTICAMENTE en cuanto la ÚLTIMA OE que existe EN ESE
+  MOMENTO cierra (`avanzar_reales`) — no cuando de verdad ya no quedan spots de la OC por
+  asignar. Si la primera OE capturada no agotó `total_spots`, la OC ya saltó a
+  `en_verificacion` sin que quedara ninguna forma de asignar el resto. Sigue bloqueado
+  desde `orden_cerrada` en adelante (facturada/cobrada/cancelada): esos sí son estados
+  asentados, no un efecto colateral de cuántas OE existían al momento del cierre
+  automático. El frontend no necesitó cambios: su vocabulario v5 ya agrupaba
+  `en_transmision`/`en_verificacion` en el mismo estado `"orden_interna"` para el filtro
+  de "OC elegible" — el bloqueo era puramente del backend.
 
 ## Integraciones
 

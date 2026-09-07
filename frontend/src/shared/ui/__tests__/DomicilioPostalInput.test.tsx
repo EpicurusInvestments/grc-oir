@@ -34,8 +34,8 @@ const VACIO: DomicilioPostalValues = {
   codigo_postal: "",
 };
 
-function Wrapper() {
-  const [values, setValues] = useState<DomicilioPostalValues>(VACIO);
+function Wrapper({ inicial = VACIO }: { inicial?: DomicilioPostalValues }) {
+  const [values, setValues] = useState<DomicilioPostalValues>(inicial);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
     <QueryClientProvider client={qc}>
@@ -141,6 +141,51 @@ describe("DomicilioPostalInput", () => {
 
     fireEvent.change(colonia, { target: { value: "Lomas Altas (corregido a mano)" } });
     expect(screen.getByDisplayValue("Lomas Altas (corregido a mano)")).toBeInTheDocument();
+  });
+
+  it("fix: al editar un registro ya guardado, no reabre la lista de colonias del CP aunque tenga varias", async () => {
+    // Mismo CP con 2 colonias que en "varias colonias se ofrecen en una lista para
+    // elegir" — la diferencia es que aquí el registro YA trae una de ellas guardada
+    // (como al editar un Anunciante/EmpresaFacturadora existente).
+    buscarCodigoPostalMock.mockResolvedValue([
+      {
+        codigo_postal: "06700",
+        asentamiento: "Roma Norte",
+        tipo_asentamiento: "Colonia",
+        municipio: "Cuauhtémoc",
+        estado: "Ciudad de México",
+        ciudad: "Ciudad de México",
+        pais: "MEX",
+      },
+      {
+        codigo_postal: "06700",
+        asentamiento: "Roma Sur",
+        tipo_asentamiento: "Colonia",
+        municipio: "Cuauhtémoc",
+        estado: "Ciudad de México",
+        ciudad: "Ciudad de México",
+        pais: "MEX",
+      },
+    ]);
+    render(
+      <Wrapper
+        inicial={{
+          ...VACIO,
+          codigo_postal: "06700",
+          colonia: "Roma Sur",
+          municipio: "Cuauhtémoc",
+          estado: "Ciudad de México",
+          localidad: "Ciudad de México",
+          pais: "MEX",
+        }}
+      />,
+    );
+
+    // Deja que la búsqueda del CP resuelva (misma consulta que al dar de alta).
+    await waitFor(() => expect(buscarCodigoPostalMock).toHaveBeenCalledWith("06700"));
+    // La colonia guardada se conserva y la lista de opciones NO se vuelve a mostrar.
+    expect(screen.getByDisplayValue("Roma Sur")).toBeInTheDocument();
+    expect(screen.queryByText("Roma Norte")).not.toBeInTheDocument();
   });
 
   it("fix: al borrar el código postal se limpian colonia/municipio/estado/localidad/país", async () => {

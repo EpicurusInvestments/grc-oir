@@ -17,11 +17,15 @@ import { fmtMonto, fmtPct } from "../../format";
 import { esActivo, findAfiliado, findEstacion, findPlaza, estaciones } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oesDeOC, oiTotalSpots, type BalanceSpotsOC } from "../../state/selectors";
-import type { OrdenCliente, OrdenEstacionInput, PeriodoTransmisionRow } from "../../types";
+import type { OrdenCliente, OrdenEstacion, OrdenEstacionInput, PeriodoTransmisionRow } from "../../types";
 
 interface OrdenEstacionFormProps {
   /** Si viene fija (desde el detalle de una OC), aquí ya no se puede cambiar de OC. */
   ocIdFijo?: string;
+  /** OE ya existente a corregir (edición). Si viene, el form arranca precargado y
+   *  bloquea OC/estación — el backend real no permite reasignarlas por esta vía, solo
+   *  corregir tarifa/días/observaciones (ver `FROZEN_STATES_OE` del backend). */
+  oe?: OrdenEstacion;
   submitting?: boolean;
   submitError?: string | null;
   onGuardar: (ocId: string, input: OrdenEstacionInput) => void;
@@ -30,13 +34,14 @@ interface OrdenEstacionFormProps {
 
 const OC_ELEGIBLE = (oc: OrdenCliente) => oc.estatus_orden === "orden_cliente_con_vobo" || oc.estatus_orden === "orden_interna";
 
-export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar, onCancelar }: OrdenEstacionFormProps) {
+export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGuardar, onCancelar }: OrdenEstacionFormProps) {
+  const isEdit = oe != null;
   const { state } = useOrdenes();
-  const [ocId, setOcId] = useState<string>(ocIdFijo ?? "");
-  const [estacionId, setEstacionId] = useState("");
-  const [precioSpot, setPrecioSpot] = useState("");
-  const [observaciones, setObservaciones] = useState("");
-  const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>([]);
+  const [ocId, setOcId] = useState<string>(ocIdFijo ?? oe?.orden_id ?? "");
+  const [estacionId, setEstacionId] = useState(oe?.estacion_id ?? "");
+  const [precioSpot, setPrecioSpot] = useState(oe ? String(oe.precio_spot) : "");
+  const [observaciones, setObservaciones] = useState(oe?.observaciones_estacion ?? "");
+  const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(oe?.periodo_transmision ?? []);
 
   const ocsElegibles = state.ordenesCliente.filter(OC_ELEGIBLE);
   const oc = ocId ? state.ordenesCliente.find((o) => o.id === ocId) : undefined;
@@ -45,7 +50,14 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
   const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
   const plaza = estacion ? findPlaza(estacion.plaza_id) : undefined;
 
-  const otrasOEDeLaOC = useMemo(() => (oc ? oesDeOC(state.ordenesEstacion, oc.id) : []), [oc, state.ordenesEstacion]);
+  // Al editar, la propia OE ya está en `state.ordenesEstacion` con su periodo VIEJO — sin
+  // excluirla aquí, el balance en vivo la contaría dos veces (una vez como "ya asignado",
+  // otra vez como `totalEstaOI` con el periodo nuevo que se está editando). Mismo criterio
+  // que usa el backend real (`hermanas_ids` excluye la propia OE al validar el balance).
+  const otrasOEDeLaOC = useMemo(
+    () => (oc ? oesDeOC(state.ordenesEstacion, oc.id).filter((o) => o.id !== oe?.id) : []),
+    [oc, state.ordenesEstacion, oe?.id],
+  );
   const totalEstaOI = periodo.reduce((s, p) => s + (p.spots_diarios || 0), 0);
   // Balance "en vivo": no se puede reusar `balanceSpotsOC` tal cual porque esta OI todavía
   // no existe como `OrdenEstacion` real — se arma a mano con la misma fórmula.
@@ -105,14 +117,14 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <SavingOverlay visible={submitting} />
       <div className="cat-header">
-        <div className="cat-title">Nueva orden interna</div>
+        <div className="cat-title">{oe ? `Editar: ${oe.folio_orden_interna}` : "Nueva orden interna"}</div>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignContent: "start" }}>
         <div>
           <div className="form-card">
             <div className="form-card-title">Orden del cliente de origen</div>
-            {ocIdFijo ? (
+            {ocIdFijo || isEdit ? (
               <div className="fv mono">{oc?.folio_orden}</div>
             ) : (
               <>
@@ -135,7 +147,13 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
               <div className="form-card">
                 <div className="form-card-title">Datos de la orden interna</div>
                 <div className="fl fl-required">Estación</div>
-                <select className="fsel" value={estacionId} onChange={(e) => onEstacionChange(e.target.value)}>
+                <select
+                  className="fsel"
+                  value={estacionId}
+                  disabled={isEdit}
+                  onChange={(e) => onEstacionChange(e.target.value)}
+                  title={isEdit ? "La estación no se puede cambiar al editar — crea una OE nueva si es otra estación." : undefined}
+                >
                   <option value="">Selecciona…</option>
                   {estaciones.filter(esActivo).map((e) => (
                     <option key={e.id} value={e.id}>
@@ -231,7 +249,7 @@ export function OrdenEstacionForm({ ocIdFijo, submitting, submitError, onGuardar
             Cancelar
           </button>
           <button type="button" className="btn btn-sm btn-teal" onClick={guardar} disabled={submitting || !listo} title={listo ? undefined : errores[0]}>
-            {submitting ? "Guardando…" : "Guardar orden interna"}
+            {submitting ? "Guardando…" : isEdit ? "Guardar cambios" : "Guardar orden interna"}
           </button>
         </div>
       </div>

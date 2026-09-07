@@ -20,6 +20,7 @@ interface OrdenEstacionDetailPanelProps {
   oc: OrdenCliente | undefined;
   incidencias: Incidencia[];
   onVerOC: () => void;
+  onEditar: () => void;
   onCapturarProgramados: () => void;
   onCapturarReales: () => void;
   onVerVerificacion: () => void;
@@ -30,6 +31,7 @@ export function OrdenEstacionDetailPanel({
   oc,
   incidencias,
   onVerOC,
+  onEditar,
   onCapturarProgramados,
   onCapturarReales,
   onVerVerificacion,
@@ -64,6 +66,14 @@ export function OrdenEstacionDetailPanel({
               {estacion && <span className="badge b-blue">{estacion.nombre_estacion}</span>}
             </div>
           </div>
+          {/* Corrige errores de captura: el backend real solo lo permite en
+              'borrador'/'asignada' (spec), que en este vocabulario v5 caen ambos en
+              "asignada_afiliado" — el único sub-estado antes de empezar a transmitir. */}
+          {oe.estatus === "asignada_afiliado" && (
+            <button type="button" className="btn btn-sm" onClick={onEditar}>
+              Editar
+            </button>
+          )}
         </div>
       </div>
 

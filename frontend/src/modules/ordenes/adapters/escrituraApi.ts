@@ -75,6 +75,17 @@ export async function crearOrdenEstacionApi(body: unknown): Promise<OrdenEstacio
   return data;
 }
 
+export async function actualizarOrdenEstacionApi(
+  ordenEstacionId: string,
+  body: Record<string, unknown>,
+): Promise<OrdenEstacionApiDTO> {
+  const { data } = await apiClient.put<OrdenEstacionApiDTO>(
+    `/ordenes/estaciones/${ordenEstacionId}`,
+    body,
+  );
+  return data;
+}
+
 export async function avanzarProgramadosApi(
   ordenEstacionId: string,
   body: unknown,

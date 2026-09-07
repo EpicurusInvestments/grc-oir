@@ -194,56 +194,54 @@ export function ListasParaFacturarPage() {
       <div style={{ padding: "16px 22px 0" }}>
         <div className="form-card" style={{ marginBottom: 0 }}>
           <div className="form-card-title">Facturación múltiple</div>
-          <label className="check-box" style={{ marginBottom: multiple ? 16 : 0 }}>
-            <input
-              type="checkbox"
-              checked={multiple}
-              onChange={(e) => (e.target.checked ? setMultiple(true) : salirDeMultiple())}
-            />
-            <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <label
+              className="check-box"
+              style={{ marginBottom: 0 }}
+              title="Agrupa varias órdenes cerradas del mismo anunciante en una sola factura."
+            >
+              <input
+                type="checkbox"
+                checked={multiple}
+                onChange={(e) => (e.target.checked ? setMultiple(true) : salirDeMultiple())}
+              />
               <div className="check-box-title">Facturar Múltiples Órdenes</div>
-              <div className="check-box-desc">
-                Agrupa varias órdenes cerradas del mismo anunciante en una sola factura.
-              </div>
-            </div>
-          </label>
+            </label>
 
-          {multiple && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div className="fl" style={{ width: "100%", marginBottom: -6 }}>
-                Anunciante
-              </div>
-              <div className="combo-anunciante">
-                <SearchableSelect
-                  value={anuncianteId}
-                  onChange={(v) => {
-                    setAnuncianteId(v);
-                    setMarcadas([]);
-                    setErrorSeleccion(null);
-                    setPage(1);
-                  }}
-                  options={(anunciantes.data ?? []).map((a) => ({
-                    value: a.anunciante_id,
-                    label: `${a.anunciante} · ${a.ordenes} órdenes`,
-                  }))}
-                  placeholder="Seleccionar Anunciante"
-                  emptyOptionLabel="Seleccionar Anunciante"
-                  emptyResultsLabel="Ningún anunciante coincide"
-                />
-              </div>
+            {multiple && (
+              <>
+                <div className="combo-anunciante">
+                  <SearchableSelect
+                    value={anuncianteId}
+                    onChange={(v) => {
+                      setAnuncianteId(v);
+                      setMarcadas([]);
+                      setErrorSeleccion(null);
+                      setPage(1);
+                    }}
+                    options={(anunciantes.data ?? []).map((a) => ({
+                      value: a.anunciante_id,
+                      label: `${a.anunciante} · ${a.ordenes} órdenes`,
+                    }))}
+                    placeholder="Seleccionar Anunciante"
+                    emptyOptionLabel="Seleccionar Anunciante"
+                    emptyResultsLabel="Ningún anunciante coincide"
+                  />
+                </div>
 
-              <button type="button" className="btn btn-primary" onClick={generarMultiple}>
-                Generar Factura Múltiple
-              </button>
+                <button type="button" className="btn btn-primary" onClick={generarMultiple}>
+                  Generar Factura Múltiple
+                </button>
 
-              {seleccionadas.length > 0 && (
-                <span className="resumen-multiple">
-                  {seleccionadas.length} seleccionadas ·{" "}
-                  <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
-                </span>
-              )}
-            </div>
-          )}
+                {seleccionadas.length > 0 && (
+                  <span className="resumen-multiple">
+                    {seleccionadas.length} seleccionadas ·{" "}
+                    <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -325,13 +323,24 @@ export function ListasParaFacturarPage() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
+                      flexWrap: "wrap",
+                      gap: 6,
                       marginBottom: 8,
                     }}
                   >
                     <span className="mono" style={{ fontWeight: 600 }}>
                       {o.folio_orden}
                     </span>
-                    <span className="badge b-teal">Orden cerrada</span>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {/* Necesario para armar una factura múltiple: todas las órdenes que
+                          se agrupen tienen que compartir empresa facturadora (un CFDI
+                          tiene un solo emisor) — sin esto no había forma de saberlo antes
+                          de intentar generar la factura y que el backend la rechazara. */}
+                      <span className="badge b-blue" style={{ fontSize: 10 }}>
+                        {oGuion(o.empresa_emisora)}
+                      </span>
+                      <span className="badge b-teal">Orden cerrada</span>
+                    </div>
                   </div>
 
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 3 }}>
