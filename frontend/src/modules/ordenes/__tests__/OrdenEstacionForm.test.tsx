@@ -24,17 +24,21 @@ estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacio
 // Fix: una estación dada de baja no debe aparecer en el select de "Estación".
 estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1 FM", tipo_senal: "fm", activo: false });
 
-function renderForm(opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[] } = {}) {
+function renderForm(
+  opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[]; oe?: Partial<OrdenEstacion> } = {},
+) {
   const onGuardar = vi.fn();
   const onCancelar = vi.fn();
   const oc = makeOC(opts.oc);
   const oesPrevias = (opts.oesPrevias ?? []).map((oe) => makeOE({ ...oe, orden_id: oc.id }));
+  const oe = opts.oe ? makeOE({ ...opts.oe, orden_id: oc.id }) : undefined;
+  const ordenesEstacion = oe ? [...oesPrevias, oe] : oesPrevias;
   const utils = render(
-    <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: oesPrevias, incidencias: [], historialComisiones: [] }}>
-      <OrdenEstacionForm ocIdFijo={oc.id} onGuardar={onGuardar} onCancelar={onCancelar} />
+    <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion, incidencias: [], historialComisiones: [] }}>
+      <OrdenEstacionForm ocIdFijo={oc.id} oe={oe} onGuardar={onGuardar} onCancelar={onCancelar} />
     </OrdenesProvider>,
   );
-  return { ...utils, onGuardar, onCancelar };
+  return { ...utils, onGuardar, onCancelar, oc, oe };
 }
 
 function agregarDia(container: HTMLElement, spots: number) {
@@ -166,6 +170,46 @@ describe("Selector de OC de origen con filtro de búsqueda — abierta suelta (s
     expect((fieldByLabelText<HTMLInputElement>(container, "Orden del cliente de origen")).value).toBe(
       `${oc2.folio_orden} — ${oc2.numero_orden_cliente}`,
     );
+  });
+});
+
+describe("Edición de OE existente (corrección de errores de captura, antes de transmitir)", () => {
+  it("precarga tarifa/observaciones/periodo, y título/botón cambian a modo edición", () => {
+    const { container, oe } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      oe: { estacion_id: "es1", precio_spot: 700, observaciones_estacion: "Nota original" },
+    });
+
+    expect(screen.getByText(`Editar: ${oe!.folio_orden_interna}`)).toBeInTheDocument();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("700.00");
+    expect(screen.getByDisplayValue("Nota original")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
+  });
+
+  it("bloquea el selector de Estación: el backend no permite reasignarla al editar", () => {
+    const { container } = renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Estación").disabled).toBe(true);
+  });
+
+  it("el balance en vivo no cuenta dos veces la propia OE que se está editando", () => {
+    // makeOE() por defecto trae un solo día con 10 spots — son "la propia OE", no "otra".
+    renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
+    expect(screen.getByText("faltan 110 spots por asignar")).toBeInTheDocument();
+  });
+
+  it("'Guardar cambios' llama a onGuardar con los valores editados", () => {
+    const { container, onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      oe: { estacion_id: "es1", precio_spot: 700 },
+    });
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    expect(onGuardar).toHaveBeenCalledTimes(1);
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.precio_spot).toBe(750);
+    expect(input.periodo_transmision).toHaveLength(1);
   });
 });
 

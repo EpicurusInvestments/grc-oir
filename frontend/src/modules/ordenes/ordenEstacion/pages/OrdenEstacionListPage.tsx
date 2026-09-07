@@ -26,7 +26,7 @@ const FILTROS: { key: FiltroOI; label: string }[] = [
   { key: "reales_conciliados", label: "2.3 Reales" },
 ];
 
-type Modo = "view" | "new" | "programados" | "reales";
+type Modo = "view" | "new" | "edit" | "programados" | "reales";
 
 interface OrdenEstacionListPageProps {
   filtroInicial?: FiltroOI;
@@ -43,7 +43,7 @@ export function OrdenEstacionListPage({
   onVerOC,
   onVerVerificacion,
 }: OrdenEstacionListPageProps) {
-  const { state, crearOE, avanzarAProgramados, avanzarAReales } = useOrdenes();
+  const { state, crearOE, actualizarOE, avanzarAProgramados, avanzarAReales } = useOrdenes();
   const [filtro, setFiltro] = useState<FiltroOI>(filtroInicial ?? "todas");
   // Al llegar con una OI preseleccionada (p.ej. "Ver orden interna →" desde Verificaciones
   // o Incidencias), el buscador arranca filtrado por su folio: así la tabla muestra SOLO
@@ -82,8 +82,13 @@ export function OrdenEstacionListPage({
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const nueva = await crearOE(ocId, input);
-      setSelectedId(nueva.id);
+      if (modo === "edit" && selected) {
+        const actualizada = await actualizarOE(selected.id, input);
+        setSelectedId(actualizada.id);
+      } else {
+        const nueva = await crearOE(ocId, input);
+        setSelectedId(nueva.id);
+      }
       setModo("view");
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "No se pudo guardar la orden interna.");
@@ -92,10 +97,11 @@ export function OrdenEstacionListPage({
     }
   };
 
-  if (modo === "new") {
+  if (modo === "new" || (modo === "edit" && selected)) {
     return (
       <OrdenEstacionForm
         ocIdFijo={ocIdParaNueva}
+        oe={modo === "edit" ? (selected ?? undefined) : undefined}
         submitError={submitError}
         submitting={submitting}
         onGuardar={onGuardar}
@@ -266,6 +272,10 @@ export function OrdenEstacionListPage({
               oc={state.ordenesCliente.find((o) => o.id === selected.orden_id)}
               incidencias={state.incidencias}
               onVerOC={() => onVerOC(selected.orden_id)}
+              onEditar={() => {
+                setSubmitError(null);
+                setModo("edit");
+              }}
               onCapturarProgramados={() => {
                 setSubmitError(null);
                 setModo("programados");

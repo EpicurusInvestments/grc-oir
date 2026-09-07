@@ -16,6 +16,7 @@ import { createContext, useContext, useMemo, useReducer, type ReactNode } from "
 import {
   actualizarComisionesApi,
   actualizarOrdenClienteApi,
+  actualizarOrdenEstacionApi,
   avanzarProgramadosApi,
   avanzarRealesApi,
   cerrarOrdenClienteApi,
@@ -34,6 +35,7 @@ import {
   ordenClienteCreateToApi,
   ordenClienteUpdateToApi,
   ordenEstacionCreateToApi,
+  ordenEstacionUpdateToApi,
   programadosToApi,
   realesToApi,
 } from "../adapters/toApi";
@@ -138,6 +140,10 @@ interface OrdenesContextValue {
   ) => Promise<void>;
   /** Crea una OrdenEstacion nueva colgada de `ocId`. */
   crearOE: (ocId: string, input: OrdenEstacionInput) => Promise<OrdenEstacion>;
+  /** Corrige tarifa/días/observaciones de una OE ya creada. El backend solo lo permite
+   *  mientras la OE siga en 'borrador'/'asignada' (antes de transmitir); si ya avanzó,
+   *  rechaza con un error que el formulario muestra tal cual. */
+  actualizarOE: (oeId: string, input: OrdenEstacionInput) => Promise<OrdenEstacion>;
   /** 2.1 → 2.2: persiste solo los días modificados respecto a lo asignado. */
   avanzarAProgramados: (oeId: string, horariosProgramados: PeriodoTransmisionRow[], reporteRef?: string | null) => Promise<void>;
   /** 2.2 → 2.3: persiste los días modificados respecto a lo programado efectivo; el backend
@@ -226,6 +232,12 @@ export function OrdenesProvider({
         ]);
         dispatch({ type: "REEMPLAZAR_OE", oe });
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        return oe;
+      },
+      actualizarOE: async (oeId, input) => {
+        await actualizarOrdenEstacionApi(oeId, ordenEstacionUpdateToApi(input));
+        const oe = await refrescarOrdenEstacion(oeId);
+        dispatch({ type: "REEMPLAZAR_OE", oe });
         return oe;
       },
       avanzarAProgramados: async (oeId, horariosProgramados, reporteRef) => {
