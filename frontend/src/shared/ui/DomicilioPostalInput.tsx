@@ -34,7 +34,12 @@ interface DomicilioPostalInputProps {
 }
 
 export function DomicilioPostalInput({ values, onChange, disabled }: DomicilioPostalInputProps) {
-  const [listaCerrada, setListaCerrada] = useState(false);
+  // Al EDITAR un registro que ya trae colonia guardada, arranca "cerrada": si no, un CP
+  // con varias colonias posibles reabre la lista de opciones apenas se monta el
+  // formulario, aunque la dirección ya esté completa y correcta (el usuario tendría que
+  // volver a elegir algo que ya había elegido al dar de alta). Al ALTA (colonia vacía)
+  // sigue arrancando abierta, igual que antes.
+  const [listaCerrada, setListaCerrada] = useState(() => values.colonia !== "");
   const cpQuery = useBuscarCodigoPostal(values.codigo_postal);
   const opciones = cpQuery.data ?? [];
   const cpCompleto = values.codigo_postal.trim().length === 5;
