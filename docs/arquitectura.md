@@ -1742,6 +1742,15 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
      siempre. Así la línea llega exactamente a los bordes izquierdo/derecho del
      marco exterior, sin hueco, y el resto del contenido conserva su margen interno
      de siempre.
+  6. **Corrección posterior: se revierte el centrado vertical del punto 4.** El
+     usuario reportó que, con contenido corto (p. ej. una orden de un solo día),
+     el `Spacer` de relleno dejaba un espacio en blanco demasiado grande arriba
+     — casi un tercio de la hoja — y pidió que el contenido de los 3 reportes
+     arranque siempre pegado al margen superior. `_build()` vuelve a
+     `doc.build(elementos)` sin el `Spacer` antepuesto; se elimina
+     `_altura_contenido()` (ya sin uso). Sigue aplicando igual a los 3 reportes,
+     porque `_build()` sigue siendo la única función que arma el documento final
+     para los 3.
 - **Consecuencias:** cambios acotados a `orden_estacion_pdf.py`. Sin cambios de API;
   `test_f1_06_ordenes_pdf.py` gana 1 prueba (6/6 en verde) que cubre que "reales"
   no truena con una descripción larga (el wrap en sí se verificó visualmente, ver

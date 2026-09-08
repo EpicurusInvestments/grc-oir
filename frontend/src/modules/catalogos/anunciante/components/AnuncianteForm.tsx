@@ -17,6 +17,7 @@ import {
   SensitiveField,
 } from "@/shared/ui";
 
+import { useConstantes } from "../../constantesSistema/hooks";
 import type { AnuncianteCreate } from "../types";
 
 export type AnuncianteFormOutput = AnuncianteCreate & { motivo_cambio?: string | null };
@@ -61,6 +62,10 @@ function buildSchema(isEdit: boolean, diasOriginal?: string) {
       estado: z.string().trim().max(100).optional(),
       pais: z.string().trim().max(3).optional(),
       codigo_postal: z.string().trim().max(5).optional(),
+      // Clave SAT (c_RegimenFiscal), sugerida desde ConstantesSistema, sin FK formal.
+      regimen_fiscal: z.string().trim().max(4).optional(),
+      // Clave SAT (c_UsoCFDI): solo SUGIERE el default de la factura, sin FK formal.
+      uso_cfdi_default: z.string().trim().max(5).optional(),
       referencia_anunciante: z.string().trim().max(250).optional(),
       contacto_nombre: z.string().trim().max(160).optional(),
       contacto_email: z
@@ -145,6 +150,8 @@ export function AnuncianteForm({
       estado: "",
       pais: "MEX",
       codigo_postal: "",
+      regimen_fiscal: "",
+      uso_cfdi_default: "",
       referencia_anunciante: "",
       contacto_nombre: "",
       contacto_email: "",
@@ -157,6 +164,10 @@ export function AnuncianteForm({
 
   const diasCambiados =
     isEdit && diasOriginal !== undefined && watch("dias_credito_default") !== diasOriginal;
+
+  const { useList } = useConstantes();
+  const regimenes = useList({ grupo: "RegimenFiscal", activo: true, size: 100 });
+  const usosCfdi = useList({ grupo: "UsoCFDI", activo: true, size: 100 });
 
   const domicilio: DomicilioPostalValues = {
     calle: watch("calle") ?? "",
@@ -194,6 +205,8 @@ export function AnuncianteForm({
       estado: data.estado?.trim() || null,
       pais: data.pais?.trim() || null,
       codigo_postal: data.codigo_postal?.trim() || null,
+      regimen_fiscal: data.regimen_fiscal?.trim() || null,
+      uso_cfdi_default: data.uso_cfdi_default?.trim() || null,
       referencia_anunciante: data.referencia_anunciante?.trim() || null,
       contacto_nombre: data.contacto_nombre?.trim() || null,
       contacto_email: data.contacto_email?.trim() || null,
@@ -237,6 +250,30 @@ export function AnuncianteForm({
             <div className="fe">{errors.referencia_anunciante?.message}</div>
           </div>
         </div>
+
+        <div className="fl">Régimen fiscal (como receptor, si factura directa)</div>
+        <select className="fsel" {...register("regimen_fiscal")}>
+          <option value="">— Sin capturar —</option>
+          {(regimenes.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.regimen_fiscal?.message}</div>
+
+        <div className="fl">
+          Uso de CFDI (default de factura, si factura directa)
+        </div>
+        <select className="fsel" {...register("uso_cfdi_default")}>
+          <option value="">— Sin capturar —</option>
+          {(usosCfdi.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.uso_cfdi_default?.message}</div>
 
         <div className="sec">Domicilio</div>
         <DomicilioPostalInput values={domicilio} onChange={onDomicilioChange} disabled={submitting} />

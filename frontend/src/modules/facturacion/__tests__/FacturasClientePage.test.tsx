@@ -51,6 +51,7 @@ const base: FacturaCliente = {
   razon_social_facturacion: "Agencia Uno SA de CV",
   rfc_facturacion: "AGU900101AB1",
   direccion_facturacion: null,
+  uso_cfdi: null,
   descripcion_factura: "Servicios de transmisión",
   observaciones_factura: null,
   fecha_inicio_transmision: "2026-02-01",
@@ -214,19 +215,20 @@ describe("FacturasClientePage", () => {
     expect(await screen.findByText(/El folio fiscal.*es obligatorio/)).toBeInTheDocument();
   });
 
-  it("una factura cancelada no ofrece ninguna transición", async () => {
+  it("una factura cancelada no ofrece ninguna transición ni la descarga del archivo plano", async () => {
     renderCon({ ...base, estado_facturacion: "cancelada" });
     (await screen.findByText("A-1041")).click();
-    await waitFor(() =>
-      expect(screen.getByText(/Archivo plano/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Factura cancelada")).toBeInTheDocument());
+    // El PAC ya no debe recibir nada de una factura cancelada — mostrar el botón solo
+    // llevaba a un 409 confuso ("Request failed with status code 409").
     for (const accion of [
+      "Archivo plano",
       "Marcar enviada a timbrado →",
       "Registrar respuesta del timbrado →",
       "Marcar entregada →",
       "Cancelar",
     ]) {
-      expect(screen.queryByText(accion)).not.toBeInTheDocument();
+      expect(screen.queryByText(new RegExp(accion))).not.toBeInTheDocument();
     }
   });
 

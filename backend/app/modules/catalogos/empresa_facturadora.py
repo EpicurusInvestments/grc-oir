@@ -66,6 +66,10 @@ class EmpresaFacturadora(Base):
     estado: Mapped[str | None] = mapped_column(Unicode(100), default=None)
     pais: Mapped[str | None] = mapped_column(Unicode(3), default="MEX")
     codigo_postal: Mapped[str | None] = mapped_column(Unicode(5), default=None)
+    # Clave SAT (catálogo c_RegimenFiscal), sugerida desde `ConstantesSistema` grupo
+    # RegimenFiscal — sin FK formal (mismo patrón que `metodo_pago_clave` en F2). Es el
+    # régimen del EMISOR: `AGREGADOS.Regimen` del layout del PAC.
+    regimen_fiscal: Mapped[str | None] = mapped_column(Unicode(4), default=None)
     activo: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
     # updated_at por uniformidad (ADR-011), como el resto de catálogos.
@@ -89,6 +93,7 @@ class EmpresaFacturadoraCreate(BaseModel):
     estado: str | None = Field(default=None, max_length=100)
     pais: str | None = Field(default="MEX", max_length=3)
     codigo_postal: str | None = Field(default=None, max_length=5)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
 
     @field_validator("rfc_empresa")
     @classmethod
@@ -110,6 +115,7 @@ class EmpresaFacturadoraUpdate(BaseModel):
     estado: str | None = Field(default=None, max_length=100)
     pais: str | None = Field(default=None, max_length=3)
     codigo_postal: str | None = Field(default=None, max_length=5)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
 
     @field_validator("rfc_empresa")
     @classmethod
@@ -134,6 +140,7 @@ class EmpresaFacturadoraRead(CatalogoReadBase):
     estado: str | None = None
     pais: str | None = None
     codigo_postal: str | None = None
+    regimen_fiscal: str | None = None
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────

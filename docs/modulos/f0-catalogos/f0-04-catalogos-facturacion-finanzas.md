@@ -20,11 +20,13 @@ Usuario/área para el control de acceso.
 
 > Los 3 catálogos llevan además `updated_at` (ADR-011), como el resto de catálogos previos.
 
-### EmpresaFacturadora (6 campos + `updated_at` + 10 de domicilio estructurado, ADR-059)
+### EmpresaFacturadora (7 campos + `updated_at` + 10 de domicilio estructurado, ADR-059)
 `empresa_facturadora_id` (PK), `nombre_empresa` (NVARCHAR(200), NOT NULL), `rfc_empresa`
 (NVARCHAR(13), NOT NULL, **único**), `direccion_empresa` (**TEXT → NVARCHAR(MAX)**, legacy —
-ya no tiene input propio, ver abajo), `activo`, `created_at`, `updated_at`. (El grupo puede
-tener varias razones sociales.) **Domicilio estructurado** (desviación aditiva, ADR-059):
+ya no tiene input propio, ver abajo), `regimen_fiscal` (desviación aditiva, ADR-065 —
+clave SAT del EMISOR, sugerida desde `ConstantesSistema` sin FK formal), `activo`,
+`created_at`, `updated_at`. (El grupo puede tener varias razones sociales.)
+**Domicilio estructurado** (desviación aditiva, ADR-059):
 `calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
 `referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta al
 escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a mano.
@@ -124,6 +126,12 @@ ventas│facturacion│tesoreria│cxc│cxp│direccion│nominas│admin), `ro
 
 ## Migración (aplicada a RDS `GRC-OIR`)
 - `f1a4d0c25e63` — `empresa_facturadora`, `vendedor`, `categoria`, `usuario` (+ seed admin).
+- `7d5f9c4589c0` — **ADR-065** (bug real, F2): agrega `regimen_fiscal` a
+  `empresa_facturadora` (y a `anunciante`/`agencia`, ver `f0-03-catalogos-comerciales.md`).
+  Reemplaza la resolución vía `ConstanteSistema` grupo `RegimenFiscal` "si hay
+  exactamente una activa" en `FacturaClienteService._datos_timbrado()`, que se volvió
+  ambigua en cuanto el catálogo tuvo varias activas — ahora cada entidad captura el
+  suyo, sugerido desde el mismo catálogo pero sin FK formal.
 
 ## Decisiones menores (resueltas)
 - `nombre_categoria` **único, case-insensitive** (E-1). `rfc_empresa` **único** (E-2).

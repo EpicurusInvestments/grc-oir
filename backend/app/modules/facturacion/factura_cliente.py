@@ -15,6 +15,7 @@ como texto libre nullable y `metodo_pago_clave` como texto sin FK formal.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -25,7 +26,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
@@ -118,6 +119,22 @@ def _producto_comun(ordenes: list[Any]) -> str | None:
     return productos.pop() if len(productos) == 1 else None
 
 
+# Una letra (la serie, ADR-060 bis) + guion + solo dígitos (sin límite de longitud). La
+# letra se normaliza a mayúscula automáticamente en vez de rechazar minúsculas: el
+# usuario no tiene que recordar la regla, solo teclearla como le salga.
+NUMERO_FACTURA_REGEX = re.compile(r"^[A-Z]-[0-9]+$")
+
+
+def _normaliza_numero_factura(valor: str) -> str:
+    v = valor.strip().upper()
+    if not NUMERO_FACTURA_REGEX.match(v):
+        raise ValueError(
+            "El número de factura debe tener el formato LETRA-NÚMEROS (ej. A-001246): "
+            "una sola letra, un guion y solo dígitos."
+        )
+    return v
+
+
 def _serie_desde_numero(numero_factura: str) -> str | None:
     """`IdDoc.Serie` del PAC (ADR-060 bis): la letra/prefijo ANTES del guion en el propio
     número de factura ("A-0010890" → "A"), no una constante aparte que mantener — las
@@ -197,6 +214,11 @@ class FacturaCliente(Base):
     razon_social_facturacion: Mapped[str] = mapped_column(Unicode(200))
     rfc_facturacion: Mapped[str] = mapped_column(Unicode(13))
     direccion_facturacion: Mapped[str | None] = mapped_column(texto_largo(), default=None)
+    # Clave SAT (catálogo c_UsoCFDI, `AGREGADOS.UsoCFDI` del layout del PAC). Se precarga
+    # del `Anunciante.uso_cfdi_default` en el alta (solo si el receptor es el anunciante
+    # directo — la Agencia no tiene default), pero SIEMPRE es editable por factura: quien
+    # recibe el CFDI puede pedir un uso distinto al que sugiere el default.
+    uso_cfdi: Mapped[str | None] = mapped_column(Unicode(5), default=None)
 
     descripcion_factura: Mapped[str] = mapped_column(texto_largo())
     observaciones_factura: Mapped[str | None] = mapped_column(texto_largo(), default=None)
@@ -356,6 +378,7 @@ class FacturaClienteRead(BaseModel):
     razon_social_facturacion: str
     rfc_facturacion: str
     direccion_facturacion: str | None = None
+    uso_cfdi: str | None = None
     descripcion_factura: str
     observaciones_factura: str | None = None
     fecha_inicio_transmision: date
@@ -444,6 +467,11 @@ class FacturaClienteCreate(BaseModel):
     # CFDI tiene un único emisor y un único receptor.
     ordenes_ids: list[uuid.UUID] = Field(min_length=1)
     numero_factura: str = Field(min_length=1, max_length=30)
+
+    @field_validator("numero_factura")
+    @classmethod
+    def _valida_numero_factura(cls, v: str) -> str:
+        return _normaliza_numero_factura(v)
     # Receptor: se DERIVA de la orden, pero la pantalla aprobada lo muestra editable
     # (etiqueta "EDITABLE" en el panel de detalle). Si vienen, mandan sobre lo derivado;
     # si no, el servicio los resuelve como siempre. Los IMPORTES no son negociables por
@@ -451,6 +479,9 @@ class FacturaClienteCreate(BaseModel):
     razon_social_facturacion: str | None = Field(default=None, max_length=200)
     rfc_facturacion: str | None = Field(default=None, max_length=13)
     direccion_facturacion: str | None = None
+    # Clave SAT (c_UsoCFDI): si no se manda, el servicio la precarga del
+    # `Anunciante.uso_cfdi_default` (solo si el receptor es el anunciante directo).
+    uso_cfdi: str | None = Field(default=None, max_length=5)
     numero_pedido: str | None = Field(default=None, max_length=50)
     referencia_adicional: str | None = Field(default=None, max_length=150)
     #: N:N (ADR-062): facturas del mismo anunciante que esta factura marca como
@@ -483,6 +514,11 @@ class FacturaClienteUpdate(BaseModel):
     metodo_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
+
+    @field_validator("numero_factura")
+    @classmethod
+    def _valida_numero_factura(cls, v: str | None) -> str | None:
+        return _normaliza_numero_factura(v) if v is not None else None
 
 
 class TimbrarIn(BaseModel):
@@ -703,6 +739,7 @@ class FacturaClienteService(
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
+        self._verificar_numero_factura_unico(data.numero_factura, excluir_id=None)
 
         # Se deduplica conservando el orden de captura; luego se ordena por folio para que
         # "la primera orden" (de la que se heredan los datos) sea siempre la misma
@@ -804,16 +841,20 @@ class FacturaClienteService(
                 )
 
         # Receptor: anunciante o agencia según `facturacion_directa_cliente` (spec).
+        # `uso_cfdi_default` solo existe en Anunciante (ADR-065): si el receptor es la
+        # Agencia, no hay de dónde sugerirlo y queda en None (se captura a mano).
         if oc.facturacion_directa_cliente or oc.agencia_id is None:
             anunciante = db.get(Anunciante, oc.anunciante_id)
             if anunciante is None:  # pragma: no cover — la FK de la OC lo garantiza
                 raise DomainError("El anunciante de la orden no existe.")
             razon_social, rfc = anunciante.nombre_fiscal, anunciante.rfc_anunciante
+            uso_cfdi_default = anunciante.uso_cfdi_default
         else:
             agencia = db.get(Agencia, oc.agencia_id)
             if agencia is None:  # pragma: no cover — la FK de la OC lo garantiza
                 raise DomainError("La agencia de la orden no existe.")
             razon_social, rfc = agencia.nombre_agencia, agencia.rfc_agencia
+            uso_cfdi_default = None
 
         # Suma de los SUBTOTALES (no de los totales): el IVA se recalcula sobre la suma,
         # que es lo que exigen los CHECK `ck_factura_cliente_iva_calculado` y
@@ -831,6 +872,7 @@ class FacturaClienteService(
                 "razon_social_facturacion",
                 "rfc_facturacion",
                 "direccion_facturacion",
+                "uso_cfdi",
                 "facturas_relacionadas_ids",
                 # Ya no son columnas: se persisten como filas de `factura_cliente_orden`.
                 "ordenes_ids",
@@ -845,6 +887,7 @@ class FacturaClienteService(
             anunciante_id=oc.anunciante_id,
             agencia_id=oc.agencia_id,
             razon_social_facturacion=data.razon_social_facturacion or razon_social,
+            uso_cfdi=data.uso_cfdi or uso_cfdi_default,
             rfc_facturacion=data.rfc_facturacion or rfc,
             direccion_facturacion=data.direccion_facturacion or oc.direccion_facturacion,
             fecha_inicio_transmision=periodo_inicio,
@@ -879,8 +922,28 @@ class FacturaClienteService(
                 "Una factura timbrada, entregada, cobrada o cancelada ya no se edita.",
                 detalles={"estado_facturacion": obj.estado_facturacion},
             )
+        if data.numero_factura is not None:
+            self._verificar_numero_factura_unico(data.numero_factura, excluir_id=obj.factura_id)
         payload = data.model_dump(exclude_unset=True)
         return self._enriquecida(self._to_read(self._repo.update(obj, payload)))
+
+    def _verificar_numero_factura_unico(
+        self, numero_factura: str, *, excluir_id: uuid.UUID | None
+    ) -> None:
+        """`numero_factura` ya llega normalizado a mayúsculas (validador del schema); el
+        `func.upper(...)` aquí es solo para no dejar pasar un choque contra un registro
+        VIEJO que se haya guardado en minúsculas antes de que existiera esta regla."""
+        stmt = select(FacturaCliente.factura_id).where(
+            func.upper(FacturaCliente.numero_factura) == numero_factura
+        )
+        if excluir_id is not None:
+            stmt = stmt.where(FacturaCliente.factura_id != excluir_id)
+        if self._repo.db.scalars(stmt).first() is not None:
+            raise ConflictError(
+                f"Ya existe una factura con el número «{numero_factura}». "
+                "Captura un número distinto.",
+                detalles={"numero_factura": numero_factura},
+            )
 
     # ── Máquina de estados ────────────────────────────────────────────────────
     def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
@@ -938,6 +1001,7 @@ class FacturaClienteService(
 
     def _datos_timbrado(self, obj: FacturaCliente) -> DatosTimbrado:
         """Resuelve TODO lo que el layout necesita. La integracion no consulta la base."""
+        from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
         from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
         from app.modules.ordenes.orden_cliente import OrdenCliente
@@ -961,9 +1025,20 @@ class FacturaClienteService(
         # mismo criterio que `create()` para elegir razón social/RFC. El domicilio
         # estructurado (ADR-059) solo existe hoy en Anunciante/EmpresaFacturadora, NO en
         # Agencia: si el receptor es la agencia, cae al texto libre de `direccion_facturacion`.
+        # `regimen_fiscal` sí existe en las 3 entidades: cada una captura el suyo, y aquí se
+        # toma el de quien sea el receptor REAL de esta factura (bug real corregido: antes
+        # salía de un catálogo global ambiguo, sin distinguir emisor/receptor).
         receptor_domicilio = None
+        regimen_fiscal_receptor = None
         if orden is not None and (orden.facturacion_directa_cliente or orden.agencia_id is None):
-            receptor_domicilio = self._domicilio_de(db.get(Anunciante, obj.anunciante_id))
+            anunciante_receptor = db.get(Anunciante, obj.anunciante_id)
+            receptor_domicilio = self._domicilio_de(anunciante_receptor)
+            if anunciante_receptor is not None:
+                regimen_fiscal_receptor = anunciante_receptor.regimen_fiscal
+        elif obj.agencia_id is not None:
+            agencia_receptora = db.get(Agencia, obj.agencia_id)
+            if agencia_receptora is not None:
+                regimen_fiscal_receptor = agencia_receptora.regimen_fiscal
 
         # Folios fiscales de las facturas relacionadas (ADR-062: N:N): al PAC van los UUID
         # de los CFDI previos, no nuestros identificadores internos. Una relacionada sin
@@ -1029,10 +1104,13 @@ class FacturaClienteService(
             folios_fiscales_relacionados=folios_relacionados,
             # Serie: del propio número de factura, no de un catálogo (ADR-060 bis).
             serie=_serie_desde_numero(obj.numero_factura),
-            # Constantes fiscales: solo si el catalogo no deja lugar a dudas.
-            regimen_fiscal_emisor=self._constante_unica("RegimenFiscal"),
-            regimen_fiscal_receptor=self._constante_unica("RegimenFiscal"),
-            uso_cfdi=self._constante_unica("UsoCFDI"),
+            # RegimenFiscal: cada entidad captura el suyo (columna propia), ya no un
+            # catálogo global — ver comentario arriba, junto a `regimen_fiscal_receptor`.
+            regimen_fiscal_emisor=emisor.regimen_fiscal if emisor else None,
+            regimen_fiscal_receptor=regimen_fiscal_receptor,
+            # UsoCFDI: columna propia de la factura (ADR-065), ya no un catálogo global.
+            uso_cfdi=obj.uso_cfdi,
+            # Constantes fiscales restantes: solo si el catálogo no deja lugar a dudas.
             clave_prod_serv=self._constante_unica("ClaveProdServ"),
             clave_unidad=self._constante_unica("ClaveUnidad"),
             forma_pago_clave=self._constante_unica("FormaPago"),
@@ -1357,6 +1435,9 @@ class OrdenPorFacturarRead(BaseModel):
     receptor_razon_social: str | None = None
     receptor_rfc: str | None = None
     receptor_direccion: str | None = None
+    #: Sugerencia de `AGREGADOS.UsoCFDI` (el formulario la precarga, editable). Solo
+    #: existe en `Anunciante`: si el receptor es la Agencia, no hay de dónde sugerirla.
+    receptor_uso_cfdi_default: str | None = None
 
 
 class OrdenesPorFacturarRepository:
@@ -1416,6 +1497,15 @@ class OrdenesPorFacturarRepository:
                     ),
                     else_=Agencia.rfc_agencia,
                 ).label("receptor_rfc"),
+                # Sin `else_`: si el receptor es la Agencia, no hay default que sugerir
+                # (columna propia solo en Anunciante) — sale NULL, no un valor equivocado.
+                case(
+                    (
+                        (OrdenCliente.facturacion_directa_cliente == True)  # noqa: E712 — BIT
+                        | (OrdenCliente.agencia_id.is_(None)),
+                        Anunciante.uso_cfdi_default,
+                    ),
+                ).label("receptor_uso_cfdi_default"),
             )
             .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
             .join(

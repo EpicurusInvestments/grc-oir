@@ -16,6 +16,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { FieldTag, MultiSearchableSelect, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
@@ -27,15 +28,31 @@ import {
 } from "../../hooks";
 import { ESTADO_FACTURACION_LABEL, type FacturaClienteCreate, type OrdenPorFacturar } from "../../types";
 
+// Una letra + guion + solo dígitos (sin límite de longitud), p.ej. "A-001246". La `i`
+// acepta minúsculas al teclear: se normalizan a mayúscula al enviar (mismo patrón que
+// el RFC en AnuncianteForm/AfiliadoForm/EmpresaFacturadoraForm).
+const NUMERO_FACTURA_REGEX = /^[A-Z]-[0-9]+$/i;
+
 const schema = z.object({
   orden_id: z.string().min(1, "Selecciona la orden a facturar."),
-  numero_factura: z.string().trim().min(1, "El número de factura es obligatorio.").max(30),
+  numero_factura: z
+    .string()
+    .trim()
+    .min(1, "El número de factura es obligatorio.")
+    .max(30)
+    .regex(
+      NUMERO_FACTURA_REGEX,
+      "Formato inválido: debe ser una letra, un guion y solo números (ej. A-001246).",
+    ),
   numero_pedido: z.string().trim().max(50).optional(),
   referencia_adicional: z.string().trim().max(150).optional(),
   facturas_relacionadas_ids: z.array(z.string()).default([]),
   razon_social_facturacion: z.string().trim().min(1, "La razón social es obligatoria.").max(200),
   rfc_facturacion: z.string().trim().min(1, "El RFC es obligatorio.").max(13),
   direccion_facturacion: z.string().trim().optional(),
+  // Clave SAT (c_UsoCFDI): se precarga del default del anunciante (si factura directa),
+  // pero siempre editable — sin FK formal (mismo patrón que metodo_pago_clave).
+  uso_cfdi: z.string().trim().max(5).optional(),
   descripcion_factura: z.string().trim().min(1, "La descripción es obligatoria."),
   observaciones_factura: z.string().trim().optional(),
   fecha_factura: z.string().min(1, "La fecha de la factura es obligatoria."),
@@ -90,6 +107,8 @@ export function FacturaClienteForm({
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
   const facturasDelAnunciante = useFacturasDelAnunciante(orden?.anunciante_id);
+  const { useList } = useConstantes();
+  const usosCfdi = useList({ grupo: "UsoCFDI", activo: true, size: 100 });
 
   const {
     register,
@@ -105,6 +124,7 @@ export function FacturaClienteForm({
       razon_social_facturacion: orden?.receptor_razon_social ?? "",
       rfc_facturacion: orden?.receptor_rfc ?? "",
       direccion_facturacion: orden?.receptor_direccion ?? "",
+      uso_cfdi: orden?.receptor_uso_cfdi_default ?? "",
       descripcion_factura: descripcionSugerida(orden),
       fecha_factura: hoy(),
       facturas_relacionadas_ids: [],
@@ -123,11 +143,12 @@ export function FacturaClienteForm({
 
   return (
     <form
-      onSubmit={handleSubmit(({ orden_id, ...resto }) =>
+      onSubmit={handleSubmit(({ orden_id, numero_factura, ...resto }) =>
         // La API recibe `ordenes_ids` (ADR-064): en facturación múltiple van todas las
         // órdenes marcadas; si no, la única elegida en el combo o traída de la bandeja.
         onSubmit({
           ...resto,
+          numero_factura: numero_factura.toUpperCase(),
           ordenes_ids: ordenesMultiples
             ? ordenesMultiples.map((o) => o.orden_id)
             : [orden_id],
@@ -275,6 +296,17 @@ export function FacturaClienteForm({
         </div>
         <div className="fl">Dirección</div>
         <textarea className="ftxt" {...register("direccion_facturacion")} />
+
+        <div className="fl">Uso de CFDI</div>
+        <select className="fsel" {...register("uso_cfdi")}>
+          <option value="">— Sin capturar —</option>
+          {(usosCfdi.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        {errors.uso_cfdi && <div className="fe">{errors.uso_cfdi.message}</div>}
       </div>
 
       {/* ── Concepto ── */}

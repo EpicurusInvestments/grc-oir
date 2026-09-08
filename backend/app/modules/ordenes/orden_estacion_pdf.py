@@ -398,15 +398,6 @@ _MARGEN_VERTICAL = 1.5 * cm
 _ANCHO_MARCO_INTERNO = _ANCHO_DISPONIBLE - 16
 
 
-def _altura_contenido(elementos: list, ancho: float) -> float:
-    """Suma el alto que ocupará cada flowable, para poder centrar el recuadro
-    verticalmente en la hoja (ADR-057). `wrap()` es la forma estándar de reportlab de
-    medir un flowable sin dibujarlo — es seguro llamarlo aquí y que `doc.build()` lo
-    vuelva a llamar después con el mismo ancho."""
-    alto_holgado = 10_000  # alto "de sobra": que nada calcule un salto de página al medir
-    return sum(el.wrap(ancho, alto_holgado)[1] for el in elementos)
-
-
 def _build(elementos: list) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -417,12 +408,10 @@ def _build(elementos: list) -> bytes:
         leftMargin=_MARGEN_LATERAL,
         rightMargin=_MARGEN_LATERAL,
     )
-    alto_disponible = letter[1] - 2 * _MARGEN_VERTICAL
-    alto_contenido = _altura_contenido(elementos, _ANCHO_DISPONIBLE)
-    relleno = max(0.0, (alto_disponible - alto_contenido) / 2)
-    # Si el contenido no cabe en una hoja (relleno = 0), fluye normal y pagina como
-    # siempre — el centrado solo aplica cuando sobra espacio.
-    doc.build([Spacer(1, relleno), *elementos] if relleno else elementos)
+    # El contenido arranca pegado al margen superior en los 3 reportes (corrección
+    # posterior a ADR-057: el centrado vertical dejaba un espacio en blanco demasiado
+    # grande arriba cuando el contenido era corto, p. ej. una orden de un solo día).
+    doc.build(elementos)
     return buf.getvalue()
 
 

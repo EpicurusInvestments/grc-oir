@@ -115,6 +115,12 @@ Solo para `ConstantesSistema` (Admin). Detalle completo en **ADR-025** y en `API
 - **Inicialmente la carga será MANUAL.** Aún no se tiene una lista formal con todos los
   catálogos del SAT; cuando se tenga, se procederá con una carga (probablemente masiva vía
   CSV). Por ahora NO se hace seed automático de los catálogos SAT.
+- **Catálogo base cargado a mano (2026-09-08):** se completaron en la base de desarrollo
+  las 33 constantes de los 9 grupos que ya trae el prototipo aprobado
+  (`fase0_catalogos.html`, pantalla "Constantes del sistema") — solo se agregaron las que
+  faltaban respecto a lo que ya se había capturado manualmente probando la pantalla; no se
+  tocó ni se desactivó nada existente. Sigue habiendo un par de registros de prueba
+  (`FormaPago/G03`, `UsoCFDI/G07`) que no forman parte de ese set base y quedaron sin tocar.
 
 ## Actualización cuando el SAT cambia (confirmado)
 - **Quién:** por ahora el **Admin (IT)**. Más adelante podría definirse otro rol

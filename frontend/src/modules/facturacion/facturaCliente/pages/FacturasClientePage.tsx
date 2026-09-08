@@ -333,6 +333,8 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               </div>
             </div>
           </div>
+          <div className="fl">Uso de CFDI</div>
+          <div className="fv mono">{oGuion(selected.uso_cfdi)}</div>
 
           <div className="sec">Concepto</div>
           <div className="fl">Descripción</div>
@@ -460,14 +462,16 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               </div>
             ))}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => descargarArchivo(selected)}
-              title="Genera el archivo en el layout del PAC (V40)"
-            >
-              <i className="pi pi-download" aria-hidden="true" /> Archivo plano
-            </button>
+            {estado !== "cancelada" && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => descargarArchivo(selected)}
+                title="Genera el archivo en el layout del PAC (V40)"
+              >
+                <i className="pi pi-download" aria-hidden="true" /> Archivo plano
+              </button>
+            )}
             {estado === "preparada" && (
               <button
                 type="button"

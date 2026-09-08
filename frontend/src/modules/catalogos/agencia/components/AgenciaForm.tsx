@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { SavingOverlay, SensitiveField } from "@/shared/ui";
 
+import { useConstantes } from "../../constantesSistema/hooks";
 import type { AgenciaCreate } from "../types";
 
 export type AgenciaFormOutput = AgenciaCreate & { motivo_cambio?: string | null };
@@ -30,6 +31,8 @@ function buildSchema(isEdit: boolean, comisionOriginal?: string) {
       contacto_nombre: z.string().trim().max(160).optional(),
       contacto_email: z.string().trim().max(160).optional(),
       contacto_telefono: z.string().trim().max(40).optional(),
+      // Clave SAT (c_RegimenFiscal), sugerida desde ConstantesSistema, sin FK formal.
+      regimen_fiscal: z.string().trim().max(4).optional(),
       porcentaje_comision_agencia_default: z
         .string()
         .trim()
@@ -94,11 +97,15 @@ export function AgenciaForm({
       contacto_nombre: "",
       contacto_email: "",
       contacto_telefono: "",
+      regimen_fiscal: "",
       porcentaje_comision_agencia_default: "0",
       motivo_cambio: "",
       ...defaultValues,
     },
   });
+
+  const { useList } = useConstantes();
+  const regimenes = useList({ grupo: "RegimenFiscal", activo: true, size: 100 });
 
   // El "Motivo del cambio" solo aparece (y es obligatorio) al MODIFICAR el % en edición.
   const comisionCambiada =
@@ -114,6 +121,7 @@ export function AgenciaForm({
       contacto_nombre: data.contacto_nombre?.trim() || null,
       contacto_email: data.contacto_email?.trim() || null,
       contacto_telefono: data.contacto_telefono?.trim() || null,
+      regimen_fiscal: data.regimen_fiscal?.trim() || null,
       porcentaje_comision_agencia_default: data.porcentaje_comision_agencia_default.trim(),
       ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
     });
@@ -140,6 +148,17 @@ export function AgenciaForm({
           {...register("rfc_agencia")}
         />
         <div className="fe">{errors.rfc_agencia?.message}</div>
+
+        <div className="fl">Régimen fiscal (como receptora)</div>
+        <select className="fsel" {...register("regimen_fiscal")}>
+          <option value="">— Sin capturar —</option>
+          {(regimenes.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.regimen_fiscal?.message}</div>
 
         <div className="sec">Comisión</div>
         <SensitiveField

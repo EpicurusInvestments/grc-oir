@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { DomicilioPostalInput, type DomicilioPostalValues, SavingOverlay } from "@/shared/ui";
 
+import { useConstantes } from "../../constantesSistema/hooks";
 import type { EmpresaFacturadoraCreate } from "../types";
 
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
@@ -34,6 +35,9 @@ const schema = z.object({
   estado: z.string().trim().max(100).optional(),
   pais: z.string().trim().max(3).optional(),
   codigo_postal: z.string().trim().max(5).optional(),
+  // Clave SAT (c_RegimenFiscal) del emisor: sugerida desde ConstantesSistema, sin FK
+  // formal (mismo patrón que metodo_pago_clave en F2) — se acepta cualquier texto.
+  regimen_fiscal: z.string().trim().max(4).optional(),
 });
 
 type EmpresaFacturadoraFormValues = z.infer<typeof schema>;
@@ -77,9 +81,13 @@ export function EmpresaFacturadoraForm({
       estado: "",
       pais: "MEX",
       codigo_postal: "",
+      regimen_fiscal: "",
       ...defaultValues,
     },
   });
+
+  const { useList } = useConstantes();
+  const regimenes = useList({ grupo: "RegimenFiscal", activo: true, size: 100 });
 
   const domicilio: DomicilioPostalValues = {
     calle: watch("calle") ?? "",
@@ -114,6 +122,7 @@ export function EmpresaFacturadoraForm({
       estado: data.estado?.trim() || null,
       pais: data.pais?.trim() || null,
       codigo_postal: data.codigo_postal?.trim() || null,
+      regimen_fiscal: data.regimen_fiscal?.trim() || null,
     });
   });
 
@@ -138,6 +147,17 @@ export function EmpresaFacturadoraForm({
           {...register("rfc_empresa")}
         />
         <div className="fe">{errors.rfc_empresa?.message}</div>
+
+        <div className="fl">Régimen fiscal</div>
+        <select className="fsel" {...register("regimen_fiscal")}>
+          <option value="">— Sin capturar —</option>
+          {(regimenes.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.regimen_fiscal?.message}</div>
 
         <div className="sec">Domicilio</div>
         <DomicilioPostalInput values={domicilio} onChange={onDomicilioChange} disabled={submitting} />
