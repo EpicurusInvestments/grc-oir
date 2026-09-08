@@ -26,6 +26,13 @@ export interface Anunciante extends CatalogoBase {
   estado: string | null;
   pais: string | null;
   codigo_postal: string | null;
+  /** Clave SAT (c_RegimenFiscal) cuando el anunciante es RECEPTOR (factura directa, sin
+   * agencia), sugerida desde ConstantesSistema; sin FK. */
+  regimen_fiscal: string | null;
+  /** Clave SAT (c_UsoCFDI) que se SUGIERE al preparar una factura directa a este
+   * anunciante (sin agencia); lo que de verdad se timbra vive en `FacturaCliente.uso_cfdi`,
+   * editable por factura. */
+  uso_cfdi_default: string | null;
   referencia_anunciante: string | null;
   contacto_nombre: string | null;
   contacto_email: string | null;
@@ -52,6 +59,8 @@ export interface AnuncianteCreate {
   estado?: string | null;
   pais?: string | null;
   codigo_postal?: string | null;
+  regimen_fiscal?: string | null;
+  uso_cfdi_default?: string | null;
   referencia_anunciante?: string | null;
   contacto_nombre?: string | null;
   contacto_email?: string | null;

@@ -58,6 +58,7 @@ const orden: OrdenPorFacturar = {
   receptor_razon_social: "Cadena Comercial OXXO SA de CV",
   receptor_rfc: "CCO8605231N4",
   receptor_direccion: "CDMX, Insurgentes Sur 800",
+  receptor_uso_cfdi_default: null,
 };
 
 /** Segunda orden del MISMO anunciante: es lo que hace posible la factura múltiple.

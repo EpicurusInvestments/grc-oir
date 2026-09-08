@@ -108,6 +108,10 @@ export function AnuncianteDetailPanel({
         <div className="fv">{anunciante.nombre_fiscal}</div>
         <div className="fl">RFC</div>
         <div className="fv mono">{anunciante.rfc_anunciante}</div>
+        <div className="fl">Régimen fiscal (como receptor, si factura directa)</div>
+        <div className="fv mono">{oGuion(anunciante.regimen_fiscal)}</div>
+        <div className="fl">Uso de CFDI (default de factura, si factura directa)</div>
+        <div className="fv mono">{oGuion(anunciante.uso_cfdi_default)}</div>
         <div className="fl">Domicilio</div>
         <div className="fv">{formatDomicilio(anunciante) ?? oGuion(anunciante.localizacion)}</div>
         <div className="fl">Referencia interna</div>

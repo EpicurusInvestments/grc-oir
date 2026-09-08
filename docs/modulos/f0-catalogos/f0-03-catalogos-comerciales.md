@@ -17,19 +17,25 @@ marcas y sus contratos. Es la base de la captura de órdenes (F1) y de la factur
 ### Agencia (10 campos)
 `agencia_id` (PK), `nombre_agencia` (NOT NULL, **único, case-insensitive**), `rfc_agencia`
 (NOT NULL, 12-13), `contacto_nombre`, `contacto_email`, `contacto_telefono`,
-**`porcentaje_comision_agencia_default` (NUMERIC(5,2) · PARÁMETRO SENSIBLE)**, `activo`,
-`created_at`, `updated_at`. No accede al sistema.
+`regimen_fiscal` (desviación aditiva, ADR-065 — clave SAT como RECEPTORA, trato vía
+agencia), **`porcentaje_comision_agencia_default` (NUMERIC(5,2) · PARÁMETRO SENSIBLE)**,
+`activo`, `created_at`, `updated_at`. No accede al sistema.
 
-### Anunciante (14 campos + 10 de domicilio estructurado, ADR-059)
+### Anunciante (16 campos + 10 de domicilio estructurado, ADR-059)
 `anunciante_id` (PK), `agencia_id` (FK NULL — null si trata directo), `nombre_comercial`
 (NOT NULL), `nombre_fiscal` (NOT NULL — el que aparece en la factura), `rfc_anunciante`
 (NOT NULL, 12-13), `localizacion` (legacy, ya no tiene input propio — ver abajo),
-`referencia_anunciante`, `contacto_nombre`, `contacto_email`, `contacto_telefono`,
-**`dias_credito_default` (INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
-`updated_at`. **Domicilio estructurado** (desviación aditiva, ADR-059): `calle`,
-`numero_exterior`, `numero_interior`, `colonia`, `localidad`, `referencia_domicilio`,
-`municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta al escribir el CP
-(catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a mano.
+`regimen_fiscal` (desviación aditiva, ADR-065 — clave SAT como RECEPTOR, factura directa
+sin agencia), `uso_cfdi_default` (desviación aditiva, ADR-065 — SUGIERE el
+`AGREGADOS.UsoCFDI` de una factura directa a este anunciante; lo que se timbra vive en
+`FacturaCliente.uso_cfdi`, editable por factura), `referencia_anunciante`,
+`contacto_nombre`, `contacto_email`, `contacto_telefono`, **`dias_credito_default`
+(INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`, `updated_at`. **Domicilio
+estructurado** (desviación aditiva, ADR-059):
+`calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
+`referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta
+al escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a
+mano.
 
 ### Marca (5 campos + `updated_at`)
 `marca_id` (PK), `anunciante_id` (FK NOT NULL), `nombre_marca` (NOT NULL), `activo`,
@@ -150,6 +156,16 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 - **ADR-027** — Integración REAL de S3: adaptador S3 + selección local/S3 por env + endpoints de adjuntos.
 - **ADR-059** — Domicilio estructurado con autocompletado por código postal (Anunciante,
   EmpresaFacturadora): 10 columnas nuevas + catálogo `AsentamientoPostal` (SEPOMEX).
+- **ADR-065** — `regimen_fiscal` propio en Agencia/Anunciante/EmpresaFacturadora, y
+  `uso_cfdi_default` en Anunciante (bug real, F2): antes ambos se resolvían con
+  `ConstanteSistema` (grupos `RegimenFiscal`/`UsoCFDI`) "si hay exactamente una activa",
+  que dejó de servir en cuanto esos catálogos tuvieron más de una (deliberado: con
+  varias, ambiguo). Ahora cada entidad captura lo suyo, sugerido desde el mismo catálogo
+  pero sin FK formal (patrón `metodo_pago_clave`). `uso_cfdi_default` es solo la
+  SUGERENCIA — lo que se timbra es `FacturaCliente.uso_cfdi`, capturado/editable por
+  factura (`regimen_fiscal` sí se timbra directo de la columna del emisor/receptor). Ver
+  también `docs/modulos/f2-facturacion/f2-facturacion.md`, donde vive la resolución en
+  `FacturaClienteService.create()`/`_datos_timbrado()`.
 
 ## Pendientes / dudas
 - (Resuelto) Marca → solo anidada en Anunciante, sin pantalla propia.

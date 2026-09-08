@@ -167,6 +167,7 @@ export function AgenciaCatalogPage() {
           contacto_nombre: selected.contacto_nombre ?? "",
           contacto_email: selected.contacto_email ?? "",
           contacto_telefono: selected.contacto_telefono ?? "",
+          regimen_fiscal: selected.regimen_fiscal ?? "",
           porcentaje_comision_agencia_default: selected.porcentaje_comision_agencia_default,
         }}
         submitting={actualizar.isPending}
@@ -203,6 +204,8 @@ export function AgenciaCatalogPage() {
           <div className="sec">Datos fiscales</div>
           <div className="fl">RFC</div>
           <div className="fv mono">{selected.rfc_agencia}</div>
+          <div className="fl">Régimen fiscal (como receptora)</div>
+          <div className="fv mono">{oGuion(selected.regimen_fiscal)}</div>
 
           <div className="sec">Comisión</div>
           <div className="fl">

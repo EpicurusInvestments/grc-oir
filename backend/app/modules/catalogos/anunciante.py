@@ -93,6 +93,16 @@ class Anunciante(Base):
     estado: Mapped[str | None] = mapped_column(Unicode(100), default=None)
     pais: Mapped[str | None] = mapped_column(Unicode(3), default="MEX")
     codigo_postal: Mapped[str | None] = mapped_column(Unicode(5), default=None)
+    # Clave SAT (catálogo c_RegimenFiscal), sugerida desde `ConstantesSistema` grupo
+    # RegimenFiscal — sin FK formal (mismo patrón que `metodo_pago_clave` en F2). Es el
+    # régimen del anunciante cuando actúa como RECEPTOR de una factura directa (sin
+    # agencia): `ExReceptor.RegimenFiscal` del layout del PAC.
+    regimen_fiscal: Mapped[str | None] = mapped_column(Unicode(4), default=None)
+    # Clave SAT (catálogo c_UsoCFDI), sugerida desde `ConstantesSistema` grupo UsoCFDI —
+    # sin FK formal. Es el DEFAULT que se propone al preparar una factura directa a este
+    # anunciante (`FacturaCliente.uso_cfdi` la captura de verdad, editable por factura;
+    # esta columna solo sugiere). `AGREGADOS.UsoCFDI` del layout del PAC.
+    uso_cfdi_default: Mapped[str | None] = mapped_column(Unicode(5), default=None)
     referencia_anunciante: Mapped[str | None] = mapped_column(Unicode(250), default=None)
     contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
@@ -122,6 +132,8 @@ class AnuncianteCreate(BaseModel):
     estado: str | None = Field(default=None, max_length=100)
     pais: str | None = Field(default="MEX", max_length=3)
     codigo_postal: str | None = Field(default=None, max_length=5)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
+    uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
@@ -150,6 +162,8 @@ class AnuncianteUpdate(BaseModel):
     estado: str | None = Field(default=None, max_length=100)
     pais: str | None = Field(default=None, max_length=3)
     codigo_postal: str | None = Field(default=None, max_length=5)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
+    uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
@@ -183,6 +197,8 @@ class AnuncianteRead(CatalogoReadBase):
     estado: str | None = None
     pais: str | None = None
     codigo_postal: str | None = None
+    regimen_fiscal: str | None = None
+    uso_cfdi_default: str | None = None
     referencia_anunciante: str | None = None
     contacto_nombre: str | None = None
     contacto_email: str | None = None

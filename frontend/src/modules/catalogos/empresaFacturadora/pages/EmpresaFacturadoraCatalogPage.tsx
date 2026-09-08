@@ -135,6 +135,7 @@ export function EmpresaFacturadoraCatalogPage() {
           estado: selected.estado ?? "",
           pais: selected.pais ?? "MEX",
           codigo_postal: selected.codigo_postal ?? "",
+          regimen_fiscal: selected.regimen_fiscal ?? "",
         }}
         submitting={actualizar.isPending}
         submitError={submitError}
@@ -168,6 +169,8 @@ export function EmpresaFacturadoraCatalogPage() {
           <div className="sec">Datos fiscales</div>
           <div className="fl">RFC</div>
           <div className="fv mono">{selected.rfc_empresa}</div>
+          <div className="fl">Régimen fiscal</div>
+          <div className="fv mono">{oGuion(selected.regimen_fiscal)}</div>
           <div className="fl">Domicilio</div>
           <div className="fv muted">
             {formatDomicilio(selected) ?? oGuion(selected.direccion_empresa)}

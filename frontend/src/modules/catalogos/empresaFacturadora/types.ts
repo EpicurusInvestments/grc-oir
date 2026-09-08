@@ -19,6 +19,8 @@ export interface EmpresaFacturadora extends CatalogoBase {
   estado: string | null;
   pais: string | null;
   codigo_postal: string | null;
+  /** Clave SAT (c_RegimenFiscal) del EMISOR, sugerida desde ConstantesSistema; sin FK. */
+  regimen_fiscal: string | null;
 }
 
 export interface EmpresaFacturadoraCreate {
@@ -35,6 +37,7 @@ export interface EmpresaFacturadoraCreate {
   estado?: string | null;
   pais?: string | null;
   codigo_postal?: string | null;
+  regimen_fiscal?: string | null;
 }
 
 export type EmpresaFacturadoraUpdate = Partial<EmpresaFacturadoraCreate>;

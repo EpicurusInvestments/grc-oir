@@ -77,6 +77,11 @@ class Agencia(Base):
     contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
+    # Clave SAT (catálogo c_RegimenFiscal), sugerida desde `ConstantesSistema` grupo
+    # RegimenFiscal — sin FK formal (mismo patrón que `metodo_pago_clave` en F2). Es el
+    # régimen de la agencia cuando actúa como RECEPTOR de la factura (trato vía agencia):
+    # `ExReceptor.RegimenFiscal` del layout del PAC.
+    regimen_fiscal: Mapped[str | None] = mapped_column(Unicode(4), default=None)
     # PARÁMETRO SENSIBLE (spec): % de comisión por defecto de la agencia.
     porcentaje_comision_agencia_default: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("0")
@@ -95,6 +100,7 @@ class AgenciaCreate(BaseModel):
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
     contacto_telefono: str | None = Field(default=None, max_length=40)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
     porcentaje_comision_agencia_default: Decimal = Field(
         default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2
     )
@@ -111,6 +117,7 @@ class AgenciaUpdate(BaseModel):
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
     contacto_telefono: str | None = Field(default=None, max_length=40)
+    regimen_fiscal: str | None = Field(default=None, max_length=4)
     porcentaje_comision_agencia_default: Decimal | None = Field(
         default=None, ge=0, le=100, max_digits=5, decimal_places=2
     )
@@ -133,6 +140,7 @@ class AgenciaRead(CatalogoReadBase):
     contacto_nombre: str | None = None
     contacto_email: str | None = None
     contacto_telefono: str | None = None
+    regimen_fiscal: str | None = None
     porcentaje_comision_agencia_default: Decimal
     # Derivado (solo lectura; NO se acepta en Create/Update):
     anunciantes_count: int = 0  # nº de anunciantes de la agencia (todos)

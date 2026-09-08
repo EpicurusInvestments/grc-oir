@@ -175,6 +175,8 @@ export function AnuncianteCatalogPage() {
           estado: selected.estado ?? "",
           pais: selected.pais ?? "MEX",
           codigo_postal: selected.codigo_postal ?? "",
+          regimen_fiscal: selected.regimen_fiscal ?? "",
+          uso_cfdi_default: selected.uso_cfdi_default ?? "",
           referencia_anunciante: selected.referencia_anunciante ?? "",
           contacto_nombre: selected.contacto_nombre ?? "",
           contacto_email: selected.contacto_email ?? "",

@@ -13,6 +13,9 @@ export interface Agencia extends CatalogoBase {
   contacto_nombre: string | null;
   contacto_email: string | null;
   contacto_telefono: string | null;
+  /** Clave SAT (c_RegimenFiscal) cuando la agencia es RECEPTORA (trato vía agencia),
+   * sugerida desde ConstantesSistema; sin FK. */
+  regimen_fiscal: string | null;
   /** DECIMAL como string (p.ej. "15.00"). Sensible: audit log al modificarlo. */
   porcentaje_comision_agencia_default: string;
   /** Derivado (solo lectura): nº de anunciantes de la agencia (todos). */
@@ -37,6 +40,7 @@ export interface AgenciaCreate {
   contacto_nombre?: string | null;
   contacto_email?: string | null;
   contacto_telefono?: string | null;
+  regimen_fiscal?: string | null;
   porcentaje_comision_agencia_default: string;
 }
 

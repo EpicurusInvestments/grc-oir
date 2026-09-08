@@ -84,6 +84,9 @@ export interface FacturaCliente {
   razon_social_facturacion: string;
   rfc_facturacion: string;
   direccion_facturacion: string | null;
+  /** Clave SAT (c_UsoCFDI, `AGREGADOS.UsoCFDI`). Se precarga del default del Anunciante
+   *  en el alta (solo si el receptor es directo), pero es editable por factura. */
+  uso_cfdi: string | null;
   descripcion_factura: string;
   observaciones_factura: string | null;
   fecha_inicio_transmision: string;
@@ -135,6 +138,9 @@ export interface FacturaClienteCreate {
   razon_social_facturacion?: string | null;
   rfc_facturacion?: string | null;
   direccion_facturacion?: string | null;
+  /** Si se omite, el servicio la precarga del `Anunciante.uso_cfdi_default` (solo si el
+   *  receptor es el anunciante directo). */
+  uso_cfdi?: string | null;
 }
 
 export interface TimbrarInput {
@@ -277,4 +283,7 @@ export interface OrdenPorFacturar {
   receptor_razon_social: string | null;
   receptor_rfc: string | null;
   receptor_direccion: string | null;
+  /** Sugerencia de `AGREGADOS.UsoCFDI` (el formulario la precarga, editable). Solo existe
+   *  si el receptor es el Anunciante directo — la Agencia no tiene esa columna. */
+  receptor_uso_cfdi_default: string | null;
 }

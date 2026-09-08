@@ -99,11 +99,13 @@ las órdenes coinciden; si difieren, cae a `descripcion_factura`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
-### FacturaCliente (33 campos spec, con 3 ajustes)
+### FacturaCliente (33 campos spec, con 3 ajustes + 1 desviación aditiva)
 PK `factura_id`. Órdenes que cubre vía `factura_cliente_orden` (**N:M**, ADR-064 — la spec
 las ligaba con `orden_id` 1:1). FKs a `EmpresaFacturadora`/`Anunciante`/`Agencia`
 (heredados de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón
 social/RFC/dirección de facturación, fechas de transmisión, `subtotal_factura`.
+`uso_cfdi` (desviación aditiva, ADR-065): clave SAT `c_UsoCFDI`, precargada del
+`Anunciante.uso_cfdi_default` si el receptor es directo, siempre editable por factura.
 Calculados: `iva_factura = subtotal_factura * 0.16`,
 `total_factura = subtotal_factura + iva_factura`.
 
@@ -449,6 +451,64 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     a F2 (`window.localStorage` indefinido con Node 26 frente al Node 20 que fija el
     proyecto), en los mismos 4 archivos de siempre.
 
+- **Corrección posterior: el botón «Archivo plano» se oculta en facturas `cancelada`.**
+  El backend ya bloqueaba con 409 (`ConflictError`) exportar el archivo de una factura
+  cancelada — regla correcta, no se tocó —, pero el frontend nunca leyó ese mensaje de
+  dominio: la descarga usa `responseType: "blob"` y el interceptor de `apiClient.ts`
+  solo sabe parsear errores JSON, así que en un 409 con blob cae al mensaje genérico de
+  axios (`"Request failed with status code 409"`). Mismo defecto latente en las otras
+  descargas blob del proyecto (adjuntos/PDFs de OE, contratos), sin arreglar aún. Para
+  esta pantalla se optó por evitar la confusión ocultando el botón directamente en vez
+  de arreglar el interceptor: es la única acción sin gate de estado en el detalle de
+  «Facturas al cliente» (todas las demás ya se condicionan por `estado_facturacion`).
+
+- **Corrección posterior: formato y unicidad de `numero_factura` (bug real).** No
+  existía NINGUNA validación: se podían capturar dos facturas con el mismo número, y el
+  texto era libre (sin relación con la convención LETRA-NÚMEROS que ya asumía
+  `_serie_desde_numero`, ADR-060 bis). Se agregó en ambas capas:
+  - **Backend:** validador de Pydantic en `FacturaClienteCreate`/`FacturaClienteUpdate`
+    (`_normaliza_numero_factura`) — normaliza a mayúsculas y exige `^[A-Z]-[0-9]+$` (una
+    sola letra, un guion, solo dígitos, sin límite de longitud); rechaza con 422 si no
+    coincide. Unicidad GLOBAL (no solo por orden) verificada en `create()`/`update()`
+    contra `func.upper(numero_factura)` — así también choca contra un registro viejo
+    guardado en minúsculas — con 409 `conflicto` nombrando el número duplicado.
+  - **Frontend:** mismo regex (con `/i`) en el `zod` de `FacturaClienteForm`, normalizado
+    a mayúsculas al enviar — mismo patrón que el RFC en
+    Anunciante/Afiliado/EmpresaFacturadoraForm (valida case-insensitive, uppercase solo
+    al hacer submit, no mientras se teclea).
+  - Sin exención para canceladas: a diferencia de la 1:1 OC↔factura (ADR-047), un número
+    de factura no se libera al cancelar — representa un folio ya usado.
+  - Se tuvieron que renombrar ~35 números de factura de prueba en
+    `test_f2_02_facturacion_escritura.py` que usaban etiquetas descriptivas
+    (`"F-REL-A"`, `"F-BANDEJA"`, etc.) que ya no cumplen el formato — quedaron como
+    `"F-9NNN"` sin significado mnemotécnico, el nombre de la función de prueba ya lo da.
+
+- **Corrección posterior: `regimen_fiscal_emisor`/`regimen_fiscal_receptor` y
+  `AGREGADOS.UsoCFDI` ya NO salen de `ConstanteSistema` (ADR-065, bug real).** Al
+  completar el catálogo de constantes SAT (ver `f0-05-constantes-sistema.md`), los
+  grupos `RegimenFiscal` y `UsoCFDI` pasaron de 1 a varias activas, y
+  `_constante_unica(...)` — que exige EXACTAMENTE una activa o reporta el campo como
+  faltante — dejó de resolver nada para NINGUNA factura. Además, la regla de
+  `RegimenFiscal` usaba la MISMA constante para emisor y receptor, que casi nunca
+  comparten régimen fiscal. Se corrigió en dos partes (migraciones `7d5f9c4589c0` y
+  `ebdf80f59dd1`, detalle completo en
+  `f0-03-catalogos-comerciales.md`/`f0-04-catalogos-facturacion-finanzas.md`):
+  - `regimen_fiscal` como columna propia en `EmpresaFacturadora` (emisor), `Anunciante` y
+    `Agencia` (receptor, según cuál de las dos sea el receptor real de esta factura) — se
+    timbra DIRECTO de la columna, sin pasar por la factura.
+  - `uso_cfdi_default` en `Anunciante` (solo sugerencia, precarga el formulario si el
+    receptor es directo) + `uso_cfdi` como columna real de `FacturaCliente`
+    (`FacturaClienteCreate.uso_cfdi`, resuelta en `create()` como
+    `data.uso_cfdi or uso_cfdi_default` — igual patrón que
+    `razon_social_facturacion`/`rfc_facturacion`). Si el receptor es la Agencia no hay
+    default que sugerir (columna solo en Anunciante): se captura a mano, siempre editable
+    por factura sin importar quién sea el receptor.
+  - Ambos siguen sugeridos desde `ConstantesSistema`, sin FK formal (patrón
+    `metodo_pago_clave`), pero ya ninguno depende de que el catálogo tenga una sola
+    activa. `ClaveProdServ`, `ClaveUnidad` y `FormaPago` siguen con el mecanismo viejo —
+    mismo riesgo de ambigüedad, pendiente de una corrección equivalente si vuelve a
+    hacer falta.
+
 ## Pendientes / dudas
 
 - ~~Formato real del archivo plano del PAC~~ **RESUELTO** en la Tanda 5 (ADR-048): el
@@ -457,11 +517,22 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
 - **Codificación del archivo plano.** Se asume CP1252 (`TIMBRADO_ENCODING`), pero el
   ejemplo llegó con sus acentos ya corruptos, así que no se pudo deducir del archivo.
   **Confirmar con el PAC antes de producción.**
+- **Interceptor de `apiClient.ts` no parsea errores en descargas `blob`.** Cualquier
+  endpoint con `responseType: "blob"` (archivo plano de F2; adjuntos, PDFs y contratos
+  de F1/F0) pierde el mensaje de dominio del backend en un error y muestra el genérico
+  de axios. Se evitó puntualmente en «Archivo plano» ocultando el botón en `cancelada`
+  en vez de arreglarlo; sigue pendiente arreglar el interceptor una sola vez para las
+  demás pantallas.
 - **(Resuelto, ADR-061)** Campos fiscales que el modelo no capturaba y el PAC exigía:
   régimen fiscal (ya se resolvía solo con UNA constante activa), serie (ya NO es
   catálogo — se deriva del propio `numero_factura`, ADR-061), `ClaveProdServ`/
   `ClaveUnidad`/`UsoCFDI`/forma de pago SAT (sembrados con valores reales de
   producción, un único activo por grupo). Verificado en vivo: 0 campos faltantes.
+  **Régimen fiscal y UsoCFDI dejaron de depender de esto** (ver ADR-065 arriba):
+  `ClaveProdServ`, `ClaveUnidad` y `FormaPago` SIGUEN dependiendo de tener una única
+  constante activa por grupo en producción — si alguien completa esos catálogos sin
+  cuidar eso (como pasó con `RegimenFiscal`/`UsoCFDI`), vuelven a reportarse como
+  faltantes en todas las facturas nuevas.
   **(Resuelto, ADR-060)** Los domicilios DESGLOSADOS de emisor/receptor y
   `AGREGADOS.LugarExpedicion` (código postal de expedición) ya salen del domicilio
   estructurado por CP de Anunciante/EmpresaFacturadora (ADR-059) — el receptor solo si
