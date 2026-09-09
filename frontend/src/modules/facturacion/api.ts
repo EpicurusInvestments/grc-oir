@@ -68,6 +68,16 @@ export const facturaClienteApi = {
     const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`);
     return data;
   },
+  /** Validación EN VIVO del campo «Número de factura» (blur, antes de guardar todo el
+   *  formulario) — no lanza, solo informa si ya existe. `excluirId` es para cuando algún
+   *  día se edite la propia factura sin que choque consigo misma. */
+  async existeNumeroFactura(numeroFactura: string, excluirId?: string): Promise<boolean> {
+    const { data } = await apiClient.get<{ existe: boolean }>(
+      `${BASE}/clientes/existe-numero-factura`,
+      { params: { numero_factura: numeroFactura, excluir_id: excluirId } },
+    );
+    return data.existe;
+  },
   /** Descarga el archivo plano del PAC (layout real V40).
    *
    * Devuelve los campos que el PAC exige y que el sistema todavía no puede llenar, para
@@ -277,6 +287,16 @@ export async function metodosDePago(): Promise<OpcionCatalogo[]> {
   const { data } = await apiClient.get<Page<{ clave: string; descripcion: string }>>(
     "/catalogos/constantes",
     { params: { grupo: "MetodoPago", activo: true, size: 100 } },
+  );
+  return data.items.map((c) => ({ id: c.clave, etiqueta: `${c.clave} · ${c.descripcion}` }));
+}
+
+/** Claves de forma de pago sugeridas desde `ConstantesSistema` (no hay FK — ADR-065 bis:
+ *  antes se resolvía sola del catálogo, ahora se captura por factura como MetodoPago). */
+export async function formasDePago(): Promise<OpcionCatalogo[]> {
+  const { data } = await apiClient.get<Page<{ clave: string; descripcion: string }>>(
+    "/catalogos/constantes",
+    { params: { grupo: "FormaPago", activo: true, size: 100 } },
   );
   return data.items.map((c) => ({ id: c.clave, etiqueta: `${c.clave} · ${c.descripcion}` }));
 }

@@ -244,6 +244,12 @@ class FacturaCliente(Base):
     )
     # Desviación aditiva 2: clave de `ConstantesSistema` (grupo MetodoPago), sin FK.
     metodo_pago_clave: Mapped[str] = mapped_column(Unicode(20))
+    # Desviación aditiva 4 (bug real, ADR-065 bis): clave de `ConstantesSistema` (grupo
+    # FormaPago), sin FK — antes NO se capturaba: `_datos_timbrado()` la resolvía sola
+    # con `_constante_unica("FormaPago")`, que dejó de servir en cuanto el catálogo tuvo
+    # más de una activa. Nullable porque las facturas viejas nunca la capturaron; las
+    # nuevas la exigen (`FacturaClienteCreate`), igual que `metodo_pago_clave`.
+    forma_pago_clave: Mapped[str | None] = mapped_column(Unicode(20), default=None)
     info_cuenta_pago: Mapped[str | None] = mapped_column(texto_largo(), default=None)
     # Desviación aditiva 1: texto libre nullable, sin catálogo LayoutFactura.
     layout_factura: Mapped[str | None] = mapped_column(Unicode(200), default=None)
@@ -390,6 +396,7 @@ class FacturaClienteRead(BaseModel):
     total_factura: Decimal
     cuenta_contable_id: uuid.UUID
     metodo_pago_clave: str
+    forma_pago_clave: str | None = None
     info_cuenta_pago: str | None = None
     layout_factura: str | None = None
     estado_facturacion: str
@@ -494,6 +501,10 @@ class FacturaClienteCreate(BaseModel):
     # Clave de `ConstantesSistema` (grupo MetodoPago). Sin FK: el frontend sugiere desde
     # el catálogo, pero la base no valida la relación (desviación aditiva 2).
     metodo_pago_clave: str = Field(min_length=1, max_length=20)
+    # Clave de `ConstantesSistema` (grupo FormaPago). Mismo patrón, sin FK (desviación
+    # aditiva 4, bug real ADR-065 bis): antes se resolvía sola del catálogo, ahora se
+    # captura como MetodoPago.
+    forma_pago_clave: str = Field(min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
 
@@ -512,6 +523,7 @@ class FacturaClienteUpdate(BaseModel):
     fecha_factura: date | None = None
     cuenta_contable_id: uuid.UUID | None = None
     metodo_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
+    forma_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
 
@@ -927,9 +939,9 @@ class FacturaClienteService(
         payload = data.model_dump(exclude_unset=True)
         return self._enriquecida(self._to_read(self._repo.update(obj, payload)))
 
-    def _verificar_numero_factura_unico(
+    def _numero_factura_existe(
         self, numero_factura: str, *, excluir_id: uuid.UUID | None
-    ) -> None:
+    ) -> bool:
         """`numero_factura` ya llega normalizado a mayúsculas (validador del schema); el
         `func.upper(...)` aquí es solo para no dejar pasar un choque contra un registro
         VIEJO que se haya guardado en minúsculas antes de que existiera esta regla."""
@@ -938,12 +950,26 @@ class FacturaClienteService(
         )
         if excluir_id is not None:
             stmt = stmt.where(FacturaCliente.factura_id != excluir_id)
-        if self._repo.db.scalars(stmt).first() is not None:
+        return self._repo.db.scalars(stmt).first() is not None
+
+    def _verificar_numero_factura_unico(
+        self, numero_factura: str, *, excluir_id: uuid.UUID | None
+    ) -> None:
+        if self._numero_factura_existe(numero_factura, excluir_id=excluir_id):
             raise ConflictError(
                 f"Ya existe una factura con el número «{numero_factura}». "
                 "Captura un número distinto.",
                 detalles={"numero_factura": numero_factura},
             )
+
+    def existe_numero_factura(
+        self, numero_factura: str, *, excluir_id: uuid.UUID | None
+    ) -> bool:
+        """Para la validación EN VIVO del formulario (blur del campo, antes de guardar):
+        mismo criterio de unicidad que `create()`/`update()`, pero solo informa — no
+        lanza. Normaliza a mayúsculas aquí porque quien llama es un endpoint de lectura,
+        no pasa por el validador de Pydantic de `FacturaClienteCreate`."""
+        return self._numero_factura_existe(numero_factura.strip().upper(), excluir_id=excluir_id)
 
     # ── Máquina de estados ────────────────────────────────────────────────────
     def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
@@ -1101,6 +1127,7 @@ class FacturaClienteService(
             ),
             info_cuenta_pago=obj.info_cuenta_pago,
             metodo_pago_clave=obj.metodo_pago_clave,
+            forma_pago_clave=obj.forma_pago_clave,
             folios_fiscales_relacionados=folios_relacionados,
             # Serie: del propio número de factura, no de un catálogo (ADR-060 bis).
             serie=_serie_desde_numero(obj.numero_factura),
@@ -1113,7 +1140,6 @@ class FacturaClienteService(
             # Constantes fiscales restantes: solo si el catálogo no deja lugar a dudas.
             clave_prod_serv=self._constante_unica("ClaveProdServ"),
             clave_unidad=self._constante_unica("ClaveUnidad"),
-            forma_pago_clave=self._constante_unica("FormaPago"),
             # AGREGADOS.LugarExpedicion = CP de dónde se expide el CFDI (catálogo SAT
             # c_CodigoPostal) — el del domicilio fiscal del emisor (ADR-059), no una
             # constante nueva que capturar aparte.
@@ -1274,6 +1300,30 @@ def listar_facturas_cliente(
             empresa_facturadora_id=empresa_facturadora_id,
             estado_facturacion=estado_facturacion,
         )
+    )
+
+
+class ExisteNumeroFacturaRead(BaseModel):
+    existe: bool
+
+
+# Ruta ESTÁTICA antes que la dinámica `/{item_id}`: si no, FastAPI intentaría parsear
+# "existe-numero-factura" como UUID y respondería 422 en vez de encontrar esta ruta
+# (mismo criterio que `/conteos` en ConstantesSistema, F0-05).
+@router_clientes.get("/existe-numero-factura", response_model=ExisteNumeroFacturaRead)
+def existe_numero_factura(
+    numero_factura: str = Query(..., min_length=1, max_length=30),
+    excluir_id: uuid.UUID | None = Query(
+        None, description="Factura a excluir de la búsqueda (al editar la suya propia)"
+    ),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> ExisteNumeroFacturaRead:
+    """Validación EN VIVO para el formulario de alta: se llama al perder el foco del
+    campo «Número de factura» (una vez que el formato ya es válido), para avisar de un
+    duplicado ANTES de intentar guardar todo el formulario."""
+    return ExisteNumeroFacturaRead(
+        existe=svc.existe_numero_factura(numero_factura, excluir_id=excluir_id)
     )
 
 

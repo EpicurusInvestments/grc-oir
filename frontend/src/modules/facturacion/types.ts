@@ -98,6 +98,9 @@ export interface FacturaCliente {
   total_factura: string;
   cuenta_contable_id: string;
   metodo_pago_clave: string;
+  /** Clave SAT (c_FormaPago, `AGREGADOS.MedioPago`). Antes se resolvía sola de un
+   *  catálogo global; ahora se captura por factura, igual que metodo_pago_clave. */
+  forma_pago_clave: string | null;
   info_cuenta_pago: string | null;
   layout_factura: string | null;
   estado_facturacion: EstadoFacturacion;
@@ -131,6 +134,7 @@ export interface FacturaClienteCreate {
   fecha_factura: string;
   cuenta_contable_id: string;
   metodo_pago_clave: string;
+  forma_pago_clave: string;
   info_cuenta_pago?: string | null;
   layout_factura?: string | null;
   /** El receptor se DERIVA de la orden; estos tres campos lo sobrescriben si el usuario

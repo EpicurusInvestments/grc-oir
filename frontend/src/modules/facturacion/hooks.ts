@@ -20,6 +20,7 @@ import {
   facturaAfiliadoApi,
   facturaAgenciaApi,
   facturaClienteApi,
+  formasDePago,
   metodosDePago,
   ordenesFacturables,
   ordenesPorFacturar,
@@ -263,6 +264,9 @@ export const useCuentasContables = () =>
 
 export const useMetodosDePago = () =>
   useQuery({ queryKey: ["facturacion:metodos-pago"], queryFn: metodosDePago });
+
+export const useFormasDePago = () =>
+  useQuery({ queryKey: ["facturacion:formas-pago"], queryFn: formasDePago });
 
 export const useAfiliados = () =>
   useQuery({ queryKey: ["facturacion:afiliados-catalogo"], queryFn: afiliadosActivos });
