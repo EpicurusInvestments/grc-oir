@@ -540,6 +540,24 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   puramente de presentación) para que `IMPORTE = COSTO × CANT` cuadre — `IMPORTE` sigue
   siendo el subtotal completo, sin cambios. Detalle completo en `docs/arquitectura.md`.
 
+## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
+
+Al revisar el `Detalle` del archivo plano campo por campo (petición del usuario), quedaron
+4 constantes verdaderas del negocio, ninguna es un hueco pendiente de llenar:
+
+| Campo | Constante / fuente | Archivo:línea | Por qué está fijo |
+|---|---|---|---|
+| `Impuesto2` | `_IMPUESTO_IVA = "002"` | `adapter_pac_v40.py:212` (usado en 379 y 455) | Código SAT `c_Impuesto` = IVA. El sistema **solo** calcula IVA — no hay IEPS ni otro impuesto en el modelo (`FacturaCliente` no tiene otro campo de impuesto). |
+| `TipoFact2` | `_TIPO_FACTOR_TASA = "Tasa"` | `adapter_pac_v40.py:213` (usado en 380 y 458) | Código SAT `c_TipoFactor`. El IVA aquí siempre se expresa como **tasa** (16%), nunca como "Cuota" ni "Exento" — no existe ningún estado "factura exenta" en el modelo. |
+| `TasaOCuot2` | `datos.tasa_iva` — **no** es constante | `port.py:75` ← `IVA_RATE` (`factura_cliente.py:78`) ← `settings.iva_rate` (`core/config.py:58`, `0.16`) | Sí sale de un dato real, centralizado en configuración (no repetido en código) — si el SAT cambia la tasa, se actualiza en un solo lugar y se propaga a toda factura nueva. |
+| `ObjetoImp` | `_OBJETO_IMPUESTO_SI = "02"` | `adapter_pac_v40.py:214` (usado en 384) | Código SAT `c_ObjetoImp` = "Sí objeto de impuesto". El sistema **siempre** calcula IVA sobre cada factura — no existe el caso "no objeto de impuesto". |
+
+**Si el negocio alguna vez agrega un escenario distinto** (otro impuesto, una factura
+exenta de IVA), estos 3 primeros dejarían de ser constantes seguras y habría que
+capturarlos por factura — pero eso no existe hoy como estado posible en `OrdenCliente`
+ni `FacturaCliente`, así que anticiparlo sin que el negocio lo pida sería inventar un
+campo sin uso real.
+
 ## Pendientes / dudas
 
 - ~~Formato real del archivo plano del PAC~~ **RESUELTO** en la Tanda 5 (ADR-048): el
