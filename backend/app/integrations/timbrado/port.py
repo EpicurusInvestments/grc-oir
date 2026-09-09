@@ -74,6 +74,10 @@ class DatosTimbrado:
     #: Tasa de IVA vigente (de configuración central, no un literal).
     tasa_iva: Decimal = Decimal("0.16")
     moneda: str = "MXN"
+    #: `Detalle.CANT` (bug real): spots totales de las órdenes de esta factura — antes
+    #: se ponía "1" fijo (la campaña completa como una sola unidad). `Detalle.COSTO` se
+    #: deriva de `subtotal / cantidad` para que `IMPORTE = COSTO * CANT` siga cuadrando.
+    cantidad: int = 1
 
     # ── Emisor (EmpresaFacturadora) ────────────────────────────────────────────
     emisor_nombre: str = ""

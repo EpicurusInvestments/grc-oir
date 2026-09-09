@@ -214,6 +214,21 @@ def test_mapea_los_datos_de_la_factura(datos: DatosTimbrado) -> None:
     assert "Orden            OC-2025-0046" in texto
 
 
+def test_detalle_cantidad_es_la_suma_de_spots_y_costo_se_deriva() -> None:
+    """Bug real: antes `Detalle.CANT` era "1" fijo (toda la campaña como una sola
+    unidad), sin importar cuántos spots tuviera la orden. Ahora es la cantidad real;
+    `COSTO` se deriva de `subtotal / cantidad` para que IMPORTE = COSTO × CANT cuadre —
+    `IMPORTE` sigue siendo el subtotal completo, sin cambios."""
+    datos_con_cantidad = _datos_completos(subtotal=Decimal("10000.00"), cantidad=20)
+    texto = TimbradoExportPacV40().exportar(datos_con_cantidad).decode("cp1252")
+    lineas = texto.split(CRLF)
+    linea_detalle = lineas[lineas.index("================ Detalle") + 2]
+
+    assert linea_detalle[49:59].strip() == "20"  # Detalle.CANT
+    assert linea_detalle[74:88].strip() == "500.00"  # Detalle.COSTO = 10000.00 / 20
+    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = subtotal
+
+
 def test_documento_relacionado_solo_si_sustituye_a_otro(datos: DatosTimbrado) -> None:
     sin_relacion = TimbradoExportPacV40().exportar(datos).decode("cp1252")
     assert "04               " not in sin_relacion

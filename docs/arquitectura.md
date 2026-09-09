@@ -2111,3 +2111,43 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `NOT EXISTS` en una función compartida (`_tiene_factura_vigente`), que pregunta por
   existencia sin multiplicar filas. Tiene tres pruebas de regresión, verificadas contra la
   versión defectuosa.
+
+### ADR-066 — `Detalle.CANT` pasa a ser los spots reales, ya no "1" fijo (F2, bug real)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F2).
+- **Contexto:** el usuario reportó que `Detalle.CANT` del archivo plano siempre venía
+  "1", con `Detalle.COSTO` e `Detalle.IMPORTE` iguales al subtotal completo — el modelo
+  facturaba la campaña entera como una sola unidad, sin reflejar cuántos spots se
+  vendieron. Antes de tocarlo se revisó el archivo de referencia real de producción
+  (`docs/referencias/ejemplo_archivo_plano_FACTURA_33_NPG_D_28_11757_V40 (2).txt`, ADR-048):
+  esa factura real es una campaña de "MENCIONES... DEL 14 AL 30 DE ABRIL" en dos
+  estaciones —claramente muchos spots— y **también** trae `CANT="1"`. Es decir: el
+  único ejemplo verificado de producción que tenemos coincide con el comportamiento
+  "incorrecto" que se pedía corregir. Se confirmó explícitamente con el usuario antes
+  de alejarse de esa referencia (regla de oro §9 del `CLAUDE.md`: ante datos/ejemplos
+  reales, no se "mejora" por cuenta propia sin preguntar) — el usuario confirmó que
+  quería el cambio de todos modos.
+- **Decisión:**
+  1. Nuevo campo `DatosTimbrado.cantidad: int = 1` (`port.py`). Se resuelve en
+     `FacturaClienteService._datos_timbrado()` como la suma de `OrdenCliente.total_spots`
+     de TODAS las órdenes que cubre la factura (consolidado, igual que el resto del
+     detalle) — `or 1` es defensivo, ya que `total_spots > 0` es CHECK de la OC y nunca
+     debería dar 0.
+  2. `Detalle.COSTO` se deriva en el adaptador (`adapter_pac_v40.py::_detalle()`) como
+     `subtotal / cantidad`, redondeado a centavos — **no** se guarda como campo propio:
+     es puramente de presentación, calculado a partir de dos valores que ya existían.
+     Para una sola orden, esto reconstruye EXACTAMENTE `precio_unitario` (por
+     construcción: `subtotal = total_spots × precio_unitario`, spec BD v2). Con varias
+     órdenes (facturación múltiple, ADR-064) da un precio promedio ponderado — mismo
+     criterio de "consolidado" que ya aplica al resto del detalle.
+  3. `Detalle.IMPORTE` **no cambia**: sigue siendo el subtotal completo. Con esto,
+     IMPORTE = COSTO × CANT cuadra siempre, por construcción (se deriva COSTO de
+     IMPORTE/CANT, no al revés — evita cualquier desajuste de redondeo).
+- **Consecuencia:** el archivo plano ya NO reproduce byte a byte ese aspecto puntual del
+  ejemplo de referencia para casos con más de 1 spot — decisión tomada a propósito y
+  confirmada, no un descuido. La prueba `test_reproduce_la_fila_del_archivo_de_referencia`
+  no se ve afectada: compara `formatear_detalle()` con valores literales copiados del
+  ejemplo, sin pasar por `_detalle()`/`_datos_timbrado()`.
+- **Verificado:** 2 pruebas nuevas — una a nivel adaptador (`_detalle()` con `cantidad`
+  y `subtotal` arbitrarios) y una de integración (factura real de 10 spots a $1,000.00 ⇒
+  `CANT=10`, `COSTO=1000.00`, `IMPORTE=10000.00`). Suite completa de F2 en verde.
