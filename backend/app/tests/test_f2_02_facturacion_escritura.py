@@ -685,6 +685,24 @@ def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
     assert "X-Campos-Faltantes" in r.headers["access-control-expose-headers"]
 
 
+def test_el_archivo_plano_lleva_los_spots_reales_no_uno_fijo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Bug real: `Detalle.CANT` era "1" fijo sin importar cuántos spots tuviera la
+    orden. La OC de `cat` (vía `_orden`) es 10 spots a $1000.00 c/u = $10,000.00."""
+    factura_id, _ = _crear_factura(client, db, cat)
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    lineas = texto.split("\r\n")
+    linea_detalle = lineas[lineas.index("================ Detalle") + 2]
+
+    assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT: spots reales
+    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = 10000.00 / 10
+    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = subtotal
+
+
 # ── Serie derivada del número de factura (ADR-060 bis) ────────────────────────
 @pytest.mark.parametrize(
     ("numero", "esperado"),

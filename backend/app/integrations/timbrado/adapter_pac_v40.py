@@ -362,12 +362,17 @@ class TimbradoExportPacV40:
             ) from exc
 
     def _detalle(self, datos: DatosTimbrado) -> list[str]:
-        """Una sola línea de concepto: el modelo factura la orden completa, no por partida."""
+        """Una sola línea de concepto: el modelo factura la orden completa, no por
+        partida, pero la CANTIDAD sí es la real (spots totales, bug real corregido) — el
+        COSTO se deriva de `subtotal / cantidad` para que IMPORTE = COSTO × CANT cuadre."""
+        costo_unitario = (Decimal(datos.subtotal) / Decimal(datos.cantidad)).quantize(
+            Decimal("0.01")
+        )
         celdas = {
             "concepto": _texto(datos.descripcion),
-            "cantidad": "1",
+            "cantidad": str(datos.cantidad),
             "unidad": _texto(datos.clave_unidad),
-            "costo": _monto(datos.subtotal),
+            "costo": _monto(costo_unitario),
             "importe": _monto(datos.subtotal),
             "clave_prod_serv": _texto(datos.clave_prod_serv),
             "clave_unidad": _texto(datos.clave_unidad),

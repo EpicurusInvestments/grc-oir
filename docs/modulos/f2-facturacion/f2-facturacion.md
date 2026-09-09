@@ -531,6 +531,15 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     `ClaveProdServ`/`ClaveUnidad` lo siguen haciendo — y esos dos ya no deberían
     variar, porque describen el negocio, no la factura individual.
 
+- **Corrección posterior: `Detalle.CANT` ya no es "1" fijo — spots reales (ADR-066,
+  bug real).** El archivo de referencia real de producción usado para construir el
+  layout (ADR-048) también trae `CANT="1"` pese a ser una campaña con muchos spots, así
+  que este cambio se confirmó explícitamente con el usuario antes de alejarse de esa
+  referencia. `Detalle.CANT` ahora es la suma de `total_spots` de las órdenes de la
+  factura; `Detalle.COSTO` se deriva como `subtotal / cantidad` (no es columna propia,
+  puramente de presentación) para que `IMPORTE = COSTO × CANT` cuadre — `IMPORTE` sigue
+  siendo el subtotal completo, sin cambios. Detalle completo en `docs/arquitectura.md`.
+
 ## Pendientes / dudas
 
 - ~~Formato real del archivo plano del PAC~~ **RESUELTO** en la Tanda 5 (ADR-048): el

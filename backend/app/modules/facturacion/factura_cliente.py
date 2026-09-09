@@ -1099,6 +1099,10 @@ class FacturaClienteService(
             iva=Decimal(obj.iva_factura),
             total=Decimal(obj.total_factura),
             tasa_iva=IVA_RATE,
+            # `Detalle.CANT` (bug real): spots totales de las órdenes de esta factura,
+            # no "1" fijo. `or 1` es defensivo (no debería pasar: `total_spots > 0` es
+            # CHECK de la OC), para no dividir entre cero al derivar `Detalle.COSTO`.
+            cantidad=sum(o.total_spots for o in ordenes) or 1,
             emisor_nombre=emisor.nombre_empresa if emisor else "",
             emisor_rfc=emisor.rfc_empresa if emisor else "",
             emisor_direccion=emisor.direccion_empresa if emisor else None,
