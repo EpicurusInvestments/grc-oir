@@ -121,6 +121,18 @@ Solo para `ConstantesSistema` (Admin). Detalle completo en **ADR-025** y en `API
   faltaban respecto a lo que ya se había capturado manualmente probando la pantalla; no se
   tocó ni se desactivó nada existente. Sigue habiendo un par de registros de prueba
   (`FormaPago/G03`, `UsoCFDI/G07`) que no forman parte de ese set base y quedaron sin tocar.
+- **Efecto colateral de la carga anterior, corregido el mismo día (ADR-065 en
+  `f2-facturacion.md`):** completar el catálogo dejó varios grupos con MÁS de una
+  constante activa (`RegimenFiscal`, `UsoCFDI`, `ClaveProdServ`, `ClaveUnidad`,
+  `FormaPago`), y F2 asumía "exactamente una activa" para resolver campos fiscales del
+  archivo plano — con varias, esos campos dejaron de llenarse en TODAS las facturas
+  nuevas. `RegimenFiscal`/`UsoCFDI`/`FormaPago` se resolvieron con columnas reales fuera
+  de este catálogo (ver `f2-facturacion.md`); `ClaveProdServ`/`ClaveUnidad` se curaron
+  aquí mismo (vía importación CSV, `modo_duplicados=actualizar`): se desactivaron las
+  claves agregadas de más, dejando activa una sola por grupo (`82101601` y `E48`, las
+  mismas que ya funcionaban antes de la carga). **Lección:** al agregar constantes a un
+  grupo que F2 resuelve con `_constante_unica`, hay que dejar activa una sola — el alta
+  vía API no expone `activo` (solo la importación CSV lo permite).
 
 ## Actualización cuando el SAT cambia (confirmado)
 - **Quién:** por ahora el **Admin (IT)**. Más adelante podría definirse otro rol

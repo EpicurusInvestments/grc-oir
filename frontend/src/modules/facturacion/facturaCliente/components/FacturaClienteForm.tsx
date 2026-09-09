@@ -13,16 +13,19 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { type FocusEvent, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { FieldTag, MultiSearchableSelect, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
+import { facturaClienteApi } from "../../api";
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
 import {
   useCuentasContables,
   useFacturasDelAnunciante,
+  useFormasDePago,
   useMetodosDePago,
   useOrdenesFacturables,
 } from "../../hooks";
@@ -58,6 +61,7 @@ const schema = z.object({
   fecha_factura: z.string().min(1, "La fecha de la factura es obligatoria."),
   cuenta_contable_id: z.string().min(1, "Selecciona la cuenta contable."),
   metodo_pago_clave: z.string().min(1, "Selecciona el método de pago."),
+  forma_pago_clave: z.string().min(1, "Selecciona la forma de pago."),
   info_cuenta_pago: z.string().trim().optional(),
 });
 
@@ -106,6 +110,7 @@ export function FacturaClienteForm({
   const ordenes = useOrdenesFacturables();
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
+  const formas = useFormasDePago();
   const facturasDelAnunciante = useFacturasDelAnunciante(orden?.anunciante_id);
   const { useList } = useConstantes();
   const usosCfdi = useList({ grupo: "UsoCFDI", activo: true, size: 100 });
@@ -114,6 +119,8 @@ export function FacturaClienteForm({
     register,
     handleSubmit,
     setValue,
+    setError,
+    trigger,
     watch,
     formState: { errors },
   } = useForm<Valores>({
@@ -133,6 +140,32 @@ export function FacturaClienteForm({
 
   const ordenId = watch("orden_id");
   const facturasRelacionadasIds = watch("facturas_relacionadas_ids");
+
+  // Validación en vivo del número de factura: formato al teclear (onChange, vía
+  // `trigger` sobre el propio campo) y, aparte, duplicado al perder el foco (onBlur).
+  // El duplicado se anuncia con `setError(..., {type:"manual"})` en el MISMO lugar que
+  // el error de formato — un `trigger` posterior (el próximo keystroke) lo reemplaza
+  // solo, sin tener que limpiarlo a mano.
+  const [verificandoNumero, setVerificandoNumero] = useState(false);
+  const onBlurNumeroFactura = async (e: FocusEvent<HTMLInputElement>) => {
+    const valor = e.target.value.trim();
+    if (!valor || !NUMERO_FACTURA_REGEX.test(valor)) return; // el error de formato ya se ve
+    setVerificandoNumero(true);
+    try {
+      const existe = await facturaClienteApi.existeNumeroFactura(valor);
+      if (existe) {
+        setError("numero_factura", {
+          type: "manual",
+          message: `Ya existe una factura con el número «${valor.toUpperCase()}». Captura uno distinto.`,
+        });
+      }
+    } catch {
+      // Verificación best-effort: si falla (red, etc.) no se bloquea al usuario — el
+      // alta lo vuelve a validar igual al guardar.
+    } finally {
+      setVerificandoNumero(false);
+    }
+  };
 
   // IVA y total son PREVISUALIZACIÓN: los calcula el servicio sobre el subtotal heredado.
   // Con varias órdenes el subtotal es la SUMA, igual que hará el backend.
@@ -234,7 +267,19 @@ export function FacturaClienteForm({
         <div className="r2">
           <div>
             <div className="fl fl-required">Número de factura</div>
-            <input className="fi mono" placeholder="Ej. A-001246" {...register("numero_factura")} />
+            <input
+              className="fi mono"
+              placeholder="Ej. A-001246"
+              {...register("numero_factura", {
+                onChange: () => trigger("numero_factura"),
+                onBlur: onBlurNumeroFactura,
+              })}
+            />
+            {verificandoNumero && (
+              <div className="fv muted" style={{ fontSize: 11, marginTop: -6 }}>
+                Verificando…
+              </div>
+            )}
             {errors.numero_factura && <div className="fe">{errors.numero_factura.message}</div>}
           </div>
           <div>
@@ -389,6 +434,20 @@ export function FacturaClienteForm({
           ))}
         </select>
         {errors.metodo_pago_clave && <div className="fe">{errors.metodo_pago_clave.message}</div>}
+
+        <div className="fl fl-required">
+          Forma de pago <FieldTag origin="catalogo" />
+        </div>
+        {/* Se guarda la CLAVE, no un FK: FormaPago vive en ConstantesSistema. */}
+        <select className="fsel" {...register("forma_pago_clave")}>
+          <option value="">— Selecciona —</option>
+          {(formas.data ?? []).map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.etiqueta}
+            </option>
+          ))}
+        </select>
+        {errors.forma_pago_clave && <div className="fe">{errors.forma_pago_clave.message}</div>}
 
         <div className="fl">Información cuenta de pago (aparece en factura)</div>
         <textarea

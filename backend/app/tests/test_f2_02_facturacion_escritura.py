@@ -245,6 +245,7 @@ def _payload_factura(
         "fecha_factura": "2026-03-01",
         "cuenta_contable_id": str(cuenta_id),
         "metodo_pago_clave": "PUE",
+        "forma_pago_clave": "03",
     }
 
 
@@ -392,6 +393,50 @@ def test_numero_factura_rechaza_duplicado_entre_ordenes_distintas(
     assert r.status_code == 409, r.text
     assert r.json()["error"]["codigo"] == "conflicto"
     assert "F-9200" in r.json()["error"]["mensaje"]
+
+
+def test_existe_numero_factura_endpoint_para_validacion_en_vivo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Endpoint que consulta el formulario al perder el foco del campo, ANTES de
+    intentar guardar todo — no lanza, solo informa `existe: bool`."""
+    _crear_factura(client, db, cat, "F-9210")
+
+    r = client.get(
+        "/api/v1/facturacion/clientes/existe-numero-factura",
+        params={"numero_factura": "F-9210"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"existe": True}
+
+    # Minúsculas y espacios a propósito: mismo criterio case-insensitive que el alta.
+    r = client.get(
+        "/api/v1/facturacion/clientes/existe-numero-factura",
+        params={"numero_factura": " f-9210 "},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json() == {"existe": True}
+
+    r = client.get(
+        "/api/v1/facturacion/clientes/existe-numero-factura",
+        params={"numero_factura": "F-9211"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json() == {"existe": False}
+
+
+def test_existe_numero_factura_excluye_la_propia_factura_al_editar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_factura(client, db, cat, "F-9212")
+
+    r = client.get(
+        "/api/v1/facturacion/clientes/existe-numero-factura",
+        params={"numero_factura": "F-9212", "excluir_id": factura_id},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json() == {"existe": False}
 
 
 def test_editar_numero_factura_rechaza_duplicado_contra_otra_factura(
@@ -990,6 +1035,38 @@ def test_uso_cfdi_capturable_a_mano_aunque_el_receptor_sea_la_agencia(
     )
     assert r.status_code == 201, r.text
     assert r.json()["uso_cfdi"] == "S01"
+
+
+# ── FormaPago: se captura por factura, ya no sale del catálogo global (bug real) ─
+def test_forma_pago_clave_se_captura_y_llega_al_archivo_plano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Antes se resolvía sola con `_constante_unica("FormaPago")` — dejó de servir en
+    cuanto ese catálogo tuvo más de una activa (mismo bug que RegimenFiscal/UsoCFDI).
+    Ahora se captura al dar de alta, igual que MetodoPago."""
+    factura_id, _ = _crear_factura(client, db, cat, "F-9700")
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}", headers=_hdr("facturacion")
+    )
+    assert r.json()["forma_pago_clave"] == "03"  # el default de _payload_factura
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    assert "AGREGADOS.MedioPago" not in r.headers["x-campos-faltantes"]
+
+
+def test_forma_pago_clave_es_obligatoria_en_el_alta(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-SINFORMAPAGO")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-9701")
+    del payload["forma_pago_clave"]
+    r = client.post(
+        "/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion")
+    )
+    assert r.status_code == 422, r.text
 
 
 def test_una_factura_cancelada_no_se_exporta(

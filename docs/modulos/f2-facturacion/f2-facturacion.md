@@ -99,14 +99,17 @@ las órdenes coinciden; si difieren, cae a `descripcion_factura`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas)
 
-### FacturaCliente (33 campos spec, con 3 ajustes + 1 desviación aditiva)
+### FacturaCliente (33 campos spec, con 3 ajustes + 2 desviaciones aditivas)
 PK `factura_id`. Órdenes que cubre vía `factura_cliente_orden` (**N:M**, ADR-064 — la spec
 las ligaba con `orden_id` 1:1). FKs a `EmpresaFacturadora`/`Anunciante`/`Agencia`
 (heredados de la OC), `CuentaContable` (F0-05, ya existe). Derivados de la OC: razón
 social/RFC/dirección de facturación, fechas de transmisión, `subtotal_factura`.
 `uso_cfdi` (desviación aditiva, ADR-065): clave SAT `c_UsoCFDI`, precargada del
 `Anunciante.uso_cfdi_default` si el receptor es directo, siempre editable por factura.
-Calculados: `iva_factura = subtotal_factura * 0.16`,
+`forma_pago_clave` (desviación aditiva, ADR-065 bis): clave SAT `c_FormaPago`
+(`AGREGADOS.MedioPago`), capturada al dar de alta igual que `metodo_pago_clave` — antes
+NO se capturaba, se resolvía sola de un catálogo global (ver más abajo). Calculados:
+`iva_factura = subtotal_factura * 0.16`,
 `total_factura = subtotal_factura + iva_factura`.
 
 **Ajuste 1 — `layout_factura_id` → `layout_factura` (texto libre).** El catálogo
@@ -509,6 +512,25 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
     mismo riesgo de ambigüedad, pendiente de una corrección equivalente si vuelve a
     hacer falta.
 
+- **Corrección posterior: `AGREGADOS.MedioPago` ya NO sale de `ConstanteSistema`
+  (ADR-065 bis, bug real).** El mismo problema volvió a aparecer: al completar el
+  catálogo, `ClaveProdServ` (1→4 activas), `ClaveUnidad` (1→3) y `FormaPago` (1→5)
+  dejaron de resolver nada. Se resolvió distinto según el caso:
+  - `ClaveProdServ`/`ClaveUnidad` describen el tipo de servicio que OIR factura, que NO
+    varía por factura — se optó por curar el dato (dejar una sola activa por grupo,
+    las mismas que ya funcionaban antes de completar el catálogo) en vez de tocar
+    código. Sin migración.
+  - `FormaPago` (efectivo/transferencia/tarjeta) SÍ varía por cliente/pago — a
+    diferencia de los otros dos, ni siquiera se capturaba antes: `_datos_timbrado()`
+    lo resolvía solo del catálogo, mientras que `MetodoPago` (PUE/PPD) sí se captura
+    por factura desde siempre. Se corrigió agregando `FacturaCliente.forma_pago_clave`
+    (columna real, obligatoria en `FacturaClienteCreate`, migración `a9b3cdeef9e7`) —
+    mismo patrón que `metodo_pago_clave`, sin FK formal. Las facturas viejas quedan con
+    `NULL` (no se les inventa un valor); las nuevas lo exigen desde el alta.
+  - Con esto, de los 5 campos que dependían de "una sola activa", solo
+    `ClaveProdServ`/`ClaveUnidad` lo siguen haciendo — y esos dos ya no deberían
+    variar, porque describen el negocio, no la factura individual.
+
 ## Pendientes / dudas
 
 - ~~Formato real del archivo plano del PAC~~ **RESUELTO** en la Tanda 5 (ADR-048): el
@@ -528,11 +550,11 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   catálogo — se deriva del propio `numero_factura`, ADR-061), `ClaveProdServ`/
   `ClaveUnidad`/`UsoCFDI`/forma de pago SAT (sembrados con valores reales de
   producción, un único activo por grupo). Verificado en vivo: 0 campos faltantes.
-  **Régimen fiscal y UsoCFDI dejaron de depender de esto** (ver ADR-065 arriba):
-  `ClaveProdServ`, `ClaveUnidad` y `FormaPago` SIGUEN dependiendo de tener una única
-  constante activa por grupo en producción — si alguien completa esos catálogos sin
-  cuidar eso (como pasó con `RegimenFiscal`/`UsoCFDI`), vuelven a reportarse como
-  faltantes en todas las facturas nuevas.
+  **Régimen fiscal, UsoCFDI y FormaPago dejaron de depender de esto** (ver ADR-065/065
+  bis arriba): solo `ClaveProdServ`/`ClaveUnidad` SIGUEN dependiendo de tener una única
+  constante activa por grupo en producción — describen el tipo de servicio que OIR
+  factura (no varía por factura), así que curar el dato basta; si algún día sí llegaran
+  a variar, necesitarían el mismo tratamiento de columna real que `FormaPago`.
   **(Resuelto, ADR-060)** Los domicilios DESGLOSADOS de emisor/receptor y
   `AGREGADOS.LugarExpedicion` (código postal de expedición) ya salen del domicilio
   estructurado por CP de Anunciante/EmpresaFacturadora (ADR-059) — el receptor solo si

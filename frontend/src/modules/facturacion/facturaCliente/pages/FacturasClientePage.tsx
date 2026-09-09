@@ -365,6 +365,8 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
           <div className="sec">Configuración contable</div>
           <div className="fl">Método de pago</div>
           <div className="fv mono">{selected.metodo_pago_clave}</div>
+          <div className="fl">Forma de pago</div>
+          <div className="fv mono">{oGuion(selected.forma_pago_clave)}</div>
           <div className="fl">Información cuenta de pago</div>
           <div className="fv muted" style={{ fontSize: 12 }}>
             {oGuion(selected.info_cuenta_pago)}
