@@ -265,12 +265,22 @@ export function useConteosCobranza(): Record<string, number> {
     queryFn: () => movimientoBancarioApi.list({ page: 1, size: 1, conciliado: false }),
     retry: false,
   });
+  // Sin un `size:1` posible aquí: no hay un `GET` de "todos los pagos" que devuelva un
+  // `total` (mismo hueco que `historialPagosCliente` resuelve para la propia pantalla) —
+  // comparte la MISMA query key que `useHistorialPagosCliente`, así que entrar a "Pagos
+  // recibidos" no dispara una segunda consulta, solo reusa esta.
+  const pagos = useQuery({
+    queryKey: [K_PAGOS, "historial"],
+    queryFn: historialPagosCliente,
+    retry: false,
+  });
 
   return {
     cobranza_factura: cobranza.data?.total ?? 0,
     cobranzas_vencidas: (vencidas.data?.items ?? []).filter(
       (c) => c.vencida && c.estatus_cobro !== "cobrada",
     ).length,
+    pago_cliente: pagos.data?.length ?? 0,
     requisicion: requisiciones.data?.total ?? 0,
     por_autorizar: porAutorizar.data?.total ?? 0,
     por_pagar: porPagar.data?.total ?? 0,
