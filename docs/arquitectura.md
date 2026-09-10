@@ -2305,3 +2305,48 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   (100 spots, 5 bonificables, $1.00/spot ⇒ `CANT=95`, `COSTO=1.00`, `IMPORTE=95.00`,
   reproduciendo el caso reportado); suite completa de backend (pytest + ruff) en verde,
   sin afectar la prueba existente sin bonificables (`CANT=10`, `COSTO=1000.00`).
+
+### ADR-070 — `app/shared/adjuntos_router.py` es la única excepción a `from __future__ import annotations` (F3)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, previo a la Tanda 1 — refactor de adjuntos).
+- **Contexto:** F1 (`ordenes/adjuntos.py`) y F2 (`facturacion/adjuntos.py`) tenían dos copias
+  casi idénticas del mismo router de subida/descarga, con una nota explícita en la segunda
+  diciendo que extraer una factory con solo 2 consumidores era prematura ("si F3 necesita
+  el mismo patrón, ahí sí valdrá la pena — tres consumidores identificados"). F3 llegó a
+  ser ese tercer consumidor, así que se extrajo `build_adjuntos_router()` a `app/shared/`.
+  Cada módulo pasa su PROPIO enum de tipos de adjunto (`TipoAdjuntoOrden`,
+  `TipoAdjuntoFacturacion`, y el de F3) para que el endpoint de subida siga validando
+  `tipo` contra ESE enum — FastAPI necesita ver el objeto `Enum` real en la anotación del
+  parámetro para generar el `enum` correcto en OpenAPI y el 422 automático ante un valor
+  inválido, en vez de degradarlo a un `string` libre.
+- **El gotcha real — PEP 563 (`from __future__ import annotations`) rompe esto en
+  silencio:** con ese import, TODAS las anotaciones del módulo se guardan como texto en
+  vez de evaluarse al definir la función. FastAPI las resuelve con
+  `typing.get_type_hints()`, que busca los nombres en `función.__globals__` — los
+  globals del MÓDULO, no en el closure de la función que las envuelve. Como el enum
+  concreto (`tipos`) es un parámetro de `build_adjuntos_router()` — una variable LOCAL
+  del closure, no un global del módulo — `get_type_hints()` no la encontraría y
+  lanzaría `NameError: name 'tipos' is not defined` al registrar la ruta. El resto del
+  proyecto usa `from __future__ import annotations` en todos los módulos (convención
+  establecida desde F0); este archivo es la única excepción, y tiene que serlo para que
+  el enum dinámico por módulo funcione.
+- **Decisión:** `app/shared/adjuntos_router.py` NO lleva `from __future__ import
+  annotations`. Python 3.12 no lo necesita para la sintaxis `X | None` de todos modos, así
+  que no se pierde nada más que la convención de estilo en este único archivo. Se
+  documenta en el docstring del propio módulo (para quien lo abra) y aquí (para que sea
+  **buscable** sin tener que abrir ese archivo específico primero) — un linter o
+  formateador automático que "corrija" esa omisión en el futuro rompería el dropdown de
+  `tipo` en OpenAPI de forma silenciosa, sin que ningún test lo detecte a simple vista si
+  no se sabe qué buscar.
+- **Verificado:** se generó el OpenAPI completo de la app (105 endpoints) sin errores tras
+  la extracción, confirmando que los tres enums dinámicos (`TipoAdjuntoOrden`,
+  `TipoAdjuntoFacturacion`) siguen resolviéndose correctamente. Las 27 pruebas existentes
+  de F1 pasan sin tocarlas, y se agregó `test_facturacion_adjuntos.py` (7 pruebas, F2 no
+  tenía cobertura propia) — incluida una que fija expresamente la diferencia de
+  comportamiento entre F1 (limpia el prefijo UUID del nombre de descarga) y F2 (lo
+  conserva), para que una regresión futura sobre la factory no pase inadvertida.
+- **Alcance:** aplica solo a este archivo. Cualquier otro consumidor futuro de
+  `build_adjuntos_router()` (F3 y en adelante) sigue usando
+  `from __future__ import annotations` con normalidad — solo la factory misma necesita
+  la excepción, porque es la única que construye el enum dinámico dentro de un closure.
+
