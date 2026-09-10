@@ -2350,3 +2350,85 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `from __future__ import annotations` con normalidad — solo la factory misma necesita
   la excepción, porque es la única que construye el enum dinámico dentro de un closure.
 
+### ADR-068 — El handoff F2↔F3: creación de `CobranzaFactura`, cascada completa de cobro y su guardarraíl sin reversa
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1).
+- **Contexto:** F2 dejó dos anzuelos deliberados esperando a F3: `EstadoFacturacion.COBRADA`
+  en el enum de `FacturaCliente` (comentario *"F3 hará avanzar"*) y `EstatusOrden.COBRADA`
+  en `OrdenCliente`, tratado como terminal desde `marcar_facturada`/`revertir_facturacion`
+  (*"responsabilidad de F3"*). Ninguno de los dos tenía, hasta esta tanda, una transición
+  real que los alcanzara — el equipo lo confirmó explícitamente al aprobar el plan (E.1):
+  construir la cascada completa, no solo el punto de creación.
+- **Decisión — tres eventos, mismo mecanismo de handoff ya usado en F1↔F2** (método
+  acotado en el dueño del agregado, invocado con la MISMA sesión, sin `commit` propio):
+  1. **Creación**: `FacturaClienteService.timbrar()` invoca
+     `CobranzaFacturaService.crear_para_factura()` en el mismo punto donde ya invoca
+     `OrdenClienteService.marcar_facturada()`. Idempotente (reintentar el timbrado no
+     duplica la `CobranzaFactura`).
+  2. **Cascada de cobro completo**: `PagoClienteService.crear/eliminar` recalculan
+     `CobranzaFactura.estatus_cobro` (`recalcular_tras_pago`); cuando el resultado es
+     `cobrada`, ese mismo método invoca `FacturaClienteService.marcar_cobrada()`, que a su
+     vez invoca `OrdenClienteService.marcar_cobrada()` para TODAS las órdenes de la
+     factura. Los tres niveles cambian en la transacción que originó el pago que completó
+     el cobro — no hay una cola ni un job aparte.
+  3. **Cancelación**: `FacturaClienteService.cancelar()` invoca
+     `CobranzaFacturaService.eliminar_o_rechazar()` ANTES de tocar el estado de la
+     factura — si `importe_cobrado > 0`, rechaza con 400 (mismo criterio que la excepción
+     de "OC ya cobrada" de ADR-047); si es 0, borra la `CobranzaFactura` y la cancelación
+     continúa con normalidad.
+- **`TRANSICIONES` de `FacturaCliente` gana `TIMBRADA → COBRADA`, no solo
+  `ENTREGADA → COBRADA`:** el cobro completo puede llegar ANTES de que alguien marque la
+  factura como entregada en el sistema (son procesos de negocio independientes — cobranza
+  no debería bloquearse esperando un clic administrativo de entrega). Antes de esta tanda
+  solo existía la segunda, insuficiente para cubrir ese caso real.
+- **Hallazgo durante la implementación — el ancla de `fecha_estimada_cobro` no existe
+  todavía cuando se crea la `CobranzaFactura`:** la spec define
+  `fecha_estimada_cobro = FacturaCliente.fecha_entrega_factura + dias_credito`, pero
+  `fecha_entrega_factura` es NULLABLE y se llena recién al ENTREGAR — un evento
+  POSTERIOR al TIMBRADO, que es cuando se crea la `CobranzaFactura`. Se resolvió con un
+  ancla provisional: `fecha_timbrado` (que sí existe en ese momento) al crear, y un
+  recálculo (`refrescar_fecha_estimada`) invocado desde `FacturaClienteService.entregar()`
+  en cuanto el ancla real está disponible — mismo mecanismo de handoff, tercer punto de
+  enganche. Sin esto, la estimación de cobranza habría quedado congelada con una fecha
+  potencialmente muy alejada de la real si pasan días entre timbrar y entregar.
+- **El guardarraíl "no se puede des-cobrar"**: `PagoClienteService.eliminar` calcula qué
+  pasaría con `importe_cobrado` SIN el pago que se intenta borrar; si eso dejaría la
+  `CobranzaFactura` por debajo de `total_factura` estando actualmente `cobrada`, rechaza
+  con 409 — extensión directa del principio de ADR-047 (deshacer un cobro real exige una
+  nota de crédito que el sistema no maneja) a un nivel que ADR-047 no cubría: no solo
+  cancelar la factura, sino corregir un pago que ya completó la cascada. El guardarraíl es
+  preciso, no un candado ciego: borrar un pago EXTRA que deja el resto todavía cubriendo
+  el total sí se permite (verificado con prueba propia).
+- **Verificado:** 14 pruebas en `test_f3_02_cobranza_escritura.py`, incluidas las dos que
+  el equipo pidió explícitamente — timbrar crea la `CobranzaFactura`, y cancelar con pagos
+  recibidos se rechaza — más la cascada completa hasta `OrdenCliente.estatus_orden =
+  cobrada`, el recálculo de `fecha_estimada_cobro` al entregar, y el guardarraíl en sus
+  dos sentidos (bloquea el pago que rompería el cobro completo; permite el que no lo hace).
+
+### ADR-069 — Tesorería captura por primera vez: mismo canal dedicado del ADR-046, no una tercera clave RBAC
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1). Decisión de negocio del equipo (E.2).
+- **Contexto:** la ficha de F3 pide que **Requisicion** (CxP) y **MovimientoBancario**
+  (Tesorería) compartan la clave de módulo `pagos` — son los dos nombres que el mapa de
+  módulos del `CLAUDE.md` §4 ya predefine para F3, y el equipo pidió explícitamente
+  conservarlos (no desviarse a una tercera clave sin razón de peso). El problema: `_nivel()`
+  resuelve por MÓDULO, no por entidad — si Tesorería tuviera `pagos:editar` para poder
+  capturar `MovimientoBancario`, automáticamente podría capturar/autorizar `Requisicion`
+  también, que la ficha reserva para CxP/Dirección.
+- **Decisión:** el mismo canal dedicado que ya resolvió la autorización de Dirección sobre
+  `Requisicion`/`FacturaAfiliado`/`FacturaAgencia` (ADR-046), aplicado por primera vez a un
+  área que CAPTURA en vez de autorizar: los endpoints de `MovimientoBancario` (crear,
+  conciliar) piden `pagos:leer` en el router —el nivel que Tesorería SÍ tiene— y el
+  servicio verifica `área in (TESORERIA, ADMIN)` antes de escribir. `Requisicion` sigue
+  con `pagos:editar` normal para CxP. Tesorería se queda en `Acceso.READ` en la matriz de
+  `pagos` (`_LECTURA_PAGOS`), igual que las demás áreas que no capturan ahí.
+- **Consecuencia:** primera vez en el proyecto que el canal dedicado del ADR-046 se usa
+  para una CAPTURA ordinaria y no para una autorización jerárquica — confirma que el
+  patrón generaliza: "cuando una acción tiene un área habilitada distinta a la del módulo,
+  va en su propio endpoint con el permiso de router al nivel del área MENOS privilegiada
+  que debe poder ejecutarla, y la regla real en el servicio" aplica igual de bien a
+  "Tesorería puede capturar esto, CxP no" que a "Dirección puede autorizar esto, CxP no".
+- **Verificado:** pruebas paramétricas por área en `test_f3_03_requisiciones_pagos.py` —
+  CxP recibe 403 al intentar crear o conciliar un movimiento bancario; Tesorería puede
+  ambas cosas; las demás áreas (incluida CxP) sí pueden LEER movimientos bancarios.
+

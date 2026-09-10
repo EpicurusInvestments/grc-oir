@@ -1,6 +1,6 @@
 # Módulo F3 — Cobranza y Pagos · Fase: F3
 
-> **Estado: REFINADA — lista para generar el plan con Claude Code.**
+> **Estado: IMPLEMENTADA (tanda 1, backend completo) — 2026-09-09.**
 > Ficha de alcance de TODO el módulo (las 4 entidades se implementan juntas — mismo
 > criterio que F1 y F2, que terminaron consolidados por su acoplamiento y por compartir
 > infraestructura). Dos dominios dentro del mismo módulo de código: **cobranza** (CxC:
@@ -10,8 +10,13 @@
 > (ADR-002 no-timbrado, ADR-019 estados independientes, ADR-039 aritmética de dinero,
 > ADR-040 RBAC, ADR-044/046 patrón de 2 claves + canal de autorización, ADR-047/064
 > handoff y cancelación con F2, ADR-048 formato real de PAC ya resuelto — no aplica aquí
-> pero es la referencia de cómo resolvimos un hueco de integración similar).
-> Refinada en sesión de planeación del [[fecha]], tras confirmar F0+F1+F2+F5-00 en `main`.
+> pero es la referencia de cómo resolvimos un hueco de integración similar, ADR-067
+> factory compartida de adjuntos — F3 fue el tercer consumidor que la justificó,
+> **ADR-068 el handoff F2↔F3 completo tal como quedó implementado, ADR-069 el canal
+> dedicado de Tesorería**).
+> Refinada en sesión de planeación del 2026-09-09, tras confirmar F0+F1+F2+F5-00 en `main`.
+> Implementada la misma sesión — backend completo (modelos, migración, servicios,
+> routers, RBAC, 28 pruebas); **pendiente el frontend** (fuera del alcance de esta tanda).
 
 ## Propósito
 
@@ -20,24 +25,35 @@ Cerrar el ciclo financiero: cobrar las facturas que F2 timbró (`CobranzaFactura
 autorizadas (`Requisicion` + `MovimientoBancario` para conciliación bancaria, CxP).
 Alimenta el Estado de Resultados de F4.
 
-## El handoff con F2 — nueva regla de sincronización (se define aquí)
+## El handoff con F2 — cómo quedó implementado (ADR-068)
 
 Igual que F1→F2 tuvo su handoff (`marcar_facturada`/`revertir_facturacion`), F2→F3 tiene
 el suyo, con la misma disciplina de "método acotado en el dueño del agregado, invocado en
-la misma transacción":
+la misma transacción, sin `commit` propio":
 
 - **Al crear**: cuando `FacturaCliente.estado_facturacion` llega a `timbrada`, se crea
   automáticamente su `CobranzaFactura` (1:1, confirmado en la spec — no cambió con
-  ADR-064). Mecanismo: `FacturaClienteService`, en el mismo punto donde ya invoca
+  ADR-064). `FacturaClienteService.timbrar()`, en el mismo punto donde ya invoca
   `OrdenClienteService.marcar_facturada()`, invoca también
-  `CobranzaService.crear_para_factura(factura)` — misma transacción, sin commit propio.
-- **Al cancelar**: si se cancela una `FacturaCliente` que ya tiene `CobranzaFactura` con
-  `importe_cobrado > 0` (ya se recibió algún pago), la cancelación se **rechaza** con
-  `400 error_dominio` — mismo criterio que la excepción de "OC ya cobrada" de ADR-047: no
-  se puede deshacer una factura con dinero real ya recibido. Si `importe_cobrado = 0`
-  (nadie ha pagado nada), la `CobranzaFactura` se elimina junto con la reversión.
-  **Esta regla es una decisión mía, extendiendo el patrón ya aprobado — avísame si no es
-  la que quieres antes de que se implemente.**
+  `CobranzaFacturaService.crear_para_factura(factura, usuario)` — misma transacción,
+  idempotente.
+- **Al cancelar**: `FacturaClienteService.cancelar()` invoca
+  `CobranzaFacturaService.eliminar_o_rechazar()` ANTES de tocar el estado de la factura.
+  Si ya tiene `CobranzaFactura` con `importe_cobrado > 0` (ya se recibió algún pago), la
+  cancelación se **rechaza** con `400 error_dominio` — mismo criterio que la excepción de
+  "OC ya cobrada" de ADR-047. Si `importe_cobrado = 0`, la `CobranzaFactura` se elimina y
+  la cancelación continúa con normalidad.
+- **Al completarse el cobro (aprobado en E.1, ver ADR-068)**: cuando
+  `CobranzaFactura.estatus_cobro` llega a `cobrada` (`importe_cobrado >= total_factura`,
+  recalculado al crear o borrar un `PagoCliente`), la cascada sube: `CobranzaFacturaService.
+  recalcular_tras_pago()` invoca `FacturaClienteService.marcar_cobrada()`, que a su vez
+  invoca `OrdenClienteService.marcar_cobrada()` para TODAS las órdenes de la factura —
+  cierra el ciclo que F2 dejó anticipado (`EstadoFacturacion.COBRADA`/`EstatusOrden.
+  COBRADA` ya existían en los enums, sin una transición real que los alcanzara). Sin
+  reversa: borrar un `PagoCliente` que dejaría la `CobranzaFactura` por debajo del total
+  estando ya `cobrada` se rechaza con `409` (mismo principio de ADR-047, un nivel más
+  abajo). El detalle del ancla provisional de `fecha_estimada_cobro` (se crea con
+  `fecha_timbrado`, se recalcula al entregar con `fecha_entrega_factura`) está en ADR-068.
 
 ## Entidades (spec BD v2, con las 3 desviaciones aditivas de esta sesión)
 
@@ -141,11 +157,15 @@ Admin superusuario automático (ADR-040) — no listarlo. La autorización de `R
 - Validar duplicados en `MovimientoBancario` (mismo banco+fecha+referencia+monto) antes
   de insertar.
 
-## Roles / permisos — nota sobre Tesorería
+## Roles / permisos — Tesorería (resuelto, ver ADR-069)
 
 Este es el primer módulo donde **Tesorería pasa de "solo lectura" a "captura"**
-(`MovimientoBancario`). Confirmar que la matriz RBAC ya contempla esto sin fricción (debería,
-ya que el área existe desde F0, solo no había tenido permiso de escritura hasta ahora).
+(`MovimientoBancario`). Se resolvió con el mismo canal dedicado del ADR-046 (ya usado
+para la autorización de Dirección): los endpoints de `MovimientoBancario` piden
+`pagos:leer` en el router (nivel que Tesorería ya tenía) y el servicio verifica
+`área in (TESORERIA, ADMIN)` antes de escribir. Tesorería NO tiene `pagos:editar` en la
+matriz — si lo tuviera, también podría capturar `Requisicion`, que la ficha reserva
+para CxP.
 
 ## Dependencias
 
@@ -155,6 +175,14 @@ ya que el área existe desde F0, solo no había tenido permiso de escritura hast
 
 ## Pendientes (no bloquean el arranque de F3)
 
-- Formato real de estados de cuenta bancarios (puerto aislado, placeholder mientras).
+- **Frontend** (`frontend/src/modules/cobranza/`): no se construyó en esta tanda —
+  backend completo, sin pantallas. Sigue el patrón de F0-F2 (types → api → hooks →
+  components → pages) cuando se retome.
+- **`ExtractoBancarioPort`** (puerto+adaptador para carga de estados de cuenta por
+  archivo): NO se construyó — la captura MANUAL de `MovimientoBancario` no depende de
+  él (ver el plan aprobado) y cubre el flujo del mockup. Se construye cuando llegue el
+  formato real, mismo patrón que `TimbradoExportPort` (ADR-048).
 - Si el negocio pide matching automático de conciliación más adelante, es una extensión
   sobre `MovimientoBancario`, no un rediseño.
+- Migración `4235d887cf06` NO aplicada a RDS todavía (4 tablas nuevas, ninguna existente
+  tocada) — pendiente de tu confirmación antes de aplicarla, como con toda migración.

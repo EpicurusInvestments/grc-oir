@@ -917,3 +917,152 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   (el CFDI), que F1 no acepta. La `ref` se guarda en la entidad por su propio endpoint.
 - **`GET /facturacion/adjuntos?ref=...`** (`costos:leer`) — descarga. Solo sirve objetos
   de los prefijos de facturación: una `ref` de `contratos/` u `ordenes/` da 404.
+
+## Cobranza y Pagos (F3)
+
+Prefijo `/cobranza`. Igual que F2, **dos claves de permiso** (mismos dos nombres que
+predefine `CLAUDE.md` §4 — ADR-044), una por dominio de negocio dentro del mismo módulo
+de código:
+
+| Sub-recurso | Permiso | Captura | Lectura |
+|---|---|---|---|
+| `/cobranza/facturas`, `/facturas/{id}/pagos`, `/pagos/{id}`, `/adjuntos` | `cobranza:*` | CxC | Ventas, Facturación, Tesorería, CxP, Dirección, Nóminas |
+| `/cobranza/requisiciones` | `pagos:*` | CxP | Ventas, Facturación, Tesorería, CxC, Dirección, Nóminas |
+| `/cobranza/movimientos-bancarios` | `pagos:leer` (todo el archivo) | **Tesorería** — chequeo real en el servicio, ver más abajo | el resto vía `pagos:leer` normal |
+
+Admin no aparece en ninguna matriz: `_nivel()` le da WRITE en todo módulo (ADR-040).
+
+### Estados
+
+`CobranzaFactura.estatus_cobro`: solo 3 valores almacenados —
+`pendiente → cobro_parcial → cobrada` — **sin endpoint de transición**: se recalcula
+automáticamente cada vez que se crea o borra un `PagoCliente`, comparando
+`SUM(PagoCliente.monto_aplicado)` contra `FacturaCliente.total_factura`. `vencida` es un
+**badge derivado** (`fecha_estimada_cobro` < hoy y no `cobrada`), calculado en cada
+lectura — nunca una columna ni un valor de este CHECK (mismo patrón que
+Vigente/Expirada de `TarifaPlaza`, F0-02).
+
+`Requisicion.estatus_requisicion`: `pendiente → autorizada → pagada`, rama a `cancelada`
+desde `pendiente`/`autorizada`. **`pendiente → autorizada` exige Dirección o Admin**
+(chequeo explícito en el servicio, no la matriz de módulo — mismo patrón que
+`FacturaAfiliado.autorizar` en F2 y `/ordenes/clientes/{id}/comisiones` en F1).
+
+`MovimientoBancario` no tiene máquina de estados: solo el booleano `conciliado`, que
+pasa de `false` a `true` una sola vía (botón "Conciliar" del mockup) y es idempotente.
+Sin matching automático en esta versión.
+
+### El handoff con F2 (ADR-068)
+
+`CobranzaFactura` es 1:1 con `FacturaCliente` y se crea/destruye/completa desde el
+handoff, nunca por un endpoint propio de alta:
+
+- **Creación**: automática cuando `POST /facturacion/clientes/{id}/timbrar` promueve
+  `FacturaCliente` a `timbrada` (misma transacción). No hay `POST /cobranza/facturas`.
+- **Cancelación**: `POST /facturacion/clientes/{id}/cancelar` invoca la reversión ANTES
+  de tocar el estado de la factura. Si la `CobranzaFactura` ya tiene
+  `importe_cobrado > 0`, la cancelación se rechaza con **400 `error_dominio`** (mismo
+  criterio que la excepción de "OC ya cobrada" de ADR-047); si `importe_cobrado = 0`, se
+  elimina y la cancelación continúa.
+- **Cierre del ciclo**: cuando `estatus_cobro` llega a `cobrada`, la cascada sube sola —
+  `FacturaCliente.estado_facturacion = cobrada` y `OrdenCliente.estatus_orden = cobrada`
+  en TODAS las órdenes de la factura, misma transacción. No hay endpoint para esto: lo
+  dispara `POST /cobranza/facturas/{cobranza_id}/pagos` (o el `DELETE` de un pago que
+  deje la suma por debajo del total, que revierte el CHECK del lado contrario — ver
+  guardarraíl abajo). Detalle completo en ADR-068.
+
+### CobranzaFactura / PagoCliente
+
+- **`GET /cobranza/facturas`** (`cobranza:leer`) — filtros `factura_id`, `anunciante_id`,
+  `estatus_cobro`. La lectura incluye `importe_cobrado`, `importe_pendiente_cobro` y
+  `vencida` ya calculados (nunca columnas): ver "Estados" arriba.
+- **`GET /cobranza/facturas/{id}`** (`cobranza:leer`) — 404 si no existe.
+- **`PUT /cobranza/facturas/{id}`** (`cobranza:editar`) — edita `dias_credito` (recalcula
+  `fecha_estimada_cobro`), `metodo_pago_clave` o `comentarios_cobranza`.
+  `estatus_cobro`/`fecha_cobro`/los importes **no son editables**: son calculados.
+- **`GET /cobranza/facturas/{cobranza_id}/pagos`** (`cobranza:leer`) — pagos de esa
+  cobranza.
+- **`POST /cobranza/facturas/{cobranza_id}/pagos`** (`cobranza:crear`) — alta de un
+  `PagoCliente`. Recalcula `estatus_cobro`/`fecha_cobro` del padre en la misma
+  transacción; si el pago completa el total, dispara la cascada del handoff (arriba).
+- **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — recalcula el padre
+  tras borrar. **Guardarraíl de una sola vía**: si la `CobranzaFactura` está `cobrada` y
+  borrar este pago la dejaría por debajo de `total_factura`, se rechaza con **409
+  `conflicto`** (no se puede "des-cobrar" una factura ya cerrada en cascada); borrar un
+  pago que deja un **excedente** que sigue cubriendo el total sí se permite.
+
+### Requisicion
+
+- **`GET /cobranza/requisiciones`** (`pagos:leer`) — filtros `tipo_requisicion`,
+  `estatus_requisicion`, `afiliado_id`, `agencia_id`, `vendedor_comision_id`. `q` busca en
+  número de requisición y número de OC de SAP.
+- **`GET /cobranza/requisiciones/{id}`** (`pagos:leer`).
+- **`POST /cobranza/requisiciones`** (`pagos:crear`) — alta por CxP. `tipo_requisicion`
+  exige FKs distintas (**400 `error_dominio`** si faltan): `pago_afiliado` →
+  `afiliado_id`; `pago_agencia` → `agencia_id`; `comision_vendedor` →
+  `vendedor_comision_id` + `orden_id`; `comision_agencia` → `agencia_id` + `orden_id`.
+  Hereda `razon_social_afiliada` del catálogo. Sugiere `porcentaje_comision_vendedor`/
+  `porcentaje_comision_agencia_req` desde el catálogo (`Vendedor`/`Agencia`) si se omiten,
+  y calcula `requisicion_comision_vendedor`/`requisicion_comision_agencia` sobre
+  `OrdenCliente.total`. Calcula `diferencia_afiliada = monto_requisicion -
+  FacturaAfiliado.total_factura_afiliado` cuando hay `factura_afiliado_id` — **puede ser
+  negativa** (sin CHECK `>= 0`, a propósito: es monitoreo de márgenes, no una validación).
+  `monto_requisicion` siempre es captura manual, nunca se fuerza a igualar las
+  comisiones calculadas.
+- **`PUT /cobranza/requisiciones/{id}`** (`pagos:editar`) — **400 `error_dominio`** si ya
+  no está `pendiente` (editar una requisición ya autorizada alteraría lo aprobado sin que
+  Dirección lo revise otra vez). Recalcula los campos derivados si cambian sus insumos.
+- **`POST /cobranza/requisiciones/{id}/estatus`** (`pagos:editar`) — canal **operativo**:
+  `pendiente → cancelada`, `autorizada → pagada` (body opcional
+  `fecha_pago_requisicion`, default hoy), `autorizada → cancelada`. Pedir `autorizada`
+  por aquí da **403** y remite al canal dedicado.
+- **`POST /cobranza/requisiciones/{id}/autorizar`** (`pagos:leer`) — **canal dedicado**
+  para `pendiente → autorizada` (ADR-046): el permiso del router es `leer` a propósito,
+  porque Dirección no tiene `pagos:editar`; la autorización real (**Dirección/Admin**) se
+  valida dentro del servicio → **403** para cualquier otra área, incluida la CxP que
+  capturó. Mismo diseño que `FacturaAfiliado.autorizar` en F2.
+
+Todas las transiciones son **idempotentes** y responden **409 `transicion_invalida`**
+ante un salto no permitido.
+
+### MovimientoBancario — primer módulo donde Tesorería captura (ADR-069)
+
+Todo el archivo pide `pagos:leer` en el ROUTER (el nivel que Tesorería ya tenía como
+lectora) — la captura real exige `área in (TESORERIA, ADMIN)` **dentro del servicio**,
+mismo canal dedicado del ADR-046 aplicado por primera vez a una captura ordinaria (no a
+una autorización jerárquica). Cualquier otra área recibe **403** al intentar `POST`/
+`conciliar`, aunque el router los deje pasar el chequeo de nivel.
+
+- **`GET /cobranza/movimientos-bancarios`** (`pagos:leer`) — filtros `tipo_movimiento`
+  (`cargo`|`abono`), `conciliado`, `fecha_desde`/`fecha_hasta`. `q` busca en referencia y
+  descripción.
+- **`GET /cobranza/movimientos-bancarios/{id}`** (`pagos:leer`).
+- **`POST /cobranza/movimientos-bancarios`** (`pagos:leer` en el router, Tesorería/Admin
+  en el servicio) — captura manual, uno por uno (sin carga de archivo en esta versión).
+  **409 `conflicto`** si ya existe un movimiento con la misma
+  `fecha_movimiento`+`monto_movimiento`+`referencia_bancaria` (con `referencia_bancaria`
+  NULL, compara solo fecha+monto) — probable carga duplicada.
+- **`POST /cobranza/movimientos-bancarios/{id}/conciliar`** (`pagos:leer` en el router,
+  Tesorería/Admin en el servicio) — botón "Conciliar" del mockup. Pasa `conciliado` de
+  `false` a `true`, idempotente, **sin transición de vuelta** (una sola vía). Sin
+  matching automático contra `CobranzaFactura`/`PagoCliente` en esta versión — puramente
+  informativo para el estado de cuenta.
+
+### Adjuntos de cobranza
+
+- **`POST /cobranza/adjuntos?tipo={comprobante_pago|estado_cuenta}`**
+  (`cobranza:leer`) — sube el archivo y devuelve su `ref`. Aunque `comprobante_pago` es
+  de CxC y `estado_cuenta` es de Tesorería, ambas acciones usan `cobranza:leer` (no
+  `pagos:*`): es la única clave que las 8 áreas satisfacen a la vez (CxC vía `WRITE`,
+  las otras 7 —incluida Tesorería— vía su `READ` en la matriz de `cobranza`). El
+  guardarraíl fino de quién puede ASIGNAR el archivo a un `MovimientoBancario` vive en
+  el endpoint de `MovimientoBancario`, no aquí.
+- **`GET /cobranza/adjuntos?ref=...`** (`cobranza:leer`) — descarga. Quita el prefijo
+  UUID del nombre (a diferencia de F2, que lo preserva por su deuda histórica — ver
+  ADR-067).
+
+**Errores posibles (todo el módulo):** 401 (sin auth), 403 (área sin permiso de router, o
+sin la autorización real de Dirección/Tesorería dentro del servicio), 404 (no
+encontrado), 409 (`transicion_invalida` / `conflicto` — incluido el guardarraíl de
+"no des-cobrar" y el duplicado de `MovimientoBancario`), 422 (validación de
+payload/filtros), 400 (`error_dominio` — FKs faltantes según `tipo_requisicion`,
+cancelación de una factura ya cobrada, edición de una requisición no-`pendiente`).

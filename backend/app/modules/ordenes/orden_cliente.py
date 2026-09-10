@@ -1111,6 +1111,36 @@ class OrdenClienteService(
             return  # el handoff nunca ocurrió: nada que deshacer
         obj.estatus_orden = EstatusOrden.ORDEN_CERRADA.value
 
+    # ── Handoff con F3 (Cobranza) ─────────────────────────────────────────────
+    def marcar_cobrada(self, orden_id: uuid.UUID) -> None:
+        """`facturada → cobrada`. La DISPARA F3 cuando `CobranzaFactura.estatus_cobro`
+        llega a `cobrada` (pago total recibido) — cierra la cascada de 3 pasos
+        `CobranzaFactura → FacturaCliente → OrdenCliente` anticipada desde F2 (el
+        comentario `# la dispara F3, no F2` en `TRANSICIONES`, y `FROZEN_STATES_OC` ya
+        incluían `cobrada` a la espera de este método).
+
+        Mismo contrato que `marcar_facturada`: **no hace `commit`** (el llamador la
+        invoca con la misma sesión, antes de su propio commit) e **idempotente** (si ya
+        está `cobrada` no hace nada, para poder recalcular sin romper si un pago se
+        recibe dos veces por error de captura y se corrige).
+
+        A diferencia de `marcar_facturada`/`revertir_facturacion`, esta transición
+        **no tiene reversa**: una vez aquí, la OC queda terminal (`FROZEN_STATES_OC`).
+        Borrar un `PagoCliente` que haría retroceder el cobro de una `CobranzaFactura`
+        ya `cobrada` se RECHAZA en el propio F3 (mismo principio que ADR-047: deshacer
+        un cobro real exige una nota de crédito que el sistema no maneja), así que esta
+        cascada nunca necesita deshacerse desde aquí.
+        """
+        obj = self._get_or_404(orden_id)
+        if obj.estatus_orden == EstatusOrden.COBRADA.value:
+            return  # ya cobrada: idempotente
+        if obj.estatus_orden != EstatusOrden.FACTURADA.value:
+            raise StateTransitionError(
+                "Solo una orden en 'facturada' puede pasar a 'cobrada'.",
+                detalles={"orden_id": str(orden_id), "estatus_orden": obj.estatus_orden},
+            )
+        obj.estatus_orden = EstatusOrden.COBRADA.value
+
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_orden_cliente_service(db: Session = Depends(get_db)) -> OrdenClienteService:

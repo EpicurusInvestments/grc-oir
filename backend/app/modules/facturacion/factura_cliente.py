@@ -451,6 +451,7 @@ TRANSICIONES: dict[str, set[str]] = {
     },
     EstadoFacturacion.TIMBRADA.value: {
         EstadoFacturacion.ENTREGADA.value,
+        EstadoFacturacion.COBRADA.value,  # la dispara F3 (ver nota abajo), no F2
         EstadoFacturacion.CANCELADA.value,
     },
     EstadoFacturacion.ENTREGADA.value: {
@@ -1195,7 +1196,16 @@ class FacturaClienteService(
         `OrdenClienteService.marcar_facturada`, que vive en F1 (dueño de esa máquina de
         estados), con la MISMA sesión y ANTES del commit: si la OC no admite la
         transición, la excepción aborta también el timbrado. Atómico por construcción.
+
+        F3: en el MISMO punto se crea la `CobranzaFactura` (`CobranzaFacturaService.
+        crear_para_factura`), mismo mecanismo — misma sesión, sin commit propio, dueño
+        del agregado (F3) construyéndolo desde el evento que lo origina (F2 timbra).
         """
+        from app.modules.cobranza.cobranza_factura import (
+            CobranzaFactura,
+            CobranzaFacturaRepository,
+            CobranzaFacturaService,
+        )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
             OrdenClienteRepository,
@@ -1224,6 +1234,11 @@ class FacturaClienteService(
         for orden_id in self._ordenes_de_factura(obj.factura_id):
             servicio_oc.marcar_facturada(orden_id)
 
+        # ── handoff con F3, misma sesión, antes del commit ──
+        CobranzaFacturaService(CobranzaFacturaRepository(db, CobranzaFactura)).crear_para_factura(
+            obj, usuario
+        )
+
         db.commit()
         db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
@@ -1235,9 +1250,63 @@ class FacturaClienteService(
         if self._validar_transicion(obj, EstadoFacturacion.ENTREGADA.value):
             obj.estado_facturacion = EstadoFacturacion.ENTREGADA.value
             obj.fecha_entrega_factura = input_.fecha_entrega_factura or date.today()
+
+            # F3: `CobranzaFactura.fecha_estimada_cobro` se calculó al TIMBRAR usando
+            # `fecha_timbrado` como ancla PROVISIONAL, porque `fecha_entrega_factura`
+            # (la que pide la spec) todavía no existía. Ahora que sí existe, se
+            # recalcula con el ancla real — misma sesión, sin commit propio, mismo
+            # patrón de handoff que ya usan `timbrar`/`cancelar`.
+            from app.modules.cobranza.cobranza_factura import (
+                CobranzaFactura,
+                CobranzaFacturaRepository,
+                CobranzaFacturaService,
+            )
+
+            CobranzaFacturaService(
+                CobranzaFacturaRepository(self._repo.db, CobranzaFactura)
+            ).refrescar_fecha_estimada(obj.factura_id)
+
             self._repo.db.commit()
             self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
+
+    def marcar_cobrada(self, factura_id: uuid.UUID) -> None:
+        """`timbrada`/`entregada` → `cobrada`. La DISPARA F3 cuando su
+        `CobranzaFactura.estatus_cobro` llega a `cobrada` (pago total recibido).
+
+        Cierra la cascada de 3 pasos `CobranzaFactura → FacturaCliente → OrdenCliente`
+        que F2 ya anticipó desde que `TRANSICIONES` incluyó `ENTREGADA → COBRADA` con el
+        comentario "la dispara F3, no F2". Se agrega también `TIMBRADA → COBRADA`: el
+        cobro puede completarse ANTES de que alguien marque la factura como entregada en
+        el sistema (son procesos de negocio independientes — cobranza no debería
+        bloquearse esperando un clic administrativo de entrega), así que la cascada
+        acepta el pago completo desde cualquiera de los dos estados no terminales.
+
+        Promueve TODAS las órdenes de la factura con `OrdenClienteService.marcar_cobrada`
+        (igual que `timbrar` hace con `marcar_facturada`), misma sesión, sin `commit`
+        propio: el llamador es `CobranzaFacturaService.recalcular_tras_pago`, que comparte la
+        transacción con la creación/borrado del `PagoCliente` que disparó el recálculo.
+
+        Idempotente (si ya está `cobrada`, no hace nada). **Sin transición de vuelta**:
+        a diferencia de `timbrar`/`cancelar`, esta cascada no tiene reversa — ver
+        `CobranzaFacturaService` sobre por qué borrar un pago que la revertiría se
+        rechaza en vez de deshacer la cascada.
+        """
+        from app.modules.ordenes.orden_cliente import (
+            OrdenCliente,
+            OrdenClienteRepository,
+            OrdenClienteService,
+        )
+
+        obj = self._get_or_404(factura_id)
+        db = self._repo.db
+        if not self._validar_transicion(obj, EstadoFacturacion.COBRADA.value):
+            return  # ya cobrada: idempotente
+        obj.estado_facturacion = EstadoFacturacion.COBRADA.value
+
+        servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
+        for orden_id in self._ordenes_de_factura(obj.factura_id):
+            servicio_oc.marcar_cobrada(orden_id)
 
     def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
         """Cancelación desde los 4 primeros estados, **revirtiendo el handoff** (ADR-047).
@@ -1249,7 +1318,17 @@ class FacturaClienteService(
 
         La reversión se invoca ANTES del commit y con la misma sesión, igual que el
         handoff hacia adelante: cancelar la factura y revertir la orden son atómicos.
+
+        F3: si la factura ya tiene `CobranzaFactura` con algún pago recibido
+        (`importe_cobrado > 0`), la cancelación se rechaza con 400 ANTES de tocar nada
+        — mismo criterio que la excepción de "OC ya cobrada". Si no hay pagos, la
+        `CobranzaFactura` se elimina como parte de esta misma transacción.
         """
+        from app.modules.cobranza.cobranza_factura import (
+            CobranzaFactura,
+            CobranzaFacturaRepository,
+            CobranzaFacturaService,
+        )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
             OrdenClienteRepository,
@@ -1261,6 +1340,11 @@ class FacturaClienteService(
         if not self._validar_transicion(obj, EstadoFacturacion.CANCELADA.value):
             # ya cancelada: idempotente, no re-revierte
             return self._enriquecida(self._to_read(obj))
+
+        # ── F3: rechazo o limpieza de la CobranzaFactura, ANTES de tocar nada ──
+        CobranzaFacturaService(
+            CobranzaFacturaRepository(db, CobranzaFactura)
+        ).eliminar_o_rechazar(obj.factura_id)
 
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
 
