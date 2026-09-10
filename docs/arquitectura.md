@@ -2432,3 +2432,46 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   CxP recibe 403 al intentar crear o conciliar un movimiento bancario; Tesorería puede
   ambas cosas; las demás áreas (incluida CxP) sí pueden LEER movimientos bancarios.
 
+### ADR-070 — Frontend de F3: deep-link F2→F3 y "amplía y filtra en el cliente" ante huecos de búsqueda del backend
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3).
+- **Contexto:** al construir el frontend de F3 aparecieron dos huecos que el plan
+  aprobado no había anticipado, ambos del lado de lectura (ningún cambio de backend):
+  1. El botón "Pasa a CxC (Fase 3)" de `FacturasClientePage` (F2) quedó como
+     placeholder deshabilitado desde que se escribió, previendo que F3 algún día
+     existiera. Con F3 ya implementado, dejarlo deshabilitado sería mentirle a quien
+     opera: la `CobranzaFactura` YA EXISTE desde que la factura se timbra (ADR-068),
+     no hace falta esperar a "entregada".
+  2. `CobranzaFacturaRepository._apply_filters` (backend) solo filtra por
+     `factura_id`/`anunciante_id`/`estatus_cobro` — no indexa texto libre (`q`) ni
+     conoce `vencida` (es un badge derivado, no una columna). `RequisicionRepository`
+     tampoco puede filtrar por "cualquiera de estos dos tipos" a la vez (una sola
+     columna `tipo_requisicion`, no un `IN`). El mockup aprobado, en cambio, sí pide
+     buscar por texto, una vista "Vencidas" y un pill "Comisiones" que agrupa
+     `comision_vendedor`+`comision_agencia`.
+- **Decisión:**
+  1. El botón de F2 pasa a ser un link real: navega a `/cobranza?factura_id=...`.
+     `CobranzaFacturasPage` lee ese query param con `useSearchParams` y resuelve la
+     `CobranzaFactura` correspondiente vía `cobranzaFacturaApi.list({ factura_id })`
+     (el backend SÍ filtra por `factura_id`), preseleccionándola sin importar en qué
+     página/filtro estuviera el usuario. El botón se habilita desde `timbrada` (antes
+     solo aparecía, deshabilitado, en `entregada`).
+  2. Para búsqueda, "Vencidas" y "Comisiones": en vez de pedirle al backend un filtro
+     que no tiene, la pantalla trae un lote más grande (tope de 100, el mismo límite
+     ya usado por los combos de F2/F3) y filtra en el cliente. Es una desviación
+     puntual del patrón normal (filtro+paginación 100% del backend) que **no** se
+     generaliza: en cuanto se activa `q` o el pill que lo requiere, la paginación del
+     backend se apaga (`page: 1, size: 100`) y el contador dice cuántas de esas 100
+     coinciden, no el total real. Documentado en el docstring de cada pantalla
+     (`CobranzaFacturasPage`, `RequisicionesPage`).
+- **Consecuencias:** ninguna migración ni cambio de servicio — es puramente cliente.
+  Si el catálogo de cobranzas o requisiciones creciera mucho más allá de un puñado de
+  cientos de filas, el tope de 100 dejaría de ser representativo y esos 3 casos
+  (`q`, "Vencidas", "Comisiones") pedirían un filtro real del lado del backend —
+  documentado como limitación conocida en el propio código, no oculto.
+- **Alcance relacionado:** el mismo criterio de "traer un lote y resolver en el
+  cliente" se usa para el historial "Pagos recibidos" (`historialPagosCliente` en
+  `cobranza/api.ts`): el backend no tiene un `GET` de pagos sin acotar a una
+  `CobranzaFactura` (el endpoint real es `/facturas/{cobranza_id}/pagos`), así que la
+  vista agrega trayendo las cobranzas con algo cobrado y pidiendo sus pagos en
+  paralelo — mismo tope de 100, misma limitación documentada.
+

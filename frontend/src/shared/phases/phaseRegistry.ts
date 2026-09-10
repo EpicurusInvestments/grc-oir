@@ -95,8 +95,8 @@ export const phaseRegistry: PhaseEntry[] = [
     accent: "amber",
     imageWebp: cobranzaPagosWebp,
     imagePng: cobranzaPagosPng,
-    route: null,
-    enabled: false,
+    route: "/cobranza",
+    enabled: true,
   },
   {
     key: "f4",

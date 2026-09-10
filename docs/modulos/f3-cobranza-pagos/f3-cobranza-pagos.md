@@ -1,6 +1,6 @@
 # Módulo F3 — Cobranza y Pagos · Fase: F3
 
-> **Estado: IMPLEMENTADA (tanda 1, backend completo) — 2026-09-09.**
+> **Estado: IMPLEMENTADA (backend + frontend) — 2026-09-09.**
 > Ficha de alcance de TODO el módulo (las 4 entidades se implementan juntas — mismo
 > criterio que F1 y F2, que terminaron consolidados por su acoplamiento y por compartir
 > infraestructura). Dos dominios dentro del mismo módulo de código: **cobranza** (CxC:
@@ -13,10 +13,12 @@
 > pero es la referencia de cómo resolvimos un hueco de integración similar, ADR-067
 > factory compartida de adjuntos — F3 fue el tercer consumidor que la justificó,
 > **ADR-068 el handoff F2↔F3 completo tal como quedó implementado, ADR-069 el canal
-> dedicado de Tesorería**).
+> dedicado de Tesorería, ADR-070 el deep-link F2→F3 y el patrón "amplía y filtra en el
+> cliente" del frontend**).
 > Refinada en sesión de planeación del 2026-09-09, tras confirmar F0+F1+F2+F5-00 en `main`.
 > Implementada la misma sesión — backend completo (modelos, migración, servicios,
-> routers, RBAC, 28 pruebas); **pendiente el frontend** (fuera del alcance de esta tanda).
+> routers, RBAC, 28 pruebas) y frontend completo (8 páginas, 4 formularios, registry +
+> explorador, deep-link F2→F3, 21 pruebas de componente) — ver sección "Frontend" abajo.
 
 ## Propósito
 
@@ -173,11 +175,32 @@ para CxP.
 - F0 completo (`Anunciante.dias_credito_default`, `ConstantesSistema` para métodos de
   pago, `Afiliado`/`Agencia`/`Vendedor`). F5-00 (RBAC real).
 
+## Frontend (`frontend/src/modules/cobranza/`)
+
+Mismo patrón que F2 (types → api → hooks → format/constants → components → pages →
+registry → explorador), montado en `/cobranza` (`phase-f3`, ámbar) con 4 grupos de
+sidebar exactos al mockup aprobado: "Cobranza al cliente" (Cobranza de facturas, Pagos
+recibidos), "Pagos a proveedores" (Requisiciones), "Tesorería" (Movimientos bancarios) y
+"Vistas operativas" (Cobranzas vencidas, Por autorizar, Por pagar, Sin conciliar — las 4
+son las MISMAS páginas con un filtro inicial preseleccionado, no pantallas nuevas).
+
+- **Deep-link F2→F3**: el botón "Pasa a CxC (Fase 3)" de `FacturasClientePage` (antes un
+  placeholder deshabilitado) ahora navega a `/cobranza?factura_id=...` y
+  `CobranzaFacturasPage` resuelve y preselecciona la `CobranzaFactura` correspondiente —
+  coherente con que ya existe desde `timbrada` (ADR-068), no solo desde `entregada`.
+- **Limitaciones conocidas de esta tanda** (no bloquean, documentadas en el propio
+  código): el backend no indexa texto libre ni el badge `vencida` sobre
+  `CobranzaFactura` — la búsqueda y la vista "Vencidas" traen hasta 100 filas y filtran
+  en el cliente. Tampoco hay un `GET` de "todos los pagos" — el historial de "Pagos
+  recibidos" se arma agregando por cobranza (mismo tope de 100).
+- **21 pruebas de componente** (Vitest + Testing Library) en `CobranzaFacturasPage.
+  test.tsx` y `RequisicionesPage.test.tsx`: qué botones ofrece la UI en cada estado
+  (mismo criterio que F2, no lo que el backend ya valida).
+- Edición de `Requisicion` vía `PUT` (backend completo) **no se expuso** en esta tanda:
+  el formulario cubre alta; editar montos/comisiones se deja para cuando se necesite.
+
 ## Pendientes (no bloquean el arranque de F3)
 
-- **Frontend** (`frontend/src/modules/cobranza/`): no se construyó en esta tanda —
-  backend completo, sin pantallas. Sigue el patrón de F0-F2 (types → api → hooks →
-  components → pages) cuando se retome.
 - **`ExtractoBancarioPort`** (puerto+adaptador para carga de estados de cuenta por
   archivo): NO se construyó — la captura MANUAL de `MovimientoBancario` no depende de
   él (ver el plan aprobado) y cubre el flujo del mockup. Se construye cuando llegue el

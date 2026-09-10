@@ -7,6 +7,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FacturasClientePage } from "../facturaCliente/pages/FacturasClientePage";
@@ -85,9 +86,11 @@ function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void 
   listMock.mockResolvedValue({ items: [factura], total: 1, page: 1, size: 20, pages: 1 });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <FacturasClientePage onIrAListasParaFacturar={onIrAListasParaFacturar} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={qc}>
+        <FacturasClientePage onIrAListasParaFacturar={onIrAListasParaFacturar} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -143,9 +146,11 @@ describe("FacturasClientePage", () => {
       ),
     );
     render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <FacturasClientePage onIrAListasParaFacturar={vi.fn()} />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <FacturasClientePage onIrAListasParaFacturar={vi.fn()} />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     (await screen.findByText("A-1041")).click();
