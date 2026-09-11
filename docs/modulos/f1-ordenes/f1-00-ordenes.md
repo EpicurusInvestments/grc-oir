@@ -17,7 +17,7 @@ OE de una OC habilita la facturación (F2).
 
 ## Entidades (spec BD v2 + extensiones aditivas)
 
-### OrdenCliente (36 campos spec + 8 aditivos)
+### OrdenCliente (36 campos spec + 10 aditivos)
 PK `orden_id`. FKs a `EmpresaFacturadora`, `Vendedor` (principal/secundario),
 `Anunciante`, `Agencia`, `Contrato`, `Marca`, `Categoria`, `Usuario` (`created_by`).
 Calculados (servicio, `Decimal`): `anio_venta`/`mes_venta` (de `fecha_venta`),
@@ -34,15 +34,30 @@ Calculados (servicio, `Decimal`): `anio_venta`/`mes_venta` (de `fecha_venta`),
   `carta_conciliacion_ref`, `reporte_programados_ref`, `reporte_reales_ref` — ADR-042): se
   suben de verdad vía `POST /ordenes/adjuntos` (lista blanca de extensiones + magic bytes),
   no solo se captura el nombre del archivo.
+- **Spots Bonificables** (`cantidad_spots_bonificables`, `subtotal_spots_bonificables` —
+  ADR-067): spots que se transmiten y se asignan a `OrdenEstacion` igual que cualquier
+  otro (`total_spots` no cambia de significado) pero no se cobran al cliente. Desde esta
+  extensión, `subtotal`/`iva`/`total` se calculan sobre `total_spots −
+  cantidad_spots_bonificables` (spots facturables), no sobre `total_spots` — ver ADR-067
+  para la fórmula completa y su propagación gratuita a `FacturaCliente`/archivo plano.
 
 **Checklist de Vo.Bo.** — tabla hija `OrdenClienteVoBoItem` (ADR-033), NO JSON: 10 ítems
 fijos (`ITEMS_VOBO`), cada uno con `completado`/`usuario_id`/`fecha_completado`.
 
-### OrdenEstacion (27 campos spec + 5 aditivos)
+### OrdenEstacion (27 campos spec + 6 aditivos)
 PK `orden_estacion_id`. FK a `OrdenCliente`, `Contrato`, `Anunciante`, `Vendedor`,
 `Agencia`, `Categoria`, `Estacion`, `Plaza`, `Usuario`. Calculados (servicio):
 `importe_estacion` (agregado de días), `importe_oir`/`iva_oir`/`total_oir`,
 `importe_emisora`/`iva_emisora`/`total_emisora`.
+
+**Spots Bonificables** (`cantidad_spots_bonificables` — ADR-068, análogo a ADR-067 de
+`OrdenCliente`): spots que se asignan y transmiten con normalidad (el balance contra
+`OrdenCliente.total_spots` no cambia) pero no se cobran a la estación. Reducen
+`importe_estacion` (`spots_facturables = spots_asignados − cantidad_spots_bonificables`),
+que a su vez arrastra `importe_oir`/`importe_emisora` y sus IVA/totales —
+`porcentaje_participacion_oir` no cambia (solo depende de las tarifas). No hay CHECK que
+lo acote contra los spots asignados: esa suma vive en `OrdenEstacionDia` (tabla hija), no
+es una columna propia de `orden_estacion` — la validación es del servicio.
 
 **Desviación aditiva clave (ADR-030):** la spec modela `fecha_transmision`/
 `hora_inicio`/`hora_fin`/`spots_solicitados`/`spots_asignados`/`spots_faltantes` como
@@ -420,6 +435,32 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   permitía Admin desde la Tanda 5 (chequeo de área explícito en el servicio, no pasa por
   esta matriz) — sin cambios ahí. Verificado: 235/235 pytest, ruff y mypy limpios sobre
   `app/core/security.py`.
+- **Rama `feature/f1-spots-bonificables`: Spots Bonificables en `OrdenCliente` (ADR-067,
+  extensión aditiva a petición del equipo):** dos columnas nuevas
+  (`cantidad_spots_bonificables`, `subtotal_spots_bonificables`, calculada) entre
+  `total_spots` y `precio_unitario`. `subtotal`/`iva`/`total` pasan de calcularse sobre
+  `total_spots` a calcularse sobre `total_spots − cantidad_spots_bonificables` (spots
+  facturables) — `total_spots` conserva su significado para `OrdenEstacion` y el balance
+  de spots, sin cambios ahí. Se propaga gratis a `FacturaCliente` (ADR-064) y al archivo
+  plano del timbrador (ADR-066), sin tocar código de F2. Frontend: nuevo campo "Spots
+  bonificables" en el formulario de alta/edición, bloque "Calculado" expandido de 3 a 5
+  tarjetas, selector central `totalesOC()` actualizado (lista, detalle y cierre heredan
+  el cálculo correcto sin cambios propios). Ver ADR-067 para la fórmula completa,
+  incluida la nota de migración de SQL Server (`server_default` + `DROP COLUMN`).
+  Verificado: 4 pruebas nuevas de backend + 6 de frontend, suites completas en verde.
+- **Rama `feature/f1-spots-bonificables`: Spots Bonificables en `OrdenEstacion` (ADR-068,
+  análogo a ADR-067 pero a nivel de OI):** columna `cantidad_spots_bonificables` entre
+  "Tarifa por spot" y el resto de la captura. `importe_estacion` pasa de calcularse sobre
+  `spots_asignados` a calcularse sobre `spots_asignados − cantidad_spots_bonificables`
+  (spots facturables) — el balance de spots contra `OrdenCliente.total_spots` no cambia,
+  los bonificables se siguen asignando/transmitiendo igual. Sin CHECK de BD para el tope
+  contra spots asignados (esa suma vive en `OrdenEstacionDia`, tabla hija): la validación
+  es del servicio. Se propaga gratis a la lista/detalle de OI y a la tabla de OE hijas
+  del detalle de OC (todos consumen `oiImporte()`, actualizado en `selectors.ts`, sin
+  tocarse ellos mismos). Frontend: nuevo campo "Spots bonificables" junto a "Tarifa por
+  spot" en `OrdenEstacionForm.tsx`, panel "Cálculos en vivo" expandido con "Spots
+  bonificables"/"Spots facturables". Ver ADR-068 para la fórmula completa. Verificado:
+  3 pruebas nuevas de backend + 7 de frontend, suites completas en verde.
 
 ## Pendientes / dudas
 

@@ -50,6 +50,7 @@ export function ordenClienteFromApi(
     fecha_fin_campania: dto.fecha_fin_campania,
     duracion_spot: dto.duracion_spot,
     total_spots: dto.total_spots,
+    cantidad_spots_bonificables: dto.cantidad_spots_bonificables,
     precio_unitario: Number(dto.precio_unitario),
     porcentaje_comision_vendedor_principal_snap:
       dto.porcentaje_comision_vendedor_principal_snap != null
@@ -134,6 +135,7 @@ export function ordenEstacionFromApi(
     estacion_id: dto.estacion_id,
     plaza_id: dto.plaza_id,
     precio_spot: Number(dto.precio_spot),
+    cantidad_spots_bonificables: dto.cantidad_spots_bonificables,
     porcentaje_participacion_oir: Number(dto.porcentaje_participacion_oir),
     periodo_transmision,
     horarios_programados: horarios_programados.length > 0 ? horarios_programados : undefined,

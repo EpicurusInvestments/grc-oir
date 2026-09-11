@@ -898,6 +898,16 @@ body {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
 }
+.r4 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 10px;
+}
+.r5 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  gap: 10px;
+}
 /* Mensaje de error de validación de campo */
 .fe {
   font-size: 11px;

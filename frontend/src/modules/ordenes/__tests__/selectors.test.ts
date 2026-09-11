@@ -25,6 +25,7 @@ import {
   oiImporte,
   oiPeriodoTexto,
   oiPrimeraFecha,
+  oiSpotsFacturables,
   oiTotalSpots,
   oiUltimaFecha,
   oiVentanaTipica,
@@ -98,6 +99,35 @@ describe("totalesOC — 1.1", () => {
     expect(Number.isNaN(subtotal)).toBe(false);
     expect(Number.isNaN(iva)).toBe(false);
     expect(Number.isNaN(total)).toBe(false);
+  });
+
+  // ── Spots bonificables (ADR-067) ────────────────────────────────────────────
+  it("ejemplo de la especificación: 25 spots a $1,000, 10 bonificables → 15 facturables", () => {
+    const oc = makeOC({ total_spots: 25, precio_unitario: 1000, cantidad_spots_bonificables: 10 });
+    const totales = totalesOC(oc);
+    expect(totales.spotsFacturables).toBe(15);
+    expect(totales.subtotalBonificables).toBe(10_000);
+    expect(totales.subtotal).toBe(15_000);
+    expect(totales.subtotalBruto).toBe(25_000);
+    expect(totales.iva).toBe(2_400);
+    expect(totales.total).toBe(17_400);
+  });
+
+  it("sin bonificables (default 0), subtotalBruto y subtotal coinciden", () => {
+    const oc = makeOC({ total_spots: 100, precio_unitario: 1000 });
+    const totales = totalesOC(oc);
+    expect(totales.spotsFacturables).toBe(100);
+    expect(totales.subtotalBonificables).toBe(0);
+    expect(totales.subtotal).toBe(totales.subtotalBruto);
+  });
+
+  it("blindaje: cantidad_spots_bonificables > total_spots no produce facturable negativo", () => {
+    // No debería ocurrir en datos reales (el backend lo rechaza), pero el selector no debe
+    // producir un valor absurdo si de todos modos llegara un dato así.
+    const oc = makeOC({ total_spots: 10, precio_unitario: 1000, cantidad_spots_bonificables: 999 });
+    const totales = totalesOC(oc);
+    expect(totales.spotsFacturables).toBe(0);
+    expect(totales.subtotal).toBe(0);
   });
 });
 
@@ -181,6 +211,32 @@ describe("Periodo de transmisión de una OI — 1.3", () => {
   it("periodo vacío da 0 spots e importe 0, sin romperse", () => {
     const oe = makeOE({ periodo_transmision: [] });
     expect(oiTotalSpots(oe)).toBe(0);
+    expect(oiImporte(oe)).toBe(0);
+  });
+
+  // ── Spots bonificables de la OI (ADR-068) ──────────────────────────────────
+  it("oiSpotsFacturables = oiTotalSpots − cantidad_spots_bonificables; oiImporte se calcula sobre ese neto", () => {
+    const oe = makeOE({
+      precio_spot: 800,
+      cantidad_spots_bonificables: 5,
+      periodo_transmision: [makeRow({ fecha: "2025-06-01", spots_diarios: 25 })],
+    });
+    expect(oiSpotsFacturables(oe)).toBe(20);
+    expect(oiImporte(oe)).toBe(20 * 800);
+  });
+
+  it("sin bonificables (default 0), oiSpotsFacturables coincide con oiTotalSpots", () => {
+    const oe = makeOE({ precio_spot: 800, periodo_transmision: [makeRow({ spots_diarios: 25 })] });
+    expect(oiSpotsFacturables(oe)).toBe(oiTotalSpots(oe));
+  });
+
+  it("blindaje: cantidad_spots_bonificables > total no produce facturable negativo", () => {
+    const oe = makeOE({
+      precio_spot: 800,
+      cantidad_spots_bonificables: 999,
+      periodo_transmision: [makeRow({ spots_diarios: 25 })],
+    });
+    expect(oiSpotsFacturables(oe)).toBe(0);
     expect(oiImporte(oe)).toBe(0);
   });
 

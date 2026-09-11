@@ -1099,10 +1099,16 @@ class FacturaClienteService(
             iva=Decimal(obj.iva_factura),
             total=Decimal(obj.total_factura),
             tasa_iva=IVA_RATE,
-            # `Detalle.CANT` (bug real): spots totales de las órdenes de esta factura,
-            # no "1" fijo. `or 1` es defensivo (no debería pasar: `total_spots > 0` es
-            # CHECK de la OC), para no dividir entre cero al derivar `Detalle.COSTO`.
-            cantidad=sum(o.total_spots for o in ordenes) or 1,
+            # `Detalle.CANT` (ADR-066, corregido en ADR-069): spots FACTURABLES de las
+            # órdenes de esta factura (total_spots − cantidad_spots_bonificables de cada
+            # una, ADR-067) — no el total de spots ni "1" fijo. Con esto, `Detalle.COSTO`
+            # (subtotal / cantidad, ver `adapter_pac_v40.py::_detalle()`) reconstruye la
+            # tarifa pactada real, sin tocar esa fórmula: antes CANT traía el total de
+            # spots (con bonificables) mientras `subtotal` ya solo reflejaba lo facturable
+            # (ADR-067), así que COSTO salía diluido por debajo de `precio_unitario`.
+            # `or 1` es defensivo (no debería pasar: `total_spots > 0` es CHECK de la OC),
+            # para no dividir entre cero al derivar `Detalle.COSTO`.
+            cantidad=sum(o.total_spots - o.cantidad_spots_bonificables for o in ordenes) or 1,
             emisor_nombre=emisor.nombre_empresa if emisor else "",
             emisor_rfc=emisor.rfc_empresa if emisor else "",
             emisor_direccion=emisor.direccion_empresa if emisor else None,

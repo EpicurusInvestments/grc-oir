@@ -540,6 +540,17 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   puramente de presentación) para que `IMPORTE = COSTO × CANT` cuadre — `IMPORTE` sigue
   siendo el subtotal completo, sin cambios. Detalle completo en `docs/arquitectura.md`.
 
+- **Corrección posterior: `Detalle.CANT` pasa de "spots reales" a "spots facturables"
+  (ADR-069, bug real tras Spots Bonificables/ADR-067).** Al agregarse Spots Bonificables
+  a `OrdenCliente` (F1), `subtotal` dejó de ser `total_spots × precio_unitario` y pasó a
+  ser `spots_facturables × precio_unitario` — pero `Detalle.CANT` seguía sumando
+  `total_spots` (con bonificables incluidos), así que `Detalle.COSTO` (`subtotal /
+  cantidad`) salía diluido por debajo de `precio_unitario` en cualquier orden con
+  bonificables. `cantidad` ahora suma `total_spots − cantidad_spots_bonificables` de
+  cada orden; `COSTO`/`IMPORTE` (`adapter_pac_v40.py::_detalle()`) no se tocaron — al
+  corregir solo lo que alimenta `cantidad`, `COSTO` vuelve a reconstruir el
+  `precio_unitario` real. Detalle completo en `docs/arquitectura.md`.
+
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 
 Al revisar el `Detalle` del archivo plano campo por campo (petición del usuario), quedaron

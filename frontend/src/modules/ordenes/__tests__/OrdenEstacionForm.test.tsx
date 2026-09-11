@@ -137,6 +137,52 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
   });
 });
 
+describe("Spots bonificables de la OI (ADR-068)", () => {
+  it("el Importe se calcula sobre spots facturables (asignados − bonificables), no sobre el total asignado", () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
+    agregarDia(container, 50);
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "20" } });
+
+    expect(screen.getAllByText("30").length).toBeGreaterThan(0); // Spots facturables = 50-20
+    expect(screen.getByText("$24,000.00")).toBeInTheDocument(); // Importe = 30*800
+  });
+
+  it("spots bonificables mayores a los asignados de esta OI muestran error y bloquean Guardar", () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
+    agregarDia(container, 50);
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "51" } });
+
+    expect(screen.getByText(/Los spots bonificables \(51\) no pueden exceder los spots asignados de esta OI \(50\)\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar orden interna" })).toBeDisabled();
+  });
+
+  it("'Guardar' llama a onGuardar con cantidad_spots_bonificables capturado", () => {
+    const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
+    agregarDia(container, 50);
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "10" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar orden interna" }));
+
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.cantidad_spots_bonificables).toBe(10);
+  });
+
+  it("al editar una OE, precarga los spots bonificables ya guardados", () => {
+    const { container } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      oe: { estacion_id: "es1", precio_spot: 700, cantidad_spots_bonificables: 15 },
+    });
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables").value).toBe("15");
+  });
+});
+
 describe("Selector de OC de origen con filtro de búsqueda — abierta suelta (sin ocIdFijo)", () => {
   function renderSuelto() {
     const oc1 = makeOC({ folio_orden: "OC-2026-0041", numero_orden_cliente: "PO-cliente-001", estatus_orden: "orden_interna" });

@@ -297,6 +297,45 @@ describe("Aviso de tarifa cuando la OC ya tiene OE creadas", () => {
   });
 });
 
+describe("Spots bonificables (ADR-067)", () => {
+  it("calcula el desglose facturable en vivo: 25 spots a $1,000, 10 bonificables → 15 facturables", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Total de spots"), { target: { value: "25" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "10" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Precio unitario (MXN, por spot)"), {
+      target: { value: "1000" },
+    });
+
+    // Las 5 tarjetas del bloque "Calculado": subtotal bruto, bonificables, facturable, IVA, total.
+    expect(screen.getAllByText("$25,000.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$10,000.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$15,000.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$2,400.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$17,400.00").length).toBeGreaterThan(0);
+  });
+
+  it("sin capturar spots bonificables, el desglose facturable coincide con el subtotal bruto (default 0)", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Total de spots"), { target: { value: "100" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Precio unitario (MXN, por spot)"), {
+      target: { value: "1000" },
+    });
+
+    expect(screen.getAllByText("$100,000.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$0.00").length).toBeGreaterThan(0);
+  });
+
+  it("rechaza spots bonificables mayores al total de spots y no llama a onGuardar", async () => {
+    const { container, onGuardar } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Total de spots"), { target: { value: "10" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "11" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+
+    expect(await screen.findByText("No puede exceder el total de spots.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+});
+
 describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
   it("al crear, una fecha de inicio pasada muestra error y no llama a onGuardar", async () => {
     const { container, onGuardar } = renderForm();

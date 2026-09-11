@@ -54,6 +54,10 @@ export interface OrdenCliente {
   fecha_fin_campania: string;
   duracion_spot: string;
   total_spots: number;
+  /** Spots que se transmiten y se asignan a OrdenEstacion igual que cualquier otro, pero
+   *  no se cobran al cliente (ADR-067): descuentan del subtotal facturable, no de
+   *  `total_spots`. Ver `totalesOC` (selectors.ts) para el desglose completo. */
+  cantidad_spots_bonificables: number;
   precio_unitario: number;
   /** PARÁMETRO SENSIBLE (snapshot): se pre-llena del catálogo, editable, auditado. */
   porcentaje_comision_vendedor_principal_snap: number | null;
@@ -87,6 +91,10 @@ export interface OrdenEstacion {
   plaza_id: string;
   /** Tarifa pactada con la estación (por spot). */
   precio_spot: number;
+  /** Spots que se asignan y transmiten igual que cualquier otro (cuentan para el balance
+   *  de spots de la OC) pero no se cobran a la estación (ADR-068): reducen `Importe`, no
+   *  los spots asignados. Ver `oiImporte`/`oiSpotsFacturables` (selectors.ts). */
+  cantidad_spots_bonificables: number;
   /** % de participación de OIR: (precio_unitario_cliente − precio_spot) / precio_unitario_cliente × 100. */
   porcentaje_participacion_oir: number;
   /** Fuente de verdad de la programación asignada. */
@@ -189,4 +197,7 @@ export type OrdenClienteInput = Omit<
 /** Campos que captura el formulario de ALTA de OrdenEstacion (Tanda 3). Excluye lo que
  * genera el sistema (folio, id, orden_id, estatus, % OIR calculado) y lo que solo aparece
  * en Programados/Reales (Tanda 4). */
-export type OrdenEstacionInput = Pick<OrdenEstacion, "estacion_id" | "plaza_id" | "precio_spot" | "periodo_transmision" | "observaciones_estacion">;
+export type OrdenEstacionInput = Pick<
+  OrdenEstacion,
+  "estacion_id" | "plaza_id" | "precio_spot" | "cantidad_spots_bonificables" | "periodo_transmision" | "observaciones_estacion"
+>;

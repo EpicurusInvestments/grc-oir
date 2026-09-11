@@ -72,6 +72,14 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
       .trim()
       .min(1, "El total de spots es obligatorio.")
       .refine((v) => Number.isInteger(Number(v)) && Number(v) >= 1, "Debe ser un entero ≥ 1."),
+    // ADR-067: spots que se transmiten pero no se cobran al cliente. Opcional (default 0);
+    // se valida contra total_spots más abajo, en el .refine de nivel de objeto, porque aquí
+    // todavía no se conoce el otro valor.
+    cantidad_spots_bonificables: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => v == null || v === "" || (Number.isInteger(Number(v)) && Number(v) >= 0), "Debe ser un entero ≥ 0."),
     precio_unitario: z
       .string()
       .trim()
@@ -108,6 +116,10 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     .refine((d) => d.fecha_fin_campania >= d.fecha_inicio_campania, {
       path: ["fecha_fin_campania"],
       message: "La fecha de fin debe ser mayor o igual que la de inicio.",
+    })
+    .refine((d) => Number(d.cantidad_spots_bonificables || 0) <= Number(d.total_spots || 0), {
+      path: ["cantidad_spots_bonificables"],
+      message: "No puede exceder el total de spots.",
     });
 }
 
@@ -184,6 +196,7 @@ export function OrdenClienteForm({
       fecha_fin_campania: defaultValues?.fecha_fin_campania ?? "",
       duracion_spot: defaultValues?.duracion_spot ?? "30s",
       total_spots: vacio(defaultValues?.total_spots),
+      cantidad_spots_bonificables: vacio(defaultValues?.cantidad_spots_bonificables ?? 0),
       precio_unitario: vacio(defaultValues?.precio_unitario),
       vendedor_principal_id: defaultValues?.vendedor_principal_id ?? "",
       vendedor_secundario_id: defaultValues?.vendedor_secundario_id ?? "",
@@ -247,8 +260,14 @@ export function OrdenClienteForm({
   const fechaInicio = watch("fecha_inicio_campania");
   const fechaFin = watch("fecha_fin_campania");
   const totalSpots = Number(watch("total_spots")) || 0;
+  const spotsBonificables = Math.min(Number(watch("cantidad_spots_bonificables")) || 0, totalSpots);
   const precioUnitario = Number(watch("precio_unitario")) || 0;
-  const subtotal = totalSpots * precioUnitario;
+  // ADR-067: el subtotal/IVA/total se calculan sobre lo FACTURABLE (total_spots menos los
+  // bonificables), no sobre el total de spots — mismo criterio que `totalesOC` (selectors.ts).
+  const spotsFacturables = totalSpots - spotsBonificables;
+  const subtotalBonificables = spotsBonificables * precioUnitario;
+  const subtotal = spotsFacturables * precioUnitario;
+  const subtotalBruto = subtotal + subtotalBonificables;
   const iva = subtotal * IVA_RATE;
   const total = subtotal + iva;
   const dias =
@@ -303,6 +322,7 @@ export function OrdenClienteForm({
       fecha_fin_campania: data.fecha_fin_campania,
       duracion_spot: data.duracion_spot,
       total_spots: Number(data.total_spots),
+      cantidad_spots_bonificables: Number(data.cantidad_spots_bonificables) || 0,
       precio_unitario: Number(data.precio_unitario),
       vendedor_principal_id: data.vendedor_principal_id,
       vendedor_secundario_id: data.vendedor_secundario_id || null,
@@ -538,7 +558,7 @@ export function OrdenClienteForm({
                 <div className="fv mono">{dias != null && dias > 0 ? `${dias} días` : "—"}</div>
               </div>
             </div>
-            <div className="r3">
+            <div className="r4">
               <div>
                 <div className="fl">
                   Duración del spot <FieldTag origin="catalogo" />
@@ -561,6 +581,17 @@ export function OrdenClienteForm({
                   {...register("total_spots")}
                 />
                 <div className="fe">{errors.total_spots?.message}</div>
+              </div>
+              <div>
+                <div className="fl">Spots bonificables</div>
+                <input
+                  className="fi"
+                  style={{ fontFamily: "var(--mono)" }}
+                  inputMode="numeric"
+                  disabled={congelado}
+                  {...register("cantidad_spots_bonificables")}
+                />
+                <div className="fe">{errors.cantidad_spots_bonificables?.message}</div>
               </div>
               <div>
                 <div className="fl fl-required">Precio unitario (MXN, por spot)</div>
@@ -597,27 +628,33 @@ export function OrdenClienteForm({
               </div>
             )}
 
-            <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "12px 14px", marginTop: 4 }} className="r3">
+            <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "12px 14px", marginTop: 4 }} className="r5">
               <div>
-                <div className="fl">
-                  Subtotal <FieldTag origin="calculado" />
+                <div className="fl">Subtotal</div>
+                <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {fmtMonto(subtotalBruto)}
                 </div>
+              </div>
+              <div>
+                <div className="fl">Spots bonificables</div>
+                <div className="fv mono" style={{ fontSize: 16, fontWeight: 600, color: "var(--red-text)" }}>
+                  {fmtMonto(subtotalBonificables)}
+                </div>
+              </div>
+              <div>
+                <div className="fl">Spots facturables</div>
                 <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
                   {fmtMonto(subtotal)}
                 </div>
               </div>
               <div>
-                <div className="fl">
-                  IVA ({(IVA_RATE * 100).toFixed(0)}%) <FieldTag origin="calculado" />
-                </div>
+                <div className="fl">IVA ({(IVA_RATE * 100).toFixed(0)}%)</div>
                 <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
                   {fmtMonto(iva)}
                 </div>
               </div>
               <div>
-                <div className="fl">
-                  Total c/IVA <FieldTag origin="calculado" />
-                </div>
+                <div className="fl">Total c/IVA</div>
                 <div className="fv mono" style={{ fontSize: 16, fontWeight: 600, color: "var(--purple-text)" }}>
                   {fmtMonto(total)}
                 </div>
@@ -824,6 +861,10 @@ export function OrdenClienteForm({
             <div className="fl">Días de campaña</div>
             <div className="fv mono">{dias != null && dias > 0 ? `${dias} días` : "—"}</div>
             <div className="fl">Subtotal</div>
+            <div className="fv mono">{fmtMonto(subtotalBruto)}</div>
+            <div className="fl">Spots bonificables</div>
+            <div className="fv mono">{fmtMonto(subtotalBonificables)}</div>
+            <div className="fl">Spots facturables</div>
             <div className="fv mono">{fmtMonto(subtotal)}</div>
             <div className="fl">
               IVA ({(IVA_RATE * 100).toFixed(0)}%)

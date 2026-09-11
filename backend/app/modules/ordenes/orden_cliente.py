@@ -167,6 +167,20 @@ class OrdenCliente(Base):
         # impedía un precio_unitario negativo ni un total en cero/negativo.
         CheckConstraint("precio_unitario >= 0", name="ck_orden_cliente_precio_unitario"),
         CheckConstraint("total_spots > 0", name="ck_orden_cliente_total_spots"),
+        # Extensión aditiva: spots bonificables (ADR-067) — se siguen transmitiendo y
+        # asignando a estaciones igual que cualquier spot (no tocan `total_spots` ni
+        # `OrdenEstacion`); solo dejan de cobrarse al cliente. No pueden ser más que el
+        # total de spots de la orden.
+        CheckConstraint(
+            "cantidad_spots_bonificables >= 0", name="ck_orden_cliente_spots_bonificables"
+        ),
+        CheckConstraint(
+            "cantidad_spots_bonificables <= total_spots",
+            name="ck_orden_cliente_spots_bonificables_no_excede",
+        ),
+        CheckConstraint(
+            "subtotal_spots_bonificables >= 0", name="ck_orden_cliente_subtotal_bonificables"
+        ),
         CheckConstraint("subtotal >= 0", name="ck_orden_cliente_subtotal"),
         CheckConstraint("iva >= 0", name="ck_orden_cliente_iva"),
         CheckConstraint("total >= 0", name="ck_orden_cliente_total"),
@@ -246,7 +260,17 @@ class OrdenCliente(Base):
     duracion_spot: Mapped[str] = mapped_column(Unicode(10))
     precio_unitario: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     total_spots: Mapped[int] = mapped_column()
-    # Calculados (spec): subtotal = total_spots * precio_unitario; iva = subtotal * IVA_RATE;
+    # Extensión aditiva (ADR-067): spots que se transmiten normalmente (siguen contando
+    # en `total_spots` y en la asignación a `OrdenEstacion`) pero no se le cobran al
+    # cliente. `subtotal_spots_bonificables` es CALCULADO
+    # (`cantidad_spots_bonificables * precio_unitario`), igual criterio que `subtotal`
+    # de abajo: nunca lo captura el cliente, lo persiste el servicio.
+    cantidad_spots_bonificables: Mapped[int] = mapped_column(default=0)
+    subtotal_spots_bonificables: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), default=Decimal("0")
+    )
+    # Calculados (spec + ADR-067): spots_facturables = total_spots - cantidad_spots_bonificables;
+    # subtotal = spots_facturables * precio_unitario; iva = subtotal * IVA_RATE;
     # total = subtotal + iva. Persistidos por el servicio, nunca aceptados del cliente.
     subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     iva: Mapped[Decimal] = mapped_column(Numeric(14, 2))
@@ -364,6 +388,8 @@ class OrdenClienteRead(BaseModel):
     duracion_spot: str
     precio_unitario: Decimal
     total_spots: int
+    cantidad_spots_bonificables: int
+    subtotal_spots_bonificables: Decimal
     subtotal: Decimal
     iva: Decimal
     total: Decimal
@@ -388,6 +414,7 @@ class OrdenClienteRead(BaseModel):
     # Montos/porcentajes como STRING para preservar precisión Decimal (ADR-015 E-4).
     @field_serializer(
         "precio_unitario",
+        "subtotal_spots_bonificables",
         "subtotal",
         "iva",
         "total",
@@ -450,6 +477,10 @@ class OrdenClienteCreate(BaseModel):
     duracion_spot: DuracionSpot
     precio_unitario: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     total_spots: int = Field(gt=0)
+    # Extensión aditiva (ADR-067): se valida contra `total_spots` en el servicio, no
+    # aquí — a nivel de schema no se conocen todavía los dos valores juntos si alguno
+    # cambia por separado en la edición.
+    cantidad_spots_bonificables: int = Field(default=0, ge=0)
     # PARÁMETROS SENSIBLES (snapshot, ADR-029): captura inicial libre por Ventas — no es
     # "cambio" (no requiere motivo); editarlos DESPUÉS sí lo es (ver
     # `OrdenClienteComisionesUpdate`, Dirección/Admin únicamente).
@@ -508,6 +539,7 @@ class OrdenClienteUpdate(BaseModel):
     duracion_spot: DuracionSpot | None = None
     precio_unitario: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     total_spots: int | None = Field(default=None, gt=0)
+    cantidad_spots_bonificables: int | None = Field(default=None, ge=0)
     observaciones_predefinidas: str | None = Field(default=None, max_length=1000)
     observaciones_libres: str | None = Field(default=None, max_length=1000)
 
@@ -666,6 +698,33 @@ class OrdenClienteService(
                 )
 
     # ── alta ──────────────────────────────────────────────────────────────────────
+    def _calcular_montos(
+        self, total_spots: int, cantidad_spots_bonificables: int, precio_unitario: Decimal
+    ) -> dict[str, Any]:
+        """Spots bonificables (ADR-067): se transmiten y se asignan a `OrdenEstacion`
+        igual que cualquier spot (no tocan `total_spots`), solo dejan de cobrarse al
+        cliente — `subtotal` se calcula sobre los spots FACTURABLES, no sobre el total."""
+        if cantidad_spots_bonificables > total_spots:
+            raise DomainError(
+                "Los spots bonificables no pueden exceder el total de spots de la orden.",
+                detalles={
+                    "total_spots": total_spots,
+                    "cantidad_spots_bonificables": cantidad_spots_bonificables,
+                },
+            )
+        spots_facturables = total_spots - cantidad_spots_bonificables
+        subtotal_bonificables = (
+            Decimal(cantidad_spots_bonificables) * precio_unitario
+        ).quantize(CENTAVOS)
+        subtotal = (Decimal(spots_facturables) * precio_unitario).quantize(CENTAVOS)
+        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+        return {
+            "subtotal_spots_bonificables": subtotal_bonificables,
+            "subtotal": subtotal,
+            "iva": iva,
+            "total": subtotal + iva,
+        }
+
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         db = self._repo.db
         self._validar_fks_y_relaciones(db, payload)
@@ -677,11 +736,13 @@ class OrdenClienteService(
         payload["total_dias_campania"] = (
             payload["fecha_fin_campania"] - payload["fecha_inicio_campania"]
         ).days + 1
-        subtotal = (Decimal(payload["total_spots"]) * payload["precio_unitario"]).quantize(CENTAVOS)
-        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
-        payload["subtotal"] = subtotal
-        payload["iva"] = iva
-        payload["total"] = subtotal + iva
+        payload.update(
+            self._calcular_montos(
+                payload["total_spots"],
+                payload["cantidad_spots_bonificables"],
+                payload["precio_unitario"],
+            )
+        )
 
         payload["orden_id"] = uuid4()
         payload["created_by"] = resolver_usuario_id(db, usuario.username)
@@ -817,14 +878,19 @@ class OrdenClienteService(
             payload["anio_venta"] = payload["fecha_venta"].year
             payload["mes_venta"] = payload["fecha_venta"].month
 
-        if "total_spots" in payload or "precio_unitario" in payload:
+        if (
+            "total_spots" in payload
+            or "precio_unitario" in payload
+            or "cantidad_spots_bonificables" in payload
+        ):
             total_spots = payload.get("total_spots", obj.total_spots)
             precio_unitario = payload.get("precio_unitario", obj.precio_unitario)
-            subtotal = (Decimal(total_spots) * precio_unitario).quantize(CENTAVOS)
-            iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
-            payload["subtotal"] = subtotal
-            payload["iva"] = iva
-            payload["total"] = subtotal + iva
+            cantidad_spots_bonificables = payload.get(
+                "cantidad_spots_bonificables", obj.cantidad_spots_bonificables
+            )
+            payload.update(
+                self._calcular_montos(total_spots, cantidad_spots_bonificables, precio_unitario)
+            )
 
     # ── comisiones (canal sensible dedicado — Hallazgo 2 del plan) ─────────────────
     def actualizar_comisiones(
