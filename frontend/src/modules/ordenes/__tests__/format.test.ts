@@ -11,6 +11,17 @@ describe("fmtMonto", () => {
     expect(fmtMonto(1234567.891, { sinDecimales: true })).toBe("$1,234,568");
   });
 
+  it("truncar corta a 2 decimales sin redondear (fix: Importe/Total en las tablas principales)", () => {
+    // Sin `truncar`, el default ya redondearía 100.999 -> $101.00; con `truncar`, se corta
+    // en 100.99 sin importar el tercer decimal.
+    expect(fmtMonto(100.999, { truncar: true })).toBe("$100.99");
+    expect(fmtMonto(1234.565, { truncar: true })).toBe("$1,234.56");
+  });
+
+  it("truncar en un valor que ya trae exactamente 2 decimales no lo altera", () => {
+    expect(fmtMonto(1234.56, { truncar: true })).toBe("$1,234.56");
+  });
+
   it("formatea negativos", () => {
     expect(fmtMonto(-1600)).toBe("-$1,600.00");
   });

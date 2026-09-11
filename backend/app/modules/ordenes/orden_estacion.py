@@ -122,6 +122,14 @@ class OrdenEstacion(Base):
         # a diferencia de Incidencia.diferencia_spots/monto_ajuste, aquí no hay caso de
         # ajuste que legitime un valor negativo.
         CheckConstraint("precio_spot >= 0", name="ck_orden_estacion_precio_spot"),
+        # ADR-068: spots que se asignan/transmiten igual que cualquier otro pero no se
+        # cobran a la estación — análogo a `cantidad_spots_bonificables` de OrdenCliente
+        # (ADR-067), pero a nivel de esta OI. No hay CHECK "<= spots asignados": ese total
+        # no es una columna propia (se agrega sobre `OrdenEstacionDia`, tabla hija), así
+        # que esa validación vive en el servicio, no en una constraint de una sola tabla.
+        CheckConstraint(
+            "cantidad_spots_bonificables >= 0", name="ck_orden_estacion_spots_bonificables"
+        ),
         CheckConstraint("importe_estacion >= 0", name="ck_orden_estacion_importe_estacion"),
         CheckConstraint("importe_oir >= 0", name="ck_orden_estacion_importe_oir"),
         CheckConstraint("iva_oir >= 0", name="ck_orden_estacion_iva_oir"),
@@ -215,6 +223,10 @@ class OrdenEstacion(Base):
     # Heredado de OrdenCliente.duracion_spot.
     duracion_spot: Mapped[str] = mapped_column(Unicode(10))
     precio_spot: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # Spots bonificables de esta OI (ADR-067/ADR-068): se transmiten y cuentan para el
+    # balance de spots de la OC igual que cualquier otro, pero no se cobran a la
+    # estación. Reducen `importe_estacion` (ver fórmula abajo), no `spots_asignados`.
+    cantidad_spots_bonificables: Mapped[int] = mapped_column(default=0)
     # Calculado (spec) — agregado sobre OrdenEstacionDia, lo persiste el servicio.
     importe_estacion: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     porcentaje_participacion_oir: Mapped[Decimal] = mapped_column(Numeric(5, 2))
@@ -340,6 +352,7 @@ class OrdenEstacionRead(BaseModel):
     plaza_id: uuid.UUID
     duracion_spot: str
     precio_spot: Decimal
+    cantidad_spots_bonificables: int
     importe_estacion: Decimal
     porcentaje_participacion_oir: Decimal
     importe_oir: Decimal
@@ -436,6 +449,9 @@ class OrdenEstacionCreate(BaseModel):
     orden_id: uuid.UUID
     estacion_id: uuid.UUID
     precio_spot: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    # ADR-068: se valida contra los spots asignados de esta OI en el servicio (esa suma
+    # no se conoce a nivel de schema, depende de `dias`).
+    cantidad_spots_bonificables: int = Field(default=0, ge=0)
     observaciones_estacion: str | None = Field(default=None, max_length=2000)
     dias: list[OrdenEstacionDiaCreate] = Field(min_length=1)
 
@@ -449,6 +465,7 @@ class OrdenEstacionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     precio_spot: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    cantidad_spots_bonificables: int | None = Field(default=None, ge=0)
     observaciones_estacion: str | None = Field(default=None, max_length=2000)
     dias: list[OrdenEstacionDiaCreate] | None = Field(default=None, min_length=1)
 
@@ -615,6 +632,17 @@ class OrdenEstacionService(
                     "nuevos": nuevos,
                 },
             )
+        # ADR-068: los bonificables siguen contando como asignados para el balance de
+        # arriba (spec: se transmiten igual) — solo dejan de cobrarse, más abajo.
+        if data.cantidad_spots_bonificables > nuevos:
+            raise DomainError(
+                "Los spots bonificables no pueden exceder los spots asignados de esta "
+                "orden estación.",
+                detalles={
+                    "spots_asignados": nuevos,
+                    "cantidad_spots_bonificables": data.cantidad_spots_bonificables,
+                },
+            )
 
         # % de participación OIR: CALCULADO (ya no lo captura el formulario, ver plan de
         # la Tanda 5) = (precio_unitario_OC − precio_spot) / precio_unitario_OC × 100.
@@ -624,7 +652,8 @@ class OrdenEstacionService(
                 (oc.precio_unitario - data.precio_spot) / oc.precio_unitario * Decimal(100)
             ).quantize(Decimal("0.1"))
 
-        importe_estacion = (Decimal(nuevos) * data.precio_spot).quantize(CENTAVOS)
+        spots_facturables = nuevos - data.cantidad_spots_bonificables
+        importe_estacion = (Decimal(spots_facturables) * data.precio_spot).quantize(CENTAVOS)
         importe_oir = (importe_estacion * pct_oir / Decimal(100)).quantize(CENTAVOS)
         iva_oir = (importe_oir * IVA_RATE).quantize(CENTAVOS)
         importe_emisora = importe_estacion - importe_oir
@@ -647,6 +676,7 @@ class OrdenEstacionService(
             plaza_id=estacion.plaza_id,
             duracion_spot=oc.duracion_spot,
             precio_spot=data.precio_spot,
+            cantidad_spots_bonificables=data.cantidad_spots_bonificables,
             importe_estacion=importe_estacion,
             porcentaje_participacion_oir=pct_oir,
             importe_oir=importe_oir,
@@ -765,18 +795,35 @@ class OrdenEstacionService(
                 },
             )
 
+        cantidad_spots_bonificables = (
+            data.cantidad_spots_bonificables
+            if "cantidad_spots_bonificables" in campos
+            else obj.cantidad_spots_bonificables
+        )
+        if cantidad_spots_bonificables > nuevos:
+            raise DomainError(
+                "Los spots bonificables no pueden exceder los spots asignados de esta "
+                "orden estación.",
+                detalles={
+                    "spots_asignados": nuevos,
+                    "cantidad_spots_bonificables": cantidad_spots_bonificables,
+                },
+            )
+
         pct_oir = Decimal("0")
         if oc.precio_unitario > 0:
             pct_oir = (
                 (oc.precio_unitario - precio_spot) / oc.precio_unitario * Decimal(100)
             ).quantize(Decimal("0.1"))
-        importe_estacion = (Decimal(nuevos) * precio_spot).quantize(CENTAVOS)
+        spots_facturables = nuevos - cantidad_spots_bonificables
+        importe_estacion = (Decimal(spots_facturables) * precio_spot).quantize(CENTAVOS)
         importe_oir = (importe_estacion * pct_oir / Decimal(100)).quantize(CENTAVOS)
         iva_oir = (importe_oir * IVA_RATE).quantize(CENTAVOS)
         importe_emisora = importe_estacion - importe_oir
         iva_emisora = (importe_emisora * IVA_RATE).quantize(CENTAVOS)
 
         obj.precio_spot = precio_spot
+        obj.cantidad_spots_bonificables = cantidad_spots_bonificables
         obj.importe_estacion = importe_estacion
         obj.porcentaje_participacion_oir = pct_oir
         obj.importe_oir = importe_oir

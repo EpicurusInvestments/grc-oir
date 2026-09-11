@@ -2151,3 +2151,157 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Verificado:** 2 pruebas nuevas — una a nivel adaptador (`_detalle()` con `cantidad`
   y `subtotal` arbitrarios) y una de integración (factura real de 10 spots a $1,000.00 ⇒
   `CANT=10`, `COSTO=1000.00`, `IMPORTE=10000.00`). Suite completa de F2 en verde.
+
+### ADR-067 — Spots Bonificables en `OrdenCliente`: el subtotal facturable ya no es `total_spots × precio_unitario` (F1)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F1, rama `feature/f1-spots-bonificables`).
+- **Contexto:** el negocio necesita registrar, dentro de la misma `OrdenCliente`, un
+  número de spots que se transmiten normalmente (se asignan a `OrdenEstacion` igual que
+  cualquier otro) pero que se **condonan** al cliente — no se cobran. Esto es una
+  extensión ADITIVA sobre la spec BD v2 (no viene en las 33 entidades originales),
+  acordada directamente con el equipo, con dos decisiones explícitas para resolver la
+  ambigüedad de alcance:
+  1. **`total_spots` no cambia de significado.** Los spots bonificables siguen contando
+     dentro de `total_spots` y se asignan/transmiten igual que cualquier spot — solo
+     dejan de cobrarse. El balance de spots de `OrdenEstacion` (`balanceSpotsOC`) sigue
+     validando contra `total_spots`, sin tocar `OrdenEstacion` en absoluto: el cambio
+     queda contenido enteramente en `OrdenCliente`.
+  2. **Las comisiones (Vendedor/Agencia) se calculan sobre lo FACTURABLE, no sobre el
+     bruto.** Como el % de comisión ya se aplica sobre `total` (que ahora es el total
+     facturable), esto no requirió cambio de fórmula — solo se heredó automáticamente al
+     cambiar qué representa `total`.
+- **Decisión:**
+  1. Dos columnas nuevas en `orden_cliente` (entre `total_spots` y `precio_unitario` en
+     pantalla, spec de negocio): `cantidad_spots_bonificables INT NOT NULL DEFAULT 0` y
+     `subtotal_spots_bonificables NUMERIC(14,2) NOT NULL DEFAULT 0` (esta última,
+     CALCULADA — nunca se captura a mano). 3 CHECK nuevos: `cantidad_spots_bonificables
+     >= 0`, `cantidad_spots_bonificables <= total_spots`, `subtotal_spots_bonificables >= 0`.
+  2. Fórmula nueva en el servicio (`OrdenClienteService._calcular_montos`, llamada desde
+     `_pre_create`/`_pre_update` cada vez que cambia `total_spots`, `precio_unitario` o
+     `cantidad_spots_bonificables`):
+     ```
+     spots_facturables            = total_spots − cantidad_spots_bonificables
+     subtotal_spots_bonificables  = cantidad_spots_bonificables × precio_unitario
+     subtotal                     = spots_facturables × precio_unitario   (ANTES: total_spots × precio_unitario)
+     iva                          = subtotal × IVA_RATE
+     total                        = subtotal + iva
+     ```
+     `cantidad_spots_bonificables > total_spots` → `DomainError` (400), tanto al crear
+     como al editar — más claro que dejar reventar el CHECK de la BD con un
+     `IntegrityError` crudo.
+  3. **`OrdenCliente.subtotal` cambia de significado**: de "total_spots × precio" pasa a
+     "spots facturables × precio". Esto se propaga GRATIS a `FacturaCliente` (ADR-064
+     suma `OrdenCliente.subtotal` de las órdenes que cubre la factura) y al archivo plano
+     del timbrador (ADR-066 usa ese mismo `subtotal` para `Detalle.IMPORTE`) — ningún
+     código de F2 necesitó tocarse.
+  4. Frontend (`modules/ordenes`): el selector central `totalesOC()` (`state/selectors.ts`)
+     — usado por la lista, el panel de detalle y el formulario de cierre — se actualizó
+     con la misma fórmula, exponiendo además `spotsFacturables`, `subtotalBonificables` y
+     `subtotalBruto` (= `subtotal + subtotalBonificables`, solo informativo, no se
+     persiste). El formulario de alta/edición (`OrdenClienteForm.tsx`) agrega el campo
+     "Spots bonificables" entre "Total de spots" y "Precio unitario", y expande el
+     bloque "Calculado" (inline y el panel lateral "Cálculos en vivo") de 3 a 5 tarjetas:
+     Subtotal (bruto), Spots bonificables, Spots facturables, IVA, Total c/IVA.
+- **Nota de migración (SQL Server):** usar `server_default='0'` en `op.add_column(...)`
+  hace que SQL Server cree un DEFAULT CONSTRAINT con nombre AUTOGENERADO
+  (`DF__orden_cli__...`), que bloquea un `DROP COLUMN` posterior en `downgrade()` con el
+  error `ALTER TABLE DROP COLUMN ... failed because one or more objects access this
+  column`. Es la primera migración del proyecto que usa `server_default`, así que no
+  había patrón previo que copiar — el `downgrade()` ahora suelta ese constraint por su
+  nombre real (consultado dinámicamente contra `sys.default_constraints`/`sys.columns`
+  vía `op.execute`, rama exclusiva de SQL Server) antes de soltar la columna. Round-trip
+  `upgrade → downgrade → upgrade` verificado contra la RDS real.
+- **Consecuencia:** ningún cambio en `OrdenEstacion`, `Verificacion`/`Incidencia`, ni en
+  el balance de spots — el alcance quedó contenido en `OrdenCliente` como se decidió.
+- **Verificado:** backend — 4 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (cálculo con bonificables sobre el ejemplo de la especificación, rechazo al exceder
+  `total_spots` en alta y en edición, recálculo al editar solo `cantidad_spots_bonificables`
+  sin tocar `total_spots`/`precio_unitario`); suite completa de backend en verde
+  (pytest + ruff). Frontend — 3 pruebas nuevas en `selectors.test.ts` (`totalesOC` con el
+  mismo ejemplo, caso sin bonificables, blindaje ante un dato inválido) y 3 en
+  `OrdenClienteForm.test.tsx` (desglose en vivo, caso sin bonificables, validación de
+  tope); `tsc --noEmit`, `eslint` y la suite `vitest` del módulo `ordenes` en verde
+  (las fallas preexistentes en `auth`/`seguridad`/`apiClient` son ajenas a este cambio,
+  confirmadas antes de tocar el módulo).
+
+### ADR-068 — Spots Bonificables en `OrdenEstacion`: `importe_estacion` ya no es `spots_asignados × precio_spot` (F1)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-10 (F1, rama `feature/f1-spots-bonificables`).
+- **Contexto:** análogo a ADR-067 (Spots Bonificables de `OrdenCliente`), pero a nivel de
+  `OrdenEstacion` (OI): el negocio necesita registrar, por cada OI, spots que se asignan
+  y transmiten con normalidad pero no se cobran a la estación afiliada. Mismo criterio de
+  alcance que ADR-067: los spots asignados (`spots_asignados`, suma de
+  `OrdenEstacionDia.spots_asignados`) **no cambian de significado** — el balance contra
+  `OrdenCliente.total_spots` sigue usando el total asignado sin descontar bonificables;
+  solo cambia qué se COBRA a la estación.
+- **Decisión:**
+  1. Una columna nueva en `orden_estacion`: `cantidad_spots_bonificables INT NOT NULL
+     DEFAULT 0`. A diferencia de `OrdenCliente.subtotal_spots_bonificables`, aquí NO se
+     agrega una columna calculada paralela — `importe_estacion` ya es el único monto
+     derivado que existía, no hace falta duplicarlo.
+  2. No hay CHECK `cantidad_spots_bonificables <= spots_asignados`: ese total no es una
+     columna propia de `orden_estacion` (se agrega sobre `orden_estacion_dia`, tabla
+     hija), así que no es expresable en una constraint de una sola tabla — la validación
+     vive en el servicio (`OrdenEstacionService.create`/`update`), igual que ya pasa con
+     el balance contra `OrdenCliente.total_spots`.
+  3. Fórmula nueva (`create()`/`update()`, mismo bloque de cálculo en ambos):
+     ```
+     spots_facturables   = spots_asignados − cantidad_spots_bonificables   (ANTES: importe_estacion = spots_asignados × precio_spot)
+     importe_estacion    = spots_facturables × precio_spot
+     importe_oir         = importe_estacion × porcentaje_participacion_oir / 100   (sin cambios de fórmula)
+     iva_oir/importe_emisora/iva_emisora/total_oir/total_emisora                    (sin cambios de fórmula, heredan el nuevo importe_estacion)
+     ```
+     `cantidad_spots_bonificables > spots_asignados` → `DomainError` (400), tanto al
+     crear como al editar. `porcentaje_participacion_oir` **no cambia**: solo depende de
+     `precio_spot` vs. `OrdenCliente.precio_unitario`, nunca del importe.
+  4. Frontend: el selector central `oiImporte()` (`state/selectors.ts`) se actualizó con
+     la misma fórmula, agregando `oiSpotsFacturables()` — se propaga gratis a la lista de
+     OI, al detalle de OI y a la tabla de OE hijas en el detalle de OC (ninguno de esos
+     3 lugares necesitó tocarse). El formulario de alta/edición
+     (`OrdenEstacionForm.tsx`, `useState` plano, no react-hook-form) agrega el campo
+     "Spots bonificables" junto a "Tarifa por spot (MXN)" y expande el panel "Cálculos en
+     vivo" con "Spots bonificables"/"Spots facturables" antes de "Importe".
+- **Consecuencia:** ningún cambio en `OrdenCliente`, en el balance de spots de la OC, ni
+  en `FacturaAfiliado`/`FacturaAgencia` (usan `importe_emisora`/`total_emisora` ya
+  calculados, sin fórmula propia que tocar).
+- **Verificado:** backend — 3 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (importe reducido con bonificables, rechazo al exceder spots asignados, recálculo al
+  editar solo `cantidad_spots_bonificables`); suite completa (pytest + ruff) en verde;
+  migración con el mismo patrón de `downgrade()` de ADR-067 (drop del DEFAULT CONSTRAINT
+  autogenerado de SQL Server antes de soltar la columna), round-trip `upgrade →
+  downgrade → upgrade` verificado contra la RDS real. Frontend — 3 pruebas nuevas en
+  `selectors.test.ts` (`oiSpotsFacturables`/`oiImporte` con y sin bonificables, blindaje)
+  y 4 en `OrdenEstacionForm.test.tsx` (cálculo en vivo, validación de tope, payload de
+  alta, precarga al editar); `tsc --noEmit`, `eslint` y la suite `vitest` del módulo
+  `ordenes` en verde (160/160).
+
+### ADR-069 — `Detalle.CANT` del PAC pasa de "spots reales" a "spots facturables" (F2, bug real tras ADR-067)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-11 (F2/F1, rama `feature/f1-spots-bonificables`).
+- **Contexto:** ADR-066 fijó `Detalle.CANT` como el total de spots de las órdenes de la
+  factura (`sum(o.total_spots)`), derivando `Detalle.COSTO` de `subtotal / CANT` para que
+  `IMPORTE = COSTO × CANT` cuadre siempre. En ese momento `OrdenCliente.subtotal` SÍ era
+  `total_spots × precio_unitario`, así que `COSTO` reconstruía `precio_unitario` exacto.
+  ADR-067 (Spots Bonificables) cambió el significado de `subtotal` a
+  `spots_facturables × precio_unitario` (excluye lo bonificado), pero nadie revisó
+  entonces la fórmula de `cantidad` en `_datos_timbrado()` — quedó sumando `total_spots`
+  (con bonificables incluidos). Resultado: con una orden bonificada, `COSTO` salía
+  DILUIDO por debajo de `precio_unitario` (ejemplo real: 100 spots a $1.00, 5
+  bonificables → `subtotal=$95.00`; `COSTO` salía `95.00/100 = $0.95`, no `$1.00`). El
+  usuario lo detectó al revisar el archivo plano generado y confirmó que `CANT` debe
+  llevar los spots FACTURABLES, sin tocar la fórmula de `COSTO`/`IMPORTE` en sí.
+- **Decisión:** en `FacturaClienteService._datos_timbrado()`, `cantidad` pasa de
+  `sum(o.total_spots for o in ordenes)` a
+  `sum(o.total_spots - o.cantidad_spots_bonificables for o in ordenes)`. `adapter_pac_v40.py::_detalle()`
+  **no se toca**: `COSTO = subtotal / cantidad` e `IMPORTE = subtotal` siguen exactamente
+  igual — al cambiar solo lo que alimenta `cantidad`, `COSTO` vuelve a reconstruir
+  `precio_unitario` real (`95.00 / 95 = $1.00`) y `IMPORTE` no cambia (sigue siendo
+  `$95.00`, el subtotal facturable, que ya era correcto desde ADR-067).
+- **Consecuencia:** órdenes SIN bonificables (`cantidad_spots_bonificables = 0`, el caso
+  de toda factura previa a esta rama) no cambian de comportamiento: `total_spots − 0 =
+  total_spots`, igual que antes. Solo afecta facturas que incluyen órdenes con
+  bonificables.
+- **Verificado:** nueva prueba de integración en `test_f2_02_facturacion_escritura.py`
+  (100 spots, 5 bonificables, $1.00/spot ⇒ `CANT=95`, `COSTO=1.00`, `IMPORTE=95.00`,
+  reproduciendo el caso reportado); suite completa de backend (pytest + ruff) en verde,
+  sin afectar la prueba existente sin bonificables (`CANT=10`, `COSTO=1000.00`).

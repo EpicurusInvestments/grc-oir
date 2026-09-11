@@ -9,25 +9,54 @@ import { findAnunciante } from "./catalogosCache";
 import type { Incidencia, OrdenCliente, OrdenEstacion, PeriodoTransmisionRow, VerificacionDerivada, VerificacionDiaRow } from "../types";
 
 export interface TotalesOC {
+  /** = spotsFacturables × precio_unitario. Es el valor que persiste el backend en
+   *  `OrdenCliente.subtotal` (ADR-067: ya no es total_spots × precio_unitario). */
   subtotal: number;
+  /** = cantidad_spots_bonificables × precio_unitario (persiste en `subtotal_spots_bonificables`). */
+  subtotalBonificables: number;
+  /** = subtotal + subtotalBonificables = total_spots × precio_unitario. Solo informativo
+   *  (no se persiste): el desglose "antes de bonificar" que pide la pantalla. */
+  subtotalBruto: number;
+  /** = total_spots − cantidad_spots_bonificables. */
+  spotsFacturables: number;
   iva: number;
   total: number;
 }
 
-/** subtotal = total_spots × precio_unitario; iva = subtotal × IVA_RATE; total = subtotal + iva.
- * SIEMPRE derivado — nunca se persiste ni se captura a mano. */
+/** spotsFacturables = total_spots − cantidad_spots_bonificables; subtotal = spotsFacturables ×
+ * precio_unitario; iva = subtotal × IVA_RATE; total = subtotal + iva (ADR-067: el IVA y el
+ * total se calculan sobre lo FACTURABLE, no sobre el total de spots). SIEMPRE derivado —
+ * nunca se persiste ni se captura a mano. */
 export function totalesOC(oc: OrdenCliente): TotalesOC {
-  const subtotal = (oc.total_spots || 0) * (oc.precio_unitario || 0);
+  const precio = oc.precio_unitario || 0;
+  const bonificables = Math.min(oc.cantidad_spots_bonificables || 0, oc.total_spots || 0);
+  const spotsFacturables = (oc.total_spots || 0) - bonificables;
+  const subtotalBonificables = bonificables * precio;
+  const subtotal = spotsFacturables * precio;
   const iva = subtotal * IVA_RATE;
-  return { subtotal, iva, total: subtotal + iva };
+  return {
+    subtotal,
+    subtotalBonificables,
+    subtotalBruto: subtotal + subtotalBonificables,
+    spotsFacturables,
+    iva,
+    total: subtotal + iva,
+  };
 }
 
 export function oiTotalSpots(oe: OrdenEstacion): number {
   return oe.periodo_transmision.reduce((s, p) => s + (p.spots_diarios || 0), 0);
 }
 
+/** = oiTotalSpots − cantidad_spots_bonificables (ADR-068). Los bonificables siguen
+ * contando como asignados (balance de spots de la OC sin cambios) — solo dejan de
+ * cobrarse a la estación, aquí. */
+export function oiSpotsFacturables(oe: OrdenEstacion): number {
+  return Math.max(oiTotalSpots(oe) - (oe.cantidad_spots_bonificables || 0), 0);
+}
+
 export function oiImporte(oe: OrdenEstacion): number {
-  return oiTotalSpots(oe) * (oe.precio_spot || 0);
+  return oiSpotsFacturables(oe) * (oe.precio_spot || 0);
 }
 
 export function oiPrimeraFecha(oe: OrdenEstacion): string {

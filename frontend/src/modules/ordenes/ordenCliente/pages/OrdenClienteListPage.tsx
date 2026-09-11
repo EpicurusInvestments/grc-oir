@@ -256,7 +256,7 @@ export function OrdenClienteListPage({
                       {fmtRangoFechas(oc.fecha_inicio_campania, oc.fecha_fin_campania)}
                     </td>
                     <td className="td-right td-mono" style={{ fontWeight: 500 }}>
-                      {fmtMonto(total, { sinDecimales: true })}
+                      {fmtMonto(total, { truncar: true })}
                     </td>
                     <td className="td-center td-2">{oeCount}</td>
                     <td className="td-center">

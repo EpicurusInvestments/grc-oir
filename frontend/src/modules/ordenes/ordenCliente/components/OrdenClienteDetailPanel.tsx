@@ -69,7 +69,7 @@ export function OrdenClienteDetailPanel({
   const categoria = oc.categoria_id ? categorias.find((c) => c.id === oc.categoria_id) : null;
 
   const oes = oesDeOC(ordenesEstacion, oc.id);
-  const { total } = totalesOC(oc);
+  const { total, spotsFacturables } = totalesOC(oc);
   const balance = balanceSpotsOC(oc, oes);
 
   const congelado = FROZEN_STATES.includes(oc.estatus_orden);
@@ -123,9 +123,13 @@ export function OrdenClienteDetailPanel({
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 6 }}>
-          <Metric label="Spots" value={String(oc.total_spots)} />
-          <Metric label="Precio unit." value={fmtMonto(oc.precio_unitario)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <Metric label={"Total de\nspots"} value={String(oc.total_spots)} />
+          <Metric label="Spots bonificables" value={String(oc.cantidad_spots_bonificables)} tono="var(--red-text)" />
+          <Metric label="Spots facturables" value={String(spotsFacturables)} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+          <Metric label="Precio unitario" value={fmtMonto(oc.precio_unitario)} />
           <Metric label="Total c/IVA" value={fmtMonto(total)} tono="var(--purple-text)" />
         </div>
 
@@ -345,7 +349,17 @@ function AdjuntoOrdenDescargaLink({ refAdjunto }: { refAdjunto: string }) {
 function Metric({ label, value, tono }: { label: string; value: string; tono?: string }) {
   return (
     <div style={{ background: "var(--surface2)", borderRadius: "var(--r)", padding: "10px 12px" }}>
-      <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 3, letterSpacing: "0.03em", textTransform: "uppercase", fontWeight: 600 }}>
+      <div
+        style={{
+          fontSize: 10,
+          color: "var(--text3)",
+          marginBottom: 3,
+          letterSpacing: "0.03em",
+          textTransform: "uppercase",
+          fontWeight: 600,
+          whiteSpace: "pre-line",
+        }}
+      >
         {label}
       </div>
       <div style={{ fontSize: 17, fontWeight: 600, fontFamily: "var(--mono)", color: tono ?? "var(--text)" }}>{value}</div>

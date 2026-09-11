@@ -370,6 +370,62 @@ def test_editar_oc_recalcula_totales(
     assert editada.total == Decimal("58000.00")
 
 
+# ── Spots bonificables (ADR-067) ──────────────────────────────────────────────
+def test_crear_oc_con_spots_bonificables_calcula_sobre_lo_facturable(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """Ejemplo de la especificación: 25 spots a $1,000.00 c/u, 10 bonificables ->
+    15 facturables. `subtotal`/`iva`/`total` se calculan sobre lo facturable; el
+    bonificado queda aparte en `subtotal_spots_bonificables`."""
+    oc = oc_svc.create(
+        _oc_payload(cat, total_spots=25, cantidad_spots_bonificables=10), VENTAS
+    )
+    assert oc.cantidad_spots_bonificables == 10
+    assert oc.subtotal_spots_bonificables == Decimal("10000.00")
+    assert oc.subtotal == Decimal("15000.00")
+    assert oc.iva == Decimal("2400.00")
+    assert oc.total == Decimal("17400.00")
+    # total_spots NO cambia de significado: sigue siendo lo que se asigna a OE.
+    assert oc.total_spots == 25
+
+
+def test_crear_oc_spots_bonificables_excede_total_400(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """A nivel de schema no se valida (ver comentario en `OrdenClienteCreate`): el
+    rechazo ocurre en `_calcular_montos`, dentro del servicio."""
+    with pytest.raises(DomainError):
+        oc_svc.create(_oc_payload(cat, total_spots=10, cantidad_spots_bonificables=11), VENTAS)
+
+
+def test_crear_oc_spots_bonificables_excede_total_por_edicion_400(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """El CHECK de la BD cubre alta+edición a la vez, pero el servicio valida antes de
+    llegar ahí para dar un error de dominio legible en vez de un IntegrityError crudo."""
+    oc = oc_svc.create(_oc_payload(cat, total_spots=10), VENTAS)
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id, OrdenClienteUpdate(cantidad_spots_bonificables=11), VENTAS
+        )
+
+
+def test_editar_oc_recalcula_solo_al_cambiar_spots_bonificables(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """Editar SOLO `cantidad_spots_bonificables` (sin tocar total_spots/precio_unitario)
+    debe recalcular igual — la condición de disparo incluye este campo por separado."""
+    oc = oc_svc.create(_oc_payload(cat, total_spots=100), VENTAS)
+    editada = oc_svc.update(
+        oc.orden_id, OrdenClienteUpdate(cantidad_spots_bonificables=20), VENTAS
+    )
+    assert editada.subtotal_spots_bonificables == Decimal("20000.00")
+    assert editada.subtotal == Decimal("80000.00")
+    assert editada.iva == Decimal("12800.00")
+    assert editada.total == Decimal("92800.00")
+    assert editada.total_spots == 100
+
+
 def test_editar_oc_con_campania_ya_pasada_no_se_bloquea(
     db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -645,6 +701,48 @@ def test_crear_oe_excede_balance_de_spots_400(
     _dar_vobo_completo(oc_svc, oc.orden_id)
     with pytest.raises(DomainError):
         oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots > 15
+
+
+# ── Spots bonificables de la OE (ADR-068) ─────────────────────────────────────
+def test_crear_oe_con_spots_bonificables_reduce_el_importe(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """20 spots asignados a $800.00, 5 bonificables -> 15 facturables: importe_estacion
+    = 15*800 = 12000.00 (antes hubiera sido 16000.00). Los bonificables SIGUEN contando
+    para el balance de spots de la OC (no se valida aquí; ver test de balance aparte)."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, cantidad_spots_bonificables=5), VENTAS)
+    assert oe.cantidad_spots_bonificables == 5
+    assert oe.importe_estacion == Decimal("12000.00")
+    # % OIR no cambia: solo depende de las tarifas, no del importe.
+    assert oe.porcentaje_participacion_oir == Decimal("20.0")
+    assert oe.importe_oir == Decimal("2400.00")
+
+
+def test_crear_oe_spots_bonificables_excede_asignados_400(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    with pytest.raises(DomainError):
+        # 20 spots asignados, 21 bonificables.
+        oe_svc.create(_oe_payload(cat, oc.orden_id, cantidad_spots_bonificables=21), VENTAS)
+
+
+def test_editar_oe_recalcula_al_cambiar_solo_spots_bonificables(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    _dar_vobo_completo(oc_svc, oc.orden_id)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800, sin bonificar
+    assert oe.importe_estacion == Decimal("16000.00")
+
+    editada = oe_svc.update(
+        oe.orden_estacion_id, OrdenEstacionUpdate(cantidad_spots_bonificables=8), VENTAS
+    )
+    assert editada.cantidad_spots_bonificables == 8
+    assert editada.importe_estacion == Decimal("9600.00")  # (20-8)*800
 
 
 def test_crear_oe_fecha_fuera_de_campania_400(

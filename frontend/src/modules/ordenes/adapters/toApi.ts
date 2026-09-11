@@ -34,6 +34,7 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput, darVobo: boole
     duracion_spot: input.duracion_spot,
     precio_unitario: input.precio_unitario,
     total_spots: input.total_spots,
+    cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     porcentaje_comision_vendedor_principal_snap: input.porcentaje_comision_vendedor_principal_snap,
     porcentaje_comision_vendedor_secundario_snap: input.porcentaje_comision_vendedor_secundario_snap,
     porcentaje_comision_agencia_snap: input.porcentaje_comision_agencia_snap,
@@ -69,6 +70,7 @@ const CAMPOS_ACTUALIZABLES = [
   "duracion_spot",
   "precio_unitario",
   "total_spots",
+  "cantidad_spots_bonificables",
   "observaciones_predefinidas",
   "observaciones_libres",
 ] as const satisfies readonly (keyof OrdenCliente)[];
@@ -96,6 +98,7 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
     orden_id: ocId,
     estacion_id: input.estacion_id,
     precio_spot: input.precio_spot,
+    cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     observaciones_estacion: input.observaciones_estacion || null,
     dias: input.periodo_transmision.map((row) => ({
       fecha_transmision: row.fecha,
@@ -113,6 +116,7 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
 export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
   return {
     precio_spot: input.precio_spot,
+    cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     observaciones_estacion: input.observaciones_estacion || null,
     dias: input.periodo_transmision.map((row) => ({
       fecha_transmision: row.fecha,

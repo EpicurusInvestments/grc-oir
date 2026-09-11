@@ -40,6 +40,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const [ocId, setOcId] = useState<string>(ocIdFijo ?? oe?.orden_id ?? "");
   const [estacionId, setEstacionId] = useState(oe?.estacion_id ?? "");
   const [precioSpot, setPrecioSpot] = useState(oe ? String(oe.precio_spot) : "");
+  const [spotsBonificables, setSpotsBonificables] = useState(oe ? String(oe.cantidad_spots_bonificables) : "0");
   const [observaciones, setObservaciones] = useState(oe?.observaciones_estacion ?? "");
   const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(oe?.periodo_transmision ?? []);
 
@@ -78,7 +79,12 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
     : null;
 
   const precio = Number(precioSpot) || 0;
-  const importe = totalEstaOI * precio;
+  const bonificablesRaw = Number(spotsBonificables) || 0;
+  const bonificablesExcede = bonificablesRaw > totalEstaOI;
+  // ADR-068: los bonificables reducen el Importe, no los spots asignados (esos siguen
+  // contando para el balance de la OC, arriba).
+  const spotsFacturables = Math.max(totalEstaOI - bonificablesRaw, 0);
+  const importe = spotsFacturables * precio;
   const pctOIR = oc && oc.precio_unitario > 0 ? ((oc.precio_unitario - precio) / oc.precio_unitario) * 100 : 0;
 
   const tarifaEstMayorQueCliente = oc != null && precio > 0 && precio > oc.precio_unitario;
@@ -94,6 +100,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
     if (problemas.length > 0) errores.push(`Día ${i + 1}: ${problemas[0]}`);
   });
   if (balance && balance.sobreAsignado) errores.push(`Excede el total de la OC por ${Math.abs(balance.porAsignar)} spots.`);
+  if (bonificablesExcede) errores.push(`Los spots bonificables (${bonificablesRaw}) no pueden exceder los spots asignados de esta OI (${totalEstaOI}).`);
 
   const listo = errores.length === 0;
 
@@ -107,6 +114,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
       estacion_id: estacionId,
       plaza_id: estacion!.plaza_id,
       precio_spot: precio,
+      cantidad_spots_bonificables: bonificablesRaw,
       periodo_transmision: periodo,
       observaciones_estacion: observaciones.trim(),
     };
@@ -177,15 +185,30 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                   </div>
                 )}
 
-                <div className="fl fl-required">Tarifa por spot (MXN)</div>
-                <MoneyInput
-                  style={{ maxWidth: 200 }}
-                  value={precioSpot}
-                  onChange={setPrecioSpot}
-                />
-                {tarifaEstMayorQueCliente && (
-                  <div className="fe">La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.</div>
-                )}
+                <div className="r2">
+                  <div>
+                    <div className="fl fl-required">Tarifa por spot (MXN)</div>
+                    <MoneyInput
+                      style={{ maxWidth: 200 }}
+                      value={precioSpot}
+                      onChange={setPrecioSpot}
+                    />
+                    {tarifaEstMayorQueCliente && (
+                      <div className="fe">La tarifa de la estación no puede ser mayor que la tarifa cliente de la OC.</div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="fl">Spots bonificables del afiliado</div>
+                    <input
+                      className="fi"
+                      style={{ maxWidth: 200, fontFamily: "var(--mono)" }}
+                      inputMode="numeric"
+                      value={spotsBonificables}
+                      onChange={(e) => setSpotsBonificables(e.target.value.replace(/\D/g, ""))}
+                    />
+                    {bonificablesExcede && <div className="fe">No puede exceder los spots asignados de esta OI.</div>}
+                  </div>
+                </div>
 
                 <div className="fl" style={{ marginTop: 10 }}>
                   Observaciones de la estación
@@ -211,6 +234,10 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 <div className="info-panel-title">Cálculos en vivo</div>
                 <div className="fl">Spots en esta OI</div>
                 <div className="fv mono">{totalEstaOI}</div>
+                <div className="fl">Spots bonificables del afiliado</div>
+                <div className="fv mono" style={{ color: "var(--red-text)" }}>{bonificablesRaw}</div>
+                <div className="fl">Spots facturables</div>
+                <div className="fv mono">{spotsFacturables}</div>
                 <div className="fl">Importe</div>
                 <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
                   {fmtMonto(importe)}

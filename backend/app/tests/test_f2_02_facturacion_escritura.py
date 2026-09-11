@@ -142,6 +142,8 @@ def _orden(
     anunciante_id: uuid.UUID | None = None,
     directa: bool = False,
     producto: str | None = None,
+    total_spots: int = 10,
+    cantidad_spots_bonificables: int = 0,
 ) -> uuid.UUID:
     """Los parámetros opcionales existen para las pruebas de facturación múltiple, que
     necesitan órdenes que difieran en importe, periodo, emisora o receptor."""
@@ -166,7 +168,8 @@ def _orden(
             total_dias_campania=28,
             duracion_spot="30s",
             precio_unitario=Decimal("1000.00"),
-            total_spots=10,
+            total_spots=total_spots,
+            cantidad_spots_bonificables=cantidad_spots_bonificables,
             subtotal=subtotal,
             iva=iva,
             total=(subtotal + iva).quantize(Decimal("0.01")),
@@ -701,6 +704,43 @@ def test_el_archivo_plano_lleva_los_spots_reales_no_uno_fijo(
     assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT: spots reales
     assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = 10000.00 / 10
     assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = subtotal
+
+
+def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Bug real corregido (ADR-069): con Spots Bonificables (ADR-067), `subtotal` ya
+    representa solo lo FACTURABLE, pero `Detalle.CANT` seguía trayendo el total de spots
+    (con bonificables incluidos) — `Detalle.COSTO` salía diluido por debajo del
+    `precio_unitario` real. 100 spots a $1.00, 5 bonificables -> 95 facturables ($95.00)."""
+    orden_id = _orden(
+        db,
+        cat,
+        "orden_cerrada",
+        "OC-BONIF",
+        subtotal=Decimal("95.00"),
+        total_spots=100,
+        cantidad_spots_bonificables=5,
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "F-9600"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    factura_id = r.json()["factura_id"]
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    lineas = texto.split("\r\n")
+    linea_detalle = lineas[lineas.index("================ Detalle") + 2]
+
+    assert linea_detalle[49:59].strip() == "95"  # Detalle.CANT: spots FACTURABLES, no 100
+    assert linea_detalle[74:88].strip() == "1.00"  # Detalle.COSTO reconstruye precio_unitario
+    assert linea_detalle[88:114].strip() == "95.00"  # Detalle.IMPORTE = subtotal, sin cambios
 
 
 # ── Serie derivada del número de factura (ADR-060 bis) ────────────────────────

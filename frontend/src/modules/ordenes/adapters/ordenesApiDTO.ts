@@ -31,6 +31,12 @@ export interface OrdenClienteApiDTO {
   duracion_spot: string;
   precio_unitario: string;
   total_spots: number;
+  /** ADR-067. `subtotal_spots_bonificables` viaja aquí por paridad con el schema del
+   *  backend, pero el front no la consume: recalcula el desglose completo en
+   *  `totalesOC` (selectors.ts) a partir de `cantidad_spots_bonificables`, igual que ya
+   *  hace con `subtotal`/`iva`/`total`. */
+  cantidad_spots_bonificables: number;
+  subtotal_spots_bonificables: string;
   subtotal: string;
   iva: string;
   total: string;
@@ -77,6 +83,11 @@ export interface OrdenEstacionApiDTO {
   plaza_id: string;
   duracion_spot: string;
   precio_spot: string;
+  /** ADR-068. El front SÍ la consume (a diferencia de `subtotal_spots_bonificables` de
+   *  OrdenCliente): `oiImporte()` (selectors.ts) recalcula el importe a partir de esta
+   *  columna, igual que ya hace con `precio_spot` — `importe_estacion` de este DTO no se
+   *  usa (mismo criterio que `subtotal`/`iva`/`total` de `OrdenClienteApiDTO`). */
+  cantidad_spots_bonificables: number;
   importe_estacion: string;
   porcentaje_participacion_oir: string;
   importe_oir: string;

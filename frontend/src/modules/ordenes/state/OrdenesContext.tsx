@@ -103,9 +103,13 @@ function reducer(state: OrdenesState, action: Action): OrdenesState {
       const existe = state.ordenesEstacion.some((o) => o.id === action.oe.id);
       return {
         ...state,
+        // Nueva al frente (igual que REEMPLAZAR_OC arriba): `created_at` se trunca a solo
+        // fecha en `fromApi.ts` (sin hora), así que varias OE creadas el mismo día EMPATAN
+        // en el sort por `created_at` de `OrdenEstacionListPage` — sin esto, la recién
+        // creada quedaba al final del empate en vez de al principio de la tabla.
         ordenesEstacion: existe
           ? state.ordenesEstacion.map((o) => (o.id === action.oe.id ? action.oe : o))
-          : [...state.ordenesEstacion, action.oe],
+          : [action.oe, ...state.ordenesEstacion],
       };
     }
 

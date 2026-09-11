@@ -61,4 +61,24 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     expect(within(filas[0]).getByText("2026-06-15")).toBeInTheDocument();
     expect(within(filas[1]).getByText("OE-2026-0041A")).toBeInTheDocument();
   });
+
+  it("fix: con dos OI del MISMO día (empate en `created_at`, sin hora), la que va primero en el arreglo queda primero en la tabla", () => {
+    // `created_at` se trunca a solo fecha (sin hora) al leer del backend, así que dos OI
+    // dadas de alta el mismo día EMPATAN en el sort — el orden entre ellas lo decide el
+    // orden ya existente en `state.ordenesEstacion` (sort estable). Por eso el reducer
+    // (`REEMPLAZAR_OE`, OrdenesContext.tsx) agrega las OE nuevas AL FRENTE del arreglo:
+    // así, al desempatar, la recién creada queda primero.
+    const oc = makeOC({ id: "oc-1" });
+    const recienCreada = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0060A", orden_id: oc.id, created_at: "2026-09-11" });
+    const yaExistia = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0059A", orden_id: oc.id, created_at: "2026-09-11" });
+    const utils = render(
+      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [recienCreada, yaExistia], incidencias: [], historialComisiones: [] }}>
+        <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+      </OrdenesProvider>,
+    );
+    const tabla = utils.container.querySelector("table") as HTMLTableElement;
+    const filas = within(tabla).getAllByRole("row").slice(1);
+    expect(within(filas[0]).getByText("OE-2026-0060A")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OE-2026-0059A")).toBeInTheDocument();
+  });
 });
