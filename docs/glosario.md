@@ -72,10 +72,29 @@
   órdenes y su periodo abarca de la fecha de inicio más temprana a la de fin más tardía.
 - **FacturaAfiliado / FacturaAgencia** — Facturas RECIBIDAS (captura o carga). La del
   afiliado puede distribuir su costo entre varias OE (FacturaAfiliadoOrden, N:M).
+- **CobranzaFactura** (F3) — Seguimiento de cobro de una FacturaCliente ya timbrada
+  (1:1, se crea sola al timbrar — no tiene alta manual). `estatus_cobro` almacenado
+  (pendiente/cobro_parcial/cobrada) se recalcula solo al crear o borrar un PagoCliente;
+  `importe_cobrado`/`importe_pendiente_cobro` son SUMA en vivo, nunca columnas. Al llegar
+  a `cobrada` dispara la cascada: FacturaCliente → `cobrada`, y todas sus OrdenCliente →
+  `cobrada` (ADR-072).
+- **PagoCliente** (F3) — Un abono de un cliente contra una CobranzaFactura, capturado por
+  CxC. Puede haber varios por factura (parcialidades).
+- **Vencida** (F3) — Badge derivado, NO un valor almacenado: `fecha_estimada_cobro` ya
+  pasó y la factura no está `cobrada`. Mismo patrón que Vigente/Expirada de TarifaPlaza
+  (F0-02).
 - **Requisición** — Solicitud de pago (pago_afiliado, pago_agencia, comision_vendedor,
-  comision_agencia) que requiere autorización e incluye referencia a la OC de SAP.
+  comision_agencia) capturada por CxP, con máquina de estados propia
+  (pendiente → autorizada → pagada, rama a cancelada) e incluye referencia a la OC de
+  SAP. `pendiente → autorizada` exige Dirección o Admin (canal dedicado, ADR-046) — CxP
+  no se autoriza a sí misma.
 - **OC de SAP** — Orden de compra en SAP del grupo; se captura como referencia.
-- **Conciliación bancaria** — Cruce de MovimientoBancario contra pagos esperados.
+- **MovimientoBancario** (F3) — Cargo o abono capturado manualmente por **Tesorería**
+  (primer módulo donde Tesorería pasa de solo-lectura a captura, ADR-073). Se rechaza
+  como duplicado (409) si coincide fecha+monto+referencia con uno existente.
+- **Conciliación bancaria** — En esta versión, SOLO manual: el botón "Conciliar" pasa
+  `MovimientoBancario.conciliado` de `false` a `true`, sin matching automático contra
+  CobranzaFactura/PagoCliente.
 - **NOI** — Formato de nómina cuyo archivo mensual alimenta CostoAdicional (tipo nomina).
 - **Overhead** — Costos indirectos capturados como CostoAdicional (tipo overhead).
 - **PeriodoResultados** — Consolidado mensual de ingresos y costos (Estado de Resultados

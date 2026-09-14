@@ -2306,6 +2306,175 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   reproduciendo el caso reportado); suite completa de backend (pytest + ruff) en verde,
   sin afectar la prueba existente sin bonificables (`CANT=10`, `COSTO=1000.00`).
 
+### ADR-071 — `app/shared/adjuntos_router.py` es la única excepción a `from __future__ import annotations` (F3)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, previo a la Tanda 1 — refactor de adjuntos).
+- **Contexto:** F1 (`ordenes/adjuntos.py`) y F2 (`facturacion/adjuntos.py`) tenían dos copias
+  casi idénticas del mismo router de subida/descarga, con una nota explícita en la segunda
+  diciendo que extraer una factory con solo 2 consumidores era prematura ("si F3 necesita
+  el mismo patrón, ahí sí valdrá la pena — tres consumidores identificados"). F3 llegó a
+  ser ese tercer consumidor, así que se extrajo `build_adjuntos_router()` a `app/shared/`.
+  Cada módulo pasa su PROPIO enum de tipos de adjunto (`TipoAdjuntoOrden`,
+  `TipoAdjuntoFacturacion`, y el de F3) para que el endpoint de subida siga validando
+  `tipo` contra ESE enum — FastAPI necesita ver el objeto `Enum` real en la anotación del
+  parámetro para generar el `enum` correcto en OpenAPI y el 422 automático ante un valor
+  inválido, en vez de degradarlo a un `string` libre.
+- **El gotcha real — PEP 563 (`from __future__ import annotations`) rompe esto en
+  silencio:** con ese import, TODAS las anotaciones del módulo se guardan como texto en
+  vez de evaluarse al definir la función. FastAPI las resuelve con
+  `typing.get_type_hints()`, que busca los nombres en `función.__globals__` — los
+  globals del MÓDULO, no en el closure de la función que las envuelve. Como el enum
+  concreto (`tipos`) es un parámetro de `build_adjuntos_router()` — una variable LOCAL
+  del closure, no un global del módulo — `get_type_hints()` no la encontraría y
+  lanzaría `NameError: name 'tipos' is not defined` al registrar la ruta. El resto del
+  proyecto usa `from __future__ import annotations` en todos los módulos (convención
+  establecida desde F0); este archivo es la única excepción, y tiene que serlo para que
+  el enum dinámico por módulo funcione.
+- **Decisión:** `app/shared/adjuntos_router.py` NO lleva `from __future__ import
+  annotations`. Python 3.12 no lo necesita para la sintaxis `X | None` de todos modos, así
+  que no se pierde nada más que la convención de estilo en este único archivo. Se
+  documenta en el docstring del propio módulo (para quien lo abra) y aquí (para que sea
+  **buscable** sin tener que abrir ese archivo específico primero) — un linter o
+  formateador automático que "corrija" esa omisión en el futuro rompería el dropdown de
+  `tipo` en OpenAPI de forma silenciosa, sin que ningún test lo detecte a simple vista si
+  no se sabe qué buscar.
+- **Verificado:** se generó el OpenAPI completo de la app (105 endpoints) sin errores tras
+  la extracción, confirmando que los tres enums dinámicos (`TipoAdjuntoOrden`,
+  `TipoAdjuntoFacturacion`) siguen resolviéndose correctamente. Las 27 pruebas existentes
+  de F1 pasan sin tocarlas, y se agregó `test_facturacion_adjuntos.py` (7 pruebas, F2 no
+  tenía cobertura propia) — incluida una que fija expresamente la diferencia de
+  comportamiento entre F1 (limpia el prefijo UUID del nombre de descarga) y F2 (lo
+  conserva), para que una regresión futura sobre la factory no pase inadvertida.
+- **Alcance:** aplica solo a este archivo. Cualquier otro consumidor futuro de
+  `build_adjuntos_router()` (F3 y en adelante) sigue usando
+  `from __future__ import annotations` con normalidad — solo la factory misma necesita
+  la excepción, porque es la única que construye el enum dinámico dentro de un closure.
+
+### ADR-072 — El handoff F2↔F3: creación de `CobranzaFactura`, cascada completa de cobro y su guardarraíl sin reversa
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1).
+- **Contexto:** F2 dejó dos anzuelos deliberados esperando a F3: `EstadoFacturacion.COBRADA`
+  en el enum de `FacturaCliente` (comentario *"F3 hará avanzar"*) y `EstatusOrden.COBRADA`
+  en `OrdenCliente`, tratado como terminal desde `marcar_facturada`/`revertir_facturacion`
+  (*"responsabilidad de F3"*). Ninguno de los dos tenía, hasta esta tanda, una transición
+  real que los alcanzara — el equipo lo confirmó explícitamente al aprobar el plan (E.1):
+  construir la cascada completa, no solo el punto de creación.
+- **Decisión — tres eventos, mismo mecanismo de handoff ya usado en F1↔F2** (método
+  acotado en el dueño del agregado, invocado con la MISMA sesión, sin `commit` propio):
+  1. **Creación**: `FacturaClienteService.timbrar()` invoca
+     `CobranzaFacturaService.crear_para_factura()` en el mismo punto donde ya invoca
+     `OrdenClienteService.marcar_facturada()`. Idempotente (reintentar el timbrado no
+     duplica la `CobranzaFactura`).
+  2. **Cascada de cobro completo**: `PagoClienteService.crear/eliminar` recalculan
+     `CobranzaFactura.estatus_cobro` (`recalcular_tras_pago`); cuando el resultado es
+     `cobrada`, ese mismo método invoca `FacturaClienteService.marcar_cobrada()`, que a su
+     vez invoca `OrdenClienteService.marcar_cobrada()` para TODAS las órdenes de la
+     factura. Los tres niveles cambian en la transacción que originó el pago que completó
+     el cobro — no hay una cola ni un job aparte.
+  3. **Cancelación**: `FacturaClienteService.cancelar()` invoca
+     `CobranzaFacturaService.eliminar_o_rechazar()` ANTES de tocar el estado de la
+     factura — si `importe_cobrado > 0`, rechaza con 400 (mismo criterio que la excepción
+     de "OC ya cobrada" de ADR-047); si es 0, borra la `CobranzaFactura` y la cancelación
+     continúa con normalidad.
+- **`TRANSICIONES` de `FacturaCliente` gana `TIMBRADA → COBRADA`, no solo
+  `ENTREGADA → COBRADA`:** el cobro completo puede llegar ANTES de que alguien marque la
+  factura como entregada en el sistema (son procesos de negocio independientes — cobranza
+  no debería bloquearse esperando un clic administrativo de entrega). Antes de esta tanda
+  solo existía la segunda, insuficiente para cubrir ese caso real.
+- **Hallazgo durante la implementación — el ancla de `fecha_estimada_cobro` no existe
+  todavía cuando se crea la `CobranzaFactura`:** la spec define
+  `fecha_estimada_cobro = FacturaCliente.fecha_entrega_factura + dias_credito`, pero
+  `fecha_entrega_factura` es NULLABLE y se llena recién al ENTREGAR — un evento
+  POSTERIOR al TIMBRADO, que es cuando se crea la `CobranzaFactura`. Se resolvió con un
+  ancla provisional: `fecha_timbrado` (que sí existe en ese momento) al crear, y un
+  recálculo (`refrescar_fecha_estimada`) invocado desde `FacturaClienteService.entregar()`
+  en cuanto el ancla real está disponible — mismo mecanismo de handoff, tercer punto de
+  enganche. Sin esto, la estimación de cobranza habría quedado congelada con una fecha
+  potencialmente muy alejada de la real si pasan días entre timbrar y entregar.
+- **El guardarraíl "no se puede des-cobrar"**: `PagoClienteService.eliminar` calcula qué
+  pasaría con `importe_cobrado` SIN el pago que se intenta borrar; si eso dejaría la
+  `CobranzaFactura` por debajo de `total_factura` estando actualmente `cobrada`, rechaza
+  con 409 — extensión directa del principio de ADR-047 (deshacer un cobro real exige una
+  nota de crédito que el sistema no maneja) a un nivel que ADR-047 no cubría: no solo
+  cancelar la factura, sino corregir un pago que ya completó la cascada. El guardarraíl es
+  preciso, no un candado ciego: borrar un pago EXTRA que deja el resto todavía cubriendo
+  el total sí se permite (verificado con prueba propia).
+- **Verificado:** 14 pruebas en `test_f3_02_cobranza_escritura.py`, incluidas las dos que
+  el equipo pidió explícitamente — timbrar crea la `CobranzaFactura`, y cancelar con pagos
+  recibidos se rechaza — más la cascada completa hasta `OrdenCliente.estatus_orden =
+  cobrada`, el recálculo de `fecha_estimada_cobro` al entregar, y el guardarraíl en sus
+  dos sentidos (bloquea el pago que rompería el cobro completo; permite el que no lo hace).
+
+### ADR-073 — Tesorería captura por primera vez: mismo canal dedicado del ADR-046, no una tercera clave RBAC
+
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1). Decisión de negocio del equipo (E.2).
+- **Contexto:** la ficha de F3 pide que **Requisicion** (CxP) y **MovimientoBancario**
+  (Tesorería) compartan la clave de módulo `pagos` — son los dos nombres que el mapa de
+  módulos del `CLAUDE.md` §4 ya predefine para F3, y el equipo pidió explícitamente
+  conservarlos (no desviarse a una tercera clave sin razón de peso). El problema: `_nivel()`
+  resuelve por MÓDULO, no por entidad — si Tesorería tuviera `pagos:editar` para poder
+  capturar `MovimientoBancario`, automáticamente podría capturar/autorizar `Requisicion`
+  también, que la ficha reserva para CxP/Dirección.
+- **Decisión:** el mismo canal dedicado que ya resolvió la autorización de Dirección sobre
+  `Requisicion`/`FacturaAfiliado`/`FacturaAgencia` (ADR-046), aplicado por primera vez a un
+  área que CAPTURA en vez de autorizar: los endpoints de `MovimientoBancario` (crear,
+  conciliar) piden `pagos:leer` en el router —el nivel que Tesorería SÍ tiene— y el
+  servicio verifica `área in (TESORERIA, ADMIN)` antes de escribir. `Requisicion` sigue
+  con `pagos:editar` normal para CxP. Tesorería se queda en `Acceso.READ` en la matriz de
+  `pagos` (`_LECTURA_PAGOS`), igual que las demás áreas que no capturan ahí.
+- **Consecuencia:** primera vez en el proyecto que el canal dedicado del ADR-046 se usa
+  para una CAPTURA ordinaria y no para una autorización jerárquica — confirma que el
+  patrón generaliza: "cuando una acción tiene un área habilitada distinta a la del módulo,
+  va en su propio endpoint con el permiso de router al nivel del área MENOS privilegiada
+  que debe poder ejecutarla, y la regla real en el servicio" aplica igual de bien a
+  "Tesorería puede capturar esto, CxP no" que a "Dirección puede autorizar esto, CxP no".
+- **Verificado:** pruebas paramétricas por área en `test_f3_03_requisiciones_pagos.py` —
+  CxP recibe 403 al intentar crear o conciliar un movimiento bancario; Tesorería puede
+  ambas cosas; las demás áreas (incluida CxP) sí pueden LEER movimientos bancarios.
+
+### ADR-074 — Frontend de F3: deep-link F2→F3 y "amplía y filtra en el cliente" ante huecos de búsqueda del backend
+- **Estado:** aceptada · **Fecha:** 2026-09-09 (F3).
+- **Contexto:** al construir el frontend de F3 aparecieron dos huecos que el plan
+  aprobado no había anticipado, ambos del lado de lectura (ningún cambio de backend):
+  1. El botón "Pasa a CxC (Fase 3)" de `FacturasClientePage` (F2) quedó como
+     placeholder deshabilitado desde que se escribió, previendo que F3 algún día
+     existiera. Con F3 ya implementado, dejarlo deshabilitado sería mentirle a quien
+     opera: la `CobranzaFactura` YA EXISTE desde que la factura se timbra (ADR-068),
+     no hace falta esperar a "entregada".
+  2. `CobranzaFacturaRepository._apply_filters` (backend) solo filtra por
+     `factura_id`/`anunciante_id`/`estatus_cobro` — no indexa texto libre (`q`) ni
+     conoce `vencida` (es un badge derivado, no una columna). `RequisicionRepository`
+     tampoco puede filtrar por "cualquiera de estos dos tipos" a la vez (una sola
+     columna `tipo_requisicion`, no un `IN`). El mockup aprobado, en cambio, sí pide
+     buscar por texto, una vista "Vencidas" y un pill "Comisiones" que agrupa
+     `comision_vendedor`+`comision_agencia`.
+- **Decisión:**
+  1. El botón de F2 pasa a ser un link real: navega a `/cobranza?factura_id=...`.
+     `CobranzaFacturasPage` lee ese query param con `useSearchParams` y resuelve la
+     `CobranzaFactura` correspondiente vía `cobranzaFacturaApi.list({ factura_id })`
+     (el backend SÍ filtra por `factura_id`), preseleccionándola sin importar en qué
+     página/filtro estuviera el usuario. El botón se habilita desde `timbrada` (antes
+     solo aparecía, deshabilitado, en `entregada`).
+  2. Para búsqueda, "Vencidas" y "Comisiones": en vez de pedirle al backend un filtro
+     que no tiene, la pantalla trae un lote más grande (tope de 100, el mismo límite
+     ya usado por los combos de F2/F3) y filtra en el cliente. Es una desviación
+     puntual del patrón normal (filtro+paginación 100% del backend) que **no** se
+     generaliza: en cuanto se activa `q` o el pill que lo requiere, la paginación del
+     backend se apaga (`page: 1, size: 100`) y el contador dice cuántas de esas 100
+     coinciden, no el total real. Documentado en el docstring de cada pantalla
+     (`CobranzaFacturasPage`, `RequisicionesPage`).
+- **Consecuencias:** ninguna migración ni cambio de servicio — es puramente cliente.
+  Si el catálogo de cobranzas o requisiciones creciera mucho más allá de un puñado de
+  cientos de filas, el tope de 100 dejaría de ser representativo y esos 3 casos
+  (`q`, "Vencidas", "Comisiones") pedirían un filtro real del lado del backend —
+  documentado como limitación conocida en el propio código, no oculto.
+- **Alcance relacionado:** el mismo criterio de "traer un lote y resolver en el
+  cliente" se usa para el historial "Pagos recibidos" (`historialPagosCliente` en
+  `cobranza/api.ts`): el backend no tiene un `GET` de pagos sin acotar a una
+  `CobranzaFactura` (el endpoint real es `/facturas/{cobranza_id}/pagos`), así que la
+  vista agrega trayendo las cobranzas con algo cobrado y pidiendo sus pagos en
+  paralelo — mismo tope de 100, misma limitación documentada.
+
 ### ADR-070 — Combo "Folio de la Orden Interna" en el alta de FacturaAfiliado: precarga editable + auto-asignación + PDF/XML (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-13 (F2, rama `fix/facturacion-correcciones-f2`).

@@ -35,6 +35,11 @@ from app.modules.catalogos import (  # noqa: F401
     tarifa,
     vendedor,
 )
+from app.modules.cobranza import (  # noqa: F401  (F3 — Cobranza y Pagos)
+    cobranza_factura,
+    movimiento_bancario,
+    requisicion,
+)
 from app.modules.facturacion import (  # noqa: F401  (F2 — Facturación)
     costo_adicional,
     factura_afiliado,

@@ -118,6 +118,35 @@ _LECTURA_COSTOS = {
     Area.NOMINAS: Acceso.READ,
 }
 
+# F3 — CobranzaFactura/PagoCliente: captura CxC, el resto lee (ficha del módulo, matriz
+# confirmada). Sin ajuste especial: a diferencia de `pagos`, aquí solo hay un área que
+# escribe.
+_LECTURA_COBRANZA = {
+    Area.VENTAS: Acceso.READ,
+    Area.FACTURACION: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXP: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+    Area.NOMINAS: Acceso.READ,
+}
+
+# F3 — Requisicion/MovimientoBancario: DOS áreas capturan DENTRO de la misma clave de
+# módulo, cada una SOLO su entidad (CxP → Requisicion, Tesorería → MovimientoBancario) —
+# es la primera vez que Tesorería pasa de solo-lectura a escritura en el proyecto.
+# `_nivel()` resuelve por MÓDULO, no por entidad: si Tesorería tuviera WRITE aquí, también
+# podría escribir Requisicion, que la ficha reserva para CxP. Se resuelve IGUAL que la
+# autorización de Dirección en `Requisicion.autorizar` (ADR-046, mismo canal): Tesorería
+# se queda en READ en esta matriz, y los endpoints de `MovimientoBancario` piden
+# `pagos:leer` en el router + `área in (TESORERIA, ADMIN)` verificado dentro del servicio.
+_LECTURA_PAGOS = {
+    Area.VENTAS: Acceso.READ,
+    Area.FACTURACION: Acceso.READ,
+    Area.TESORERIA: Acceso.READ,
+    Area.CXC: Acceso.READ,
+    Area.DIRECCION: Acceso.READ,
+    Area.NOMINAS: Acceso.READ,
+}
+
 RBAC: dict[str, dict[Area, Acceso]] = {
     "catalogos": _LECTURA_CATALOGOS,
     "ordenes": {Area.VENTAS: Acceso.WRITE, **_LECTURA_ORDENES},
@@ -125,6 +154,12 @@ RBAC: dict[str, dict[Area, Acceso]] = {
     "facturacion": {Area.FACTURACION: Acceso.WRITE, **_LECTURA_FACTURACION},
     # F2 — FacturaAfiliado / FacturaAgencia / CostoAdicional.
     "costos": {Area.CXP: Acceso.WRITE, **_LECTURA_COSTOS},
+    # F3 — CobranzaFactura / PagoCliente.
+    "cobranza": {Area.CXC: Acceso.WRITE, **_LECTURA_COBRANZA},
+    # F3 — Requisicion (CxP escribe) / MovimientoBancario (Tesorería escribe, canal
+    # dedicado ADR-046 — ver `_LECTURA_PAGOS` arriba). Admin no se lista: siempre WRITE
+    # vía `_nivel()` (ADR-040).
+    "pagos": {Area.CXP: Acceso.WRITE, **_LECTURA_PAGOS},
     # F5-00: la gestión de usuarios es exclusiva de Admin, INCLUSO en lectura. El padrón
     # de usuarios (quién existe, con qué área) no es un catálogo consultable por el resto
     # de las áreas. El diccionario va VACÍO a propósito: no hay ningún área con acceso

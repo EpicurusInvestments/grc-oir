@@ -534,6 +534,16 @@ body {
   border-color: #2c2c2a;
   color: #fff;
 }
+.btn-blue {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.btn-blue:hover {
+  background: #0c447c;
+  border-color: #0c447c;
+  color: #fff;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Panel de resumen para forms full-screen (patrón "captura + panel de resumen" de la
@@ -700,6 +710,20 @@ body {
 }
 .sec:first-child {
   margin-top: 0;
+}
+/* Acción en línea dentro de un título de sección (p.ej. "+ Registrar pago" junto a
+ * "Pagos recibidos (3)", F3). Sin mayúsculas forzadas ni tracking: es texto de acción,
+ * no un título. */
+.sec-action {
+  font-size: 11px;
+  color: var(--phase);
+  cursor: pointer;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.sec-action:hover {
+  text-decoration: underline;
 }
 
 /* Campos de formulario / lectura */
@@ -1546,6 +1570,13 @@ body {
   --phase-border: var(--teal-border);
 }
 
+.phase-f3 {
+  --phase: var(--amber);
+  --phase-bg: var(--amber-bg);
+  --phase-text: var(--amber-text);
+  --phase-border: var(--amber-border);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * Timeline (F1 — ciclo de vida de OrdenCliente). Portado de la pantalla aprobada
  * `Fase_1_-_Ordenes.html`: "completado" siempre teal y "vigente" siempre morado,
@@ -1697,6 +1728,72 @@ body {
 .heredado-val {
   font-size: 12px;
   color: var(--text);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Franja de KPIs bajo el `.cat-header` (F3 — pantalla aprobada `Fase_3_-_Cobranza.html`):
+ * un vistazo del estado financiero de la sección antes de tocar la lista. Genérica a
+ * propósito — cualquier módulo con métricas de resumen la puede reutilizar (F4 reportería,
+ * previsiblemente).
+ * ───────────────────────────────────────────────────────────────────────────── */
+.kpi-strip {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 22px;
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.kpi-box {
+  flex: 1;
+  background: var(--surface2);
+  border-radius: var(--r);
+  padding: 10px 13px;
+  border-left: 3px solid var(--border-med);
+}
+.kpi-box.warn {
+  border-left-color: var(--amber-border);
+  background: #fdf8eb;
+}
+.kpi-box.danger {
+  border-left-color: #f5c2c2;
+  background: #fdf5f5;
+}
+.kpi-box.success {
+  border-left-color: #a8d585;
+  background: #f4f9eb;
+}
+.kpi-lbl {
+  font-size: 10px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.kpi-val {
+  font-size: 18px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+.kpi-sub {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+}
+
+/* Barra de avance de cobro (F3): porcentaje de `importe_cobrado` sobre el total. */
+.progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface3);
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--teal-border);
+  transition: width 0.3s;
 }
 
 /* Tarjeta de sección de un formulario largo (alta de factura). El prototipo la escribe

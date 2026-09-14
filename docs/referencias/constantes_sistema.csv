@@ -1,0 +1,34 @@
+grupo,clave,descripcion,valor,activo
+TipoComprobante,I,"Ingreso · facturas, notas de cargo",,true
+TipoComprobante,E,Egreso · notas de crédito,,true
+TipoComprobante,P,Pago · complementos de pago,,true
+TipoComprobante,33,Factura tradicional (legacy del timbrador externo),33,true
+Serie,D,Serie D — Radio Publicidad XHMéxico (División OIR),D,true
+Serie,A,Serie A — Grupo Radio Centro Servicios,A,true
+RegimenFiscal,601,General de Ley Personas Morales,,true
+RegimenFiscal,603,Personas Morales con Fines no Lucrativos,,false
+RegimenFiscal,612,Personas Físicas con Actividades Empresariales y Profesionales,,false
+RegimenFiscal,626,Régimen Simplificado de Confianza,,false
+ClaveProdServ,82101601,Spots o servicios de transmisión publicitaria,,true
+ClaveProdServ,82101501,Servicios de publicidad por radio,,false
+ClaveProdServ,82101599,Otros servicios de publicidad,,false
+ClaveProdServ,80141600,Servicios de mercadeo / patrocinios,,false
+ClaveUnidad,E48,Unidad de servicio,,true
+ClaveUnidad,ACT,Actividad,,false
+ClaveUnidad,H87,Pieza,,false
+UsoCFDI,G03,Gastos en general,,true
+UsoCFDI,G01,Adquisición de mercancías,,false
+UsoCFDI,P01,Por definir,,false
+UsoCFDI,S01,Sin efectos fiscales,,false
+UsoCFDI,CP01,Pagos,,false
+FormaPago,99,Por definir,,true
+FormaPago,01,Efectivo,,false
+FormaPago,02,Cheque nominativo,,false
+FormaPago,03,Transferencia electrónica de fondos,,false
+FormaPago,04,Tarjeta de crédito,,false
+FormaPago,28,Tarjeta de débito,,false
+MetodoPago,PUE,Pago en una sola exhibición,,true
+MetodoPago,PPD,Pago en parcialidades o diferido,,true
+MonedaSAT,MXN,Peso mexicano,,true
+MonedaSAT,USD,Dólar estadounidense,,true
+MonedaSAT,EUR,Euro,,true

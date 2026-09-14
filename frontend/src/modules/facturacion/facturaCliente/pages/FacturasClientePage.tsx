@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
@@ -88,6 +89,7 @@ interface Props {
 }
 
 export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
+  const navigate = useNavigate();
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -506,9 +508,14 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                 Marcar entregada →
               </button>
             )}
-            {estado === "entregada" && (
-              <button type="button" className="btn btn-sm btn-dark" disabled>
-                Pasa a CxC (Fase 3)
+            {(estado === "timbrada" || estado === "entregada" || estado === "cobrada") && (
+              <button
+                type="button"
+                className="btn btn-sm btn-dark"
+                title="La CobranzaFactura ya existe desde que se timbró (ADR-072)"
+                onClick={() => navigate(`/cobranza?factura_id=${selected.factura_id}`)}
+              >
+                Ver en Cobranza (F3) →
               </button>
             )}
             {["preparada", "enviada_a_timbrado", "timbrada", "entregada"].includes(estado) && (
