@@ -951,7 +951,7 @@ desde `pendiente`/`autorizada`. **`pendiente → autorizada` exige Dirección o 
 pasa de `false` a `true` una sola vía (botón "Conciliar" del mockup) y es idempotente.
 Sin matching automático en esta versión.
 
-### El handoff con F2 (ADR-068)
+### El handoff con F2 (ADR-072)
 
 `CobranzaFactura` es 1:1 con `FacturaCliente` y se crea/destruye/completa desde el
 handoff, nunca por un endpoint propio de alta:
@@ -968,7 +968,7 @@ handoff, nunca por un endpoint propio de alta:
   en TODAS las órdenes de la factura, misma transacción. No hay endpoint para esto: lo
   dispara `POST /cobranza/facturas/{cobranza_id}/pagos` (o el `DELETE` de un pago que
   deje la suma por debajo del total, que revierte el CHECK del lado contrario — ver
-  guardarraíl abajo). Detalle completo en ADR-068.
+  guardarraíl abajo). Detalle completo en ADR-072.
 
 ### CobranzaFactura / PagoCliente
 
@@ -1024,7 +1024,7 @@ handoff, nunca por un endpoint propio de alta:
 Todas las transiciones son **idempotentes** y responden **409 `transicion_invalida`**
 ante un salto no permitido.
 
-### MovimientoBancario — primer módulo donde Tesorería captura (ADR-069)
+### MovimientoBancario — primer módulo donde Tesorería captura (ADR-073)
 
 Todo el archivo pide `pagos:leer` en el ROUTER (el nivel que Tesorería ya tenía como
 lectora) — la captura real exige `área in (TESORERIA, ADMIN)` **dentro del servicio**,
@@ -1058,7 +1058,7 @@ una autorización jerárquica). Cualquier otra área recibe **403** al intentar 
   el endpoint de `MovimientoBancario`, no aquí.
 - **`GET /cobranza/adjuntos?ref=...`** (`cobranza:leer`) — descarga. Quita el prefijo
   UUID del nombre (a diferencia de F2, que lo preserva por su deuda histórica — ver
-  ADR-067).
+  ADR-071).
 
 **Errores posibles (todo el módulo):** 401 (sin auth), 403 (área sin permiso de router, o
 sin la autorización real de Dirección/Tesorería dentro del servicio), 404 (no

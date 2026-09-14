@@ -77,7 +77,7 @@
   (pendiente/cobro_parcial/cobrada) se recalcula solo al crear o borrar un PagoCliente;
   `importe_cobrado`/`importe_pendiente_cobro` son SUMA en vivo, nunca columnas. Al llegar
   a `cobrada` dispara la cascada: FacturaCliente → `cobrada`, y todas sus OrdenCliente →
-  `cobrada` (ADR-068).
+  `cobrada` (ADR-072).
 - **PagoCliente** (F3) — Un abono de un cliente contra una CobranzaFactura, capturado por
   CxC. Puede haber varios por factura (parcialidades).
 - **Vencida** (F3) — Badge derivado, NO un valor almacenado: `fecha_estimada_cobro` ya
@@ -90,7 +90,7 @@
   no se autoriza a sí misma.
 - **OC de SAP** — Orden de compra en SAP del grupo; se captura como referencia.
 - **MovimientoBancario** (F3) — Cargo o abono capturado manualmente por **Tesorería**
-  (primer módulo donde Tesorería pasa de solo-lectura a captura, ADR-069). Se rechaza
+  (primer módulo donde Tesorería pasa de solo-lectura a captura, ADR-073). Se rechaza
   como duplicado (409) si coincide fecha+monto+referencia con uno existente.
 - **Conciliación bancaria** — En esta versión, SOLO manual: el botón "Conciliar" pasa
   `MovimientoBancario.conciliado` de `false` a `true`, sin matching automático contra

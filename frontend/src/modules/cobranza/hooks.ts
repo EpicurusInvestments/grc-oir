@@ -89,7 +89,7 @@ export function usePagosCliente(cobranzaId: string | null) {
   const invalidarTodo = () => {
     qc.invalidateQueries({ queryKey: [K_PAGOS] });
     qc.invalidateQueries({ queryKey: [K_COBRANZA] });
-    // La cascada del handoff (ADR-068) puede llegar hasta FacturaCliente/OrdenCliente
+    // La cascada del handoff (ADR-072) puede llegar hasta FacturaCliente/OrdenCliente
     // cuando el pago completa el total — se invalidan también, igual que `timbrar` en F2.
     qc.invalidateQueries({ queryKey: [K_FACTURACION_CLIENTES] });
     qc.invalidateQueries({ queryKey: [K_ORDENES] });

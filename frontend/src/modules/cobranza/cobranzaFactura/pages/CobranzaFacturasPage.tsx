@@ -1,6 +1,6 @@
 /** Cobranza de facturas (F3) — seguimiento del cobro de cada `FacturaCliente` timbrada.
  *
- * `CobranzaFactura` no tiene alta propia (la crea el handoff de F2 al timbrar, ADR-068):
+ * `CobranzaFactura` no tiene alta propia (la crea el handoff de F2 al timbrar, ADR-072):
  * esta pantalla es puramente de seguimiento y captura de pagos, nunca de creación.
  *
  * Búsqueda y la vista "Vencidas": el backend NO indexa texto libre sobre esta lista

@@ -7,7 +7,7 @@
  *
  * Permisos (ADR-044): `/facturas`, `/facturas/{id}/pagos`, `/pagos/{id}`, `/adjuntos` piden
  * `cobranza:*`; `/requisiciones` y `/movimientos-bancarios` piden `pagos:*` (este último
- * siempre en `leer` — el canal dedicado de Tesorería del ADR-069 vive en el backend, no
+ * siempre en `leer` — el canal dedicado de Tesorería del ADR-073 vive en el backend, no
  * aquí). El backend valida siempre; esto solo afecta qué ve cada área.
  */
 
@@ -203,7 +203,7 @@ export const movimientoBancarioApi = {
     return data;
   },
   /** Captura manual — el ROUTER pide `pagos:leer`; el servicio exige Tesorería/Admin
-   *  (ADR-069). Áreas sin ese permiso reciben 403 desde el backend. */
+   *  (ADR-073). Áreas sin ese permiso reciben 403 desde el backend. */
   async crear(payload: MovimientoBancarioCreate) {
     const { data } = await apiClient.post<MovimientoBancario>(
       `${BASE}/movimientos-bancarios`,

@@ -2306,7 +2306,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   reproduciendo el caso reportado); suite completa de backend (pytest + ruff) en verde,
   sin afectar la prueba existente sin bonificables (`CANT=10`, `COSTO=1000.00`).
 
-### ADR-070 — `app/shared/adjuntos_router.py` es la única excepción a `from __future__ import annotations` (F3)
+### ADR-071 — `app/shared/adjuntos_router.py` es la única excepción a `from __future__ import annotations` (F3)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, previo a la Tanda 1 — refactor de adjuntos).
 - **Contexto:** F1 (`ordenes/adjuntos.py`) y F2 (`facturacion/adjuntos.py`) tenían dos copias
@@ -2350,7 +2350,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `from __future__ import annotations` con normalidad — solo la factory misma necesita
   la excepción, porque es la única que construye el enum dinámico dentro de un closure.
 
-### ADR-068 — El handoff F2↔F3: creación de `CobranzaFactura`, cascada completa de cobro y su guardarraíl sin reversa
+### ADR-072 — El handoff F2↔F3: creación de `CobranzaFactura`, cascada completa de cobro y su guardarraíl sin reversa
 
 - **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1).
 - **Contexto:** F2 dejó dos anzuelos deliberados esperando a F3: `EstadoFacturacion.COBRADA`
@@ -2405,7 +2405,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   cobrada`, el recálculo de `fecha_estimada_cobro` al entregar, y el guardarraíl en sus
   dos sentidos (bloquea el pago que rompería el cobro completo; permite el que no lo hace).
 
-### ADR-069 — Tesorería captura por primera vez: mismo canal dedicado del ADR-046, no una tercera clave RBAC
+### ADR-073 — Tesorería captura por primera vez: mismo canal dedicado del ADR-046, no una tercera clave RBAC
 
 - **Estado:** aceptada · **Fecha:** 2026-09-09 (F3, tanda 1). Decisión de negocio del equipo (E.2).
 - **Contexto:** la ficha de F3 pide que **Requisicion** (CxP) y **MovimientoBancario**
@@ -2432,7 +2432,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   CxP recibe 403 al intentar crear o conciliar un movimiento bancario; Tesorería puede
   ambas cosas; las demás áreas (incluida CxP) sí pueden LEER movimientos bancarios.
 
-### ADR-070 — Frontend de F3: deep-link F2→F3 y "amplía y filtra en el cliente" ante huecos de búsqueda del backend
+### ADR-074 — Frontend de F3: deep-link F2→F3 y "amplía y filtra en el cliente" ante huecos de búsqueda del backend
 - **Estado:** aceptada · **Fecha:** 2026-09-09 (F3).
 - **Contexto:** al construir el frontend de F3 aparecieron dos huecos que el plan
   aprobado no había anticipado, ambos del lado de lectura (ningún cambio de backend):
@@ -2475,3 +2475,56 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   vista agrega trayendo las cobranzas con algo cobrado y pidiendo sus pagos en
   paralelo — mismo tope de 100, misma limitación documentada.
 
+### ADR-070 — Combo "Folio de la Orden Interna" en el alta de FacturaAfiliado: precarga editable + auto-asignación + PDF/XML (F2)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-13 (F2, rama `fix/facturacion-correcciones-f2`).
+- **Contexto:** el usuario pidió, en "Nueva factura de afiliado", un combo "Folio de la
+  Orden Interna" que trajera las OI del afiliado elegido en estado **"2.3 Reales
+  Conciliados"**, con búsqueda por folio, que precargara Monto/IVA/Total (editables) al
+  elegir una, y que permitiera cargar la factura en PDF y XML. Al investigar, ese estado
+  no existe con ese nombre en el backend real (solo en un mockup obsoleto,
+  `docs/referencias/pantallas/Fase_1_-_Ordenes.html`): la OI, al llegar a esa etapa,
+  queda con `estatus = "cerrada"` — el mismo estado que ya exige la regla de negocio
+  existente de `FacturaAfiliadoService.asignar_orden` ("Solo se puede asignar costo a
+  una OrdenEstacion 'cerrada'"). Se confirmó con el usuario filtrar por `cerrada`, y
+  además que **al elegir un folio, la factura quede asignada automáticamente a esa OI**
+  al guardar (antes solo existía el paso manual "+ Asignar OE").
+- **Decisión:**
+  1. **Combo** — nuevo endpoint `GET /facturacion/afiliados/ordenes-facturables?afiliado_id=`
+     (`FacturaAfiliadoService.ordenes_facturables()`): OE `cerrada` de ese afiliado (JOIN
+     con `Estacion.afiliado_id`), con `importe_emisora`/`iva_emisora`/`total_emisora` —
+     lo que la emisora le cobra a OIR por esa OI, de donde se precargan Subtotal/IVA en
+     el formulario (`SearchableSelect`, búsqueda por folio). **Se listan TODAS las
+     `cerrada`, sin excluir las ya asignadas a otra factura**: la spec permite facturar
+     una OE en parcialidades (`FacturaAfiliadoOrden.__table_args__` ya lo documentaba
+     como decisión previa) — excluirlas habría roto esa capacidad ya existente.
+  2. **Auto-asignación** — `FacturaAfiliadoCreate` gana `orden_estacion_id: UUID | None`.
+     Si se manda, `FacturaAfiliadoService.create()` valida que la OE exista y esté
+     `cerrada` (sin checar si ya está asignada — parcialidades) y crea la
+     `FacturaAfiliadoOrden` correspondiente en la MISMA transacción, con
+     `monto_asignado` = el Subtotal capturado (no el total, mismo criterio que
+     `asignar_orden()` y que ya asume el detalle al sumar "Asignado" contra
+     `monto_factura_afiliado`). Los campos siguen siendo inputs normales, sin
+     `disabled`: la precarga no bloquea la edición.
+  3. **PDF/XML** — `FacturaAfiliado` gana `archivo_pdf_path`/`archivo_xml_path`
+     (columnas nuevas, nullable, sin `server_default` — no aplica el hallazgo de
+     ADR-067/068 de SQL Server). Los campos legado `archivo_nombre`/`archivo_path` no se
+     tocan (no los llenaba ningún formulario); el detalle los sigue mostrando solo como
+     fallback si una factura vieja los trajera. Reutiliza el mecanismo genérico de
+     adjuntos ya usado por XML/PDF del CFDI de `FacturaCliente` (`AdjuntoFacturaInput`,
+     `adjuntosFacturacionApi`) — 2 tipos nuevos en el enum backend
+     (`factura_afiliado_pdf`/`factura_afiliado_xml`), disponibles también al editar.
+- **Consecuencia:** el combo y la asignación automática solo aplican al ALTA — en
+  edición (`isEdit`) no se muestran (el backend tampoco acepta `orden_estacion_id` en
+  `FacturaAfiliadoUpdate`, ni permite reasignar el afiliado). El endpoint nuevo se
+  declaró ANTES de `GET /{item_id}` en el router — si no, FastAPI intentaría parsear
+  `"ordenes-facturables"` como UUID de `item_id` y respondería 422.
+- **Verificado:** backend — 6 pruebas nuevas en `test_f2_02_facturacion_escritura.py`
+  (combo solo lista `cerrada`, auto-asignación al crear, rechazo si la OE no está
+  `cerrada`/no existe, alta sin OE no crea asignación, dos facturas distintas SÍ pueden
+  facturar la misma OE en parcialidades); suite completa (pytest + ruff) en verde;
+  migración con round-trip `upgrade → downgrade → upgrade` verificado contra la RDS
+  real. Frontend — 7 pruebas nuevas en `FacturaAfiliadoForm.test.tsx` (combo
+  deshabilitado sin afiliado, filtra por afiliado, precarga editable, payload con/sin
+  OE elegida, el combo no aparece al editar, subida de PDF); `tsc`, `eslint` y la suite
+  `vitest` del módulo `facturacion` en verde (50/50).

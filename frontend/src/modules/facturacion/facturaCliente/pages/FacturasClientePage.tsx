@@ -512,7 +512,7 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               <button
                 type="button"
                 className="btn btn-sm btn-dark"
-                title="La CobranzaFactura ya existe desde que se timbró (ADR-068)"
+                title="La CobranzaFactura ya existe desde que se timbró (ADR-072)"
                 onClick={() => navigate(`/cobranza?factura_id=${selected.factura_id}`)}
               >
                 Ver en Cobranza (F3) →

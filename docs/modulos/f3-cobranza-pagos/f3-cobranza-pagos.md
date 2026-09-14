@@ -10,10 +10,10 @@
 > (ADR-002 no-timbrado, ADR-019 estados independientes, ADR-039 aritmética de dinero,
 > ADR-040 RBAC, ADR-044/046 patrón de 2 claves + canal de autorización, ADR-047/064
 > handoff y cancelación con F2, ADR-048 formato real de PAC ya resuelto — no aplica aquí
-> pero es la referencia de cómo resolvimos un hueco de integración similar, ADR-067
+> pero es la referencia de cómo resolvimos un hueco de integración similar, ADR-071
 > factory compartida de adjuntos — F3 fue el tercer consumidor que la justificó,
-> **ADR-068 el handoff F2↔F3 completo tal como quedó implementado, ADR-069 el canal
-> dedicado de Tesorería, ADR-070 el deep-link F2→F3 y el patrón "amplía y filtra en el
+> **ADR-072 el handoff F2↔F3 completo tal como quedó implementado, ADR-073 el canal
+> dedicado de Tesorería, ADR-074 el deep-link F2→F3 y el patrón "amplía y filtra en el
 > cliente" del frontend**).
 > Refinada en sesión de planeación del 2026-09-09, tras confirmar F0+F1+F2+F5-00 en `main`.
 > Implementada la misma sesión — backend completo (modelos, migración, servicios,
@@ -27,7 +27,7 @@ Cerrar el ciclo financiero: cobrar las facturas que F2 timbró (`CobranzaFactura
 autorizadas (`Requisicion` + `MovimientoBancario` para conciliación bancaria, CxP).
 Alimenta el Estado de Resultados de F4.
 
-## El handoff con F2 — cómo quedó implementado (ADR-068)
+## El handoff con F2 — cómo quedó implementado (ADR-072)
 
 Igual que F1→F2 tuvo su handoff (`marcar_facturada`/`revertir_facturacion`), F2→F3 tiene
 el suyo, con la misma disciplina de "método acotado en el dueño del agregado, invocado en
@@ -45,7 +45,7 @@ la misma transacción, sin `commit` propio":
   cancelación se **rechaza** con `400 error_dominio` — mismo criterio que la excepción de
   "OC ya cobrada" de ADR-047. Si `importe_cobrado = 0`, la `CobranzaFactura` se elimina y
   la cancelación continúa con normalidad.
-- **Al completarse el cobro (aprobado en E.1, ver ADR-068)**: cuando
+- **Al completarse el cobro (aprobado en E.1, ver ADR-072)**: cuando
   `CobranzaFactura.estatus_cobro` llega a `cobrada` (`importe_cobrado >= total_factura`,
   recalculado al crear o borrar un `PagoCliente`), la cascada sube: `CobranzaFacturaService.
   recalcular_tras_pago()` invoca `FacturaClienteService.marcar_cobrada()`, que a su vez
@@ -55,7 +55,7 @@ la misma transacción, sin `commit` propio":
   reversa: borrar un `PagoCliente` que dejaría la `CobranzaFactura` por debajo del total
   estando ya `cobrada` se rechaza con `409` (mismo principio de ADR-047, un nivel más
   abajo). El detalle del ancla provisional de `fecha_estimada_cobro` (se crea con
-  `fecha_timbrado`, se recalcula al entregar con `fecha_entrega_factura`) está en ADR-068.
+  `fecha_timbrado`, se recalcula al entregar con `fecha_entrega_factura`) está en ADR-072.
 
 ## Entidades (spec BD v2, con las 3 desviaciones aditivas de esta sesión)
 
@@ -159,7 +159,7 @@ Admin superusuario automático (ADR-040) — no listarlo. La autorización de `R
 - Validar duplicados en `MovimientoBancario` (mismo banco+fecha+referencia+monto) antes
   de insertar.
 
-## Roles / permisos — Tesorería (resuelto, ver ADR-069)
+## Roles / permisos — Tesorería (resuelto, ver ADR-073)
 
 Este es el primer módulo donde **Tesorería pasa de "solo lectura" a "captura"**
 (`MovimientoBancario`). Se resolvió con el mismo canal dedicado del ADR-046 (ya usado
@@ -187,7 +187,7 @@ son las MISMAS páginas con un filtro inicial preseleccionado, no pantallas nuev
 - **Deep-link F2→F3**: el botón "Pasa a CxC (Fase 3)" de `FacturasClientePage` (antes un
   placeholder deshabilitado) ahora navega a `/cobranza?factura_id=...` y
   `CobranzaFacturasPage` resuelve y preselecciona la `CobranzaFactura` correspondiente —
-  coherente con que ya existe desde `timbrada` (ADR-068), no solo desde `entregada`.
+  coherente con que ya existe desde `timbrada` (ADR-072), no solo desde `entregada`.
 - **Limitaciones conocidas de esta tanda** (no bloquean, documentadas en el propio
   código): el backend no indexa texto libre ni el badge `vencida` sobre
   `CobranzaFactura` — la búsqueda y la vista "Vencidas" traen hasta 100 filas y filtran

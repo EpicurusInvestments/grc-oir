@@ -10,7 +10,7 @@ negocio real:
   con autorización de Dirección).
 - `movimiento_bancario.py` — `MovimientoBancario` (Tesorería: conciliación manual).
 - `adjuntos.py`         — comprobantes de pago (`PagoCliente`) y archivos de estado
-  de cuenta (`MovimientoBancario`), con la factory compartida (ADR-067). `Requisicion`
+  de cuenta (`MovimientoBancario`), con la factory compartida (ADR-071). `Requisicion`
   no tiene campo de archivo propio en la spec: sus facturas de proveedor ya se adjuntan
   por `facturacion/adjuntos.py` (F2), a través de `factura_afiliado_id`/
   `factura_agencia_id`.

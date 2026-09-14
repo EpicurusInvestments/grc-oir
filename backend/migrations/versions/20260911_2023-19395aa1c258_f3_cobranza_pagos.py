@@ -26,7 +26,7 @@ una migración separada para la deriva.
 ─────────────────────────────────────────────────────────────────────────────
 
 Revision ID: 19395aa1c258
-Revises: 00b9c6d6a5a1
+Revises: f9521496be2e
 Create Date: 2026-09-11 20:23:52.571299
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ from sqlalchemy.dialects import mssql
 
 # identificadores de revisión, usados por Alembic.
 revision: str = '19395aa1c258'
-down_revision: str | None = '00b9c6d6a5a1'
+down_revision: str | None = 'f9521496be2e'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

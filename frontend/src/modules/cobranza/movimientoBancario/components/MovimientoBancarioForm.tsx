@@ -1,5 +1,5 @@
 /** Alta de MovimientoBancario (F3) — captura manual de Tesorería (canal dedicado,
- * ADR-069): el permiso del router es `pagos:leer` (nivel que Tesorería ya tenía como
+ * ADR-073): el permiso del router es `pagos:leer` (nivel que Tesorería ya tenía como
  * lectora); el servicio exige `área in (TESORERIA, ADMIN)` y devuelve 403 a cualquier
  * otra área. El botón no se oculta por área (el front no conoce la matriz), solo lleva
  * un hint.

@@ -33,6 +33,7 @@ import type {
   CostoAdicionalCreate,
   EstatusProveedor,
   FacturaAfiliadoCreate,
+  FacturaAfiliadoUpdate,
   FacturaAgenciaCreate,
   FacturaClienteCreate,
   TimbrarInput,
@@ -110,6 +111,12 @@ export function useFacturasAfiliado(filtros: FiltrosFacturaAfiliado) {
     onSuccess: invalidar,
   });
 
+  const actualizar = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: FacturaAfiliadoUpdate }) =>
+      facturaAfiliadoApi.actualizar(id, data),
+    onSuccess: invalidar,
+  });
+
   const cambiarEstatus = useMutation({
     mutationFn: ({ id, estatus }: { id: string; estatus: EstatusProveedor }) =>
       facturaAfiliadoApi.cambiarEstatus(id, estatus),
@@ -121,7 +128,7 @@ export function useFacturasAfiliado(filtros: FiltrosFacturaAfiliado) {
     onSuccess: invalidar,
   });
 
-  return { list, crear, cambiarEstatus, autorizar };
+  return { list, crear, actualizar, cambiarEstatus, autorizar };
 }
 
 export function useAsignacionesAfiliado(facturaId: string | null) {
@@ -129,6 +136,16 @@ export function useAsignacionesAfiliado(facturaId: string | null) {
     queryKey: [K_AFILIADOS, "ordenes", facturaId],
     queryFn: () => facturaAfiliadoApi.asignaciones(facturaId as string),
     enabled: facturaId != null,
+  });
+}
+
+/** Combo "Folio de la Orden Interna" del alta — solo se pide con un afiliado ya
+ *  elegido (`enabled`), para no listar OE de nadie antes de tiempo. */
+export function useOrdenesFacturablesAfiliado(afiliadoId: string | null) {
+  return useQuery({
+    queryKey: [K_AFILIADOS, "ordenes-facturables", afiliadoId],
+    queryFn: () => facturaAfiliadoApi.ordenesFacturables(afiliadoId as string),
+    enabled: !!afiliadoId,
   });
 }
 

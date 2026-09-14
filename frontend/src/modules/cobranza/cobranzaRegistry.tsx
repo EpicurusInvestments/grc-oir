@@ -6,7 +6,7 @@
  *
  * De paso reflejan las dos claves de RBAC del módulo (ADR-044): el primer grupo lo
  * captura CxC (`cobranza:*`), los otros dos CxP/Tesorería (`pagos:*`, con el canal
- * dedicado de Tesorería del ADR-069 dentro del servicio).
+ * dedicado de Tesorería del ADR-073 dentro del servicio).
  *
  * "Vistas operativas" no son pantallas nuevas: son las MISMAS páginas con un filtro
  * inicial preseleccionado (`filtroInicial`), igual que `showFiltered()` en el mockup.

@@ -17,7 +17,7 @@ export const ESTATUS_COBRO_LABEL: Record<EstatusCobro, string> = {
 };
 
 /** `CobranzaFactura` se crea SOLA al timbrar la `FacturaCliente` (handoff F2→F3,
- * ADR-068): no hay `POST` de alta en este módulo. `importe_cobrado`,
+ * ADR-072): no hay `POST` de alta en este módulo. `importe_cobrado`,
  * `importe_pendiente_cobro`, `vencida` y `numero_factura` los calcula el backend en CADA
  * lectura — nunca se recalculan aquí. */
 export interface CobranzaFactura {

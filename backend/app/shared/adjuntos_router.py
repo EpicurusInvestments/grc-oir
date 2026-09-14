@@ -9,7 +9,7 @@ que cambia es dónde vive el código.
 
 ## Por qué NO lleva `from __future__ import annotations`
 
-Ver **ADR-067** en `docs/arquitectura.md` — buscable ahí sin tener que abrir este
+Ver **ADR-071** en `docs/arquitectura.md` — buscable ahí sin tener que abrir este
 archivo primero. Resumen: es deliberado, no un descuido. El router construido aquí
 acepta el tipo de `tipo` como parámetro (`tipos: type[StrEnum]`) para que cada módulo
 declare SU propio enum de tipos

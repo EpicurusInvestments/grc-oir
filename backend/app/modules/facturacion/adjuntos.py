@@ -30,8 +30,14 @@ class TipoAdjuntoFacturacion(StrEnum):
     CFDI_XML = "cfdi_xml"
     #: PDF impreso del CFDI (`FacturaCliente.pdf_path`).
     CFDI_PDF = "cfdi_pdf"
-    #: Factura recibida del afiliado (`FacturaAfiliado.archivo_path`).
+    #: Factura recibida del afiliado (`FacturaAfiliado.archivo_path`) — genérico, sin
+    #: usar desde que se separó en PDF/XML (abajo); se deja para no romper referencias
+    #: ya guardadas con este tipo.
     FACTURA_AFILIADO = "factura_afiliado"
+    #: PDF de la factura del afiliado (`FacturaAfiliado.archivo_pdf_path`).
+    FACTURA_AFILIADO_PDF = "factura_afiliado_pdf"
+    #: XML de la factura del afiliado (`FacturaAfiliado.archivo_xml_path`).
+    FACTURA_AFILIADO_XML = "factura_afiliado_xml"
     #: Factura recibida de la agencia (`FacturaAgencia.archivo_path`).
     FACTURA_AGENCIA = "factura_agencia"
     #: Respaldo de un costo adicional (`CostoAdicional.archivo_path`).
@@ -43,6 +49,8 @@ _PREFIJOS: dict[TipoAdjuntoFacturacion, str] = {
     TipoAdjuntoFacturacion.CFDI_XML: "facturacion/cfdi/xml/",
     TipoAdjuntoFacturacion.CFDI_PDF: "facturacion/cfdi/pdf/",
     TipoAdjuntoFacturacion.FACTURA_AFILIADO: "facturacion/proveedor/afiliado/",
+    TipoAdjuntoFacturacion.FACTURA_AFILIADO_PDF: "facturacion/proveedor/afiliado/pdf/",
+    TipoAdjuntoFacturacion.FACTURA_AFILIADO_XML: "facturacion/proveedor/afiliado/xml/",
     TipoAdjuntoFacturacion.FACTURA_AGENCIA: "facturacion/proveedor/agencia/",
     TipoAdjuntoFacturacion.RESPALDO_COSTO: "facturacion/costos/respaldo/",
 }

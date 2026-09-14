@@ -1,6 +1,6 @@
 """Adjuntos de Cobranza y Pagos (comprobante de pago, estado de cuenta bancario).
 
-Construido con `build_adjuntos_router` (`app/shared/adjuntos_router.py`, ADR-067) — F3
+Construido con `build_adjuntos_router` (`app/shared/adjuntos_router.py`, ADR-071) — F3
 es el tercer consumidor que justificó extraer esa factory de F1/F2.
 
 Dos tipos que pertenecen a dominios de negocio distintos dentro del módulo (ver
