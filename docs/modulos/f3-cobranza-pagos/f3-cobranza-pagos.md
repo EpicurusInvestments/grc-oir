@@ -207,5 +207,9 @@ son las MISMAS páginas con un filtro inicial preseleccionado, no pantallas nuev
   formato real, mismo patrón que `TimbradoExportPort` (ADR-048).
 - Si el negocio pide matching automático de conciliación más adelante, es una extensión
   sobre `MovimientoBancario`, no un rediseño.
-- Migración `4235d887cf06` NO aplicada a RDS todavía (4 tablas nuevas, ninguna existente
-  tocada) — pendiente de tu confirmación antes de aplicarla, como con toda migración.
+- Migración `19395aa1c258` (regenerada tras rebasar sobre `main` con spots bonificables
+  de F1 — la original `4235d887cf06` quedó huérfana y se eliminó) NO aplicada a RDS
+  todavía (4 tablas nuevas, ninguna existente tocada; también corrige condicionalmente
+  la deriva preexistente de índices en `constantes_sistema`/`contrato`/`marca` cuando el
+  dialecto es SQL Server) — pendiente de tu confirmación antes de aplicarla, como con
+  toda migración.
