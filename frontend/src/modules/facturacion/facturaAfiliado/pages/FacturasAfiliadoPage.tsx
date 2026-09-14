@@ -12,15 +12,70 @@ import { useState } from "react";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
+import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
 import { FacturaAfiliadoForm } from "../components/FacturaAfiliadoForm";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, oGuion } from "../../format";
 import { useAsignacionesAfiliado, useFacturasAfiliado } from "../../hooks";
 import {
+  ESTATUS_PROVEEDOR,
   ESTATUS_PROVEEDOR_LABEL,
   type EstatusProveedor,
   type FacturaAfiliado,
   type FacturaAfiliadoCreate,
+  type FacturaAfiliadoUpdate,
 } from "../../types";
+
+/** Solo antes de autorizar (mismo candado que el backend, `FacturaAfiliadoService.update`):
+ *  una factura `autorizada`/`pagada` ya no se edita. */
+const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida", "en_revision"]);
+
+/** Timeline del ciclo de vida (mismo patrón que `Timeline` de Facturas al cliente):
+ *  `ESTATUS_PROVEEDOR` ya está en orden y sin "cancelada" (esta entidad no la tiene). */
+function TimelineAfiliado({ estatus }: { estatus: EstatusProveedor }) {
+  const actual = ESTATUS_PROVEEDOR.indexOf(estatus);
+  return (
+    <div className="timeline">
+      {ESTATUS_PROVEEDOR.map((paso, i) => (
+        <div key={paso} className={`tl-step ${i < actual ? "done" : i === actual ? "current" : ""}`}>
+          <div className="tl-dot">{i < actual ? "✓" : i + 1}</div>
+          <div className="tl-lbl">{ESTATUS_PROVEEDOR_LABEL[paso]}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Fila clickeable de un adjunto ya subido (PDF/XML) — descarga vía
+ *  `adjuntosFacturacionApi.ver`, mismo mecanismo que `AdjuntoFacturaInput` en modo lectura. */
+function ArchivoDescargable({ etiqueta, archivoRef }: { etiqueta: string; archivoRef: string }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => void adjuntosFacturacionApi.ver(archivoRef)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") void adjuntosFacturacionApi.ver(archivoRef);
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 11px",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r)",
+        fontSize: 12,
+        marginBottom: 5,
+        cursor: "pointer",
+      }}
+    >
+      <i className="pi pi-file" aria-hidden="true" />
+      <span className="badge b-gray" style={{ fontSize: 10 }}>
+        {etiqueta}
+      </span>
+      {nombreDeAdjuntoFacturacionRef(archivoRef)}
+    </div>
+  );
+}
 
 type Filtro = "todas" | EstatusProveedor;
 
@@ -39,6 +94,7 @@ export function FacturasAfiliadoPage() {
   const [size, setSize] = useState(20);
   const [selected, setSelected] = useState<FacturaAfiliado | null>(null);
   const [creando, setCreando] = useState(false);
+  const [editando, setEditando] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
 
@@ -48,7 +104,7 @@ export function FacturasAfiliadoPage() {
     q: q || undefined,
     estatus_factura_afiliado: filtro === "todas" ? undefined : filtro,
   };
-  const { list, crear, cambiarEstatus, autorizar } = useFacturasAfiliado(filtros);
+  const { list, crear, actualizar, cambiarEstatus, autorizar } = useFacturasAfiliado(filtros);
   const asignaciones = useAsignacionesAfiliado(selected?.factura_afiliado_id ?? null);
 
   const mensajeDeError = (e: unknown): string =>
@@ -73,55 +129,212 @@ export function FacturasAfiliadoPage() {
     }
   };
 
+  const onEditar = async (data: FacturaAfiliadoUpdate) => {
+    if (!selected) return;
+    setSubmitError(null);
+    try {
+      setSelected(await actualizar.mutateAsync({ id: selected.factura_afiliado_id, data }));
+      setEditando(false);
+    } catch (e) {
+      setSubmitError(mensajeDeError(e));
+    }
+  };
+
   let detail;
   if (creando) {
     detail = (
       <FacturaAfiliadoForm
         submitting={crear.isPending}
         submitError={submitError}
-        onSubmit={onCrear}
+        onSubmit={(data) => onCrear(data as FacturaAfiliadoCreate)}
         onCancel={() => {
           setCreando(false);
           setSubmitError(null);
         }}
       />
     );
+  } else if (editando && selected) {
+    detail = (
+      <FacturaAfiliadoForm
+        isEdit
+        defaultValues={{
+          afiliado_id: selected.afiliado_id,
+          factura_emisora: selected.factura_emisora,
+          fecha_factura_afiliado: selected.fecha_factura_afiliado,
+          monto_factura_afiliado: selected.monto_factura_afiliado,
+          iva_factura_afiliado: selected.iva_factura_afiliado,
+        }}
+        archivoPdfPathInicial={selected.archivo_pdf_path}
+        archivoXmlPathInicial={selected.archivo_xml_path}
+        submitting={actualizar.isPending}
+        submitError={submitError}
+        onSubmit={(data) => onEditar(data as FacturaAfiliadoUpdate)}
+        onCancel={() => {
+          setEditando(false);
+          setSubmitError(null);
+        }}
+      />
+    );
   } else if (selected) {
     const estatus = selected.estatus_factura_afiliado;
+    const puedeEditar = PUEDE_EDITAR.has(estatus);
+    const asignado = (asignaciones.data ?? []).reduce((s, a) => s + Number(a.monto_asignado), 0);
+    const sinAsignar = Number(selected.monto_factura_afiliado) - asignado;
     detail = (
       <>
         <div className="dh">
           <div className="dh-row">
             <div>
               <div className="dh-name mono">{selected.factura_emisora}</div>
-              <div className="dh-sub">{oGuion(selected.razon_social_afiliada)}</div>
+              <div className="dh-sub">
+                <span className={`badge ${badgeEstatusProveedor(estatus)}`}>
+                  {ESTATUS_PROVEEDOR_LABEL[estatus]}
+                </span>
+                <span className="badge b-teal">{oGuion(selected.razon_social_afiliada)}</span>
+              </div>
             </div>
-            <span className={`badge ${badgeEstatusProveedor(estatus)}`}>
-              {ESTATUS_PROVEEDOR_LABEL[estatus]}
-            </span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!puedeEditar}
+              title={puedeEditar ? undefined : "Una factura autorizada o pagada ya no se puede editar."}
+              onClick={() => {
+                setEditando(true);
+                setSubmitError(null);
+              }}
+            >
+              Editar
+            </button>
           </div>
         </div>
 
-        <div className="dg">
-          <div className="sec">Importes</div>
-          <div className="fl">Subtotal</div>
-          <div className="fv">{fmtMoneda(selected.monto_factura_afiliado)}</div>
-          <div className="fl">IVA</div>
-          <div className="fv">{fmtMoneda(selected.iva_factura_afiliado)}</div>
-          <div className="fl">Total</div>
-          <div className="fv strong">{fmtMoneda(selected.total_factura_afiliado)}</div>
-          <div className="fl">Fecha</div>
-          <div className="fv">{fmtFecha(selected.fecha_factura_afiliado)}</div>
+        <div className="db">
+          <TimelineAfiliado estatus={estatus} />
 
-          <div className="sec">Reparto entre órdenes de estación</div>
+          <div className="mc-row">
+            <div className="mc">
+              <div className="mc-lbl">Subtotal</div>
+              <div className="mc-val">{fmtMoneda(selected.monto_factura_afiliado)}</div>
+            </div>
+            <div className="mc">
+              <div className="mc-lbl">IVA</div>
+              <div className="mc-val">{fmtMoneda(selected.iva_factura_afiliado)}</div>
+            </div>
+            <div className="mc">
+              <div className="mc-lbl">Total</div>
+              <div className="mc-val total">{fmtMoneda(selected.total_factura_afiliado)}</div>
+            </div>
+          </div>
+
+          <div className="sec">Datos generales</div>
+          <div className="fl">Razón social emisora</div>
+          <div className="fv">{oGuion(selected.razon_social_afiliada)}</div>
+          <div className="r2">
+            <div>
+              <div className="fl">Folio</div>
+              <div className="fv mono">{selected.factura_emisora}</div>
+            </div>
+            <div>
+              <div className="fl">Fecha</div>
+              <div className="fv mono">{fmtFecha(selected.fecha_factura_afiliado)}</div>
+            </div>
+          </div>
+          {(selected.archivo_pdf_path || selected.archivo_xml_path || selected.archivo_nombre) && (
+            <>
+              <div className="fl">Archivo</div>
+              <div style={{ marginBottom: 6 }}>
+                {selected.archivo_pdf_path && (
+                  <ArchivoDescargable etiqueta="PDF" archivoRef={selected.archivo_pdf_path} />
+                )}
+                {selected.archivo_xml_path && (
+                  <ArchivoDescargable etiqueta="XML" archivoRef={selected.archivo_xml_path} />
+                )}
+                {/* Legado: facturas capturadas antes de separar PDF/XML (ADR nuevo). */}
+                {selected.archivo_nombre && !selected.archivo_pdf_path && !selected.archivo_xml_path && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "8px 11px",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--r)",
+                      fontSize: 12,
+                    }}
+                  >
+                    <i className="pi pi-file" aria-hidden="true" />
+                    {selected.archivo_nombre}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="sec">Asignación a órdenes estación</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>
+            <div style={{ flex: 1, background: "var(--surface2)", borderRadius: "var(--r)", padding: "8px 11px" }}>
+              <div style={{ fontSize: 10, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Asignado
+              </div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 600 }}>{fmtMoneda(String(asignado))}</div>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                background: sinAsignar === 0 ? "var(--green-bg)" : "var(--red-bg)",
+                borderRadius: "var(--r)",
+                padding: "8px 11px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  color: sinAsignar === 0 ? "var(--green-text)" : "var(--red-text)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Sin asignar
+              </div>
+              <div
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: sinAsignar === 0 ? "var(--green-text)" : "var(--red-text)",
+                }}
+              >
+                {fmtMoneda(String(sinAsignar))}
+              </div>
+            </div>
+          </div>
           {asignaciones.isLoading && <div className="fv muted">Cargando…</div>}
           {!asignaciones.isLoading && (asignaciones.data?.length ?? 0) === 0 && (
-            <div className="fv muted">Sin asignaciones todavía.</div>
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Sin asignaciones. Asigna esta factura a las órdenes estación correspondientes.
+            </div>
           )}
           {(asignaciones.data ?? []).map((a) => (
-            <div key={a.id} style={{ display: "contents" }}>
-              <div className="fl mono">{a.orden_estacion_id.slice(0, 8)}…</div>
-              <div className="fv">{fmtMoneda(a.monto_asignado)}</div>
+            <div
+              key={a.id}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r)",
+                padding: "9px 11px",
+                marginBottom: 5,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
+                  {a.orden_estacion_id.slice(0, 8)}…
+                </span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+                  {fmtMoneda(a.monto_asignado)}
+                </span>
+              </div>
+              {a.notas_asignacion && (
+                <div style={{ fontSize: 11, color: "var(--text3)" }}>{a.notas_asignacion}</div>
+              )}
             </div>
           ))}
         </div>
@@ -178,23 +391,6 @@ export function FacturasAfiliadoPage() {
                 </button>
               </>
             )}
-            {estatus === "autorizada" && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={cambiarEstatus.isPending}
-                onClick={() =>
-                  ejecutar(() =>
-                    cambiarEstatus.mutateAsync({
-                      id: selected.factura_afiliado_id,
-                      estatus: "pagada",
-                    }),
-                  )
-                }
-              >
-                Marcar pagada
-              </button>
-            )}
           </div>
         </div>
       </>
@@ -227,12 +423,13 @@ export function FacturasAfiliadoPage() {
               onClick={() => {
                 setSelected(f);
                 setCreando(false);
+                setEditando(false);
                 setErrorAccion(null);
               }}
             >
               <td className="td-main mono">{f.factura_emisora}</td>
               <td className="td-2">{oGuion(f.razon_social_afiliada)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura_afiliado)}</td>
+              <td className="td-2 td-right">{fmtMoneda(f.total_factura_afiliado, { truncar: true })}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_afiliado)}`}>
                   {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_afiliado]}
@@ -276,6 +473,7 @@ export function FacturasAfiliadoPage() {
           onClick={() => {
             setSelected(null);
             setCreando(true);
+            setEditando(false);
             setSubmitError(null);
           }}
         >
@@ -300,7 +498,10 @@ export function FacturasAfiliadoPage() {
         count={list.data ? `${items.length} de ${list.data.total}` : undefined}
       />
 
-      <ListDetailLayout list={listNode} detail={detail} />
+      {/* Más ancho al capturar/editar: lo justo para que "Cargar PDF de la factura" /
+          "Cargar XML de la factura" quepan lado a lado sin cortarse — no más que eso,
+          para no dejar el formulario con espacio de sobra (fix: 760px quedaba muy largo). */}
+      <ListDetailLayout list={listNode} detail={detail} detailWidth={creando || editando ? "560px" : undefined} />
     </>
   );
 }

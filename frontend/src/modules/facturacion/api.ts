@@ -20,11 +20,13 @@ import type {
   FacturaAfiliado,
   FacturaAfiliadoCreate,
   FacturaAfiliadoOrden,
+  FacturaAfiliadoUpdate,
   FacturaAgencia,
   FacturaAgenciaCreate,
   FacturaCliente,
   FacturaClienteCreate,
   OpcionCatalogo,
+  OrdenEstacionFacturableAfiliado,
   OrdenFacturable,
   OrdenPorFacturar,
   TimbrarInput,
@@ -119,7 +121,11 @@ function leerNombreDeContentDisposition(cabeceras: unknown): string | null {
 // ── Adjuntos de Facturación (XML/PDF del CFDI timbrado) ────────────────────────
 // Mismo patrón que `ordenes/adapters/adjuntosApi.ts` (ADR-042): un endpoint genérico de
 // subida/descarga; el bucket es privado, la descarga SIEMPRE pasa por el backend.
-export type TipoAdjuntoFacturacion = "cfdi_xml" | "cfdi_pdf";
+export type TipoAdjuntoFacturacion =
+  | "cfdi_xml"
+  | "cfdi_pdf"
+  | "factura_afiliado_pdf"
+  | "factura_afiliado_xml";
 
 export interface AdjuntoFacturacionSubido {
   ref: string;
@@ -177,8 +183,20 @@ export const facturaAfiliadoApi = {
     const { data } = await apiClient.post<FacturaAfiliado>(`${BASE}/afiliados`, payload);
     return data;
   },
+  async actualizar(id: string, payload: FacturaAfiliadoUpdate) {
+    const { data } = await apiClient.put<FacturaAfiliado>(`${BASE}/afiliados/${id}`, payload);
+    return data;
+  },
   async asignaciones(id: string) {
     const { data } = await apiClient.get<FacturaAfiliadoOrden[]>(`${BASE}/afiliados/${id}/ordenes`);
+    return data;
+  },
+  /** Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado. */
+  async ordenesFacturables(afiliadoId: string) {
+    const { data } = await apiClient.get<OrdenEstacionFacturableAfiliado[]>(
+      `${BASE}/afiliados/ordenes-facturables`,
+      { params: { afiliado_id: afiliadoId } },
+    );
     return data;
   },
   /** Transiciones operativas de CxP. `autorizada` NO pasa por aquí (403). */

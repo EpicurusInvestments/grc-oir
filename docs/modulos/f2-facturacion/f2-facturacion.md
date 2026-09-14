@@ -141,10 +141,22 @@ preparada → enviada_a_timbrado → timbrada → entregada → cobrada
 llenan al pasar a `timbrada` (vía el mismo endpoint genérico de adjuntos que F1, ver
 "Adjuntos" abajo, para XML/PDF).
 
-### FacturaAfiliado (13 campos spec)
+### FacturaAfiliado (13 campos spec + 2 aditivos)
 PK `factura_afiliado_id`. FK a `Afiliado`. Captura manual o carga de archivo, por **CxP**
 (no Facturación — ver RBAC). `total_factura_afiliado` calculado
 (`monto + iva`). Estados: `recibida → en_revision → autorizada → pagada`.
+
+**Aditivos** (`archivo_pdf_path`/`archivo_xml_path` — ADR-070): la factura del afiliado
+se sube en PDF y XML por separado, mismo mecanismo de adjuntos que ya usa el CFDI de
+`FacturaCliente`. Los campos legado `archivo_nombre`/`archivo_path` (spec) siguen ahí
+sin tocar, pero ningún formulario los llena desde que existen estos dos.
+
+**Combo "Folio de la Orden Interna" en el alta (ADR-070):** el formulario ofrece elegir
+una OE `cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=`),
+precarga Subtotal/IVA (editables) con lo que la emisora cobra por ella
+(`importe_emisora`/`iva_emisora`), y al guardar la factura queda asignada a esa OE en la
+misma transacción (`FacturaAfiliadoCreate.orden_estacion_id`) — sin excluir OE ya
+asignadas a otra factura: la spec permite facturar en parcialidades.
 
 ### FacturaAfiliadoOrden (5 campos spec)
 Relación N:M `FacturaAfiliado` ↔ `OrdenEstacion` **cerrada** — permite repartir el costo
@@ -550,6 +562,52 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   cada orden; `COSTO`/`IMPORTE` (`adapter_pac_v40.py::_detalle()`) no se tocaron — al
   corregir solo lo que alimenta `cantidad`, `COSTO` vuelve a reconstruir el
   `precio_unitario` real. Detalle completo en `docs/arquitectura.md`.
+
+- **Rediseño del detalle de "Facturas de afiliado" + edición conectada (petición del
+  usuario, sin ADR — solo frontend, ningún cambio de esquema/servicio).** El panel de
+  detalle (`FacturasAfiliadoPage.tsx`) tenía un diseño más viejo/plano que el resto de
+  las pantallas de F2; se llevó al mismo patrón que "Facturas al cliente"/"Facturas de
+  agencia": tarjetas `mc-row` (Subtotal/IVA/Total), sección "Datos generales" (razón
+  social, folio, fecha, archivo si existe) y "Asignación a órdenes estación" con el
+  resumen Asignado/Sin asignar + la lista ya existente de asignaciones. El botón
+  "Editar" (visible en el mockup aprobado, `docs/referencias/pantallas/Fase_2_-_Facturacion.html`)
+  se conectó de verdad: el backend YA tenía `PUT /afiliados/{id}` sin usar desde el
+  frontend (`FacturaAfiliadoService.update` — 409 si la factura ya está
+  `autorizada`/`pagada`, mismo candado que respeta el botón, deshabilitado en esos
+  casos). `FacturaAfiliadoForm` gana un modo `isEdit` (afiliado fijo, no reasignable
+  por esta vía, igual que el backend). **Fuera de alcance, a propósito** (confirmado
+  con el usuario): "+ Asignar OE" queda solo visual — crear asignaciones nuevas
+  (`POST /afiliados/{id}/ordenes`, que también ya existe en el backend sin usar) es
+  tarea aparte. Verificado: 7 pruebas nuevas (`FacturasAfiliadoPage.test.tsx`); `tsc`,
+  `eslint` y la suite `vitest` del módulo `facturacion` en verde.
+
+- **Timeline de Facturas de afiliado + se quita "Marcar pagada" del detalle (petición
+  del usuario, solo frontend).** Se agregó un timeline al detalle (mismo patrón que el
+  de "Facturas al cliente"), con las 4 fases REALES de `ESTATUS_PROVEEDOR` — recibida →
+  en_revision → autorizada → pagada, ya en orden — sin inventar ni combinar estados
+  (el usuario pidió inicialmente 3 fases agrupadas, pero se confirmó usar las 4 reales).
+  Aparte, se quitó el botón "Marcar pagada" (transición `autorizada → pagada` por
+  `POST /estatus`) del detalle — esa transición queda pendiente de resolverse por otro
+  canal (p.ej. Requisiciones en F3), no por este botón operativo. Verificado: 3 pruebas
+  nuevas del timeline (orden de las fases, "done"/"current" en `autorizada` y en
+  `recibida`); suite completa del módulo en verde (43/43).
+
+- **Combo "Folio de la Orden Interna" en el alta de FacturaAfiliado + PDF/XML por
+  separado (ADR-070, petición del usuario).** Corrección de terminología: el estado
+  "2.3 Reales Conciliados" pedido no existe en el backend real (solo en un mockup
+  obsoleto) — la OI en esa etapa queda `cerrada`, y se confirmó filtrar por ahí. Nuevo
+  endpoint `GET /afiliados/ordenes-facturables?afiliado_id=` lista las OE `cerrada` del
+  afiliado (sin excluir las ya asignadas a otra factura: la spec permite parcialidades).
+  Al elegir un folio en el combo (`SearchableSelect`, búsqueda por folio), se precargan
+  Subtotal/IVA con `importe_emisora`/`iva_emisora` de esa OE — quedan editables — y al
+  guardar, `FacturaAfiliadoCreate.orden_estacion_id` hace que el backend cree la
+  `FacturaAfiliadoOrden` en la misma transacción (auto-asignación, confirmada con el
+  usuario). Además, `FacturaAfiliado` gana `archivo_pdf_path`/`archivo_xml_path`
+  (columnas nuevas) para subir la factura del afiliado en PDF y XML por separado,
+  reutilizando el mecanismo de adjuntos ya usado por el CFDI de `FacturaCliente` — el
+  combo y la auto-asignación solo aplican al alta, no a la edición. Verificado: 6
+  pruebas nuevas de backend + 7 de frontend (`FacturaAfiliadoForm.test.tsx`); suites
+  completas (pytest + ruff; tsc + eslint + vitest) en verde.
 
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 

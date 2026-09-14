@@ -113,6 +113,12 @@ class FacturaAfiliado(Base):
     archivo_nombre: Mapped[str | None] = mapped_column(Unicode(255), default=None)
     # CLAVE del almacenamiento (S3/local), no una ruta de disco (ADR-042).
     archivo_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
+    # ADITIVO: la factura del afiliado se sube en PDF y XML por separado (mismo patrón
+    # que `FacturaCliente.xml_path`/`pdf_path` — CLAVE de almacenamiento, no nombre +
+    # ruta). `archivo_nombre`/`archivo_path` (arriba) quedan sin tocar por compatibilidad,
+    # aunque en la práctica no los llena ninguna pantalla todavía.
+    archivo_pdf_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
+    archivo_xml_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
 
     estatus_factura_afiliado: Mapped[str] = mapped_column(
         Unicode(20), default=EstatusFacturaProveedor.RECIBIDA.value
@@ -192,10 +198,27 @@ class FacturaAfiliadoRead(BaseModel):
     total_factura_afiliado: Decimal
     archivo_nombre: str | None = None
     archivo_path: str | None = None
+    archivo_pdf_path: str | None = None
+    archivo_xml_path: str | None = None
     estatus_factura_afiliado: str
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class OrdenEstacionFacturableAfiliadoRead(BaseModel):
+    """Fila del combo "Folio de la Orden Interna" (alta de FacturaAfiliado): una OE
+    `cerrada` del afiliado elegido, con lo que la emisora le cobra a OIR por ella —
+    de ahí se precargan Monto/IVA/Total (editables) al elegir un folio."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_estacion_id: uuid.UUID
+    folio_orden_estacion: str
+    nombre_estacion: str | None = None
+    importe_emisora: Decimal
+    iva_emisora: Decimal
+    total_emisora: Decimal
 
 
 class FacturaAfiliadoListParams(ListParams):
@@ -237,6 +260,15 @@ class FacturaAfiliadoCreate(BaseModel):
     iva_factura_afiliado: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     archivo_nombre: str | None = Field(default=None, max_length=255)
     archivo_path: str | None = Field(default=None, max_length=500)
+    archivo_pdf_path: str | None = Field(default=None, max_length=500)
+    archivo_xml_path: str | None = Field(default=None, max_length=500)
+    # Opcional: si se elige un folio en el combo "Folio de la Orden Interna" del alta,
+    # la factura queda asignada a esa OE en la MISMA transacción (ADR nuevo, ver
+    # docs/arquitectura.md) — evita el paso manual de "+ Asignar OE" para el caso común
+    # de una factura ligada a una sola OI. Debe estar `cerrada`; no hay tope de "ya
+    # asignada": la spec permite facturar una OE en parcialidades (ver
+    # `FacturaAfiliadoOrden.__table_args__`).
+    orden_estacion_id: uuid.UUID | None = None
 
 
 class FacturaAfiliadoUpdate(BaseModel):
@@ -252,6 +284,8 @@ class FacturaAfiliadoUpdate(BaseModel):
     )
     archivo_nombre: str | None = Field(default=None, max_length=255)
     archivo_path: str | None = Field(default=None, max_length=500)
+    archivo_pdf_path: str | None = Field(default=None, max_length=500)
+    archivo_xml_path: str | None = Field(default=None, max_length=500)
 
 
 class AsignarOrdenIn(BaseModel):
@@ -319,9 +353,48 @@ class FacturaAfiliadoService(
             for a in self._repo.listar_asignaciones(factura_afiliado_id)
         ]
 
+    def ordenes_facturables(
+        self, afiliado_id: uuid.UUID
+    ) -> list[OrdenEstacionFacturableAfiliadoRead]:
+        """OE `cerrada` del afiliado — combo "Folio de la Orden Interna" del alta. Se
+        listan TODAS, sin excluir las ya asignadas a otra factura: la spec permite
+        facturar una OE en parcialidades (ver `FacturaAfiliadoOrden.__table_args__`)."""
+        from app.modules.catalogos.estacion import Estacion
+        from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
+
+        db = self._repo.db
+        filas = db.execute(
+            select(
+                OrdenEstacion.orden_estacion_id,
+                OrdenEstacion.folio_orden_estacion,
+                Estacion.nombre_estacion,
+                OrdenEstacion.importe_emisora,
+                OrdenEstacion.iva_emisora,
+                OrdenEstacion.total_emisora,
+            )
+            .join(Estacion, Estacion.estacion_id == OrdenEstacion.estacion_id)
+            .where(
+                Estacion.afiliado_id == afiliado_id,
+                OrdenEstacion.estatus == EstatusOrdenEstacion.CERRADA.value,
+            )
+            .order_by(OrdenEstacion.folio_orden_estacion)
+        ).all()
+        return [
+            OrdenEstacionFacturableAfiliadoRead(
+                orden_estacion_id=f.orden_estacion_id,
+                folio_orden_estacion=f.folio_orden_estacion,
+                nombre_estacion=f.nombre_estacion,
+                importe_emisora=f.importe_emisora,
+                iva_emisora=f.iva_emisora,
+                total_emisora=f.total_emisora,
+            )
+            for f in filas
+        ]
+
     # ── Captura ───────────────────────────────────────────────────────────────
     def create(self, data: FacturaAfiliadoCreate, usuario: CurrentUser) -> FacturaAfiliadoRead:
         from app.modules.catalogos.afiliado import Afiliado
+        from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
@@ -330,11 +403,31 @@ class FacturaAfiliadoService(
             raise DomainError(
                 "El afiliado indicado no existe.", detalles={"afiliado_id": str(data.afiliado_id)}
             )
+
+        oe = None
+        if data.orden_estacion_id is not None:
+            oe = db.get(OrdenEstacion, data.orden_estacion_id)
+            if oe is None:
+                raise DomainError(
+                    "La OrdenEstacion indicada no existe.",
+                    detalles={"orden_estacion_id": str(data.orden_estacion_id)},
+                )
+            if oe.estatus != EstatusOrdenEstacion.CERRADA.value:
+                raise DomainError(
+                    "Solo se puede asignar costo a una OrdenEstacion 'cerrada'.",
+                    detalles={
+                        "orden_estacion_id": str(data.orden_estacion_id),
+                        "estatus": oe.estatus,
+                    },
+                )
+
         monto = Decimal(data.monto_factura_afiliado).quantize(CENTAVOS)
         iva = Decimal(data.iva_factura_afiliado).quantize(CENTAVOS)
         obj = FacturaAfiliado(
             factura_afiliado_id=uuid4(),
-            **data.model_dump(exclude={"monto_factura_afiliado", "iva_factura_afiliado"}),
+            **data.model_dump(
+                exclude={"monto_factura_afiliado", "iva_factura_afiliado", "orden_estacion_id"}
+            ),
             # Heredado del catálogo (spec: origen "Derivado").
             razon_social_afiliada=afiliado.razon_social_afiliado,
             monto_factura_afiliado=monto,
@@ -344,6 +437,19 @@ class FacturaAfiliadoService(
             created_by=resolver_usuario_id(db, usuario.username),
         )
         db.add(obj)
+        if oe is not None:
+            # Mismo criterio que `asignar_orden()`: el monto asignado es el subtotal
+            # (sin IVA), consistente con cómo el detalle ya suma "Asignado" contra
+            # `monto_factura_afiliado`, no contra el total.
+            db.add(
+                FacturaAfiliadoOrden(
+                    id=uuid4(),
+                    factura_afiliado_id=obj.factura_afiliado_id,
+                    orden_estacion_id=oe.orden_estacion_id,
+                    monto_asignado=monto,
+                    notas_asignacion=None,
+                )
+            )
         db.commit()
         db.refresh(obj)
         return self._to_read(obj)
@@ -512,6 +618,20 @@ def listar_facturas_afiliado(
             estatus_factura_afiliado=estatus_factura_afiliado,
         )
     )
+
+
+@router_afiliados.get(
+    "/ordenes-facturables", response_model=list[OrdenEstacionFacturableAfiliadoRead]
+)
+def listar_ordenes_facturables_afiliado(
+    afiliado_id: uuid.UUID = Query(...),
+    usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
+    svc: FacturaAfiliadoService = Depends(get_factura_afiliado_service),
+) -> list[OrdenEstacionFacturableAfiliadoRead]:
+    """Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado.
+    Declarado ANTES de `/{item_id}` — si no, FastAPI intentaría parsear
+    "ordenes-facturables" como UUID de `item_id` y respondería 422."""
+    return svc.ordenes_facturables(afiliado_id)
 
 
 @router_afiliados.get("/{item_id}", response_model=FacturaAfiliadoRead)
