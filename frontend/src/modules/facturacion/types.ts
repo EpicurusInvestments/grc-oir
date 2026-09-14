@@ -167,6 +167,10 @@ export interface FacturaAfiliado {
   total_factura_afiliado: string;
   archivo_nombre: string | null;
   archivo_path: string | null;
+  /** Factura del afiliado subida en PDF/XML por separado (a diferencia de
+   *  `archivo_nombre`/`archivo_path`, un campo legado sin usar desde ningún formulario). */
+  archivo_pdf_path: string | null;
+  archivo_xml_path: string | null;
   estatus_factura_afiliado: EstatusProveedor;
   created_by: string;
   created_at: string;
@@ -181,6 +185,40 @@ export interface FacturaAfiliadoCreate {
   iva_factura_afiliado: string;
   archivo_nombre?: string | null;
   archivo_path?: string | null;
+  archivo_pdf_path?: string | null;
+  archivo_xml_path?: string | null;
+  /** Folio de la Orden Interna elegido en el combo del alta: si se manda, el backend
+   *  crea la factura Y la asigna a esa OE en la misma transacción (debe estar `cerrada`).
+   *  Opcional — la asignación se puede seguir haciendo aparte, a mano. */
+  orden_estacion_id?: string | null;
+}
+
+/** Edición (`PUT /afiliados/{id}`): sin `afiliado_id` ni `orden_estacion_id` — el
+ *  backend no permite reasignar la factura a otro afiliado ni asignar una OI por esta
+ *  vía, y el servicio la rechaza con 409 si ya está `autorizada`/`pagada` (edición solo
+ *  antes de autorizar). */
+export interface FacturaAfiliadoUpdate {
+  factura_emisora?: string;
+  fecha_factura_afiliado?: string;
+  monto_factura_afiliado?: string;
+  iva_factura_afiliado?: string;
+  archivo_nombre?: string | null;
+  archivo_path?: string | null;
+  archivo_pdf_path?: string | null;
+  archivo_xml_path?: string | null;
+}
+
+/** Fila del combo "Folio de la Orden Interna" (alta de FacturaAfiliado): una OE
+ *  `cerrada` del afiliado elegido. `importe_emisora`/`iva_emisora`/`total_emisora` son
+ *  lo que la emisora le cobra a OIR por esa OE — de ahí se precargan Monto/IVA/Total
+ *  (quedan editables). */
+export interface OrdenEstacionFacturableAfiliado {
+  orden_estacion_id: string;
+  folio_orden_estacion: string;
+  nombre_estacion: string | null;
+  importe_emisora: string;
+  iva_emisora: string;
+  total_emisora: string;
 }
 
 export interface FacturaAfiliadoOrden {
