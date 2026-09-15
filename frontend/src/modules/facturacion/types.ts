@@ -175,6 +175,9 @@ export interface FacturaAfiliado {
   created_by: string;
   created_at: string;
   updated_at: string | null;
+  /** Cuántas OrdenEstacion tiene asignadas (columna "OE Asig." de la lista). Resuelto
+   *  por el backend en lote — el front no necesita pedir `/ordenes` de cada factura. */
+  ordenes_asignadas: number;
 }
 
 export interface FacturaAfiliadoCreate {
@@ -187,17 +190,20 @@ export interface FacturaAfiliadoCreate {
   archivo_path?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
-  /** Folio de la Orden Interna elegido en el combo del alta: si se manda, el backend
-   *  crea la factura Y la asigna a esa OE en la misma transacción (debe estar `cerrada`).
-   *  Opcional — la asignación se puede seguir haciendo aparte, a mano. */
-  orden_estacion_id?: string | null;
+  /** Folios de Orden Interna elegidos en el combo del alta (permite varios): si se
+   *  mandan, el backend crea la factura Y la asigna a cada una en la misma transacción
+   *  (cada una debe estar `cerrada`). El monto asignado a cada una es su propio
+   *  `importe_emisora` — no una repartición del subtotal. Opcional. */
+  ordenes_estacion_ids?: string[];
 }
 
-/** Edición (`PUT /afiliados/{id}`): sin `afiliado_id` ni `orden_estacion_id` — el
- *  backend no permite reasignar la factura a otro afiliado ni asignar una OI por esta
- *  vía, y el servicio la rechaza con 409 si ya está `autorizada`/`pagada` (edición solo
- *  antes de autorizar). */
+/** Edición (`PUT /afiliados/{id}`): hace todo lo que hace el alta — puede reasignar el
+ *  afiliado y editar qué OI tiene asignadas (`ordenes_estacion_ids` deja las
+ *  asignaciones EXACTAMENTE como pide la lista: agrega, quita, deja intactas las que
+ *  siguen). El servicio rechaza con 409 si la factura ya está `autorizada`/`pagada`
+ *  (edición solo antes de autorizar). */
 export interface FacturaAfiliadoUpdate {
+  afiliado_id?: string;
   factura_emisora?: string;
   fecha_factura_afiliado?: string;
   monto_factura_afiliado?: string;
@@ -206,6 +212,7 @@ export interface FacturaAfiliadoUpdate {
   archivo_path?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  ordenes_estacion_ids?: string[];
 }
 
 /** Fila del combo "Folio de la Orden Interna" (alta de FacturaAfiliado): una OE
@@ -227,6 +234,10 @@ export interface FacturaAfiliadoOrden {
   orden_estacion_id: string;
   monto_asignado: string;
   notas_asignacion: string | null;
+  /** Folio y nombre de la estación de la OE asignada — resueltos por el backend en
+   *  lote, para no mostrar el UUID crudo en la lista de asignaciones. */
+  folio_orden_estacion: string;
+  nombre_estacion: string | null;
 }
 
 // ── FacturaAgencia ────────────────────────────────────────────────────────────

@@ -59,6 +59,7 @@ const base: FacturaAfiliado = {
   created_by: "u-1",
   created_at: "2025-04-10T10:00:00",
   updated_at: null,
+  ordenes_asignadas: 2,
 };
 
 // Dos asignaciones cuya SUMA (264,384.00) no coincide con ninguna de las dos por
@@ -71,6 +72,8 @@ const asignaciones2: FacturaAfiliadoOrden[] = [
     orden_estacion_id: "9cbc85c3-aaaa-bbbb-cccc-000000000000",
     monto_asignado: "200000.00",
     notas_asignacion: null,
+    folio_orden_estacion: "OE-2025-0041A",
+    nombre_estacion: "XHMT-FM",
   },
   {
     id: "asig-2",
@@ -78,6 +81,8 @@ const asignaciones2: FacturaAfiliadoOrden[] = [
     orden_estacion_id: "bc89ce9d-aaaa-bbbb-cccc-000000000000",
     monto_asignado: "64384.00",
     notas_asignacion: null,
+    folio_orden_estacion: "OE-2025-0041B",
+    nombre_estacion: "XHRC-FM",
   },
 ];
 
@@ -155,11 +160,29 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     expect(panel.getByText("$388,488.64")).toBeInTheDocument();
   });
 
+  it("la lista muestra Fecha, Subtotal, Total y OE Asig., todo en 2 decimales", async () => {
+    await abrirDetalle(base);
+    // El folio también aparece en el encabezado del panel de detalle (misma fila,
+    // seleccionada) — se toma la coincidencia que está dentro de un `<tr>`.
+    const celda = screen
+      .getAllByText(base.factura_emisora)
+      .find((el) => el.closest("tr")) as HTMLElement;
+    const fila = celda.closest("tr") as HTMLElement;
+    const dentro = within(fila);
+    expect(dentro.getByText("10/04/2025")).toBeInTheDocument();
+    expect(dentro.getByText("$334,904.00")).toBeInTheDocument();
+    expect(dentro.getByText("$388,488.64")).toBeInTheDocument();
+    expect(dentro.getByText("2")).toBeInTheDocument();
+  });
+
   it("la sección 'Datos generales' muestra razón social, folio y fecha", async () => {
     await abrirDetalle(base);
+    // La fecha también aparece en la columna "Fecha" de la lista (misma fila,
+    // seleccionada) — se acota al panel de detalle, igual que ya hace "Total".
+    const panel = within(panelDeDetalle());
     expect(screen.getByText("Razón social emisora")).toBeInTheDocument();
     expect(screen.getAllByText("Radiorama Jalisco SA de CV").length).toBeGreaterThan(0);
-    expect(screen.getByText("10/04/2025")).toBeInTheDocument();
+    expect(panel.getByText("10/04/2025")).toBeInTheDocument();
   });
 
   it("muestra el archivo adjunto cuando existe", async () => {
@@ -177,12 +200,22 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     expect(screen.getByText("$70,520.00")).toBeInTheDocument();
   });
 
+  it("fix: cada asignación muestra folio y estación de la OE, no el UUID crudo", async () => {
+    await abrirDetalle(base);
+    expect(screen.getByText("OE-2025-0041A")).toBeInTheDocument();
+    expect(screen.getByText("XHMT-FM")).toBeInTheDocument();
+    expect(screen.getByText("OE-2025-0041B")).toBeInTheDocument();
+    expect(screen.getByText("XHRC-FM")).toBeInTheDocument();
+    expect(screen.queryByText(/9cbc85c3/)).toBeNull();
+    expect(screen.queryByText(/bc89ce9d/)).toBeNull();
+  });
+
   it("fix: una factura autorizada no permite editar (candado del backend)", async () => {
     await abrirDetalle(base);
     expect(screen.getByRole("button", { name: "Editar" })).toBeDisabled();
   });
 
-  it("una factura 'recibida' sí permite editar, y precarga el formulario", async () => {
+  it("una factura 'recibida' sí permite editar, y precarga el formulario (afiliado incluido)", async () => {
     await abrirDetalle({ ...base, estatus_factura_afiliado: "recibida" });
     const boton = screen.getByRole("button", { name: "Editar" });
     expect(boton).toBeEnabled();
@@ -191,11 +224,19 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     expect(await screen.findByText("Editar factura de afiliado")).toBeInTheDocument();
     expect(screen.getByDisplayValue("EMI-2025-118")).toBeInTheDocument();
     expect(screen.getByDisplayValue("334904.00")).toBeInTheDocument();
-    // El afiliado no se puede reasignar al editar.
-    expect(screen.getByTitle("El afiliado no se puede cambiar al editar.")).toBeDisabled();
+    // fix: el afiliado ya se puede reasignar al editar — el combo llega habilitado y
+    // con el afiliado actual ya elegido (la opción del `<select>` tarda un tick en
+    // llegar: `useAfiliados()` es una consulta async).
+    const comboAfiliado = await screen.findByDisplayValue("Radiorama Jalisco SA de CV");
+    expect(comboAfiliado).toBeEnabled();
+    // Y la sección de asignaciones se precarga con lo ya guardado (antes solo existía
+    // en el alta).
+    expect(screen.getByText("Asignación a órdenes estación")).toBeInTheDocument();
+    expect(screen.getByText("OE-2025-0041A")).toBeInTheDocument();
+    expect(screen.getByText("OE-2025-0041B")).toBeInTheDocument();
   });
 
-  it("guardar la edición llama a actualizar con el id correcto y sin afiliado_id", async () => {
+  it("guardar la edición llama a actualizar con el afiliado y las OI ya asignadas", async () => {
     actualizarMock.mockResolvedValue({ ...base, estatus_factura_afiliado: "recibida", monto_factura_afiliado: "999.00" });
     await abrirDetalle({ ...base, estatus_factura_afiliado: "recibida" });
     fireEvent.click(screen.getByRole("button", { name: "Editar" }));
@@ -206,8 +247,13 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     await waitFor(() => expect(actualizarMock).toHaveBeenCalledTimes(1));
     const [id, payload] = actualizarMock.mock.calls[0];
     expect(id).toBe("fa-1");
-    expect(payload).not.toHaveProperty("afiliado_id");
+    expect(payload.afiliado_id).toBe("af-1");
     expect(payload.factura_emisora).toBe("EMI-2025-118");
+    // Sin tocar nada, manda de vuelta exactamente las OI que ya estaban asignadas.
+    expect(payload.ordenes_estacion_ids).toEqual([
+      "9cbc85c3-aaaa-bbbb-cccc-000000000000",
+      "bc89ce9d-aaaa-bbbb-cccc-000000000000",
+    ]);
 
     // Vuelve a la vista de detalle (ya no el formulario).
     expect(await screen.findByText("Datos generales")).toBeInTheDocument();

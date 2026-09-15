@@ -28,7 +28,7 @@ class BaseRepository(Generic[ModelType]):
         model: type[ModelType],
         *,
         search_columns: Sequence[InstrumentedAttribute[Any]] | None = None,
-        default_order_by: Sequence[InstrumentedAttribute[Any]] | None = None,
+        default_order_by: Sequence[ColumnElement[Any]] | None = None,
     ) -> None:
         self.db = db
         self.model = model
