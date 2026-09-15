@@ -182,7 +182,18 @@ def _orden(
 
 
 def _orden_estacion(
-    db: Session, cat: dict[str, uuid.UUID], orden_id: uuid.UUID, estatus: str
+    db: Session,
+    cat: dict[str, uuid.UUID],
+    orden_id: uuid.UUID,
+    estatus: str,
+    *,
+    importe_estacion: Decimal = Decimal("10000.00"),
+    importe_oir: Decimal = Decimal("3000.00"),
+    iva_oir: Decimal = Decimal("480.00"),
+    total_oir: Decimal = Decimal("3480.00"),
+    importe_emisora: Decimal = Decimal("7000.00"),
+    iva_emisora: Decimal = Decimal("1120.00"),
+    total_emisora: Decimal = Decimal("8120.00"),
 ) -> uuid.UUID:
     oe_id = uuid.uuid4()
     db.add(
@@ -196,14 +207,14 @@ def _orden_estacion(
             plaza_id=cat["plaza_id"],
             duracion_spot="30s",
             precio_spot=Decimal("1000.00"),
-            importe_estacion=Decimal("10000.00"),
+            importe_estacion=importe_estacion,
             porcentaje_participacion_oir=Decimal("30.00"),
-            importe_oir=Decimal("3000.00"),
-            iva_oir=Decimal("480.00"),
-            total_oir=Decimal("3480.00"),
-            importe_emisora=Decimal("7000.00"),
-            iva_emisora=Decimal("1120.00"),
-            total_emisora=Decimal("8120.00"),
+            importe_oir=importe_oir,
+            iva_oir=iva_oir,
+            total_oir=total_oir,
+            importe_emisora=importe_emisora,
+            iva_emisora=iva_emisora,
+            total_emisora=total_emisora,
             estatus=estatus,
             created_by=ADMIN_ID,
         )
@@ -1970,7 +1981,7 @@ def test_crear_factura_afiliado_con_orden_estacion_asigna_automaticamente(
 
     r = client.post(
         "/api/v1/facturacion/afiliados",
-        json=_payload_factura_afiliado(cat, orden_estacion_id=str(oe)),
+        json=_payload_factura_afiliado(cat, ordenes_estacion_ids=[str(oe)]),
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
@@ -1981,8 +1992,14 @@ def test_crear_factura_afiliado_con_orden_estacion_asigna_automaticamente(
     ).json()
     assert len(asignaciones) == 1
     assert asignaciones[0]["orden_estacion_id"] == str(oe)
-    # El monto asignado es el subtotal capturado (monto_factura_afiliado), no el total.
+    # El monto asignado es el importe_emisora de la propia OE (fijo en `_orden_estacion`
+    # en $7,000.00), no una repartición del subtotal capturado en la factura.
     assert asignaciones[0]["monto_asignado"] == "7000.00"
+    # Folio y estación resueltos por el servicio (no el UUID crudo de la OE): la
+    # pantalla los necesita para no mostrar un identificador ilegible.
+    oe_db = db.get(OrdenEstacion, oe)
+    assert asignaciones[0]["folio_orden_estacion"] == oe_db.folio_orden_estacion
+    assert asignaciones[0]["nombre_estacion"] == "XHTEST-FM"
 
 
 def test_crear_factura_afiliado_orden_estacion_no_cerrada_400(
@@ -1994,7 +2011,7 @@ def test_crear_factura_afiliado_orden_estacion_no_cerrada_400(
 
     r = client.post(
         "/api/v1/facturacion/afiliados",
-        json=_payload_factura_afiliado(cat, orden_estacion_id=str(oe)),
+        json=_payload_factura_afiliado(cat, ordenes_estacion_ids=[str(oe)]),
         headers=_hdr("cxp"),
     )
     assert r.status_code == 400
@@ -2006,7 +2023,7 @@ def test_crear_factura_afiliado_orden_estacion_inexistente_400(
 ) -> None:
     r = client.post(
         "/api/v1/facturacion/afiliados",
-        json=_payload_factura_afiliado(cat, orden_estacion_id=str(uuid.uuid4())),
+        json=_payload_factura_afiliado(cat, ordenes_estacion_ids=[str(uuid.uuid4())]),
         headers=_hdr("cxp"),
     )
     assert r.status_code == 400
@@ -2050,8 +2067,312 @@ def test_crear_factura_afiliado_permite_facturar_la_misma_oe_en_parcialidades(
                 factura_emisora=numero,
                 monto_factura_afiliado="3500.00",
                 iva_factura_afiliado="560.00",
-                orden_estacion_id=str(oe),
+                ordenes_estacion_ids=[str(oe)],
             ),
             headers=_hdr("cxp"),
         )
         assert r.status_code == 201, r.text
+
+
+def test_crear_factura_afiliado_con_varias_ordenes_estacion_asigna_cada_una(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Selecciona más de una OI en el alta: se crea una asignación por cada una, cada
+    una con SU PROPIO importe_emisora (no una repartición del subtotal capturado)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-MULTI")
+    # Mismo criterio 70/30 (emisora/OIR) que el default del helper, con montos reales
+    # distintos por OE — importe_estacion = importe_oir + importe_emisora (CHECK).
+    oe_a = _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        importe_estacion=Decimal("408000.00"),
+        importe_oir=Decimal("122400.00"),
+        iva_oir=Decimal("19584.00"),
+        total_oir=Decimal("141984.00"),
+        importe_emisora=Decimal("285600.00"),
+        iva_emisora=Decimal("45696.00"),
+        total_emisora=Decimal("331296.00"),
+    )
+    oe_b = _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        importe_estacion=Decimal("240000.00"),
+        importe_oir=Decimal("72000.00"),
+        iva_oir=Decimal("11520.00"),
+        total_oir=Decimal("83520.00"),
+        importe_emisora=Decimal("168000.00"),
+        iva_emisora=Decimal("26880.00"),
+        total_emisora=Decimal("194880.00"),
+    )
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(
+            cat,
+            monto_factura_afiliado="453600.00",
+            iva_factura_afiliado="72576.00",
+            ordenes_estacion_ids=[str(oe_a), str(oe_b)],
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    # El conteo ya viene correcto en la MISMA respuesta del alta, sin esperar al
+    # próximo GET (mismo criterio que `_enriquecida` en `factura_cliente.py`).
+    assert r.json()["ordenes_asignadas"] == 2
+    factura_id = r.json()["factura_afiliado_id"]
+
+    asignaciones = client.get(
+        f"/api/v1/facturacion/afiliados/{factura_id}/ordenes", headers=_hdr("cxp")
+    ).json()
+    por_oe = {a["orden_estacion_id"]: a["monto_asignado"] for a in asignaciones}
+    assert por_oe == {str(oe_a): "285600.00", str(oe_b): "168000.00"}
+
+    # Columna "OE Asig." de la lista: se resuelve en lote, sin que el front tenga que
+    # pedir `/ordenes` de cada factura para saber cuántas trae.
+    detalle = client.get(
+        f"/api/v1/facturacion/afiliados/{factura_id}", headers=_hdr("cxp")
+    ).json()
+    assert detalle["ordenes_asignadas"] == 2
+
+    lista = client.get(
+        "/api/v1/facturacion/afiliados",
+        params={"afiliado_id": str(cat["afiliado_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    en_lista = next(f for f in lista["items"] if f["factura_afiliado_id"] == factura_id)
+    assert en_lista["ordenes_asignadas"] == 2
+
+
+def test_factura_afiliado_sin_ordenes_asignadas_muestra_conteo_cero(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(cat),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["ordenes_asignadas"] == 0
+
+    factura_id = r.json()["factura_afiliado_id"]
+    detalle = client.get(
+        f"/api/v1/facturacion/afiliados/{factura_id}", headers=_hdr("cxp")
+    ).json()
+    assert detalle["ordenes_asignadas"] == 0
+
+
+def test_crear_factura_afiliado_rechaza_la_misma_oe_repetida_en_el_alta(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-REPETIDA")
+    oe = _orden_estacion(db, cat, orden_id, "cerrada")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(cat, ordenes_estacion_ids=[str(oe), str(oe)]),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_lista_facturas_afiliado_ordena_por_mas_reciente_primero(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario: al capturar una factura nueva, siempre sube hasta arriba
+    de la lista — sin importar `fecha_factura_afiliado` (que puede ser una fecha
+    pasada), se ordena por el momento REAL del alta (`created_at`)."""
+    primera = client.post(
+        "/api/v1/facturacion/afiliados",
+        # Fecha de factura más reciente que la segunda, a propósito: si se ordenara
+        # por `fecha_factura_afiliado` en vez de `created_at`, esta quedaría arriba.
+        json=_payload_factura_afiliado(
+            cat, factura_emisora="EMI-ORDEN-1", fecha_factura_afiliado="2026-06-01"
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert primera.status_code == 201, primera.text
+
+    segunda = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(
+            cat, factura_emisora="EMI-ORDEN-2", fecha_factura_afiliado="2026-01-01"
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert segunda.status_code == 201, segunda.text
+
+    lista = client.get(
+        "/api/v1/facturacion/afiliados",
+        params={"afiliado_id": str(cat["afiliado_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    folios = [f["factura_emisora"] for f in lista["items"]]
+    assert folios.index("EMI-ORDEN-2") < folios.index("EMI-ORDEN-1")
+
+
+# ── Editar FacturaAfiliado: hace todo lo que hace el alta ─────────────────────────
+def test_editar_factura_afiliado_permite_reasignar_afiliado(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario: la edición ya no deja el afiliado fijo — se re-deriva
+    `razon_social_afiliada` del NUEVO afiliado, igual que en el alta."""
+    otro_afiliado_id = uuid.uuid4()
+    db.add(
+        Afiliado(
+            afiliado_id=otro_afiliado_id,
+            nombre_afiliado="Afiliado Dos",
+            razon_social_afiliado="Afiliado Dos SA de CV",
+            rfc_afiliado="ADS900101AB2",
+            plaza_id=cat["plaza_id"],
+        )
+    )
+    db.commit()
+
+    fid = _crear_factura_afiliado(client, cat)
+    r = client.put(
+        f"/api/v1/facturacion/afiliados/{fid}",
+        json={"afiliado_id": str(otro_afiliado_id)},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["afiliado_id"] == str(otro_afiliado_id)
+    assert r.json()["razon_social_afiliada"] == "Afiliado Dos SA de CV"
+
+
+def test_editar_factura_afiliado_afiliado_inexistente_400(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_afiliado(client, cat)
+    r = client.put(
+        f"/api/v1/facturacion/afiliados/{fid}",
+        json={"afiliado_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_editar_factura_afiliado_reconcilia_ordenes_estacion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """`ordenes_estacion_ids` en la edición deja las asignaciones EXACTAMENTE como pide
+    la lista: agrega las nuevas, quita las que ya no están, y las que siguen (oe_b) se
+    quedan con su `monto_asignado` intacto."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-EDITAR-OE")
+    # importe_estacion = importe_oir + importe_emisora (CHECK
+    # `ck_orden_estacion_margen_oir_emisora`) — mismo criterio 70/30 que otros tests.
+    oe_a = _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        importe_estacion=Decimal("1300.00"),
+        importe_oir=Decimal("300.00"),
+        iva_oir=Decimal("48.00"),
+        total_oir=Decimal("348.00"),
+        importe_emisora=Decimal("1000.00"),
+        iva_emisora=Decimal("160.00"),
+        total_emisora=Decimal("1160.00"),
+    )
+    oe_b = _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        importe_estacion=Decimal("2600.00"),
+        importe_oir=Decimal("600.00"),
+        iva_oir=Decimal("96.00"),
+        total_oir=Decimal("696.00"),
+        importe_emisora=Decimal("2000.00"),
+        iva_emisora=Decimal("320.00"),
+        total_emisora=Decimal("2320.00"),
+    )
+    oe_c = _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        importe_estacion=Decimal("3900.00"),
+        importe_oir=Decimal("900.00"),
+        iva_oir=Decimal("144.00"),
+        total_oir=Decimal("1044.00"),
+        importe_emisora=Decimal("3000.00"),
+        iva_emisora=Decimal("480.00"),
+        total_emisora=Decimal("3480.00"),
+    )
+    db.commit()
+
+    alta = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(cat, ordenes_estacion_ids=[str(oe_a), str(oe_b)]),
+        headers=_hdr("cxp"),
+    )
+    assert alta.status_code == 201, alta.text
+    fid = alta.json()["factura_afiliado_id"]
+
+    r = client.put(
+        f"/api/v1/facturacion/afiliados/{fid}",
+        json={"ordenes_estacion_ids": [str(oe_b), str(oe_c)]},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ordenes_asignadas"] == 2
+
+    asignaciones = client.get(
+        f"/api/v1/facturacion/afiliados/{fid}/ordenes", headers=_hdr("cxp")
+    ).json()
+    por_oe = {a["orden_estacion_id"]: a["monto_asignado"] for a in asignaciones}
+    # oe_a se quitó, oe_c se agregó con su propio importe_emisora, y oe_b (que ya
+    # estaba) se queda con el mismo monto de antes.
+    assert por_oe == {str(oe_b): "2000.00", str(oe_c): "3000.00"}
+
+
+def test_editar_factura_afiliado_orden_estacion_no_cerrada_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_afiliado(client, cat)
+    orden_id = _orden(db, cat, "en_transmision", "OC-EDITAR-NOCERRADA")
+    oe = _orden_estacion(db, cat, orden_id, "en_transmision")
+    db.commit()
+
+    r = client.put(
+        f"/api/v1/facturacion/afiliados/{fid}",
+        json={"ordenes_estacion_ids": [str(oe)]},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+    # La validación falla ANTES de tocar nada: sin asignaciones a medias.
+    asignaciones = client.get(
+        f"/api/v1/facturacion/afiliados/{fid}/ordenes", headers=_hdr("cxp")
+    ).json()
+    assert asignaciones == []
+
+
+def test_editar_factura_afiliado_autorizada_no_permite_reasignar_ni_reconciliar(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo candado que ya protege monto/IVA (`Una factura autorizada o pagada ya no
+    se edita`): también aplica a `afiliado_id`/`ordenes_estacion_ids`."""
+    fid = _crear_factura_afiliado(client, cat)
+    client.post(
+        f"/api/v1/facturacion/afiliados/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+    client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr("direccion"))
+
+    r = client.put(
+        f"/api/v1/facturacion/afiliados/{fid}",
+        json={"afiliado_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 409

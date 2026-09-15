@@ -146,21 +146,40 @@ PK `factura_afiliado_id`. FK a `Afiliado`. Captura manual o carga de archivo, po
 (no Facturación — ver RBAC). `total_factura_afiliado` calculado
 (`monto + iva`). Estados: `recibida → en_revision → autorizada → pagada`.
 
+**`ordenes_asignadas` (ADR-074, no es columna de la tabla):** cuántas `OrdenEstacion`
+tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre
+`FacturaAfiliadoOrden`, una sola consulta por página) y se expone solo en
+`FacturaAfiliadoRead` para pintar la columna "OE Asig." de la lista.
+
 **Aditivos** (`archivo_pdf_path`/`archivo_xml_path` — ADR-070): la factura del afiliado
 se sube en PDF y XML por separado, mismo mecanismo de adjuntos que ya usa el CFDI de
 `FacturaCliente`. Los campos legado `archivo_nombre`/`archivo_path` (spec) siguen ahí
 sin tocar, pero ningún formulario los llena desde que existen estos dos.
 
-**Combo "Folio de la Orden Interna" en el alta (ADR-070):** el formulario ofrece elegir
-una OE `cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=`),
-precarga Subtotal/IVA (editables) con lo que la emisora cobra por ella
-(`importe_emisora`/`iva_emisora`), y al guardar la factura queda asignada a esa OE en la
-misma transacción (`FacturaAfiliadoCreate.orden_estacion_id`) — sin excluir OE ya
-asignadas a otra factura: la spec permite facturar en parcialidades.
+**Combo "Folio de la Orden Interna" en alta Y edición (ADR-070, multi-selección desde
+ADR-073, también al editar desde ADR-077):** el formulario ofrece agregar VARIAS OE
+`cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=`), una por una
+con búsqueda; al guardar, la factura queda asignada a cada una
+(`ordenes_estacion_ids: UUID[]`, en `FacturaAfiliadoCreate` y también en
+`FacturaAfiliadoUpdate`) — sin excluir OE ya asignadas a otra factura: la spec permite
+facturar en parcialidades. El monto asignado a cada una es su propio `importe_emisora`
+(no una repartición del Subtotal). Subtotal/IVA se capturan a mano, sin auto-llenarse
+desde las OE elegidas (con varias no hay un solo monto que copiar); la sección
+"Asignación a órdenes estación" muestra en vivo **Asignado** (suma de `importe_emisora`
+de las OE agregadas) y **Sin Asignar** (Subtotal capturado − Asignado), igual en alta,
+edición y en el detalle de solo lectura. **Al editar** (ADR-077), el afiliado también se
+puede reasignar (antes quedaba fijo) y la lista de OI llega precargada con lo ya
+asignado — el backend reconcilia al guardar: agrega lo nuevo, quita lo removido, deja
+intacto lo que sigue (no recalcula `monto_asignado` de lo que no se tocó).
 
 ### FacturaAfiliadoOrden (5 campos spec)
 Relación N:M `FacturaAfiliado` ↔ `OrdenEstacion` **cerrada** — permite repartir el costo
 de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacion`.
+
+**`folio_orden_estacion`/`nombre_estacion` (ADR-075, no son columnas de la tabla):**
+resueltos en el servicio (`JOIN OrdenEstacion → Estacion`, en lote) y expuestos solo en
+`FacturaAfiliadoOrdenRead` — sin esto, la lista de asignaciones del detalle solo podía
+mostrar el UUID crudo de la OE.
 
 ### FacturaAgencia (15 campos spec)
 PK `factura_agencia_id`. FK a `Agencia` y a `OrdenCliente` (**1:N** — una OC puede tener
@@ -581,6 +600,10 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   tarea aparte. Verificado: 7 pruebas nuevas (`FacturasAfiliadoPage.test.tsx`); `tsc`,
   `eslint` y la suite `vitest` del módulo `facturacion` en verde.
 
+  > **Superado por ADR-077:** el afiliado fijo en edición y el combo de OI solo en el
+  > alta fueron decisiones de ESTE momento — el usuario después pidió lo contrario
+  > ("hacer todo como en la creación"). Ver ADR-077 más abajo.
+
 - **Timeline de Facturas de afiliado + se quita "Marcar pagada" del detalle (petición
   del usuario, solo frontend).** Se agregó un timeline al detalle (mismo patrón que el
   de "Facturas al cliente"), con las 4 fases REALES de `ESTATUS_PROVEEDOR` — recibida →
@@ -608,6 +631,89 @@ comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
   combo y la auto-asignación solo aplican al alta, no a la edición. Verificado: 6
   pruebas nuevas de backend + 7 de frontend (`FacturaAfiliadoForm.test.tsx`); suites
   completas (pytest + ruff; tsc + eslint + vitest) en verde.
+
+- **El combo del alta de FacturaAfiliado pasa a multi-selección; Asignado/Sin Asignar en
+  vivo (ADR-073, petición del usuario).** El combo "Folio de la Orden Interna" ya
+  permite agregar VARIAS OI (una por una, con búsqueda; cada una se puede quitar de la
+  lista); `FacturaAfiliadoCreate.ordenes_estacion_ids: UUID[]` reemplaza al campo
+  singular — el backend asigna la factura a cada una en la misma transacción, cada una
+  con SU PROPIO `importe_emisora` como `monto_asignado` (no una repartición del
+  Subtotal). Se retiró la auto-precarga de Subtotal/IVA desde la OE elegida (con varias
+  seleccionadas no hay un solo monto que copiar): ahora se capturan libremente, y la
+  nueva sección "Asignación a órdenes estación" del formulario de alta muestra en vivo
+  **Asignado** (suma de `importe_emisora` de las OI agregadas) y **Sin Asignar**
+  (Subtotal capturado − Asignado, a 2 decimales con `fmtMoneda`) — mismo patrón visual
+  que ya tenía el detalle de solo lectura. Cambiar de afiliado con OI ya elegidas las
+  limpia (antes solo se filtraban las opciones del combo; la selección previa quedaba
+  colgada). Verificado: pruebas de backend nuevas/actualizadas (alta con varias OI,
+  rechazo de la misma OE repetida en el mismo alta) + `FacturaAfiliadoForm.test.tsx`
+  reescrito (10 pruebas); suites completas (pytest + ruff; tsc + eslint + vitest) en
+  verde (53/53 en frontend).
+
+- **Columnas faltantes en la lista de Facturas de afiliado (ADR-074, petición del
+  usuario comparando contra el mockup).** La tabla solo mostraba Folio emisora /
+  Afiliado / Total / Estatus; ahora agrega Fecha, Subtotal y **OE Asig.** (cuántas
+  OrdenEstacion tiene asignadas). Este último es un campo NUEVO —
+  `FacturaAfiliadoRead.ordenes_asignadas: int` —, resuelto en el servicio con una sola
+  consulta `GROUP BY` por página (nunca N+1, mismo patrón que `_nombres_emisoras` en
+  `factura_cliente.py`); se recalcula también en el alta, la edición y las
+  transiciones/autorización, para que nunca se muestre en 0 por accidente antes del
+  siguiente GET. De paso, se confirmó que todos los montos de la pantalla ya usaban
+  `fmtMoneda` (2 decimales) — el único ajuste fue quitar `{ truncar: true }` del Total de
+  la lista, que no aportaba nada (`truncar` cambia el redondeo, no la cantidad de
+  decimales). Verificado: 2 pruebas nuevas de backend (conteo correcto en alta/detalle/
+  lista, y en 0 sin asignaciones) + 1 prueba nueva de frontend para las columnas;
+  suites completas (pytest + ruff; tsc + eslint + vitest) en verde.
+
+- **El detalle de "Asignación a órdenes estación" mostraba el UUID crudo de la OE
+  (ADR-075, petición del usuario comparando contra el alta).** Cada asignación se veía
+  como `3f6e53ba…` en vez de folio + estación, a diferencia del formulario de alta
+  (ADR-073), que sí muestra `OE-2026-0041A` / `XHLE-TV` porque esos datos vienen del
+  combo. `FacturaAfiliadoOrdenRead` gana `folio_orden_estacion`/`nombre_estacion`,
+  resueltos en el servicio con un `JOIN` en lote (mismo patrón que `ordenes_asignadas`,
+  ADR-074) — nunca N+1. El renglón de cada asignación en el detalle ahora se ve igual
+  que en el alta. Verificado: se extendió una prueba de backend existente para
+  comprobar folio/estación reales + 1 prueba nueva de frontend; suites completas
+  (pytest + ruff; tsc + eslint + vitest) en verde.
+
+- **La lista de Facturas de afiliado no tenía un orden estable (ADR-076, petición del
+  usuario).** Al no pasarle `default_order_by`, `BaseRepository.list()` caía al orden de
+  la PK (`factura_afiliado_id`, un UUID) — se veía prácticamente aleatorio. Ahora ordena
+  por `created_at DESC` (el momento REAL del alta, no `fecha_factura_afiliado` — una
+  factura nueva sube hasta arriba aunque su fecha de campaña sea antigua), con el id
+  como segundo criterio para que la paginación no quede indeterminada si dos altas caen
+  en el mismo instante. Verificado: 1 prueba nueva (dos altas con fechas de factura
+  invertidas a propósito, para confirmar que ordena por `created_at` y no por la fecha
+  capturada); suite completa (pytest + ruff) en verde. Sin cambios de frontend.
+
+- **La edición de FacturaAfiliado ya hace todo lo que hace el alta (ADR-077, petición
+  del usuario).** Antes el afiliado quedaba fijo y el combo de OI solo aplicaba al alta
+  (decisión de ADR-070/073); ahora `FacturaAfiliadoUpdate` acepta `afiliado_id` (se
+  re-deriva `razon_social_afiliada` del nuevo) y `ordenes_estacion_ids`, que
+  **reconcilia** las asignaciones: agrega lo nuevo, quita lo que ya no está (primer
+  DELETE real de `FacturaAfiliadoOrden`), deja intacto lo que sigue sin recalcular su
+  monto. El mismo formulario se usa para alta y edición — la sección "Asignación a
+  órdenes estación" ahora se precarga con lo ya asignado
+  (`asignacionesIniciales`) y se puede editar igual que en el alta. De paso se corrigió
+  un bug latente que esto expuso: el combo Afiliado no reflejaba el valor inicial en el
+  DOM cuando el catálogo (`useAfiliados`, async) tardaba en cargar — inofensivo antes
+  porque el select estaba deshabilitado y su valor nunca se mandaba; ahora sí se manda,
+  así que se agregó `value` controlado para que siempre muestre el afiliado correcto.
+  Verificado: 5 pruebas nuevas de backend (el endpoint `PUT` no tenía ninguna antes) +
+  3 de `FacturaAfiliadoForm.test.tsx` + 2 reescritas en `FacturasAfiliadoPage.test.tsx`;
+  suites completas (pytest + ruff; tsc + eslint + vitest) en verde.
+
+- **Fix inmediato a lo anterior: las OI ya asignadas no cargaban al editar (ADR-078,
+  reporte del usuario).** El `useEffect` que limpia la selección al cambiar de afiliado
+  usaba un `useRef` de "¿ya corrió una vez?" para no dispararse en el montaje — pero
+  `<StrictMode>` (activo en `main.tsx`) monta cada componente dos veces a propósito en
+  desarrollo, y la SEGUNDA pasada sí encontraba el `useRef` ya "usado", así que borraba
+  la precarga sin que el usuario tocara nada. Se cambió a comparar contra el afiliado
+  con el que se montó el formulario (capturado una sola vez), no contra "cuántas veces
+  corrió el efecto" — así da igual cuántas veces se dispare con el mismo valor.
+  Verificado: el test de precarga ahora envuelve el render en `<StrictMode>` a
+  propósito (antes no lo hacía y por eso no atrapó el bug); se confirmó manualmente que
+  fallaba con el código viejo. Suite `vitest` del módulo en verde.
 
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 

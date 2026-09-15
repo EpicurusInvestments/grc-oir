@@ -35,6 +35,7 @@ from sqlalchemy import (
     Unicode,
     UniqueConstraint,
     Uuid,
+    func,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -183,6 +184,13 @@ class FacturaAfiliadoOrdenRead(BaseModel):
     orden_estacion_id: uuid.UUID
     monto_asignado: Decimal
     notas_asignacion: str | None = None
+    # Se resuelven en el servicio, en lote (mismo criterio que `ordenes_asignadas` en
+    # `FacturaAfiliadoRead`): sin esto, la pantalla solo podía mostrar el UUID crudo de
+    # la OE en la lista de asignaciones — el combo del alta sí muestra folio/estación
+    # porque los trae de otro endpoint (`ordenes-facturables`), pero aquí no había de
+    # dónde sacarlos hasta ahora.
+    folio_orden_estacion: str = ""
+    nombre_estacion: str | None = None
 
 
 class FacturaAfiliadoRead(BaseModel):
@@ -204,6 +212,12 @@ class FacturaAfiliadoRead(BaseModel):
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
+    # Se resuelve en el servicio, en lote, para la lista (columna "OE Asig." de la
+    # pantalla aprobada) — no es una columna de esta tabla, sino un conteo sobre
+    # `FacturaAfiliadoOrden` (mismo criterio que `empresa_facturadora`/`folio_orden` en
+    # `FacturaClienteRead`: se llena DESPUÉS de `model_validate`, con una sola consulta
+    # por página en vez de N+1).
+    ordenes_asignadas: int = 0
 
 
 class OrdenEstacionFacturableAfiliadoRead(BaseModel):
@@ -262,18 +276,27 @@ class FacturaAfiliadoCreate(BaseModel):
     archivo_path: str | None = Field(default=None, max_length=500)
     archivo_pdf_path: str | None = Field(default=None, max_length=500)
     archivo_xml_path: str | None = Field(default=None, max_length=500)
-    # Opcional: si se elige un folio en el combo "Folio de la Orden Interna" del alta,
-    # la factura queda asignada a esa OE en la MISMA transacción (ADR nuevo, ver
-    # docs/arquitectura.md) — evita el paso manual de "+ Asignar OE" para el caso común
-    # de una factura ligada a una sola OI. Debe estar `cerrada`; no hay tope de "ya
-    # asignada": la spec permite facturar una OE en parcialidades (ver
-    # `FacturaAfiliadoOrden.__table_args__`).
-    orden_estacion_id: uuid.UUID | None = None
+    # Opcional: folios elegidos en el combo "Folio de la Orden Interna" del alta (permite
+    # varios) — la factura queda asignada a cada una en la MISMA transacción (ADR
+    # nuevo, ver docs/arquitectura.md), evitando el paso manual de "+ Asignar OE" para
+    # el caso común. Cada una debe estar `cerrada`; no hay tope de "ya asignada": la
+    # spec permite facturar una OE en parcialidades (ver
+    # `FacturaAfiliadoOrden.__table_args__`). El monto asignado a cada una es su propio
+    # `importe_emisora` — no una repartición manual del subtotal de la factura.
+    ordenes_estacion_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class FacturaAfiliadoUpdate(BaseModel):
+    """Edición: hace todo lo que hace el alta (petición del usuario), incluido
+    reasignar el afiliado y editar qué OI tiene asignadas — mismo criterio que
+    `FacturaAfiliadoCreate.ordenes_estacion_ids`: si se manda, el servicio deja las
+    asignaciones EXACTAMENTE como pide la lista (agrega las nuevas, quita las que ya no
+    están, deja intactas las que siguen). `None` (campo omitido) = no tocar
+    asignaciones; `[]` = quitarlas todas."""
+
     model_config = ConfigDict(extra="forbid")
 
+    afiliado_id: uuid.UUID | None = None
     factura_emisora: str | None = Field(default=None, min_length=1, max_length=50)
     fecha_factura_afiliado: date | None = None
     monto_factura_afiliado: Decimal | None = Field(
@@ -286,6 +309,7 @@ class FacturaAfiliadoUpdate(BaseModel):
     archivo_path: str | None = Field(default=None, max_length=500)
     archivo_pdf_path: str | None = Field(default=None, max_length=500)
     archivo_xml_path: str | None = Field(default=None, max_length=500)
+    ordenes_estacion_ids: list[uuid.UUID] | None = None
 
 
 class AsignarOrdenIn(BaseModel):
@@ -348,10 +372,77 @@ class FacturaAfiliadoService(
 
     def asignaciones(self, factura_afiliado_id: uuid.UUID) -> list[FacturaAfiliadoOrdenRead]:
         self._get_or_404(factura_afiliado_id)
-        return [
+        leidas = [
             FacturaAfiliadoOrdenRead.model_validate(a)
             for a in self._repo.listar_asignaciones(factura_afiliado_id)
         ]
+        datos_oe = self._datos_oe(leidas)
+        for a in leidas:
+            folio, nombre = datos_oe.get(a.orden_estacion_id, ("", None))
+            a.folio_orden_estacion = folio
+            a.nombre_estacion = nombre
+        return leidas
+
+    def _datos_oe(
+        self, asignaciones: list[FacturaAfiliadoOrdenRead]
+    ) -> dict[uuid.UUID, tuple[str, str | None]]:
+        """Folio y estación de las OE de una factura, en UNA consulta — mismo patrón
+        por lote que `_conteo_asignaciones`. Sin esto, la lista de asignaciones solo
+        podía mostrar el UUID crudo de la OE (pantalla aprobada: folio + estación)."""
+        from app.modules.catalogos.estacion import Estacion
+        from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+        ids = {a.orden_estacion_id for a in asignaciones}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(
+                OrdenEstacion.orden_estacion_id,
+                OrdenEstacion.folio_orden_estacion,
+                Estacion.nombre_estacion,
+            )
+            .join(Estacion, Estacion.estacion_id == OrdenEstacion.estacion_id)
+            .where(OrdenEstacion.orden_estacion_id.in_(ids))
+        ).all()
+        return {fila[0]: (fila[1], fila[2]) for fila in filas}
+
+    def _conteo_asignaciones(
+        self, facturas: list[FacturaAfiliadoRead]
+    ) -> dict[uuid.UUID, int]:
+        """Cuántas OrdenEstacion tiene asignadas cada factura de una página, en UNA
+        consulta (columna "OE Asig." de la pantalla aprobada) — mismo patrón por lote
+        que `_nombres_emisoras` en `factura_cliente.py`."""
+        ids = {f.factura_afiliado_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(
+                FacturaAfiliadoOrden.factura_afiliado_id, func.count(FacturaAfiliadoOrden.id)
+            )
+            .where(FacturaAfiliadoOrden.factura_afiliado_id.in_(ids))
+            .group_by(FacturaAfiliadoOrden.factura_afiliado_id)
+        ).all()
+        return {fila[0]: fila[1] for fila in filas}
+
+    def _enriquecida(self, leida: FacturaAfiliadoRead) -> FacturaAfiliadoRead:
+        """Enriquece UNA lectura (alta/edición/transiciones) con `ordenes_asignadas` —
+        mismo criterio que `_enriquecida` en `factura_cliente.py`: sin esto, la
+        respuesta de un alta con OI ya asignadas mostraría el conteo en 0 hasta el
+        próximo GET."""
+        leida.ordenes_asignadas = self._conteo_asignaciones([leida]).get(
+            leida.factura_afiliado_id, 0
+        )
+        return leida
+
+    def list(self, params: ListParams) -> Page[FacturaAfiliadoRead]:
+        pagina = super().list(params)
+        conteos = self._conteo_asignaciones(pagina.items)
+        for f in pagina.items:
+            f.ordenes_asignadas = conteos.get(f.factura_afiliado_id, 0)
+        return pagina
+
+    def get(self, id_: Any) -> FacturaAfiliadoRead:
+        return self._enriquecida(super().get(id_))
 
     def ordenes_facturables(
         self, afiliado_id: uuid.UUID
@@ -391,10 +482,73 @@ class FacturaAfiliadoService(
             for f in filas
         ]
 
+    def _validar_ordenes_estacion(self, ids: list[uuid.UUID]) -> list[Any]:
+        """Valida una lista de OI para el combo del alta/edición: sin repetidos, cada
+        una debe existir y estar `cerrada`. Devuelve las `OrdenEstacion` ya validadas,
+        en el mismo orden — compartido por `create()` y `update()` (vía
+        `_aplicar_asignaciones()`) para no duplicar esta regla de negocio."""
+        from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
+
+        db = self._repo.db
+        oes: list[OrdenEstacion] = []
+        ids_vistos: set[uuid.UUID] = set()
+        for oe_id in ids:
+            if oe_id in ids_vistos:
+                raise DomainError(
+                    "La misma OrdenEstacion no puede repetirse en la misma factura.",
+                    detalles={"orden_estacion_id": str(oe_id)},
+                )
+            ids_vistos.add(oe_id)
+            oe = db.get(OrdenEstacion, oe_id)
+            if oe is None:
+                raise DomainError(
+                    "La OrdenEstacion indicada no existe.",
+                    detalles={"orden_estacion_id": str(oe_id)},
+                )
+            if oe.estatus != EstatusOrdenEstacion.CERRADA.value:
+                raise DomainError(
+                    "Solo se puede asignar costo a una OrdenEstacion 'cerrada'.",
+                    detalles={"orden_estacion_id": str(oe_id), "estatus": oe.estatus},
+                )
+            oes.append(oe)
+        return oes
+
+    def _aplicar_asignaciones(self, obj: FacturaAfiliado, nuevas_oes: list[Any]) -> None:
+        """Deja las asignaciones de la factura EXACTAMENTE como pide `nuevas_oes` (ya
+        validadas por `_validar_ordenes_estacion`): agrega las OI nuevas (con su propio
+        `importe_emisora`, mismo criterio que `create()`) y quita las que ya no están —
+        las que siguen se dejan intactas, sin recalcular su `monto_asignado` aunque el
+        `importe_emisora` de la OE haya cambiado desde que se asignó (edición: "hacer
+        todo como en la creación", petición del usuario, pero sin alterar en silencio
+        un monto ya comprometido)."""
+        db = self._repo.db
+        existentes = {
+            a.orden_estacion_id: a
+            for a in self._repo.listar_asignaciones(obj.factura_afiliado_id)
+        }
+        ids_nuevos = {oe.orden_estacion_id for oe in nuevas_oes}
+
+        for oe_id, asignacion in existentes.items():
+            if oe_id not in ids_nuevos:
+                db.delete(asignacion)
+
+        for oe in nuevas_oes:
+            if oe.orden_estacion_id in existentes:
+                continue
+            db.add(
+                FacturaAfiliadoOrden(
+                    id=uuid4(),
+                    factura_afiliado_id=obj.factura_afiliado_id,
+                    orden_estacion_id=oe.orden_estacion_id,
+                    monto_asignado=Decimal(oe.importe_emisora).quantize(CENTAVOS),
+                    notas_asignacion=None,
+                )
+            )
+        db.commit()
+
     # ── Captura ───────────────────────────────────────────────────────────────
     def create(self, data: FacturaAfiliadoCreate, usuario: CurrentUser) -> FacturaAfiliadoRead:
         from app.modules.catalogos.afiliado import Afiliado
-        from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
@@ -404,29 +558,18 @@ class FacturaAfiliadoService(
                 "El afiliado indicado no existe.", detalles={"afiliado_id": str(data.afiliado_id)}
             )
 
-        oe = None
-        if data.orden_estacion_id is not None:
-            oe = db.get(OrdenEstacion, data.orden_estacion_id)
-            if oe is None:
-                raise DomainError(
-                    "La OrdenEstacion indicada no existe.",
-                    detalles={"orden_estacion_id": str(data.orden_estacion_id)},
-                )
-            if oe.estatus != EstatusOrdenEstacion.CERRADA.value:
-                raise DomainError(
-                    "Solo se puede asignar costo a una OrdenEstacion 'cerrada'.",
-                    detalles={
-                        "orden_estacion_id": str(data.orden_estacion_id),
-                        "estatus": oe.estatus,
-                    },
-                )
+        oes = self._validar_ordenes_estacion(data.ordenes_estacion_ids)
 
         monto = Decimal(data.monto_factura_afiliado).quantize(CENTAVOS)
         iva = Decimal(data.iva_factura_afiliado).quantize(CENTAVOS)
         obj = FacturaAfiliado(
             factura_afiliado_id=uuid4(),
             **data.model_dump(
-                exclude={"monto_factura_afiliado", "iva_factura_afiliado", "orden_estacion_id"}
+                exclude={
+                    "monto_factura_afiliado",
+                    "iva_factura_afiliado",
+                    "ordenes_estacion_ids",
+                }
             ),
             # Heredado del catálogo (spec: origen "Derivado").
             razon_social_afiliada=afiliado.razon_social_afiliado,
@@ -437,28 +580,31 @@ class FacturaAfiliadoService(
             created_by=resolver_usuario_id(db, usuario.username),
         )
         db.add(obj)
-        if oe is not None:
-            # Mismo criterio que `asignar_orden()`: el monto asignado es el subtotal
-            # (sin IVA), consistente con cómo el detalle ya suma "Asignado" contra
-            # `monto_factura_afiliado`, no contra el total.
+        for oe in oes:
+            # A diferencia de `asignar_orden()` (un monto libre que Facturación decide),
+            # aquí el monto asignado es el propio `importe_emisora` de la OE — lo que la
+            # emisora cobra por ella —, no una repartición manual del subtotal capturado.
             db.add(
                 FacturaAfiliadoOrden(
                     id=uuid4(),
                     factura_afiliado_id=obj.factura_afiliado_id,
                     orden_estacion_id=oe.orden_estacion_id,
-                    monto_asignado=monto,
+                    monto_asignado=Decimal(oe.importe_emisora).quantize(CENTAVOS),
                     notas_asignacion=None,
                 )
             )
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        return self._enriquecida(self._to_read(obj))
 
     def update(
         self, id_: Any, data: FacturaAfiliadoUpdate, usuario: CurrentUser
     ) -> FacturaAfiliadoRead:
         """Edición solo antes de autorizar: una vez autorizada, el monto ya sirvió de base
-        para la decisión de pago."""
+        para la decisión de pago. Hace todo lo que hace el alta (petición del usuario):
+        puede reasignar el afiliado y editar qué OI tiene asignadas."""
+        from app.modules.catalogos.afiliado import Afiliado
+
         obj = self._get_or_404(id_)
         if obj.estatus_factura_afiliado not in (
             EstatusFacturaProveedor.RECIBIDA.value,
@@ -469,6 +615,29 @@ class FacturaAfiliadoService(
                 detalles={"estatus_factura_afiliado": obj.estatus_factura_afiliado},
             )
         payload = data.model_dump(exclude_unset=True)
+        # No es columna de `FacturaAfiliado` — se reconcilia aparte, después de guardar
+        # el resto (mismo criterio que `create()` la excluye del `model_dump` del alta).
+        ordenes_estacion_ids = payload.pop("ordenes_estacion_ids", None)
+        # Se valida ANTES de tocar la factura: si la lista trae una OE repetida,
+        # inexistente o no `cerrada`, la edición se rechaza completa — no se quiere un
+        # afiliado/monto ya guardado con las asignaciones a medio reconciliar.
+        nuevas_oes = (
+            self._validar_ordenes_estacion(ordenes_estacion_ids)
+            if ordenes_estacion_ids is not None
+            else None
+        )
+
+        if "afiliado_id" in payload:
+            afiliado = self._repo.db.get(Afiliado, payload["afiliado_id"])
+            if afiliado is None:
+                raise DomainError(
+                    "El afiliado indicado no existe.",
+                    detalles={"afiliado_id": str(payload["afiliado_id"])},
+                )
+            # Heredado del catálogo (spec: origen "Derivado") — igual que en el alta,
+            # se re-deriva al cambiar de afiliado en vez de dejar el nombre viejo.
+            payload["razon_social_afiliada"] = afiliado.razon_social_afiliado
+
         obj = self._repo.update(obj, payload)
         # Recalcular el total si cambió alguno de sus sumandos.
         if "monto_factura_afiliado" in payload or "iva_factura_afiliado" in payload:
@@ -476,7 +645,11 @@ class FacturaAfiliadoService(
                 Decimal(obj.monto_factura_afiliado) + Decimal(obj.iva_factura_afiliado)
             ).quantize(CENTAVOS)
             obj = self._repo.update(obj, {"total_factura_afiliado": total})
-        return self._to_read(obj)
+
+        if nuevas_oes is not None:
+            self._aplicar_asignaciones(obj, nuevas_oes)
+
+        return self._enriquecida(self._to_read(obj))
 
     # ── Máquina de estados ────────────────────────────────────────────────────
     def transicionar(
@@ -498,7 +671,7 @@ class FacturaAfiliadoService(
         if destino not in {e.value for e in EstatusFacturaProveedor}:
             raise DomainError(f"Estatus desconocido: '{destino}'.")
         if obj.estatus_factura_afiliado == destino:
-            return self._to_read(obj)  # idempotente
+            return self._enriquecida(self._to_read(obj))  # idempotente
         if destino not in TRANSICIONES_PROVEEDOR.get(obj.estatus_factura_afiliado, set()):
             raise StateTransitionError(
                 f"No se puede pasar de '{obj.estatus_factura_afiliado}' a '{destino}'.",
@@ -515,7 +688,7 @@ class FacturaAfiliadoService(
         obj.estatus_factura_afiliado = destino
         self._repo.db.commit()
         self._repo.db.refresh(obj)
-        return self._to_read(obj)
+        return self._enriquecida(self._to_read(obj))
 
     def autorizar(
         self, factura_afiliado_id: uuid.UUID, usuario: CurrentUser
@@ -593,7 +766,21 @@ class FacturaAfiliadoService(
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_factura_afiliado_service(db: Session = Depends(get_db)) -> FacturaAfiliadoService:
-    return FacturaAfiliadoService(FacturaAfiliadoRepository(db, FacturaAfiliado))
+    # Más reciente primero (petición del usuario): al capturar una factura nueva, sube
+    # hasta arriba de la lista sin importar la fecha de la factura (que puede venir de
+    # una campaña ya pasada) — se ordena por `created_at`, el momento real del alta.
+    # Segundo criterio (el id) por si dos facturas caen en el mismo instante: sin él,
+    # la paginación dejaría de ser determinista entre esas dos filas empatadas.
+    return FacturaAfiliadoService(
+        FacturaAfiliadoRepository(
+            db,
+            FacturaAfiliado,
+            default_order_by=[
+                FacturaAfiliado.created_at.desc(),
+                FacturaAfiliado.factura_afiliado_id,
+            ],
+        )
+    )
 
 
 router_afiliados = APIRouter(prefix="/afiliados", tags=["facturacion:afiliados"])

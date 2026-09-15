@@ -164,6 +164,7 @@ export function FacturasAfiliadoPage() {
           monto_factura_afiliado: selected.monto_factura_afiliado,
           iva_factura_afiliado: selected.iva_factura_afiliado,
         }}
+        asignacionesIniciales={asignaciones.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}
         submitting={actualizar.isPending}
@@ -326,12 +327,15 @@ export function FacturasAfiliadoPage() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
-                  {a.orden_estacion_id.slice(0, 8)}…
+                  {a.folio_orden_estacion || a.orden_estacion_id.slice(0, 8) + "…"}
                 </span>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
                   {fmtMoneda(a.monto_asignado)}
                 </span>
               </div>
+              {a.nombre_estacion && (
+                <div style={{ fontSize: 11, color: "var(--text3)" }}>{a.nombre_estacion}</div>
+              )}
               {a.notas_asignacion && (
                 <div style={{ fontSize: 11, color: "var(--text3)" }}>{a.notas_asignacion}</div>
               )}
@@ -405,10 +409,17 @@ export function FacturasAfiliadoPage() {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: "22%" }}>Folio emisora</th>
+            <th style={{ width: "16%" }}>Folio emisora</th>
             <th>Afiliado</th>
-            <th className="td-right" style={{ width: "20%" }}>
+            <th style={{ width: "10%" }}>Fecha</th>
+            <th className="td-right" style={{ width: "13%" }}>
+              Subtotal
+            </th>
+            <th className="td-right" style={{ width: "13%" }}>
               Total
+            </th>
+            <th className="td-center" style={{ width: 90 }}>
+              OE asig.
             </th>
             <th className="td-center" style={{ width: 130 }}>
               Estatus
@@ -429,7 +440,10 @@ export function FacturasAfiliadoPage() {
             >
               <td className="td-main mono">{f.factura_emisora}</td>
               <td className="td-2">{oGuion(f.razon_social_afiliada)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura_afiliado, { truncar: true })}</td>
+              <td className="td-2 mono">{fmtFecha(f.fecha_factura_afiliado)}</td>
+              <td className="td-2 td-right">{fmtMoneda(f.monto_factura_afiliado)}</td>
+              <td className="td-2 td-right">{fmtMoneda(f.total_factura_afiliado)}</td>
+              <td className="td-center">{f.ordenes_asignadas}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_afiliado)}`}>
                   {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_afiliado]}
