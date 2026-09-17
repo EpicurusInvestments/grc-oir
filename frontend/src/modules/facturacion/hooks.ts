@@ -20,14 +20,17 @@ import {
   facturaAfiliadoApi,
   facturaAgenciaApi,
   facturaClienteApi,
+  facturaVendedorApi,
   formasDePago,
   metodosDePago,
   ordenesFacturables,
   ordenesPorFacturar,
+  vendedoresActivos,
   type FiltrosCosto,
   type FiltrosFacturaAfiliado,
   type FiltrosFacturaAgencia,
   type FiltrosFacturaCliente,
+  type FiltrosFacturaVendedor,
 } from "./api";
 import type {
   CostoAdicionalCreate,
@@ -35,13 +38,17 @@ import type {
   FacturaAfiliadoCreate,
   FacturaAfiliadoUpdate,
   FacturaAgenciaCreate,
+  FacturaAgenciaUpdate,
   FacturaClienteCreate,
+  FacturaVendedorCreate,
+  FacturaVendedorUpdate,
   TimbrarInput,
 } from "./types";
 
 const K_CLIENTES = "facturacion:clientes";
 const K_AFILIADOS = "facturacion:afiliados";
 const K_AGENCIAS = "facturacion:agencias";
+const K_VENDEDORES = "facturacion:vendedores";
 const K_COSTOS = "facturacion:costos";
 /** Clave de las órdenes (F1). Se invalida tras timbrar — ver docstring del módulo. */
 const K_ORDENES = "ordenes";
@@ -164,6 +171,12 @@ export function useFacturasAgencia(filtros: FiltrosFacturaAgencia) {
     onSuccess: invalidar,
   });
 
+  const actualizar = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: FacturaAgenciaUpdate }) =>
+      facturaAgenciaApi.actualizar(id, data),
+    onSuccess: invalidar,
+  });
+
   const cambiarEstatus = useMutation({
     mutationFn: ({ id, estatus }: { id: string; estatus: EstatusProveedor }) =>
       facturaAgenciaApi.cambiarEstatus(id, estatus),
@@ -175,7 +188,61 @@ export function useFacturasAgencia(filtros: FiltrosFacturaAgencia) {
     onSuccess: invalidar,
   });
 
-  return { list, crear, cambiarEstatus, autorizar };
+  return { list, crear, actualizar, cambiarEstatus, autorizar };
+}
+
+/** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` de esa agencia. */
+export function useOrdenesFacturablesAgencia(agenciaId: string | null) {
+  return useQuery({
+    queryKey: [K_AGENCIAS, "ordenes-facturables", agenciaId],
+    queryFn: () => facturaAgenciaApi.ordenesFacturables(agenciaId as string),
+    enabled: !!agenciaId,
+  });
+}
+
+// ── FacturaVendedor ───────────────────────────────────────────────────────────
+export function useFacturasVendedor(filtros: FiltrosFacturaVendedor) {
+  const qc = useQueryClient();
+  const invalidar = () => qc.invalidateQueries({ queryKey: [K_VENDEDORES] });
+
+  const list = useQuery({
+    queryKey: [K_VENDEDORES, "list", filtros],
+    queryFn: () => facturaVendedorApi.list(filtros),
+  });
+
+  const crear = useMutation({
+    mutationFn: (data: FacturaVendedorCreate) => facturaVendedorApi.create(data),
+    onSuccess: invalidar,
+  });
+
+  const actualizar = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: FacturaVendedorUpdate }) =>
+      facturaVendedorApi.actualizar(id, data),
+    onSuccess: invalidar,
+  });
+
+  const cambiarEstatus = useMutation({
+    mutationFn: ({ id, estatus }: { id: string; estatus: EstatusProveedor }) =>
+      facturaVendedorApi.cambiarEstatus(id, estatus),
+    onSuccess: invalidar,
+  });
+
+  const autorizar = useMutation({
+    mutationFn: (id: string) => facturaVendedorApi.autorizar(id),
+    onSuccess: invalidar,
+  });
+
+  return { list, crear, actualizar, cambiarEstatus, autorizar };
+}
+
+/** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` cuyo vendedor
+ *  principal es el elegido. */
+export function useOrdenesFacturablesVendedor(vendedorId: string | null) {
+  return useQuery({
+    queryKey: [K_VENDEDORES, "ordenes-facturables", vendedorId],
+    queryFn: () => facturaVendedorApi.ordenesFacturables(vendedorId as string),
+    enabled: !!vendedorId,
+  });
 }
 
 // ── CostoAdicional ────────────────────────────────────────────────────────────
@@ -252,6 +319,11 @@ export function useConteosFacturacion(): Record<string, number> {
     queryFn: () => facturaAgenciaApi.list(soloTotal),
     retry: false,
   });
+  const vendedores = useQuery({
+    queryKey: [K_VENDEDORES, "list", soloTotal],
+    queryFn: () => facturaVendedorApi.list(soloTotal),
+    retry: false,
+  });
   const costos = useQuery({
     queryKey: [K_COSTOS, "list", soloTotal],
     queryFn: () => costoApi.list(soloTotal),
@@ -268,6 +340,7 @@ export function useConteosFacturacion(): Record<string, number> {
     listas_para_facturar: porFacturar.data?.total ?? 0,
     facturas_afiliado: afiliados.data?.total ?? 0,
     facturas_agencia: agencias.data?.total ?? 0,
+    facturas_vendedor: vendedores.data?.total ?? 0,
     costos_adicionales: costos.data?.total ?? 0,
   };
 }
@@ -290,6 +363,9 @@ export const useAfiliados = () =>
 
 export const useAgencias = () =>
   useQuery({ queryKey: ["facturacion:agencias-catalogo"], queryFn: agenciasActivas });
+
+export const useVendedores = () =>
+  useQuery({ queryKey: ["facturacion:vendedores-catalogo"], queryFn: vendedoresActivos });
 
 /** Facturas del MISMO anunciante, para el combo de "Factura relacionada" (ADR-062):
  *  incluye canceladas a propósito — el control que pide la pantalla es justo poder ver

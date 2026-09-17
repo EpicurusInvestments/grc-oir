@@ -2762,3 +2762,203 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `<StrictMode>` a propósito (antes no lo hacía, y por eso no atrapó el bug) — se
   confirmó manualmente que FALLABA con el `useRef` viejo y pasa con el nuevo; suite
   `vitest` del módulo `facturacion` completa en verde (57/57), `tsc` y `eslint` limpios.
+
+### ADR-079 — Facturas de agencia se lleva a la misma paridad que Facturas de afiliado (F2)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-16 (F2, rama `fix/facturacion-correcciones-f2`).
+- **Contexto:** el usuario pidió que "Facturas de agencia" reciba el mismo tratamiento
+  que "Facturas de afiliado" (ADR-070/073/074/075/076/077/078): capturar la agencia,
+  elegir la orden **de esa agencia**, capturar monto/folio/IVA/fecha, traer el % de
+  comisión de la agencia y calcular el monto con eso, homologar columnas con 2
+  decimales sin redondear, y completar el mapa de estatus. A diferencia de
+  `FacturaAfiliado`, la relación `FacturaAgencia` ↔ `OrdenCliente` es **1:N por diseño**
+  (una OC puede tener varias facturas de agencia — parcialidades ya documentadas desde
+  antes de esta sesión), NO N:M vía tabla intermedia: por eso aquí NO se replica el
+  combo de selección MÚLTIPLE de ADR-073 — el combo "Orden relacionada" es de selección
+  **simple**, más parecido al patrón original de ADR-070 (antes de volverse múltiple).
+- **Decisión:**
+  1. **Combo "Orden relacionada" filtrado por agencia** — nuevo endpoint
+     `GET /agencias/ordenes-facturables?agencia_id=` (mismo criterio que el de
+     afiliados): OC `orden_cerrada` de esa agencia, con `total` (para la comisión en
+     vivo) y el `porcentaje_comision_agencia_default` de la agencia (denormalizado por
+     fila, para no pedirlo aparte). No excluye OC ya facturadas por otra factura de
+     agencia — la relación 1:N ya lo permitía desde antes.
+  2. **Comisión en vivo en el formulario** — al elegir una orden, si el usuario
+     todavía no capturó un `%` a mano, se sugiere el default de la agencia (editable,
+     igual que ya hacía el backend al omitirlo); se muestra una tarjeta "Comisión
+     calculada" (`orden.total * % / 100`) recalculada en cada cambio, y un "Total"
+     (monto + IVA) — mismo criterio de previsualización que ya tenía `FacturaAfiliadoForm`.
+  3. **`FacturaAgenciaRead` se enriquece** con `agencia`, `folio_orden`,
+     `numero_orden_cliente`, `anunciante`, `producto`, `orden_total` — resueltos en el
+     servicio en lote (mismo patrón que `_nombres_emisoras`/`_ordenes_de` en
+     `factura_cliente.py` y `_datos_agencia`/`_datos_orden` aquí), aplicados en
+     `list()`/`get()`/`create()`/`update()`/`transicionar()` vía `_enriquecida()`. Sin
+     esto, la lista solo podía mostrar el UUID crudo de `agencia_id`/`orden_id`.
+  4. **Edición hace todo lo que hace el alta** (igual que ADR-077): `FacturaAgenciaUpdate`
+     gana `agencia_id`/`orden_id` opcionales; cambiar cualquiera de los dos, o el `%`,
+     recalcula `comision_agencia` contra el total de la orden que quede (la nueva si
+     cambió, la que ya tenía si no). Antes NO existía ninguna edición conectada en el
+     frontend para esta entidad (`FacturaAgenciaForm` no tenía modo `isEdit`, y la
+     página no ofrecía botón "Editar").
+  5. **Columnas homologadas + orden por más reciente** — la lista pasa de
+     Folio/Comisión/Total/Estatus a Folio/Agencia/Orden relacionada/Fecha/Subtotal/
+     Total/Estatus (mismas 7 columnas que Afiliado, con "Orden relacionada" en vez de
+     "OE Asig." — no aplica un conteo porque la relación es 1:1 por factura). Se
+     confirmó que todos los montos ya usaban `fmtMoneda` (2 decimales, sin truncar) — no
+     hubo que tocar nada ahí. `FacturaAgenciaRepository` gana
+     `default_order_by=[FacturaAgencia.created_at.desc(), FacturaAgencia.factura_agencia_id]`
+     (mismo criterio que ADR-076).
+  6. **Timeline con las 4 fases** — `TimelineAgencia` (duplicado de `TimelineAfiliado`,
+     mismo criterio de "un componente pequeño por página" ya usado en el resto del
+     módulo) sustituye el badge suelto que traía el detalle; el "mapa de estatus" en sí
+     (`ESTATUS_PROVEEDOR`/`ESTATUS_PROVEEDOR_LABEL`/`badgeEstatusProveedor`) ya estaba
+     completo y compartido con Afiliado — lo que faltaba era la VISUALIZACIÓN de las 4
+     fases, no los estados en sí.
+  7. **Fuera de alcance, a propósito:** no se agregó subida de PDF/XML (ADR-070 lo trajo
+     para Afiliado, pero el usuario no lo pidió aquí — los campos legado
+     `archivo_nombre`/`archivo_path` de `FacturaAgencia` quedan como estaban, sin
+     formulario que los llene, igual que antes de este cambio).
+- **Consecuencia:** `FacturaAgencia`/`FacturaAgenciaCreate` (frontend) cambian de forma;
+  nueva interfaz `FacturaAgenciaUpdate` (no existía) y `OrdenClienteFacturableAgencia`.
+  `FacturaAgenciaForm`/`FacturasAgenciaPage` se reescriben casi por completo.
+- **Verificado:** backend — 7 pruebas nuevas (combo filtrado por agencia + estatus
+  `orden_cerrada`, enriquecido en alta/detalle/lista, reasignar agencia/orden recalcula
+  comisión, 400 agencia/orden inexistente, 409 si ya autorizada, orden por `created_at`);
+  suite completa (pytest + ruff) en verde. Frontend — 2 archivos de prueba nuevos
+  (`FacturaAgenciaForm.test.tsx`: 7 pruebas, incluida una con `<StrictMode>` para blindar
+  contra la regresión de ADR-078; `FacturasAgenciaPage.test.tsx`: 8 pruebas); suite
+  `vitest` del módulo `facturacion` completa en verde (72/72), `tsc` y `eslint` limpios.
+
+### ADR-080 — Fix inmediato a ADR-079: PDF/XML de FacturaAgencia (fuera de alcance ahí, pedido después)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-16 (F2, rama `fix/facturacion-correcciones-f2`).
+- **Contexto:** ADR-079 dejó la subida de PDF/XML explícitamente fuera de alcance
+  ("el usuario no lo pidió aquí"). En la siguiente ronda de pruebas, el usuario pidió
+  agregarla, "como en el de afiliados" (ADR-070).
+- **Decisión:** réplica exacta del mecanismo de ADR-070, sin inventar nada nuevo:
+  1. **Backend** — `FacturaAgencia` gana `archivo_pdf_path`/`archivo_xml_path`
+     (`Unicode(500)`, nullable, sin `server_default` — mismo motivo que ADR-067/068:
+     un default en SQL Server crea un DEFAULT CONSTRAINT que bloquea `DROP COLUMN` en
+     el downgrade). Nueva migración (`ef082485b930`, `down_revision = 19395aa1c258`,
+     el head vigente) clonando línea por línea la de Afiliado (`f9521496be2e`), solo
+     cambiando la tabla destino. Los campos legado `archivo_nombre`/`archivo_path`
+     quedan igual que en Afiliado: sin tocar, sin formulario que los llene.
+  2. **Enum de adjuntos** (`facturacion/adjuntos.py`) gana
+     `FACTURA_AGENCIA_PDF`/`FACTURA_AGENCIA_XML` con sus propios prefijos
+     (`facturacion/proveedor/agencia/pdf/`, `.../xml/`) — el valor genérico
+     `FACTURA_AGENCIA` (sin PDF/XML) ya existía pero quedó igual de sin-usar que
+     `FACTURA_AFILIADO` en su momento. **No hizo falta tocar**
+     `app/shared/adjuntos_router.py`: la lista de tipos/prefijos permitidos para
+     descarga es el propio dict `_PREFIJOS` del módulo (`prefijos_descargables`),
+     así que agregar las dos claves ahí ya habilita subida y descarga sin cambios en
+     la factory compartida.
+  3. **Frontend** — `TipoAdjuntoFacturacion` (union type en `api.ts`) gana los dos
+     valores; `FacturaAgenciaForm`/`FacturasAgenciaPage` importan `AdjuntoFacturaInput`/
+     `ArchivoDescargable` con el mismo patrón textual que sus contrapartes de Afiliado
+     (props `archivoPdfPathInicial`/`archivoXmlPathInicial`, sección "Archivo" en el
+     detalle, fallback al legado `archivo_nombre` si no hay PDF/XML separados).
+     `constants.ts` (extensiones, tamaño máximo) no se tocó — ya es genérico por tipo.
+- **Consecuencia:** ninguna migración de datos existentes — factores nuevos, nullable,
+  cero filas afectadas. `FacturaAgencia`/`FacturaAgenciaCreate`/`FacturaAgenciaUpdate`
+  (frontend) ganan los dos campos.
+- **Verificado:** backend — round-trip `upgrade → downgrade → upgrade` contra la RDS
+  real; 1 prueba nueva de captura/edición de las rutas + 1 prueba nueva en el archivo
+  compartido de adjuntos (prefijo correcto por tipo, sube y descarga); suite completa
+  (pytest + ruff) en verde. Frontend — 1 prueba nueva en `FacturaAgenciaForm.test.tsx`
+  (sube PDF, tipo correcto, se incluye al guardar) + 1 en `FacturasAgenciaPage.test.tsx`
+  (muestra PDF/XML descargables en el detalle); suite `vitest` del módulo `facturacion`
+  completa en verde (74/74), `tsc` y `eslint` limpios.
+
+### ADR-081 — Se quita "Marcar pagada" del detalle de FacturaAgencia (paridad con FacturaAfiliado)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-16 (F2, rama `fix/facturacion-correcciones-f2`).
+- **Contexto:** el detalle del ADR original de Afiliado (sección "Timeline de Facturas
+  de afiliado + se quita 'Marcar pagada' del detalle", `docs/modulos/f2-facturacion/
+  f2-facturacion.md`) ya había quitado ese botón de `FacturasAfiliadoPage`: la
+  transición `autorizada → pagada` queda pendiente de resolverse por otro canal (p.ej.
+  Requisiciones en F3), no por un botón operativo en este detalle. Al construir
+  `FacturasAgenciaPage` en ADR-079 se replicó sin querer la versión VIEJA del detalle de
+  Afiliado (con el botón), en vez de la ya corregida — el usuario lo notó al probar y
+  pidió ocultarlo, igual que ya estaba en Afiliado.
+- **Decisión:** se quita el botón "Marcar pagada" (`estatus === "autorizada"`) del
+  detalle de `FacturasAgenciaPage`, sin tocar el backend — `POST
+  /agencias/{id}/estatus` con destino `pagada` sigue existiendo y sigue siendo una
+  transición válida en `TRANSICIONES_PROVEEDOR`; solo deja de ofrecerse desde este
+  botón operativo del frontend.
+- **Consecuencia:** ninguna — mismo timeline (4 fases) sigue mostrando "Pagada" como
+  fase final; solo cambia cómo se llega ahí.
+- **Verificado:** 1 prueba nueva confirmando que el botón no aparece en `autorizada`;
+  suite `vitest` del módulo `facturacion` completa en verde (75/75), `tsc` y `eslint`
+  limpios.
+
+### ADR-082 — `FacturaVendedor`: entidad NUEVA (fuera de la spec BD v2), paridad exacta de FacturaAgencia pero con la comisión del vendedor principal
+
+- **Estado:** aceptada · **Fecha:** 2026-09-16 (F2, rama `fix/facturacion-correcciones-f2`).
+- **Contexto:** el usuario pidió agregar, debajo de "Agencias" en el menú de "Facturas
+  recibidas", una sección "Vendedor" idéntica en funcionalidad a Facturas de Agencia
+  (ADR-079/080/081) pero para la comisión que se le paga al vendedor de la orden, no a
+  la agencia — señalando que `OrdenCliente` ya captura `vendedor_principal_id`/
+  `vendedor_secundario_id` con su propio % de comisión cada uno (sección "Equipo
+  comercial y comisiones" del detalle de OC), y que el catálogo `Vendedor` ya tiene
+  `porcentaje_comision_default`, igual que `Agencia.porcentaje_comision_agencia_default`.
+  A diferencia de los ADR anteriores de este bloque, **esta es una entidad nueva**: la
+  spec BD v2 (33 entidades) no contempla `FacturaVendedor` — solo `FacturaCliente`,
+  `FacturaAfiliado`, `FacturaAfiliadoOrden`, `FacturaAgencia` y `CostoAdicional` para F2.
+  Por la regla de oro #9 (CLAUDE.md: "cuando dudes, pregunta"), antes de escribir código
+  se preguntó al usuario:
+  1. **¿Vendedor principal, secundario, o ambos?** → Respuesta: **solo el principal**.
+     El secundario no factura comisión por este canal (fuera de alcance; si se necesita
+     después, es una ampliación explícita).
+  2. **¿Cardinalidad con `OrdenCliente`?** → Respuesta: **1:N, igual que Agencia**
+     (parcialidades permitidas — una orden puede tener varias facturas de vendedor).
+- **Decisión:** módulo `factura_vendedor.py` nuevo, mirror línea por línea de
+  `factura_agencia.py`:
+  - Modelo `FacturaVendedor`: mismas columnas que `FacturaAgencia` (monto/iva/total,
+    `porcentaje_comision_vendedor`/`comision_vendedor`, `estatus_factura_vendedor` sobre
+    el mismo enum compartido `EstatusFacturaProveedor`/`TRANSICIONES_PROVEEDOR` de
+    `factura_afiliado.py`), FK a `vendedor.vendedor_id` (no a `agencia_id`) y a
+    `orden_cliente.orden_id` **sin** `UniqueConstraint` (1:N, confirmado arriba).
+  - **Sin campos legado** `archivo_nombre`/`archivo_path`: a diferencia de
+    Afiliado/Agencia (que los heredaron de la spec original antes de separar PDF/XML),
+    `FacturaVendedor` nace directo con `archivo_pdf_path`/`archivo_xml_path` — no hay
+    nada que mantener por compatibilidad.
+  - El % de comisión sugerido en el combo "Orden relacionada" sale del catálogo
+    `Vendedor.porcentaje_comision_default` (no del snapshot congelado
+    `OrdenCliente.porcentaje_comision_vendedor_principal_snap` de F1) — mismo criterio
+    que Agencia: la snapshot de la orden es para lo que YA se pactó al cerrarla: la
+    factura de comisión puede renegociar un % distinto y lo sugerido es solo un punto de
+    partida editable.
+  - Combo `GET /vendedores/ordenes-facturables?vendedor_id=`: solo OC `orden_cerrada`
+    cuyo `vendedor_principal_id` sea el elegido (nunca por `vendedor_secundario_id`).
+  - Router `router_vendedores` con los mismos 7 endpoints que `router_agencias`
+    (list, combo, get, create, update, transición de estatus, autorizar — mismo gate de
+    Dirección/Admin en `autorizar()`); adjuntos nuevos `factura_vendedor_pdf`/
+    `factura_vendedor_xml` en `TipoAdjuntoFacturacion` con prefijo propio
+    `facturacion/proveedor/vendedor/{pdf,xml}/`.
+  - Migración Alembic `factura_vendedor` (tabla nueva) siguiendo los mismos criterios
+    que las anteriores de F2 (`ROUND(x,2)` en el CHECK de suma, `NO ACTION` en FKs,
+    columnas de archivo nullable sin `server_default`); aplicada y verificada en
+    round-trip contra la RDS real.
+  - Frontend: mirror exacto de `FacturaAgenciaForm`/`FacturasAgenciaPage` →
+    `FacturaVendedorForm`/`FacturasVendedorPage`, con el mismo fix de StrictMode del
+    ADR-078 en el efecto de "cambiar de vendedor limpia la orden elegida", y **sin**
+    botón "Marcar pagada" desde el inicio (ADR-081 ya aplicado de entrada, no hay que
+    corregirlo después). Entrada nueva `facturas_vendedor` ("De vendedores") en
+    `facturacionRegistry.tsx`, dentro del grupo "Facturas recibidas", inmediatamente
+    después de "De agencias" (el lugar donde el usuario pidió el menú).
+- **Consecuencia:** el mismo % de comisión del vendedor ahora se captura y calcula en
+  DOS lugares con propósitos distintos y sin relación automática entre sí: la snapshot
+  de F1 (`OrdenCliente.porcentaje_comision_vendedor_principal_snap`, lo pactado al
+  cerrar la orden) y la factura de comisión de F2 (`FacturaVendedor.
+  porcentaje_comision_vendedor`, lo que realmente se le paga) — exactamente el mismo
+  patrón ya existente entre `OrdenCliente.porcentaje_comision_agencia_snap` y
+  `FacturaAgencia.porcentaje_comision_agencia`, así que no es una inconsistencia nueva.
+- **Verificado:** backend — 11 pruebas nuevas (cálculo de comisión, sugerencia desde
+  catálogo, denormalización de vendedor/orden, combo filtrado solo por
+  `vendedor_principal_id`, edición reasignando vendedor/orden, validaciones 400/409,
+  orden de lista por más reciente, captura/edición de PDF/XML) más 1 en
+  `test_facturacion_adjuntos.py`; suite completa (`pytest app/tests/ -q`) y `ruff` en
+  verde. Frontend — `FacturaVendedorForm.test.tsx` (8 pruebas) y
+  `FacturasVendedorPage.test.tsx` (10 pruebas), paridad 1:1 con sus equivalentes de
+  Agencia; suite `vitest` del módulo `facturacion` completa en verde (93/93); `tsc` y
+  `eslint` limpios.

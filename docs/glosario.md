@@ -70,8 +70,12 @@
   mismo anunciante. Exige que compartan empresa facturadora y receptor, porque un CFDI
   tiene un solo emisor y un solo receptor; su subtotal es la suma de los subtotales de las
   órdenes y su periodo abarca de la fecha de inicio más temprana a la de fin más tardía.
-- **FacturaAfiliado / FacturaAgencia** — Facturas RECIBIDAS (captura o carga). La del
-  afiliado puede distribuir su costo entre varias OE (FacturaAfiliadoOrden, N:M).
+- **FacturaAfiliado / FacturaAgencia / FacturaVendedor** — Facturas RECIBIDAS (captura o
+  carga). La del afiliado puede distribuir su costo entre varias OE
+  (FacturaAfiliadoOrden, N:M). `FacturaVendedor` es la comisión del vendedor
+  **principal** de la orden (nunca el secundario); es una entidad NUEVA agregada en F2
+  (ADR-082), sin equivalente en la spec BD v2 — mirror funcional exacto de
+  FacturaAgencia.
 - **CobranzaFactura** (F3) — Seguimiento de cobro de una FacturaCliente ya timbrada
   (1:1, se crea sola al timbrar — no tiene alta manual). `estatus_cobro` almacenado
   (pendiente/cobro_parcial/cobrada) se recalcula solo al crear o borrar un PagoCliente;

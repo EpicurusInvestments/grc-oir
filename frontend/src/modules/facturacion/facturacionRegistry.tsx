@@ -22,6 +22,7 @@ import { FacturasAfiliadoPage } from "./facturaAfiliado/pages/FacturasAfiliadoPa
 import { FacturasAgenciaPage } from "./facturaAgencia/pages/FacturasAgenciaPage";
 import { FacturasClientePage } from "./facturaCliente/pages/FacturasClientePage";
 import { ListasParaFacturarPage } from "./facturaCliente/pages/ListasParaFacturarPage";
+import { FacturasVendedorPage } from "./facturaVendedor/pages/FacturasVendedorPage";
 
 /** `goTo` deja que una sección navegue a otra del mismo explorador — hoy solo lo usa
  *  «Facturas al cliente» para mandar a «Listas para facturar», pero cualquier entrada
@@ -73,6 +74,12 @@ export const facturacionRegistry: FacturacionEntry[] = [
     label: "De agencias",
     group: "Facturas recibidas",
     render: () => <FacturasAgenciaPage />,
+  },
+  {
+    key: "facturas_vendedor",
+    label: "De vendedores",
+    group: "Facturas recibidas",
+    render: () => <FacturasVendedorPage />,
   },
   {
     key: "costos_adicionales",

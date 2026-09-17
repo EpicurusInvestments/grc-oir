@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2, fecha_sql, get_db
@@ -97,6 +97,12 @@ class FacturaAgencia(Base):
     archivo_nombre: Mapped[str | None] = mapped_column(Unicode(255), default=None)
     # CLAVE del almacenamiento (S3/local), no una ruta de disco (ADR-042).
     archivo_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
+    # ADITIVO (ADR-079, mismo criterio que ADR-070 en `FacturaAfiliado`): la factura de
+    # la agencia se sube en PDF y XML por separado. `archivo_nombre`/`archivo_path`
+    # (arriba) quedan sin tocar por compatibilidad, aunque en la práctica no los llena
+    # ningún formulario.
+    archivo_pdf_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
+    archivo_xml_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
 
     estatus_factura_agencia: Mapped[str] = mapped_column(
         Unicode(20), default=EstatusFacturaProveedor.RECIBIDA.value
@@ -129,10 +135,39 @@ class FacturaAgenciaRead(BaseModel):
     comision_agencia: Decimal | None = None
     archivo_nombre: str | None = None
     archivo_path: str | None = None
+    archivo_pdf_path: str | None = None
+    archivo_xml_path: str | None = None
     estatus_factura_agencia: str
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
+    # Se resuelven en el servicio, en lote (mismo criterio que `folio_orden_estacion`/
+    # `nombre_estacion` en `FacturaAfiliadoOrdenRead` y que los denormalizados de
+    # `factura_cliente.py`): sin esto, la lista y el detalle solo podían mostrar los
+    # UUID crudos de `agencia_id`/`orden_id`, sin nombre ni folio legibles.
+    agencia: str | None = None
+    folio_orden: str | None = None
+    numero_orden_cliente: str | None = None
+    anunciante: str | None = None
+    producto: str | None = None
+    orden_total: Decimal | None = None
+
+
+class OrdenClienteFacturableAgenciaRead(BaseModel):
+    """Fila del combo "Orden relacionada" (alta/edición de FacturaAgencia): una OC
+    `orden_cerrada` de la agencia elegida, con su `total` (para calcular en vivo la
+    comisión) y el `%` default de esa agencia (sugerido, editable — igual criterio que
+    el combo de OI en `FacturaAfiliado`)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_id: uuid.UUID
+    folio_orden: str
+    numero_orden_cliente: str
+    anunciante: str | None = None
+    producto: str | None = None
+    total: Decimal
+    porcentaje_comision_agencia_default: Decimal | None = None
 
 
 class FacturaAgenciaListParams(ListParams):
@@ -163,11 +198,20 @@ class FacturaAgenciaCreate(BaseModel):
     )
     archivo_nombre: str | None = Field(default=None, max_length=255)
     archivo_path: str | None = Field(default=None, max_length=500)
+    archivo_pdf_path: str | None = Field(default=None, max_length=500)
+    archivo_xml_path: str | None = Field(default=None, max_length=500)
 
 
 class FacturaAgenciaUpdate(BaseModel):
+    """Edición: hace todo lo que hace el alta (mismo criterio que ADR-077 en
+    `FacturaAfiliado`) — puede reasignar la agencia y la orden relacionada. Cambiar
+    `orden_id` o `porcentaje_comision_agencia` recalcula `comision_agencia` contra el
+    total de la orden (nueva o la que ya tenía)."""
+
     model_config = ConfigDict(extra="forbid")
 
+    agencia_id: uuid.UUID | None = None
+    orden_id: uuid.UUID | None = None
     folio_factura_agencia: str | None = Field(default=None, max_length=50)
     fecha_factura_agencia: date | None = None
     monto_factura_agencia: Decimal | None = Field(
@@ -181,6 +225,8 @@ class FacturaAgenciaUpdate(BaseModel):
     )
     archivo_nombre: str | None = Field(default=None, max_length=255)
     archivo_path: str | None = Field(default=None, max_length=500)
+    archivo_pdf_path: str | None = Field(default=None, max_length=500)
+    archivo_xml_path: str | None = Field(default=None, max_length=500)
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
@@ -225,6 +271,121 @@ class FacturaAgenciaService(
         if porcentaje is None:
             return None
         return (Decimal(total_orden) * Decimal(porcentaje) / Decimal(100)).quantize(CENTAVOS)
+
+    # ── Enriquecido de lectura ────────────────────────────────────────────────
+    def _datos_agencia(self, facturas: list[FacturaAgenciaRead]) -> dict[uuid.UUID, str]:
+        """Nombres de las agencias de una página, en UNA consulta — mismo patrón por
+        lote que `_nombres_emisoras` en `factura_cliente.py`."""
+        from app.modules.catalogos.agencia import Agencia
+
+        ids = {f.agencia_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(Agencia.agencia_id, Agencia.nombre_agencia).where(Agencia.agencia_id.in_(ids))
+        ).all()
+        return {fila[0]: fila[1] for fila in filas}
+
+    def _datos_orden(
+        self, facturas: list[FacturaAgenciaRead]
+    ) -> dict[uuid.UUID, tuple[str, str, str | None, str | None, Decimal]]:
+        """Folio/número/anunciante/producto/total de las OC de una página, en UNA
+        consulta — la relación es 1:N (varias facturas pueden apuntar a la MISMA OC),
+        de ahí el `IN` sobre el conjunto de `orden_id` distintos, no un `JOIN` 1:1."""
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+
+        ids = {f.orden_id for f in facturas}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(
+                OrdenCliente.orden_id,
+                OrdenCliente.folio_orden,
+                OrdenCliente.numero_orden_cliente,
+                Anunciante.nombre_comercial,
+                OrdenCliente.producto,
+                OrdenCliente.total,
+            )
+            .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
+            .where(OrdenCliente.orden_id.in_(ids))
+        ).all()
+        return {fila[0]: (fila[1], fila[2], fila[3], fila[4], fila[5]) for fila in filas}
+
+    def _enriquecida(self, leida: FacturaAgenciaRead) -> FacturaAgenciaRead:
+        """Enriquece UNA lectura (alta/edición/transiciones) con agencia/orden — mismo
+        criterio que `_enriquecida` en `factura_cliente.py` y `factura_afiliado.py`: sin
+        esto, la respuesta de un alta/edición mostraría esos campos en `None` hasta el
+        próximo GET."""
+        leida.agencia = self._datos_agencia([leida]).get(leida.agencia_id)
+        datos_oc = self._datos_orden([leida]).get(leida.orden_id)
+        if datos_oc:
+            (
+                leida.folio_orden,
+                leida.numero_orden_cliente,
+                leida.anunciante,
+                leida.producto,
+                leida.orden_total,
+            ) = datos_oc
+        return leida
+
+    def list(self, params: ListParams) -> Page[FacturaAgenciaRead]:
+        pagina = super().list(params)
+        agencias = self._datos_agencia(pagina.items)
+        ordenes = self._datos_orden(pagina.items)
+        for f in pagina.items:
+            f.agencia = agencias.get(f.agencia_id)
+            datos_oc = ordenes.get(f.orden_id)
+            if datos_oc:
+                f.folio_orden, f.numero_orden_cliente, f.anunciante, f.producto, f.orden_total = (
+                    datos_oc
+                )
+        return pagina
+
+    def get(self, id_: Any) -> FacturaAgenciaRead:
+        return self._enriquecida(super().get(id_))
+
+    def ordenes_facturables(
+        self, agencia_id: uuid.UUID
+    ) -> list[OrdenClienteFacturableAgenciaRead]:
+        """OC `orden_cerrada` de la agencia elegida — combo "Orden relacionada" del
+        alta/edición. No excluye OC que ya tengan otra factura de agencia: la relación
+        es 1:N a propósito (ver docstring del módulo)."""
+        from app.modules.catalogos.agencia import Agencia
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        db = self._repo.db
+        agencia = db.get(Agencia, agencia_id)
+        porcentaje_default = agencia.porcentaje_comision_agencia_default if agencia else None
+        filas = db.execute(
+            select(
+                OrdenCliente.orden_id,
+                OrdenCliente.folio_orden,
+                OrdenCliente.numero_orden_cliente,
+                Anunciante.nombre_comercial,
+                OrdenCliente.producto,
+                OrdenCliente.total,
+            )
+            .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
+            .where(
+                OrdenCliente.agencia_id == agencia_id,
+                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+            )
+            .order_by(OrdenCliente.folio_orden)
+        ).all()
+        return [
+            OrdenClienteFacturableAgenciaRead(
+                orden_id=f.orden_id,
+                folio_orden=f.folio_orden,
+                numero_orden_cliente=f.numero_orden_cliente,
+                anunciante=f.nombre_comercial,
+                producto=f.producto,
+                total=f.total,
+                porcentaje_comision_agencia_default=porcentaje_default,
+            )
+            for f in filas
+        ]
 
     def create(self, data: FacturaAgenciaCreate, usuario: CurrentUser) -> FacturaAgenciaRead:
         from app.modules.catalogos.agencia import Agencia
@@ -274,11 +435,16 @@ class FacturaAgenciaService(
         db.add(obj)
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        return self._enriquecida(self._to_read(obj))
 
     def update(
         self, id_: Any, data: FacturaAgenciaUpdate, usuario: CurrentUser
     ) -> FacturaAgenciaRead:
+        """Edición solo antes de autorizar (mismo candado que `FacturaAfiliado`). Hace
+        todo lo que hace el alta: puede reasignar agencia/orden — ambas se validan
+        ANTES de tocar la factura, para no dejarla a medio actualizar si alguna no
+        existe."""
+        from app.modules.catalogos.agencia import Agencia
         from app.modules.ordenes.orden_cliente import OrdenCliente
 
         obj = self._get_or_404(id_)
@@ -291,21 +457,38 @@ class FacturaAgenciaService(
                 detalles={"estatus_factura_agencia": obj.estatus_factura_agencia},
             )
         payload = data.model_dump(exclude_unset=True)
+
+        if "agencia_id" in payload and self._repo.db.get(Agencia, payload["agencia_id"]) is None:
+            raise DomainError(
+                "La agencia indicada no existe.",
+                detalles={"agencia_id": str(payload["agencia_id"])},
+            )
+        oc_nueva = None
+        if "orden_id" in payload:
+            oc_nueva = self._repo.db.get(OrdenCliente, payload["orden_id"])
+            if oc_nueva is None:
+                raise DomainError(
+                    "La OrdenCliente indicada no existe.",
+                    detalles={"orden_id": str(payload["orden_id"])},
+                )
+
         obj = self._repo.update(obj, payload)
         recalculos: dict[str, Any] = {}
         if "monto_factura_agencia" in payload or "iva_factura_agencia" in payload:
             recalculos["total_factura_agencia"] = (
                 Decimal(obj.monto_factura_agencia) + Decimal(obj.iva_factura_agencia)
             ).quantize(CENTAVOS)
-        if "porcentaje_comision_agencia" in payload:
-            oc = self._repo.db.get(OrdenCliente, obj.orden_id)
+        if "porcentaje_comision_agencia" in payload or "orden_id" in payload:
+            # Si cambió la orden, usa la NUEVA (ya validada arriba); si no, la que ya
+            # tenía la factura.
+            oc = oc_nueva if oc_nueva is not None else self._repo.db.get(OrdenCliente, obj.orden_id)
             if oc is not None:
                 recalculos["comision_agencia"] = self._calcular_comision(
                     oc.total, obj.porcentaje_comision_agencia
                 )
         if recalculos:
             obj = self._repo.update(obj, recalculos)
-        return self._to_read(obj)
+        return self._enriquecida(self._to_read(obj))
 
     def transicionar(
         self,
@@ -321,7 +504,7 @@ class FacturaAgenciaService(
         if destino not in {e.value for e in EstatusFacturaProveedor}:
             raise DomainError(f"Estatus desconocido: '{destino}'.")
         if obj.estatus_factura_agencia == destino:
-            return self._to_read(obj)  # idempotente
+            return self._enriquecida(self._to_read(obj))  # idempotente
         if destino not in TRANSICIONES_PROVEEDOR.get(obj.estatus_factura_agencia, set()):
             raise StateTransitionError(
                 f"No se puede pasar de '{obj.estatus_factura_agencia}' a '{destino}'.",
@@ -337,7 +520,7 @@ class FacturaAgenciaService(
         obj.estatus_factura_agencia = destino
         self._repo.db.commit()
         self._repo.db.refresh(obj)
-        return self._to_read(obj)
+        return self._enriquecida(self._to_read(obj))
 
 
     def autorizar(self, factura_agencia_id: uuid.UUID, usuario: CurrentUser) -> FacturaAgenciaRead:
@@ -358,7 +541,18 @@ class FacturaAgenciaService(
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_factura_agencia_service(db: Session = Depends(get_db)) -> FacturaAgenciaService:
-    return FacturaAgenciaService(FacturaAgenciaRepository(db, FacturaAgencia))
+    # Más reciente primero (mismo criterio que `FacturaAfiliado`, ADR-076): se ordena
+    # por `created_at`, el momento real del alta, no por `fecha_factura_agencia`.
+    return FacturaAgenciaService(
+        FacturaAgenciaRepository(
+            db,
+            FacturaAgencia,
+            default_order_by=[
+                FacturaAgencia.created_at.desc(),
+                FacturaAgencia.factura_agencia_id,
+            ],
+        )
+    )
 
 
 router_agencias = APIRouter(prefix="/agencias", tags=["facturacion:agencias"])
@@ -385,6 +579,20 @@ def listar_facturas_agencia(
             estatus_factura_agencia=estatus_factura_agencia,
         )
     )
+
+
+@router_agencias.get(
+    "/ordenes-facturables", response_model=list[OrdenClienteFacturableAgenciaRead]
+)
+def listar_ordenes_facturables_agencia(
+    agencia_id: uuid.UUID = Query(...),
+    usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
+    svc: FacturaAgenciaService = Depends(get_factura_agencia_service),
+) -> list[OrdenClienteFacturableAgenciaRead]:
+    """Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` de esa agencia.
+    Declarado ANTES de `/{item_id}` — si no, FastAPI intentaría parsear
+    "ordenes-facturables" como UUID de `item_id` y respondería 422."""
+    return svc.ordenes_facturables(agencia_id)
 
 
 @router_agencias.get("/{item_id}", response_model=FacturaAgenciaRead)
