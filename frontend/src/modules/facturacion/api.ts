@@ -23,9 +23,15 @@ import type {
   FacturaAfiliadoUpdate,
   FacturaAgencia,
   FacturaAgenciaCreate,
+  FacturaAgenciaUpdate,
   FacturaCliente,
   FacturaClienteCreate,
+  FacturaVendedor,
+  FacturaVendedorCreate,
+  FacturaVendedorUpdate,
   OpcionCatalogo,
+  OrdenClienteFacturableAgencia,
+  OrdenClienteFacturableVendedor,
   OrdenEstacionFacturableAfiliado,
   OrdenFacturable,
   OrdenPorFacturar,
@@ -125,7 +131,11 @@ export type TipoAdjuntoFacturacion =
   | "cfdi_xml"
   | "cfdi_pdf"
   | "factura_afiliado_pdf"
-  | "factura_afiliado_xml";
+  | "factura_afiliado_xml"
+  | "factura_agencia_pdf"
+  | "factura_agencia_xml"
+  | "factura_vendedor_pdf"
+  | "factura_vendedor_xml";
 
 export interface AdjuntoFacturacionSubido {
   ref: string;
@@ -228,6 +238,18 @@ export const facturaAgenciaApi = {
     const { data } = await apiClient.post<FacturaAgencia>(`${BASE}/agencias`, payload);
     return data;
   },
+  async actualizar(id: string, payload: FacturaAgenciaUpdate) {
+    const { data } = await apiClient.put<FacturaAgencia>(`${BASE}/agencias/${id}`, payload);
+    return data;
+  },
+  /** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` de esa agencia. */
+  async ordenesFacturables(agenciaId: string) {
+    const { data } = await apiClient.get<OrdenClienteFacturableAgencia[]>(
+      `${BASE}/agencias/ordenes-facturables`,
+      { params: { agencia_id: agenciaId } },
+    );
+    return data;
+  },
   async cambiarEstatus(id: string, estatus: EstatusProveedor) {
     const { data } = await apiClient.post<FacturaAgencia>(`${BASE}/agencias/${id}/estatus`, {
       estatus,
@@ -236,6 +258,46 @@ export const facturaAgenciaApi = {
   },
   async autorizar(id: string) {
     const { data } = await apiClient.post<FacturaAgencia>(`${BASE}/agencias/${id}/autorizar`);
+    return data;
+  },
+};
+
+// ── FacturaVendedor ───────────────────────────────────────────────────────────
+export interface FiltrosFacturaVendedor extends ListParams {
+  estatus_factura_vendedor?: string;
+  orden_id?: string;
+}
+
+export const facturaVendedorApi = {
+  async list(params?: FiltrosFacturaVendedor) {
+    const { data } = await apiClient.get<Page<FacturaVendedor>>(`${BASE}/vendedores`, { params });
+    return data;
+  },
+  async create(payload: FacturaVendedorCreate) {
+    const { data } = await apiClient.post<FacturaVendedor>(`${BASE}/vendedores`, payload);
+    return data;
+  },
+  async actualizar(id: string, payload: FacturaVendedorUpdate) {
+    const { data } = await apiClient.put<FacturaVendedor>(`${BASE}/vendedores/${id}`, payload);
+    return data;
+  },
+  /** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` cuyo vendedor
+   *  principal es el elegido. */
+  async ordenesFacturables(vendedorId: string) {
+    const { data } = await apiClient.get<OrdenClienteFacturableVendedor[]>(
+      `${BASE}/vendedores/ordenes-facturables`,
+      { params: { vendedor_id: vendedorId } },
+    );
+    return data;
+  },
+  async cambiarEstatus(id: string, estatus: EstatusProveedor) {
+    const { data } = await apiClient.post<FacturaVendedor>(`${BASE}/vendedores/${id}/estatus`, {
+      estatus,
+    });
+    return data;
+  },
+  async autorizar(id: string) {
+    const { data } = await apiClient.post<FacturaVendedor>(`${BASE}/vendedores/${id}/autorizar`);
     return data;
   },
 };
@@ -333,4 +395,12 @@ export async function agenciasActivas(): Promise<OpcionCatalogo[]> {
     { params: { activo: true, size: 100 } },
   );
   return data.items.map((a) => ({ id: a.agencia_id, etiqueta: a.nombre_agencia }));
+}
+
+export async function vendedoresActivos(): Promise<OpcionCatalogo[]> {
+  const { data } = await apiClient.get<Page<{ vendedor_id: string; nombre_vendedor: string }>>(
+    "/catalogos/vendedores",
+    { params: { activo: true, size: 100 } },
+  );
+  return data.items.map((v) => ({ id: v.vendedor_id, etiqueta: v.nombre_vendedor }));
 }

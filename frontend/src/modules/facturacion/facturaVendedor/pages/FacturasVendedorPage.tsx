@@ -1,15 +1,14 @@
-/** Facturas de agencia (F2) — la comisión que la agencia cobra a OIR.
+/** Facturas de vendedor (F2) — la comisión que el vendedor PRINCIPAL de la orden cobra
+ * a OIR. Entidad nueva, sin equivalente en la spec BD v2: paridad exacta de
+ * `FacturasAgenciaPage`, salvo que no hay campos legado `archivo_nombre`/`archivo_path`
+ * (esta entidad nace ya con `archivo_pdf_path`/`archivo_xml_path` por separado).
  *
- * Misma máquina de estados y misma regla de autorización que las de afiliado (ADR-046).
- * La diferencia con `FacturaCliente`/`FacturaAfiliado`: la relación con la OrdenCliente
- * es 1:N — una misma orden puede tener varias facturas de agencia (parcialidades), así
- * que aquí no hay un combo de "varias órdenes", solo una relacionada por factura.
+ * Misma máquina de estados y misma regla de autorización que agencia/afiliado.
+ * La relación con la OrdenCliente es 1:N — una misma orden puede tener varias facturas
+ * de vendedor (parcialidades).
  *
- * Alta y edición comparten el mismo formulario (`FacturaAgenciaForm`), igual criterio
- * que `FacturasAfiliadoPage` desde ADR-087: la edición puede reasignar agencia y orden.
- *
- * PDF/XML de la factura (ADR-079, mismo mecanismo que ADR-070 en Afiliado): se muestran
- * como `ArchivoDescargable` en la sección "Archivo" del detalle.
+ * Alta y edición comparten el mismo formulario (`FacturaVendedorForm`): la edición
+ * puede reasignar vendedor y orden.
  */
 
 import { useState } from "react";
@@ -18,26 +17,24 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
-import { FacturaAgenciaForm } from "../components/FacturaAgenciaForm";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
-import { useFacturasAgencia } from "../../hooks";
+import { useFacturasVendedor } from "../../hooks";
 import {
   ESTATUS_PROVEEDOR,
   ESTATUS_PROVEEDOR_LABEL,
   type EstatusProveedor,
-  type FacturaAgencia,
-  type FacturaAgenciaCreate,
-  type FacturaAgenciaUpdate,
+  type FacturaVendedor,
+  type FacturaVendedorCreate,
+  type FacturaVendedorUpdate,
 } from "../../types";
+import { FacturaVendedorForm } from "../components/FacturaVendedorForm";
 
 /** Solo antes de autorizar (mismo candado que el backend): una factura `autorizada`/
  *  `pagada` ya no se edita. */
 const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida", "en_revision"]);
 
-/** Timeline del ciclo de vida — mismo patrón que `TimelineAfiliado`
- *  (`facturaAfiliado/pages/FacturasAfiliadoPage.tsx`): `ESTATUS_PROVEEDOR` ya está en
- *  orden y sin "cancelada" (esta entidad no la tiene). */
-function TimelineAgencia({ estatus }: { estatus: EstatusProveedor }) {
+/** Timeline del ciclo de vida — mismo patrón que `TimelineAgencia`. */
+function TimelineVendedor({ estatus }: { estatus: EstatusProveedor }) {
   const actual = ESTATUS_PROVEEDOR.indexOf(estatus);
   return (
     <div className="timeline">
@@ -52,7 +49,7 @@ function TimelineAgencia({ estatus }: { estatus: EstatusProveedor }) {
 }
 
 /** Fila clickeable de un adjunto ya subido (PDF/XML) — descarga vía
- *  `adjuntosFacturacionApi.ver`, mismo mecanismo que en `FacturasAfiliadoPage.tsx`. */
+ *  `adjuntosFacturacionApi.ver`, mismo mecanismo que en `FacturasAgenciaPage.tsx`. */
 function ArchivoDescargable({ etiqueta, archivoRef }: { etiqueta: string; archivoRef: string }) {
   return (
     <div
@@ -93,12 +90,12 @@ const FILTROS = [
   { key: "pagada", label: "Pagadas" },
 ];
 
-export function FacturasAgenciaPage() {
+export function FacturasVendedorPage() {
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
-  const [selected, setSelected] = useState<FacturaAgencia | null>(null);
+  const [selected, setSelected] = useState<FacturaVendedor | null>(null);
   const [creando, setCreando] = useState(false);
   const [editando, setEditando] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -108,14 +105,14 @@ export function FacturasAgenciaPage() {
     page,
     size,
     q: q || undefined,
-    estatus_factura_agencia: filtro === "todas" ? undefined : filtro,
+    estatus_factura_vendedor: filtro === "todas" ? undefined : filtro,
   };
-  const { list, crear, actualizar, cambiarEstatus, autorizar } = useFacturasAgencia(filtros);
+  const { list, crear, actualizar, cambiarEstatus, autorizar } = useFacturasVendedor(filtros);
 
   const mensajeDeError = (e: unknown): string =>
     e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
 
-  const ejecutar = async (accion: () => Promise<FacturaAgencia>) => {
+  const ejecutar = async (accion: () => Promise<FacturaVendedor>) => {
     setErrorAccion(null);
     try {
       setSelected(await accion());
@@ -124,7 +121,7 @@ export function FacturasAgenciaPage() {
     }
   };
 
-  const onCrear = async (data: FacturaAgenciaCreate) => {
+  const onCrear = async (data: FacturaVendedorCreate) => {
     setSubmitError(null);
     try {
       setSelected(await crear.mutateAsync(data));
@@ -134,11 +131,11 @@ export function FacturasAgenciaPage() {
     }
   };
 
-  const onEditar = async (data: FacturaAgenciaUpdate) => {
+  const onEditar = async (data: FacturaVendedorUpdate) => {
     if (!selected) return;
     setSubmitError(null);
     try {
-      setSelected(await actualizar.mutateAsync({ id: selected.factura_agencia_id, data }));
+      setSelected(await actualizar.mutateAsync({ id: selected.factura_vendedor_id, data }));
       setEditando(false);
     } catch (e) {
       setSubmitError(mensajeDeError(e));
@@ -148,10 +145,10 @@ export function FacturasAgenciaPage() {
   let detail;
   if (creando) {
     detail = (
-      <FacturaAgenciaForm
+      <FacturaVendedorForm
         submitting={crear.isPending}
         submitError={submitError}
-        onSubmit={(data) => onCrear(data as FacturaAgenciaCreate)}
+        onSubmit={(data) => onCrear(data as FacturaVendedorCreate)}
         onCancel={() => {
           setCreando(false);
           setSubmitError(null);
@@ -160,22 +157,22 @@ export function FacturasAgenciaPage() {
     );
   } else if (editando && selected) {
     detail = (
-      <FacturaAgenciaForm
+      <FacturaVendedorForm
         isEdit
         defaultValues={{
-          agencia_id: selected.agencia_id,
+          vendedor_id: selected.vendedor_id,
           orden_id: selected.orden_id,
-          folio_factura_agencia: selected.folio_factura_agencia ?? undefined,
-          fecha_factura_agencia: selected.fecha_factura_agencia,
-          monto_factura_agencia: selected.monto_factura_agencia,
-          iva_factura_agencia: selected.iva_factura_agencia,
-          porcentaje_comision_agencia: selected.porcentaje_comision_agencia ?? undefined,
+          folio_factura_vendedor: selected.folio_factura_vendedor ?? undefined,
+          fecha_factura_vendedor: selected.fecha_factura_vendedor,
+          monto_factura_vendedor: selected.monto_factura_vendedor,
+          iva_factura_vendedor: selected.iva_factura_vendedor,
+          porcentaje_comision_vendedor: selected.porcentaje_comision_vendedor ?? undefined,
         }}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}
         submitting={actualizar.isPending}
         submitError={submitError}
-        onSubmit={(data) => onEditar(data as FacturaAgenciaUpdate)}
+        onSubmit={(data) => onEditar(data as FacturaVendedorUpdate)}
         onCancel={() => {
           setEditando(false);
           setSubmitError(null);
@@ -183,19 +180,19 @@ export function FacturasAgenciaPage() {
       />
     );
   } else if (selected) {
-    const estatus = selected.estatus_factura_agencia;
+    const estatus = selected.estatus_factura_vendedor;
     const puedeEditar = PUEDE_EDITAR.has(estatus);
     detail = (
       <>
         <div className="dh">
           <div className="dh-row">
             <div>
-              <div className="dh-name mono">{oGuion(selected.folio_factura_agencia)}</div>
+              <div className="dh-name mono">{oGuion(selected.folio_factura_vendedor)}</div>
               <div className="dh-sub">
                 <span className={`badge ${badgeEstatusProveedor(estatus)}`}>
                   {ESTATUS_PROVEEDOR_LABEL[estatus]}
                 </span>
-                <span className="badge b-teal">{oGuion(selected.agencia)}</span>
+                <span className="badge b-teal">{oGuion(selected.vendedor)}</span>
               </div>
             </div>
             <button
@@ -214,20 +211,20 @@ export function FacturasAgenciaPage() {
         </div>
 
         <div className="db">
-          <TimelineAgencia estatus={estatus} />
+          <TimelineVendedor estatus={estatus} />
 
           <div className="mc-row">
             <div className="mc">
               <div className="mc-lbl">Subtotal</div>
-              <div className="mc-val">{fmtMoneda(selected.monto_factura_agencia)}</div>
+              <div className="mc-val">{fmtMoneda(selected.monto_factura_vendedor)}</div>
             </div>
             <div className="mc">
               <div className="mc-lbl">IVA</div>
-              <div className="mc-val">{fmtMoneda(selected.iva_factura_agencia)}</div>
+              <div className="mc-val">{fmtMoneda(selected.iva_factura_vendedor)}</div>
             </div>
             <div className="mc">
               <div className="mc-lbl">Total</div>
-              <div className="mc-val total">{fmtMoneda(selected.total_factura_agencia)}</div>
+              <div className="mc-val total">{fmtMoneda(selected.total_factura_vendedor)}</div>
             </div>
           </div>
 
@@ -260,22 +257,22 @@ export function FacturasAgenciaPage() {
           <div className="sec">Cálculo de comisión</div>
           <div className="fl">% Comisión aplicada</div>
           <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtPorcentaje(selected.porcentaje_comision_agencia)}
+            {fmtPorcentaje(selected.porcentaje_comision_vendedor)}
           </div>
           <div className="fl">
             Monto comisión <FieldTag origin="calculado" />
           </div>
           <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtMoneda(selected.comision_agencia)}
+            {fmtMoneda(selected.comision_vendedor)}
           </div>
           <div style={{ fontSize: 11, color: "var(--text3)", marginTop: -6 }}>
             Sobre venta total c/IVA de la orden ({fmtMoneda(selected.orden_total)})
           </div>
 
           <div className="sec">Fecha</div>
-          <div className="fv mono">{fmtFecha(selected.fecha_factura_agencia)}</div>
+          <div className="fv mono">{fmtFecha(selected.fecha_factura_vendedor)}</div>
 
-          {(selected.archivo_pdf_path || selected.archivo_xml_path || selected.archivo_nombre) && (
+          {(selected.archivo_pdf_path || selected.archivo_xml_path) && (
             <>
               <div className="sec">Archivo</div>
               <div style={{ marginBottom: 6 }}>
@@ -284,23 +281,6 @@ export function FacturasAgenciaPage() {
                 )}
                 {selected.archivo_xml_path && (
                   <ArchivoDescargable etiqueta="XML" archivoRef={selected.archivo_xml_path} />
-                )}
-                {/* Legado: facturas capturadas antes de separar PDF/XML. */}
-                {selected.archivo_nombre && !selected.archivo_pdf_path && !selected.archivo_xml_path && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "8px 11px",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r)",
-                      fontSize: 12,
-                    }}
-                  >
-                    <i className="pi pi-file" aria-hidden="true" />
-                    {selected.archivo_nombre}
-                  </div>
                 )}
               </div>
             </>
@@ -314,8 +294,8 @@ export function FacturasAgenciaPage() {
             </div>
           )}
           {/* Sin botón "Marcar pagada" en `autorizada` — mismo criterio ya aplicado en
-              FacturasAfiliadoPage: esa transición queda pendiente de resolverse por
-              otro canal (p.ej. Requisiciones en F3), no por un botón operativo aquí. */}
+              agencia/afiliado: esa transición queda pendiente de resolverse por otro
+              canal, no por un botón operativo aquí. */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {estatus === "recibida" && (
               <button
@@ -325,7 +305,7 @@ export function FacturasAgenciaPage() {
                 onClick={() =>
                   ejecutar(() =>
                     cambiarEstatus.mutateAsync({
-                      id: selected.factura_agencia_id,
+                      id: selected.factura_vendedor_id,
                       estatus: "en_revision",
                     }),
                   )
@@ -341,7 +321,7 @@ export function FacturasAgenciaPage() {
                   className="btn btn-sm btn-primary"
                   disabled={autorizar.isPending}
                   title="Solo Dirección o Admin pueden autorizar"
-                  onClick={() => ejecutar(() => autorizar.mutateAsync(selected.factura_agencia_id))}
+                  onClick={() => ejecutar(() => autorizar.mutateAsync(selected.factura_vendedor_id))}
                 >
                   Autorizar
                 </button>
@@ -352,7 +332,7 @@ export function FacturasAgenciaPage() {
                   onClick={() =>
                     ejecutar(() =>
                       cambiarEstatus.mutateAsync({
-                        id: selected.factura_agencia_id,
+                        id: selected.factura_vendedor_id,
                         estatus: "recibida",
                       }),
                     )
@@ -377,7 +357,7 @@ export function FacturasAgenciaPage() {
         <thead>
           <tr>
             <th style={{ width: "14%" }}>Folio</th>
-            <th style={{ width: "18%" }}>Agencia</th>
+            <th style={{ width: "18%" }}>Vendedor</th>
             <th style={{ width: "16%" }}>Orden relacionada</th>
             <th style={{ width: "10%" }}>Fecha</th>
             <th className="td-right" style={{ width: "13%" }}>
@@ -394,8 +374,8 @@ export function FacturasAgenciaPage() {
         <tbody>
           {items.map((f) => (
             <tr
-              key={f.factura_agencia_id}
-              className={selected?.factura_agencia_id === f.factura_agencia_id ? "sel" : ""}
+              key={f.factura_vendedor_id}
+              className={selected?.factura_vendedor_id === f.factura_vendedor_id ? "sel" : ""}
               onClick={() => {
                 setSelected(f);
                 setCreando(false);
@@ -403,15 +383,15 @@ export function FacturasAgenciaPage() {
                 setErrorAccion(null);
               }}
             >
-              <td className="td-main mono">{oGuion(f.folio_factura_agencia)}</td>
-              <td className="td-2">{oGuion(f.agencia)}</td>
+              <td className="td-main mono">{oGuion(f.folio_factura_vendedor)}</td>
+              <td className="td-2">{oGuion(f.vendedor)}</td>
               <td className="td-2 mono">{oGuion(f.folio_orden)}</td>
-              <td className="td-2 mono">{fmtFecha(f.fecha_factura_agencia)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.monto_factura_agencia)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura_agencia)}</td>
+              <td className="td-2 mono">{fmtFecha(f.fecha_factura_vendedor)}</td>
+              <td className="td-2 td-right">{fmtMoneda(f.monto_factura_vendedor)}</td>
+              <td className="td-2 td-right">{fmtMoneda(f.total_factura_vendedor)}</td>
               <td className="td-center">
-                <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_agencia)}`}>
-                  {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_agencia]}
+                <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_vendedor)}`}>
+                  {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_vendedor]}
                 </span>
               </td>
             </tr>
@@ -441,9 +421,9 @@ export function FacturasAgenciaPage() {
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Facturas de agencia</div>
+          <div className="cat-title">Facturas de vendedor</div>
           <div className="cat-sub">
-            Comisión que la agencia factura a OIR. Una orden puede tener varias.
+            Comisión que el vendedor principal factura a OIR. Una orden puede tener varias.
           </div>
         </div>
         <button

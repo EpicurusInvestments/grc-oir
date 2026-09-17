@@ -142,7 +142,7 @@ def _encabezado(
     logo_grc: bool = True,
     logos_arriba: bool = False,
 ) -> Table:
-    """Por defecto el nombre de empresa va grande y `subtitulo` chico debajo (ADR-044).
+    """Por defecto el nombre de empresa va grande y `subtitulo` chico debajo (ADR-089).
     "Horarios programados" (2.2) usa `subtitulo_primero=True` para igualar su PDF de
     referencia, donde el título del reporte va grande arriba y la empresa chica debajo —
     corrección puntual a ese reporte, no cambia servicio (2.1) ni reales (2.3).
@@ -150,7 +150,7 @@ def _encabezado(
     de Radio Centro, a diferencia de servicio y programados.
     "Horarios programados" también usa `logos_arriba=True`: en su referencia los logos
     van en su propio renglón, arriba del título — no centrados verticalmente junto al
-    título/subtítulo como en servicio/reales (ADR-044)."""
+    título/subtítulo como en servicio/reales (ADR-089)."""
     grande, chico = (subtitulo, nombre_empresa) if subtitulo_primero else (nombre_empresa, subtitulo)
     ancho_logo_col = 3.5 * cm
     logo_derecho = _logo_flowable("grc") if logo_grc else Spacer(1, _LOGO_ALTO)

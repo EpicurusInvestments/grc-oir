@@ -98,6 +98,50 @@ def test_prefijo_distinto_por_tipo(api) -> None:  # type: ignore[no-untyped-def]
     assert r.json()["ref"].startswith("facturacion/costos/respaldo/")
 
 
+def test_subir_pdf_y_xml_de_factura_agencia(api) -> None:  # type: ignore[no-untyped-def]
+    """ADR-079: la factura de la agencia se sube en PDF y XML por separado, mismo
+    criterio que ADR-070 en factura de afiliado — prefijos propios, uno por tipo."""
+    r_pdf = api.post(
+        "/api/v1/facturacion/adjuntos?tipo=factura_agencia_pdf",
+        files={"archivo": ("factura.pdf", PDF_BYTES, "application/pdf")},
+        headers=_hdr("cxp"),
+    )
+    assert r_pdf.status_code == 201, r_pdf.text
+    assert r_pdf.json()["ref"].startswith("facturacion/proveedor/agencia/pdf/")
+
+    r_xml = api.post(
+        "/api/v1/facturacion/adjuntos?tipo=factura_agencia_xml",
+        files={"archivo": ("factura.xml", XML_BYTES, "application/xml")},
+        headers=_hdr("cxp"),
+    )
+    assert r_xml.status_code == 201, r_xml.text
+    assert r_xml.json()["ref"].startswith("facturacion/proveedor/agencia/xml/")
+
+    r = api.get(f"/api/v1/facturacion/adjuntos?ref={r_pdf.json()['ref']}", headers=_hdr("cxp"))
+    assert r.status_code == 200
+    assert r.content == PDF_BYTES
+
+
+def test_subir_pdf_y_xml_de_factura_vendedor(api) -> None:  # type: ignore[no-untyped-def]
+    """Paridad con `FacturaAgencia`: la factura del vendedor también se sube en PDF y
+    XML por separado, con su propio prefijo de almacenamiento."""
+    r_pdf = api.post(
+        "/api/v1/facturacion/adjuntos?tipo=factura_vendedor_pdf",
+        files={"archivo": ("factura.pdf", PDF_BYTES, "application/pdf")},
+        headers=_hdr("cxp"),
+    )
+    assert r_pdf.status_code == 201, r_pdf.text
+    assert r_pdf.json()["ref"].startswith("facturacion/proveedor/vendedor/pdf/")
+
+    r_xml = api.post(
+        "/api/v1/facturacion/adjuntos?tipo=factura_vendedor_xml",
+        files={"archivo": ("factura.xml", XML_BYTES, "application/xml")},
+        headers=_hdr("cxp"),
+    )
+    assert r_xml.status_code == 201, r_xml.text
+    assert r_xml.json()["ref"].startswith("facturacion/proveedor/vendedor/xml/")
+
+
 def test_rbac_ventas_no_puede_subir(api) -> None:  # type: ignore[no-untyped-def]
     """`costos:editar` exige CxP (o Admin); Ventas solo lee en este módulo."""
     files = {"archivo": ("factura.pdf", PDF_BYTES, "application/pdf")}

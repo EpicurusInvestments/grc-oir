@@ -1326,6 +1326,644 @@ def test_el_porcentaje_se_sugiere_del_catalogo_si_no_viene(
     assert r.json()["comision_agencia"] == "1160.00"
 
 
+def test_alta_factura_agencia_trae_agencia_y_orden_denormalizados(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El alta ya trae `agencia`/`folio_orden`/`anunciante`/`producto`/`orden_total` en
+    la MISMA respuesta (sin esperar al próximo GET) — mismo criterio que
+    `_enriquecida()` en `factura_afiliado.py`."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-ENRIQ", producto="Spot radio mayo")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_agencia": "2026-03-03",
+            "monto_factura_agencia": "1160.00",
+            "iva_factura_agencia": "185.60",
+            "porcentaje_comision_agencia": "10.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["agencia"] == "Agencia Uno"
+    assert body["folio_orden"] == "OC-AG-ENRIQ"
+    assert body["numero_orden_cliente"] == "NUM-OC-AG-ENRIQ"
+    assert body["anunciante"] == "Anunciante Uno"
+    assert body["producto"] == "Spot radio mayo"
+    assert body["orden_total"] == "11600.00"
+
+    detalle = client.get(
+        f"/api/v1/facturacion/agencias/{body['factura_agencia_id']}", headers=_hdr("cxp")
+    ).json()
+    assert detalle["agencia"] == "Agencia Uno"
+    assert detalle["folio_orden"] == "OC-AG-ENRIQ"
+
+    lista = client.get(
+        "/api/v1/facturacion/agencias",
+        params={"agencia_id": str(cat["agencia_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    en_lista = next(
+        f for f in lista["items"] if f["factura_agencia_id"] == body["factura_agencia_id"]
+    )
+    assert en_lista["agencia"] == "Agencia Uno"
+    assert en_lista["folio_orden"] == "OC-AG-ENRIQ"
+
+
+def test_factura_agencia_captura_y_edita_archivo_pdf_xml(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-079: la factura de la agencia se sube en PDF y XML por separado, mismo
+    criterio que ADR-070 en FacturaAfiliado — se capturan como referencias (claves de
+    almacenamiento ya subidas), no como el archivo mismo en este endpoint."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-ARCHIVO")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_agencia": "2026-03-03",
+            "monto_factura_agencia": "1160.00",
+            "iva_factura_agencia": "185.60",
+            "archivo_pdf_path": "facturacion/proveedor/agencia/pdf/abc_factura.pdf",
+            "archivo_xml_path": "facturacion/proveedor/agencia/xml/abc_factura.xml",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["archivo_pdf_path"] == "facturacion/proveedor/agencia/pdf/abc_factura.pdf"
+    assert r.json()["archivo_xml_path"] == "facturacion/proveedor/agencia/xml/abc_factura.xml"
+    fid = r.json()["factura_agencia_id"]
+
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={"archivo_pdf_path": "facturacion/proveedor/agencia/pdf/nuevo.pdf"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["archivo_pdf_path"] == "facturacion/proveedor/agencia/pdf/nuevo.pdf"
+    # No se tocó al editar: sigue el mismo XML de antes.
+    assert r.json()["archivo_xml_path"] == "facturacion/proveedor/agencia/xml/abc_factura.xml"
+
+
+def test_ordenes_facturables_agencia_solo_lista_las_cerradas_de_esa_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    from app.modules.catalogos.agencia import Agencia
+
+    orden_cerrada = _orden(db, cat, "orden_cerrada", "OC-AG-COMBO", producto="Radio spot")
+    _orden(db, cat, "en_transmision", "OC-AG-NOCERRADA")  # no debe aparecer
+
+    otra_agencia_id = uuid.uuid4()
+    db.add(
+        Agencia(
+            agencia_id=otra_agencia_id,
+            nombre_agencia="Agencia Dos",
+            rfc_agencia="ADS900101AB2",
+            porcentaje_comision_agencia_default=Decimal("12.50"),
+        )
+    )
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(cat["agencia_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()
+    assert len(items) == 1
+    assert items[0]["orden_id"] == str(orden_cerrada)
+    assert items[0]["folio_orden"] == "OC-AG-COMBO"
+    assert items[0]["anunciante"] == "Anunciante Uno"
+    assert items[0]["producto"] == "Radio spot"
+    assert items[0]["total"] == "11600.00"
+    assert items[0]["porcentaje_comision_agencia_default"] == "10.00"
+
+    # Una agencia SIN órdenes cerradas propias → combo vacío (no las de otra agencia).
+    vacio = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(otra_agencia_id)},
+        headers=_hdr("cxp"),
+    ).json()
+    assert vacio == []
+
+
+def test_editar_factura_agencia_permite_reasignar_agencia_y_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario: la edición hace todo lo que hace el alta — reasignar
+    agencia y orden relacionada, recalculando la comisión contra la NUEVA orden."""
+    from app.modules.catalogos.agencia import Agencia
+
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-EDIT-1", subtotal=Decimal("10000.00"))
+    otra_agencia_id = uuid.uuid4()
+    db.add(
+        Agencia(
+            agencia_id=otra_agencia_id,
+            nombre_agencia="Agencia Dos",
+            rfc_agencia="ADS900101AB3",
+            porcentaje_comision_agencia_default=Decimal("20.00"),
+        )
+    )
+    db.commit()
+    otra_orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-EDIT-2", subtotal=Decimal("5000.00"))
+    db.commit()
+
+    alta = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_agencia": "2026-03-03",
+            "monto_factura_agencia": "1160.00",
+            "iva_factura_agencia": "185.60",
+            "porcentaje_comision_agencia": "10.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert alta.status_code == 201, alta.text
+    fid = alta.json()["factura_agencia_id"]
+    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% = 1160.00
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={
+            "agencia_id": str(otra_agencia_id),
+            "orden_id": str(otra_orden_id),
+            "porcentaje_comision_agencia": "20.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["agencia_id"] == str(otra_agencia_id)
+    assert body["orden_id"] == str(otra_orden_id)
+    assert body["agencia"] == "Agencia Dos"
+    assert body["folio_orden"] == "OC-AG-EDIT-2"
+    assert body["comision_agencia"] == "1160.00"
+
+
+def test_editar_factura_agencia_agencia_inexistente_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-SIMPLE-1")
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={"agencia_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_editar_factura_agencia_orden_inexistente_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-SIMPLE-2")
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={"orden_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_editar_factura_agencia_autorizada_no_permite_reasignar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-SIMPLE-3")
+    client.post(
+        f"/api/v1/facturacion/agencias/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+    client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
+
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={"agencia_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 409
+
+
+def test_lista_facturas_agencia_ordena_por_mas_reciente_primero(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo criterio que `FacturaAfiliado` (ADR-086): ordena por `created_at`, no por
+    `fecha_factura_agencia` (a propósito invertida respecto al orden de captura)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-ORDEN")
+    db.commit()
+
+    primera = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "folio_factura_agencia": "AG-ORDEN-1",
+            "fecha_factura_agencia": "2026-06-01",
+            "monto_factura_agencia": "100.00",
+            "iva_factura_agencia": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert primera.status_code == 201, primera.text
+
+    segunda = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "folio_factura_agencia": "AG-ORDEN-2",
+            "fecha_factura_agencia": "2026-01-01",
+            "monto_factura_agencia": "100.00",
+            "iva_factura_agencia": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert segunda.status_code == 201, segunda.text
+
+    lista = client.get(
+        "/api/v1/facturacion/agencias",
+        params={"agencia_id": str(cat["agencia_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    folios = [f["folio_factura_agencia"] for f in lista["items"]]
+    assert folios.index("AG-ORDEN-2") < folios.index("AG-ORDEN-1")
+
+
+def _crear_factura_agencia_simple(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], folio: str = "OC-AG-SIMPLE"
+) -> str:
+    """Crea su propia `orden_cerrada` (con folio único por llamada, para no chocar si
+    se usa varias veces en la misma prueba) y una FacturaAgencia sobre ella."""
+    orden_id = _orden(db, cat, "orden_cerrada", folio)
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_agencia": "2026-03-03",
+            "monto_factura_agencia": "100.00",
+            "iva_factura_agencia": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["factura_agencia_id"]
+
+
+# ── FacturaVendedor (entidad nueva, paridad con FacturaAgencia) ───────────────────
+def test_comision_vendedor_se_calcula_sobre_el_total_de_la_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "1160.00",
+            "iva_factura_vendedor": "185.60",
+            "porcentaje_comision_vendedor": "10.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    # OrdenCliente.total = 11600.00 · 10% = 1160.00
+    assert r.json()["comision_vendedor"] == "1160.00"
+    assert r.json()["total_factura_vendedor"] == "1345.60"
+
+
+def test_el_porcentaje_de_vendedor_se_sugiere_del_catalogo_si_no_viene(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    vendedor_con_pct_id = uuid.uuid4()
+    db.add(
+        Vendedor(
+            vendedor_id=vendedor_con_pct_id,
+            nombre_vendedor="Vendedor Con Default",
+            porcentaje_comision_default=Decimal("10.00"),
+        )
+    )
+    orden_id = _orden(
+        db, cat, "orden_cerrada", "OC-VEND2", subtotal=Decimal("10000.00")
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(vendedor_con_pct_id),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "100.00",
+            "iva_factura_vendedor": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["porcentaje_comision_vendedor"] == "10.00"  # default del catálogo
+    assert r.json()["comision_vendedor"] == "1160.00"
+
+
+def test_alta_factura_vendedor_trae_vendedor_y_orden_denormalizados(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El alta ya trae `vendedor`/`folio_orden`/`anunciante`/`producto`/`orden_total`
+    en la MISMA respuesta (sin esperar al próximo GET) — mismo criterio que
+    `_enriquecida()` en `factura_agencia.py`."""
+    orden_id = _orden(
+        db, cat, "orden_cerrada", "OC-VEND-ENRIQ", producto="Spot radio mayo"
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "1160.00",
+            "iva_factura_vendedor": "185.60",
+            "porcentaje_comision_vendedor": "10.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["vendedor"] == "Vendedor Uno"
+    assert body["folio_orden"] == "OC-VEND-ENRIQ"
+    assert body["numero_orden_cliente"] == "NUM-OC-VEND-ENRIQ"
+    assert body["anunciante"] == "Anunciante Uno"
+    assert body["producto"] == "Spot radio mayo"
+    assert body["orden_total"] == "11600.00"
+
+    detalle = client.get(
+        f"/api/v1/facturacion/vendedores/{body['factura_vendedor_id']}", headers=_hdr("cxp")
+    ).json()
+    assert detalle["vendedor"] == "Vendedor Uno"
+    assert detalle["folio_orden"] == "OC-VEND-ENRIQ"
+
+    lista = client.get(
+        "/api/v1/facturacion/vendedores",
+        params={"vendedor_id": str(cat["vendedor_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    en_lista = next(
+        f for f in lista["items"] if f["factura_vendedor_id"] == body["factura_vendedor_id"]
+    )
+    assert en_lista["vendedor"] == "Vendedor Uno"
+    assert en_lista["folio_orden"] == "OC-VEND-ENRIQ"
+
+
+def test_ordenes_facturables_vendedor_solo_lista_las_del_vendedor_principal(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_cerrada = _orden(
+        db, cat, "orden_cerrada", "OC-VEND-COMBO", producto="Radio spot"
+    )
+    _orden(db, cat, "en_transmision", "OC-VEND-NOCERRADA")  # no debe aparecer
+
+    otro_vendedor_id = uuid.uuid4()
+    db.add(
+        Vendedor(
+            vendedor_id=otro_vendedor_id,
+            nombre_vendedor="Vendedor Dos",
+            porcentaje_comision_default=Decimal("12.50"),
+        )
+    )
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(cat["vendedor_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()
+    assert len(items) == 1
+    assert items[0]["orden_id"] == str(orden_cerrada)
+    assert items[0]["folio_orden"] == "OC-VEND-COMBO"
+    assert items[0]["anunciante"] == "Anunciante Uno"
+    assert items[0]["producto"] == "Radio spot"
+    assert items[0]["total"] == "11600.00"
+
+    # Otro vendedor (no es el principal de ninguna orden) → combo vacío.
+    vacio = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(otro_vendedor_id)},
+        headers=_hdr("cxp"),
+    ).json()
+    assert vacio == []
+
+
+def test_editar_factura_vendedor_permite_reasignar_vendedor_y_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """La edición hace todo lo que hace el alta — reasignar vendedor y orden
+    relacionada, recalculando la comisión contra la NUEVA orden."""
+    orden_id = _orden(
+        db, cat, "orden_cerrada", "OC-VEND-EDIT-1", subtotal=Decimal("10000.00")
+    )
+    otro_vendedor_id = uuid.uuid4()
+    db.add(
+        Vendedor(
+            vendedor_id=otro_vendedor_id,
+            nombre_vendedor="Vendedor Dos",
+            porcentaje_comision_default=Decimal("20.00"),
+        )
+    )
+    db.commit()
+    otra_orden_id = _orden(
+        db, cat, "orden_cerrada", "OC-VEND-EDIT-2", subtotal=Decimal("5000.00")
+    )
+    db.commit()
+
+    alta = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "1160.00",
+            "iva_factura_vendedor": "185.60",
+            "porcentaje_comision_vendedor": "10.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert alta.status_code == 201, alta.text
+    fid = alta.json()["factura_vendedor_id"]
+    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% = 1160.00
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={
+            "vendedor_id": str(otro_vendedor_id),
+            "orden_id": str(otra_orden_id),
+            "porcentaje_comision_vendedor": "20.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["vendedor_id"] == str(otro_vendedor_id)
+    assert body["orden_id"] == str(otra_orden_id)
+    assert body["vendedor"] == "Vendedor Dos"
+    assert body["folio_orden"] == "OC-VEND-EDIT-2"
+    assert body["comision_vendedor"] == "1160.00"
+
+
+def test_editar_factura_vendedor_vendedor_inexistente_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-SIMPLE-1")
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={"vendedor_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_editar_factura_vendedor_orden_inexistente_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-SIMPLE-2")
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={"orden_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_editar_factura_vendedor_autorizada_no_permite_reasignar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-SIMPLE-3")
+    client.post(
+        f"/api/v1/facturacion/vendedores/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+    client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
+
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={"vendedor_id": str(uuid.uuid4())},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 409
+
+
+def test_lista_facturas_vendedor_ordena_por_mas_reciente_primero(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo criterio que FacturaAgencia/FacturaAfiliado: ordena por `created_at`, no
+    por `fecha_factura_vendedor` (a propósito invertida respecto al orden de captura)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-ORDEN")
+    db.commit()
+
+    primera = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "folio_factura_vendedor": "VE-ORDEN-1",
+            "fecha_factura_vendedor": "2026-06-01",
+            "monto_factura_vendedor": "100.00",
+            "iva_factura_vendedor": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert primera.status_code == 201, primera.text
+
+    segunda = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "folio_factura_vendedor": "VE-ORDEN-2",
+            "fecha_factura_vendedor": "2026-01-01",
+            "monto_factura_vendedor": "100.00",
+            "iva_factura_vendedor": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert segunda.status_code == 201, segunda.text
+
+    lista = client.get(
+        "/api/v1/facturacion/vendedores",
+        params={"vendedor_id": str(cat["vendedor_id"]), "size": 100},
+        headers=_hdr("cxp"),
+    ).json()
+    folios = [f["folio_factura_vendedor"] for f in lista["items"]]
+    assert folios.index("VE-ORDEN-2") < folios.index("VE-ORDEN-1")
+
+
+def test_factura_vendedor_captura_y_edita_archivo_pdf_xml(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-ARCHIVO")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "1160.00",
+            "iva_factura_vendedor": "185.60",
+            "archivo_pdf_path": "facturacion/proveedor/vendedor/pdf/abc_factura.pdf",
+            "archivo_xml_path": "facturacion/proveedor/vendedor/xml/abc_factura.xml",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["archivo_pdf_path"] == "facturacion/proveedor/vendedor/pdf/abc_factura.pdf"
+    assert r.json()["archivo_xml_path"] == "facturacion/proveedor/vendedor/xml/abc_factura.xml"
+    fid = r.json()["factura_vendedor_id"]
+
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={"archivo_pdf_path": "facturacion/proveedor/vendedor/pdf/nuevo.pdf"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["archivo_pdf_path"] == "facturacion/proveedor/vendedor/pdf/nuevo.pdf"
+    assert r.json()["archivo_xml_path"] == "facturacion/proveedor/vendedor/xml/abc_factura.xml"
+
+
+def _crear_factura_vendedor_simple(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], folio: str = "OC-VEND-SIMPLE"
+) -> str:
+    """Crea su propia `orden_cerrada` (con folio único por llamada) y una
+    FacturaVendedor sobre ella."""
+    orden_id = _orden(db, cat, "orden_cerrada", folio)
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "fecha_factura_vendedor": "2026-03-03",
+            "monto_factura_vendedor": "100.00",
+            "iva_factura_vendedor": "16.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["factura_vendedor_id"]
+
+
 # ── CostoAdicional ────────────────────────────────────────────────────────────
 def test_costo_general_sin_orden_y_periodo_invalido(
     client: TestClient, cat: dict[str, uuid.UUID]

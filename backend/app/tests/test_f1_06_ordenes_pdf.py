@@ -338,9 +338,9 @@ def test_pdf_reales_no_truena_con_descripcion_larga(
     oe_svc: OrdenEstacionService,
     cat: dict[str, uuid.UUID],
 ) -> None:
-    """ADR-056: DESCRIPCION/EMISORA van en `Paragraph` (no `str` plano) justo para que un
+    """ADR-057: DESCRIPCION/EMISORA van en `Paragraph` (no `str` plano) justo para que un
     texto largo haga word-wrap dentro de su columna en vez de encimarse con la siguiente.
-    No hay forma sencilla de aserto visual aquí (verificado manualmente, ver ADR-056); esto
+    No hay forma sencilla de aserto visual aquí (verificado manualmente, ver ADR-057); esto
     al menos cubre que reportlab no truena al recibir texto que excede la columna."""
     oc = oc_svc.create(
         _oc_payload(cat, producto="ZAPATOS DE ALTA CALIDAD HECHOS A MANO EN LEÓN GUANAJUATO"),
