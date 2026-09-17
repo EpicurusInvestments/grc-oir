@@ -146,7 +146,7 @@ PK `factura_afiliado_id`. FK a `Afiliado`. Captura manual o carga de archivo, po
 (no Facturación — ver RBAC). `total_factura_afiliado` calculado
 (`monto + iva`). Estados: `recibida → en_revision → autorizada → pagada`.
 
-**`ordenes_asignadas` (ADR-074, no es columna de la tabla):** cuántas `OrdenEstacion`
+**`ordenes_asignadas` (ADR-084, no es columna de la tabla):** cuántas `OrdenEstacion`
 tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre
 `FacturaAfiliadoOrden`, una sola consulta por página) y se expone solo en
 `FacturaAfiliadoRead` para pintar la columna "OE Asig." de la lista.
@@ -157,7 +157,7 @@ se sube en PDF y XML por separado, mismo mecanismo de adjuntos que ya usa el CFD
 sin tocar, pero ningún formulario los llena desde que existen estos dos.
 
 **Combo "Folio de la Orden Interna" en alta Y edición (ADR-070, multi-selección desde
-ADR-073, también al editar desde ADR-077):** el formulario ofrece agregar VARIAS OE
+ADR-083, también al editar desde ADR-087):** el formulario ofrece agregar VARIAS OE
 `cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=`), una por una
 con búsqueda; al guardar, la factura queda asignada a cada una
 (`ordenes_estacion_ids: UUID[]`, en `FacturaAfiliadoCreate` y también en
@@ -167,7 +167,7 @@ facturar en parcialidades. El monto asignado a cada una es su propio `importe_em
 desde las OE elegidas (con varias no hay un solo monto que copiar); la sección
 "Asignación a órdenes estación" muestra en vivo **Asignado** (suma de `importe_emisora`
 de las OE agregadas) y **Sin Asignar** (Subtotal capturado − Asignado), igual en alta,
-edición y en el detalle de solo lectura. **Al editar** (ADR-077), el afiliado también se
+edición y en el detalle de solo lectura. **Al editar** (ADR-087), el afiliado también se
 puede reasignar (antes quedaba fijo) y la lista de OI llega precargada con lo ya
 asignado — el backend reconcilia al guardar: agrega lo nuevo, quita lo removido, deja
 intacto lo que sigue (no recalcula `monto_asignado` de lo que no se tocó).
@@ -176,7 +176,7 @@ intacto lo que sigue (no recalcula `monto_asignado` de lo que no se tocó).
 Relación N:M `FacturaAfiliado` ↔ `OrdenEstacion` **cerrada** — permite repartir el costo
 de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacion`.
 
-**`folio_orden_estacion`/`nombre_estacion` (ADR-075, no son columnas de la tabla):**
+**`folio_orden_estacion`/`nombre_estacion` (ADR-085, no son columnas de la tabla):**
 resueltos en el servicio (`JOIN OrdenEstacion → Estacion`, en lote) y expuestos solo en
 `FacturaAfiliadoOrdenRead` — sin esto, la lista de asignaciones del detalle solo podía
 mostrar el UUID crudo de la OE.
@@ -646,9 +646,9 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   tarea aparte. Verificado: 7 pruebas nuevas (`FacturasAfiliadoPage.test.tsx`); `tsc`,
   `eslint` y la suite `vitest` del módulo `facturacion` en verde.
 
-  > **Superado por ADR-077:** el afiliado fijo en edición y el combo de OI solo en el
+  > **Superado por ADR-087:** el afiliado fijo en edición y el combo de OI solo en el
   > alta fueron decisiones de ESTE momento — el usuario después pidió lo contrario
-  > ("hacer todo como en la creación"). Ver ADR-077 más abajo.
+  > ("hacer todo como en la creación"). Ver ADR-087 más abajo.
 
 - **Timeline de Facturas de afiliado + se quita "Marcar pagada" del detalle (petición
   del usuario, solo frontend).** Se agregó un timeline al detalle (mismo patrón que el
@@ -679,7 +679,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   completas (pytest + ruff; tsc + eslint + vitest) en verde.
 
 - **El combo del alta de FacturaAfiliado pasa a multi-selección; Asignado/Sin Asignar en
-  vivo (ADR-073, petición del usuario).** El combo "Folio de la Orden Interna" ya
+  vivo (ADR-083, petición del usuario).** El combo "Folio de la Orden Interna" ya
   permite agregar VARIAS OI (una por una, con búsqueda; cada una se puede quitar de la
   lista); `FacturaAfiliadoCreate.ordenes_estacion_ids: UUID[]` reemplaza al campo
   singular — el backend asigna la factura a cada una en la misma transacción, cada una
@@ -696,7 +696,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   reescrito (10 pruebas); suites completas (pytest + ruff; tsc + eslint + vitest) en
   verde (53/53 en frontend).
 
-- **Columnas faltantes en la lista de Facturas de afiliado (ADR-074, petición del
+- **Columnas faltantes en la lista de Facturas de afiliado (ADR-084, petición del
   usuario comparando contra el mockup).** La tabla solo mostraba Folio emisora /
   Afiliado / Total / Estatus; ahora agrega Fecha, Subtotal y **OE Asig.** (cuántas
   OrdenEstacion tiene asignadas). Este último es un campo NUEVO —
@@ -712,17 +712,17 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   suites completas (pytest + ruff; tsc + eslint + vitest) en verde.
 
 - **El detalle de "Asignación a órdenes estación" mostraba el UUID crudo de la OE
-  (ADR-075, petición del usuario comparando contra el alta).** Cada asignación se veía
+  (ADR-085, petición del usuario comparando contra el alta).** Cada asignación se veía
   como `3f6e53ba…` en vez de folio + estación, a diferencia del formulario de alta
-  (ADR-073), que sí muestra `OE-2026-0041A` / `XHLE-TV` porque esos datos vienen del
+  (ADR-083), que sí muestra `OE-2026-0041A` / `XHLE-TV` porque esos datos vienen del
   combo. `FacturaAfiliadoOrdenRead` gana `folio_orden_estacion`/`nombre_estacion`,
   resueltos en el servicio con un `JOIN` en lote (mismo patrón que `ordenes_asignadas`,
-  ADR-074) — nunca N+1. El renglón de cada asignación en el detalle ahora se ve igual
+  ADR-084) — nunca N+1. El renglón de cada asignación en el detalle ahora se ve igual
   que en el alta. Verificado: se extendió una prueba de backend existente para
   comprobar folio/estación reales + 1 prueba nueva de frontend; suites completas
   (pytest + ruff; tsc + eslint + vitest) en verde.
 
-- **La lista de Facturas de afiliado no tenía un orden estable (ADR-076, petición del
+- **La lista de Facturas de afiliado no tenía un orden estable (ADR-086, petición del
   usuario).** Al no pasarle `default_order_by`, `BaseRepository.list()` caía al orden de
   la PK (`factura_afiliado_id`, un UUID) — se veía prácticamente aleatorio. Ahora ordena
   por `created_at DESC` (el momento REAL del alta, no `fecha_factura_afiliado` — una
@@ -732,9 +732,9 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   invertidas a propósito, para confirmar que ordena por `created_at` y no por la fecha
   capturada); suite completa (pytest + ruff) en verde. Sin cambios de frontend.
 
-- **La edición de FacturaAfiliado ya hace todo lo que hace el alta (ADR-077, petición
+- **La edición de FacturaAfiliado ya hace todo lo que hace el alta (ADR-087, petición
   del usuario).** Antes el afiliado quedaba fijo y el combo de OI solo aplicaba al alta
-  (decisión de ADR-070/073); ahora `FacturaAfiliadoUpdate` acepta `afiliado_id` (se
+  (decisión de ADR-070/083); ahora `FacturaAfiliadoUpdate` acepta `afiliado_id` (se
   re-deriva `razon_social_afiliada` del nuevo) y `ordenes_estacion_ids`, que
   **reconcilia** las asignaciones: agrega lo nuevo, quita lo que ya no está (primer
   DELETE real de `FacturaAfiliadoOrden`), deja intacto lo que sigue sin recalcular su
@@ -749,7 +749,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   3 de `FacturaAfiliadoForm.test.tsx` + 2 reescritas en `FacturasAfiliadoPage.test.tsx`;
   suites completas (pytest + ruff; tsc + eslint + vitest) en verde.
 
-- **Fix inmediato a lo anterior: las OI ya asignadas no cargaban al editar (ADR-078,
+- **Fix inmediato a lo anterior: las OI ya asignadas no cargaban al editar (ADR-088,
   reporte del usuario).** El `useEffect` que limpia la selección al cambiar de afiliado
   usaba un `useRef` de "¿ya corrió una vez?" para no dispararse en el montaje — pero
   `<StrictMode>` (activo en `main.tsx`) monta cada componente dos veces a propósito en
@@ -774,7 +774,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   propósito EN ESE MOMENTO: no se agregó subida de PDF/XML (el usuario no lo había
   pedido todavía — ver ADR-080, inmediatamente después). Verificado:
   7 pruebas nuevas de backend + 2 archivos de prueba nuevos de frontend (15 pruebas,
-  una con `<StrictMode>` para blindar contra la regresión de ADR-078); suites completas
+  una con `<StrictMode>` para blindar contra la regresión de ADR-088); suites completas
   (pytest + ruff; tsc + eslint + vitest) en verde (72/72 en frontend).
 
 - **Fix inmediato a lo anterior: PDF/XML de FacturaAgencia (ADR-080, petición del
@@ -824,7 +824,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   vendedor/orden, validaciones 400/409, orden de lista, PDF/XML) + suite completa
   (pytest + ruff) en verde; 2 archivos de prueba nuevos de frontend (18 pruebas, con
   `<StrictMode>` para blindar el efecto de reset-on-change contra la regresión de
-  ADR-078); suites completas (tsc + eslint + vitest) en verde (93/93 en el módulo
+  ADR-088); suites completas (tsc + eslint + vitest) en verde (93/93 en el módulo
   `facturacion`).
 
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué

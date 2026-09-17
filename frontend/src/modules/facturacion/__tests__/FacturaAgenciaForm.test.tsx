@@ -3,7 +3,7 @@
  * factura) y solo lista las OC `orden_cerrada` de la agencia ya elegida. Al elegir una,
  * se sugiere el % de comisión de esa agencia (si el usuario no capturó uno a mano) y se
  * muestra en vivo la comisión calculada. La edición hace todo lo que hace el alta
- * (agencia/orden reasignables) — mismo criterio que ADR-077 en FacturaAfiliado.
+ * (agencia/orden reasignables) — mismo criterio que ADR-087 en FacturaAfiliado.
  */
 
 import { StrictMode } from "react";

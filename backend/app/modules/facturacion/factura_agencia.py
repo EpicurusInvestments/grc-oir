@@ -203,7 +203,7 @@ class FacturaAgenciaCreate(BaseModel):
 
 
 class FacturaAgenciaUpdate(BaseModel):
-    """Edición: hace todo lo que hace el alta (mismo criterio que ADR-077 en
+    """Edición: hace todo lo que hace el alta (mismo criterio que ADR-087 en
     `FacturaAfiliado`) — puede reasignar la agencia y la orden relacionada. Cambiar
     `orden_id` o `porcentaje_comision_agencia` recalcula `comision_agencia` contra el
     total de la orden (nueva o la que ya tenía)."""
@@ -541,7 +541,7 @@ class FacturaAgenciaService(
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_factura_agencia_service(db: Session = Depends(get_db)) -> FacturaAgenciaService:
-    # Más reciente primero (mismo criterio que `FacturaAfiliado`, ADR-076): se ordena
+    # Más reciente primero (mismo criterio que `FacturaAfiliado`, ADR-086): se ordena
     # por `created_at`, el momento real del alta, no por `fecha_factura_agencia`.
     return FacturaAgenciaService(
         FacturaAgenciaRepository(

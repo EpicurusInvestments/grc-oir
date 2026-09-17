@@ -6,7 +6,7 @@
  * que aquí no hay un combo de "varias órdenes", solo una relacionada por factura.
  *
  * Alta y edición comparten el mismo formulario (`FacturaAgenciaForm`), igual criterio
- * que `FacturasAfiliadoPage` desde ADR-077: la edición puede reasignar agencia y orden.
+ * que `FacturasAfiliadoPage` desde ADR-087: la edición puede reasignar agencia y orden.
  *
  * PDF/XML de la factura (ADR-079, mismo mecanismo que ADR-070 en Afiliado): se muestran
  * como `ArchivoDescargable` en la sección "Archivo" del detalle.

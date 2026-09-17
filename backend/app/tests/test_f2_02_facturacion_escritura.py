@@ -1555,7 +1555,7 @@ def test_editar_factura_agencia_autorizada_no_permite_reasignar(
 def test_lista_facturas_agencia_ordena_por_mas_reciente_primero(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Mismo criterio que `FacturaAfiliado` (ADR-076): ordena por `created_at`, no por
+    """Mismo criterio que `FacturaAfiliado` (ADR-086): ordena por `created_at`, no por
     `fecha_factura_agencia` (a propósito invertida respecto al orden de captura)."""
     orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-ORDEN")
     db.commit()

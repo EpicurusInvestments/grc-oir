@@ -9,7 +9,7 @@
  * (`orden.total * % / 100`) para que quien captura vea el monto antes de guardar, sin
  * esperar la respuesta del backend.
  *
- * La edición hace todo lo que hace el alta (mismo criterio que ADR-077 en
+ * La edición hace todo lo que hace el alta (mismo criterio que ADR-087 en
  * FacturaAfiliado): agencia y orden se pueden reasignar.
  *
  * PDF/XML por separado (ADR-079, mismo mecanismo que ADR-070 en FacturaAfiliado):
@@ -99,7 +99,7 @@ export function FacturaAgenciaForm({
   // limpia la orden ya elegida — era de la agencia ANTERIOR. Se compara contra la
   // agencia CON LA QUE SE MONTÓ el formulario (no "¿ya corrió el efecto?"): React
   // StrictMode monta cada componente dos veces en desarrollo, y un `useRef` de "ya
-  // corrió una vez" se deja engañar por ese doble montaje (ver ADR-078).
+  // corrió una vez" se deja engañar por ese doble montaje (ver ADR-088).
   const agenciaIdDeMontaje = useRef(defaultValues?.agencia_id ?? "");
   useEffect(() => {
     if (agenciaId === agenciaIdDeMontaje.current) return;

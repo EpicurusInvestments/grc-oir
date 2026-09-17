@@ -8,7 +8,7 @@
  * factura (spec: "Cat/Manual"). La tarjeta "Comisión calculada" se recalcula en vivo
  * (`orden.total * % / 100`).
  *
- * La edición hace todo lo que hace el alta (mismo criterio que ADR-077/ADR-079):
+ * La edición hace todo lo que hace el alta (mismo criterio que ADR-087/ADR-079):
  * vendedor y orden se pueden reasignar.
  *
  * PDF/XML por separado (mismo mecanismo que ADR-070/ADR-079): `AdjuntoFacturaInput`
@@ -98,7 +98,7 @@ export function FacturaVendedorForm({
   // vendedor limpia la orden ya elegida — era del vendedor ANTERIOR. Se compara contra
   // el vendedor CON EL QUE SE MONTÓ el formulario (no "¿ya corrió el efecto?"): React
   // StrictMode monta cada componente dos veces en desarrollo, y un `useRef` de "ya
-  // corrió una vez" se deja engañar por ese doble montaje (ver ADR-078).
+  // corrió una vez" se deja engañar por ese doble montaje (ver ADR-088).
   const vendedorIdDeMontaje = useRef(defaultValues?.vendedor_id ?? "");
   useEffect(() => {
     if (vendedorId === vendedorIdDeMontaje.current) return;

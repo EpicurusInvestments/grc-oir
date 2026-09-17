@@ -1391,7 +1391,11 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   nombre forzado que ADR-042). Pendiente de spec/negocio: logo de "OIR" y cualquier ajuste
   de formato una vez que el equipo revise el resultado visual.
 
-### ADR-044 — Ajustes a ADR-043 tras revisión visual: logos, ubicación de botones y visor
+### ADR-089 — Ajustes a ADR-043 tras revisión visual: logos, ubicación de botones y visor
+
+> **Nota de renumeración:** esta entrada nació como "ADR-044", duplicando el número de la
+> entrada de F2 "DOS claves de RBAC" (más arriba, y con muchas más referencias cruzadas
+> vigentes en el código — se dejó esa como está). Renumerada aquí a 089 para no chocar.
 - **Estado:** aceptada · **Fecha:** 2026-08-22 (F1).
 - **Contexto:** el equipo revisó el resultado visual de ADR-043 contra el prototipo HTML
   aprobado (`docs/referencias/pantallas/Fase_1_-_Ordenes.html`) y pidió 3 correcciones.
@@ -1429,7 +1433,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 ### ADR-050 — Correcciones puntuales de encabezado/formato por PDF, contra sus referencias reales
 - **Estado:** aceptada · **Fecha:** 2026-08-26/27 (F1).
 - **Contexto:** el equipo comparó cada uno de los 3 PDFs de Orden interna contra un PDF de
-  referencia real (no el prototipo HTML de ADR-044) y encontró varias diferencias, cada
+  referencia real (no el prototipo HTML de ADR-089) y encontró varias diferencias, cada
   una acotada a un solo reporte:
   1. **"Horarios programados" (2.2):** `_encabezado()` siempre pone el nombre de la
      empresa grande arriba y el título del reporte chico debajo; en la referencia de
@@ -1466,7 +1470,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
      explícitamente que el orden título/empresa de "reales" (punto 2: empresa grande,
      título chico) se queda IGUAL por ahora — no se corrige junto con esto.
 - **Decisión:** `_encabezado()` gana 3 parámetros opcionales, cada uno con default que
-  preserva el comportamiento de ADR-044 para los reportes no corregidos:
+  preserva el comportamiento de ADR-089 para los reportes no corregidos:
   `subtitulo_primero: bool = False` (usado solo por `generar_pdf_programados()`),
   `logo_grc: bool = True` (`generar_pdf_reales()` lo llama con `logo_grc=False`) y
   `logos_arriba: bool = False` (`generar_pdf_programados()` Y `generar_pdf_reales()` lo
@@ -1677,7 +1681,13 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   estado. Pruebas nuevas: backend (`test_f2_01_facturacion_lectura.py`,
   `test_f2_02_facturacion_escritura.py`) y frontend (`FacturasClientePage.test.tsx`).
 
-### ADR-056 — Se quita la fecha/hora de generación de los pies de "servicio"/"programados" y se corrige el encimado de texto en "reales" (F1)
+### ADR-057 — Se quita la fecha/hora de generación de los pies de "servicio"/"programados" y se corrige el encimado de texto en "reales" (F1)
+
+> **Nota de renumeración:** esta entrada nació como "ADR-056", pero ADR-058 (más abajo)
+> y `orden_estacion_pdf.py` ya la citaban como "ADR-057" — una inconsistencia interna de
+> UN solo número, no un choque con otra entrada distinta. Se corrige aquí al número que
+> ya usaba la mayoría de las citas cruzadas (058's propio texto + 2 comentarios de
+> código); el archivo de pruebas tenía el mismo "056" y también se corrigió.
 - **Estado:** aceptada · **Fecha:** 2026-08-31 (F1).
 - **Contexto:** el equipo pidió quitar del pie de los 3 PDFs de Orden interna
   (servicio/programados/reales) la fecha/hora de generación (`"26/agosto/2026
@@ -2112,6 +2122,63 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   existencia sin multiplicar filas. Tiene tres pruebas de regresión, verificadas contra la
   versión defectuosa.
 
+### ADR-065 — `RegimenFiscal`/`UsoCFDI`/`FormaPago` dejan de resolverse por "una sola activa" en `ConstanteSistema`; bis con `FormaPago` (F2, bug real)
+
+> **Nota de reconstrucción:** esta entrada nunca se escribió como sección propia aquí,
+> pese a estar citada por su número (`ADR-065`/`ADR-065 bis`) en más de 15 lugares
+> (migraciones, `factura_cliente.py`, y las fichas `f0-03-catalogos-comerciales.md`/
+> `f0-04-catalogos-facturacion-finanzas.md`/`f2-facturacion.md`). Se reconstruye aquí a
+> partir de esas mismas referencias, sin inventar nada nuevo — el contenido ya vivía
+> disperso en esos documentos.
+
+- **Estado:** aceptada · **Fecha:** 2026-09-08 (`regimen_fiscal`/`uso_cfdi`) y
+  2026-09-08/09 ("bis", `forma_pago_clave`) (F2/F0).
+- **Contexto:** `_constante_unica(...)` en `FacturaClienteService._datos_timbrado()`
+  resolvía varios campos fiscales del PAC pidiendo la ÚNICA fila activa de un grupo de
+  `ConstanteSistema` (patrón `metodo_pago_clave`) — funcionaba mientras cada grupo tenía
+  exactamente una activa. Al completar el catálogo real de constantes SAT (ver
+  `f0-05-constantes-sistema.md`), los grupos `RegimenFiscal` (1→varias) y `UsoCFDI`
+  (1→varias) dejaron de resolver NADA para ninguna factura — `_constante_unica` reporta
+  el campo como faltante si hay más de una activa, por diseño (evita adivinar cuál).
+  Además, `RegimenFiscal` usaba la MISMA constante para emisor y receptor, que casi
+  nunca comparten régimen fiscal — un bug independiente del de "varias activas". Un
+  problema equivalente reapareció un día después ("bis") al completar `ClaveProdServ`
+  (1→4), `ClaveUnidad` (1→3) y `FormaPago` (1→5).
+- **Decisión:**
+  1. **`regimen_fiscal` como columna propia** en `EmpresaFacturadora` (emisor),
+     `Anunciante` y `Agencia` (receptor, según cuál sea el receptor real de la factura)
+     — migración `7d5f9c4589c0`. Se timbra DIRECTO de la columna del emisor/receptor,
+     sin pasar por `ConstanteSistema` en tiempo de timbrado; resuelve de paso el bug de
+     "misma constante para ambos".
+  2. **`uso_cfdi_default` en `Anunciante`** (solo SUGERENCIA, precarga el formulario si
+     el receptor es directo) + **`uso_cfdi` como columna real de `FacturaCliente`**
+     (`FacturaClienteCreate.uso_cfdi`, resuelto en `create()` como
+     `data.uso_cfdi or uso_cfdi_default` — mismo patrón que
+     `razon_social_facturacion`/`rfc_facturacion`) — migración `ebdf80f59dd1`. Si el
+     receptor es la Agencia no hay default que sugerir (columna solo en `Anunciante`):
+     se captura a mano, siempre editable por factura. Ambos (`regimen_fiscal`,
+     `uso_cfdi_default`) siguen SUGERIDOS desde `ConstantesSistema` al capturar el
+     catálogo, sin FK formal — lo que cambia es que el TIMBRADO ya no depende de que el
+     catálogo tenga una sola activa.
+  3. **Bis — `FormaPago` sí varía por cliente/pago** (a diferencia de `ClaveProdServ`/
+     `ClaveUnidad`, que describen el servicio que OIR factura y NO varían por factura:
+     esos dos se resolvieron curando el dato — una sola activa por grupo — en vez de
+     tocar código, sin migración). Se agrega `FacturaCliente.forma_pago_clave` (columna
+     real, obligatoria en `FacturaClienteCreate`, migración `a9b3cdeef9e7`) — antes ni
+     siquiera se capturaba por factura (a diferencia de `MetodoPago`/PUE-PPD, que sí se
+     captura desde siempre); `_datos_timbrado()` la resuelve de la columna, ya no del
+     catálogo.
+- **Consecuencia:** `ClaveProdServ`/`ClaveUnidad` siguen con el mecanismo viejo de "una
+  sola activa" (curado a mano) — mismo riesgo de ambigüedad si el catálogo vuelve a
+  crecer, pendiente de una corrección equivalente si hace falta. `regimen_fiscal`,
+  `uso_cfdi_default` (Agencia/Anunciante/EmpresaFacturadora) y `forma_pago_clave`
+  (FacturaCliente) son desviaciones aditivas sobre la spec v2 — documentadas en las
+  fichas de F0/F2 correspondientes.
+- **Verificado:** ver el detalle de pruebas en `f0-03-catalogos-comerciales.md`,
+  `f0-04-catalogos-facturacion-finanzas.md` y `f2-facturacion.md` (donde se documentó
+  cada corrección al momento de aplicarla); suites completas de backend en verde tras
+  cada una de las 3 migraciones.
+
 ### ADR-066 — `Detalle.CANT` pasa a ser los spots reales, ya no "1" fijo (F2, bug real)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-09 (F2).
@@ -2529,7 +2596,13 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   OE elegida, el combo no aparece al editar, subida de PDF); `tsc`, `eslint` y la suite
   `vitest` del módulo `facturacion` en verde (50/50).
 
-### ADR-073 — Alta de FacturaAfiliado: el combo pasa a multi-selección y "Asignación a órdenes estación" se vuelve una sección en vivo (F2)
+### ADR-083 — Alta de FacturaAfiliado: el combo pasa a multi-selección y "Asignación a órdenes estación" se vuelve una sección en vivo (F2)
+
+> **Nota de renumeración:** esta entrada nació como "ADR-073" y las cinco siguientes
+> como "ADR-074" a "ADR-078". Colisionaban con ADR-073 (Tesorería) y ADR-074 (deep-link
+> F2→F3) de la rama `feature/f3-cobranza-pagos`, ya mergeados a `main` antes que esta
+> tanda — el PR #36 no verificó los números ya tomados por esa rama y quedaron
+> duplicados en `main`. Renumeradas aquí a 083-088 para no chocar con nada.
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
 - **Contexto:** ADR-070 dejó el combo "Folio de la Orden Interna" como selección única,
@@ -2585,7 +2658,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   el arreglo, sección ausente en edición, subida de PDF); `tsc`, `eslint` y la suite
   `vitest` del módulo `facturacion` en verde (53/53).
 
-### ADR-074 — Columnas faltantes en la lista de Facturas de afiliado: Fecha, Subtotal, OE Asig. (F2)
+### ADR-084 — Columnas faltantes en la lista de Facturas de afiliado: Fecha, Subtotal, OE Asig. (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
 - **Contexto:** el usuario comparó la lista real contra el mockup de referencia y señaló
@@ -2623,11 +2696,11 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   (la fecha ahora aparece dos veces: lista y panel de detalle, mismo caso ya resuelto
   para Total); `tsc`, `eslint` y la suite `vitest` del módulo `facturacion` en verde.
 
-### ADR-075 — La lista de asignaciones de FacturaAfiliado mostraba el UUID crudo de la OE (F2)
+### ADR-085 — La lista de asignaciones de FacturaAfiliado mostraba el UUID crudo de la OE (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
 - **Contexto:** el usuario comparó el detalle de solo lectura de "Asignación a órdenes
-  estación" contra la sección equivalente del formulario de ALTA (ADR-073) y señaló que
+  estación" contra la sección equivalente del formulario de ALTA (ADR-083) y señaló que
   el detalle mostraba cada asignación con el UUID de la OE truncado (`3f6e53ba…`), sin
   folio ni estación — mientras que el alta sí muestra `OE-2026-0041A` / `XHLE-TV`,
   porque esos datos SÍ vienen en el combo "Folio de la Orden Interna"
@@ -2635,7 +2708,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `FacturaAfiliadoOrdenRead`) nunca los trajo — solo tenía `orden_estacion_id`.
 - **Decisión:** `FacturaAfiliadoOrdenRead` gana `folio_orden_estacion: str` y
   `nombre_estacion: str | None`, resueltos en el servicio con el mismo patrón por lote ya
-  usado para `ordenes_asignadas` (ADR-074) y para los denormalizados de
+  usado para `ordenes_asignadas` (ADR-084) y para los denormalizados de
   `factura_cliente.py`: una sola consulta `JOIN OrdenEstacion → Estacion` con
   `WHERE orden_estacion_id IN (...)` sobre TODAS las asignaciones de la respuesta, nunca
   N+1. El frontend (`FacturasAfiliadoPage.tsx`) cambia el renglón de folio truncado por
@@ -2651,7 +2724,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   (folio/estación visibles, UUID crudo ausente); `tsc`, `eslint` y la suite `vitest` del
   módulo `facturacion` en verde (55/55).
 
-### ADR-076 — La lista de Facturas de afiliado no tenía un orden estable ni mostraba lo más reciente arriba (F2)
+### ADR-086 — La lista de Facturas de afiliado no tenía un orden estable ni mostraba lo más reciente arriba (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
 - **Contexto:** el usuario pidió que, al capturar una factura nueva, siempre aparezca
@@ -2678,10 +2751,10 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `fecha_factura_afiliado`); suite completa (pytest + ruff) en verde. Sin cambios de
   frontend — la pantalla ya pinta lo que el backend regresa, en el orden que venga.
 
-### ADR-077 — La edición de FacturaAfiliado ahora hace todo lo que hace el alta: reasignar afiliado y editar las OI asignadas (F2)
+### ADR-087 — La edición de FacturaAfiliado ahora hace todo lo que hace el alta: reasignar afiliado y editar las OI asignadas (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
-- **Contexto:** ADR-070/073 habían dejado el afiliado FIJO en la edición (decisión
+- **Contexto:** ADR-070/083 habían dejado el afiliado FIJO en la edición (decisión
   confirmada con el usuario en su momento) y el combo de OI solo aplicaba al alta. El
   usuario pidió revertir eso: "la edición debe permitir modificar el afiliado y hacer
   todo como en la creación de la factura" — reasignar el afiliado y editar qué OI tiene
@@ -2734,10 +2807,10 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   reescribieron para el nuevo comportamiento; `tsc`, `eslint` y la suite `vitest` del
   módulo `facturacion` en verde (57/57).
 
-### ADR-078 — Al editar, las OI ya asignadas desaparecían: `useRef` de "ya corrió" engañado por React StrictMode (F2)
+### ADR-088 — Al editar, las OI ya asignadas desaparecían: `useRef` de "ya corrió" engañado por React StrictMode (F2)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-15 (F2, rama `fix/facturacion-correcciones-f2`).
-- **Contexto:** justo después de ADR-077, el usuario reportó que al editar una factura
+- **Contexto:** justo después de ADR-087, el usuario reportó que al editar una factura
   de afiliado, la sección "Asignación a órdenes estación" NO cargaba las OI que ya
   tenía asignadas (`asignacionesIniciales` llegaba bien a la prop, pero el estado
   quedaba vacío en pantalla).
@@ -2767,14 +2840,14 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 
 - **Estado:** aceptada · **Fecha:** 2026-09-16 (F2, rama `fix/facturacion-correcciones-f2`).
 - **Contexto:** el usuario pidió que "Facturas de agencia" reciba el mismo tratamiento
-  que "Facturas de afiliado" (ADR-070/073/074/075/076/077/078): capturar la agencia,
+  que "Facturas de afiliado" (ADR-070/083/084/085/086/087/088): capturar la agencia,
   elegir la orden **de esa agencia**, capturar monto/folio/IVA/fecha, traer el % de
   comisión de la agencia y calcular el monto con eso, homologar columnas con 2
   decimales sin redondear, y completar el mapa de estatus. A diferencia de
   `FacturaAfiliado`, la relación `FacturaAgencia` ↔ `OrdenCliente` es **1:N por diseño**
   (una OC puede tener varias facturas de agencia — parcialidades ya documentadas desde
   antes de esta sesión), NO N:M vía tabla intermedia: por eso aquí NO se replica el
-  combo de selección MÚLTIPLE de ADR-073 — el combo "Orden relacionada" es de selección
+  combo de selección MÚLTIPLE de ADR-083 — el combo "Orden relacionada" es de selección
   **simple**, más parecido al patrón original de ADR-070 (antes de volverse múltiple).
 - **Decisión:**
   1. **Combo "Orden relacionada" filtrado por agencia** — nuevo endpoint
@@ -2794,7 +2867,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
      `factura_cliente.py` y `_datos_agencia`/`_datos_orden` aquí), aplicados en
      `list()`/`get()`/`create()`/`update()`/`transicionar()` vía `_enriquecida()`. Sin
      esto, la lista solo podía mostrar el UUID crudo de `agencia_id`/`orden_id`.
-  4. **Edición hace todo lo que hace el alta** (igual que ADR-077): `FacturaAgenciaUpdate`
+  4. **Edición hace todo lo que hace el alta** (igual que ADR-087): `FacturaAgenciaUpdate`
      gana `agencia_id`/`orden_id` opcionales; cambiar cualquiera de los dos, o el `%`,
      recalcula `comision_agencia` contra el total de la orden que quede (la nueva si
      cambió, la que ya tenía si no). Antes NO existía ninguna edición conectada en el
@@ -2807,7 +2880,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
      confirmó que todos los montos ya usaban `fmtMoneda` (2 decimales, sin truncar) — no
      hubo que tocar nada ahí. `FacturaAgenciaRepository` gana
      `default_order_by=[FacturaAgencia.created_at.desc(), FacturaAgencia.factura_agencia_id]`
-     (mismo criterio que ADR-076).
+     (mismo criterio que ADR-086).
   6. **Timeline con las 4 fases** — `TimelineAgencia` (duplicado de `TimelineAfiliado`,
      mismo criterio de "un componente pequeño por página" ya usado en el resto del
      módulo) sustituye el badge suelto que traía el detalle; el "mapa de estatus" en sí
@@ -2826,7 +2899,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   comisión, 400 agencia/orden inexistente, 409 si ya autorizada, orden por `created_at`);
   suite completa (pytest + ruff) en verde. Frontend — 2 archivos de prueba nuevos
   (`FacturaAgenciaForm.test.tsx`: 7 pruebas, incluida una con `<StrictMode>` para blindar
-  contra la regresión de ADR-078; `FacturasAgenciaPage.test.tsx`: 8 pruebas); suite
+  contra la regresión de ADR-088; `FacturasAgenciaPage.test.tsx`: 8 pruebas); suite
   `vitest` del módulo `facturacion` completa en verde (72/72), `tsc` y `eslint` limpios.
 
 ### ADR-080 — Fix inmediato a ADR-079: PDF/XML de FacturaAgencia (fuera de alcance ahí, pedido después)
@@ -2941,7 +3014,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
     round-trip contra la RDS real.
   - Frontend: mirror exacto de `FacturaAgenciaForm`/`FacturasAgenciaPage` →
     `FacturaVendedorForm`/`FacturasVendedorPage`, con el mismo fix de StrictMode del
-    ADR-078 en el efecto de "cambiar de vendedor limpia la orden elegida", y **sin**
+    ADR-088 en el efecto de "cambiar de vendedor limpia la orden elegida", y **sin**
     botón "Marcar pagada" desde el inicio (ADR-081 ya aplicado de entrada, no hay que
     corregirlo después). Entrada nueva `facturas_vendedor` ("De vendedores") en
     `facturacionRegistry.tsx`, dentro del grupo "Facturas recibidas", inmediatamente
