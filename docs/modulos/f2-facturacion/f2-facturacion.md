@@ -827,6 +827,17 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   ADR-088); suites completas (tsc + eslint + vitest) en verde (93/93 en el módulo
   `facturacion`).
 
+- **Todo campo de dinero en pantalla trunca a 2 decimales, nunca redondea (ADR-090,
+  auditoría de TODO el sistema, no solo F2).** `fmtMoneda` ya tenía un `truncar`
+  opcional desde ADR-084, pero nadie lo usaba: ~10 sitios de este módulo (KPIs no hay,
+  pero sí los previews en vivo de `FacturaClienteForm`/`FacturaAfiliadoForm`/
+  `FacturaAgenciaForm`/`FacturaVendedorForm`) hacían `valor.toFixed(2)` — que SÍ
+  redondea — antes de pasarle el string a `fmtMoneda`, dejando el truncado interno sin
+  nada que hacer. Se quita el parámetro opcional (el truncado ya es el único
+  comportamiento) y se corrigen los previews para pasar el valor crudo. Alcance
+  confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
+  cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
+
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 
 Al revisar el `Detalle` del archivo plano campo por campo (petición del usuario), quedaron

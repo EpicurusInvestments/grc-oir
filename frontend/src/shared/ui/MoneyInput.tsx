@@ -8,10 +8,16 @@
 import { useState } from "react";
 import type { InputHTMLAttributes } from "react";
 
+// Trunca a 2 decimales SIN redondear: se corta el STRING antes de convertir a número
+// (mismo criterio que el resto del sistema, `modules/facturacion/format.ts`) — si el
+// usuario escribió más de 2 decimales, la vista con foco perdido no debe "inventar" un
+// centavo redondeando lo que en realidad se va a enviar sin redondear.
 function formatearMonto(v: string): string {
   const n = Number(v);
   if (v.trim() === "" || !Number.isFinite(n)) return v;
-  return n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const idxPunto = v.indexOf(".");
+  const truncado = idxPunto === -1 ? v : v.slice(0, idxPunto + 3);
+  return Number(truncado).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /** Deja pasar solo dígitos y un único punto decimal (evita basura mientras se escribe). */

@@ -90,7 +90,7 @@ export function ContratoDetailPanel({
         </div>
         <div className="fl">Monto del contrato</div>
         <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-          {fmtMonto(contrato.monto_contrato, { full: true })}
+          {fmtMonto(contrato.monto_contrato)}
         </div>
         <div className="fl">
           % comisión específica del contrato <FieldTag origin="audit" />

@@ -375,8 +375,9 @@ registro)
 - **`oiVentanaTipica()` usa la primera fila capturada, no la cronológicamente más
   temprana.** Sin impacto visible hoy porque nadie captura los días fuera de orden en la
   práctica. (`state/selectors.ts`)
-- **`totalesOC()` no redondea a centavos internamente** — el redondeo visual solo ocurre
-  al formatear con `fmtMonto()`. Sin impacto en pantalla. (`state/selectors.ts`)
+- **`totalesOC()` no redondea a centavos internamente** — el corte a 2 decimales solo
+  ocurre al formatear con `fmtMonto()`, que trunca (no redondea). Sin impacto en pantalla.
+  (`state/selectors.ts`)
 - **Ningún campo de formulario tiene `<label htmlFor>` ni `aria-label`** — son
   `<div className="fl">` seguidos del input. Sin impacto visual; si alguien navega solo con
   teclado/lector de pantalla, no anunciaría qué campo es cuál. (Todos los forms de F1)

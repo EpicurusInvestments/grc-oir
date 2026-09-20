@@ -267,7 +267,7 @@ export function OrdenClienteDetailPanel({
               <div style={{ display: "flex", gap: 11, fontSize: 11, color: "var(--text2)", flexWrap: "wrap" }}>
                 <span>{oiPeriodoTexto(oe)}</span>
                 <span>
-                  <strong style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{fmtMonto(oiImporte(oe), { sinDecimales: true })}</strong>
+                  <strong style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{fmtMonto(oiImporte(oe))}</strong>
                 </span>
               </div>
             </button>

@@ -247,7 +247,7 @@ export function OrdenEstacionListPage({
                     </td>
                     <td className="td-center td-mono">{oiTotalSpots(oe)}</td>
                     <td className="td-right td-mono" style={{ fontWeight: 500 }}>
-                      {fmtMonto(oiImporte(oe), { truncar: true })}
+                      {fmtMonto(oiImporte(oe))}
                     </td>
                     <td className="td-center">
                       <EstadoOIBadge estatus={oe.estatus} />

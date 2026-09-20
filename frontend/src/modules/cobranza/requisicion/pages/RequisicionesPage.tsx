@@ -479,17 +479,17 @@ export function RequisicionesPage({ filtroInicial }: Props) {
       <div className="kpi-strip">
         <div className="kpi-box warn">
           <div className="kpi-lbl" style={{ color: "var(--amber-text)" }}>Por autorizar</div>
-          <div className="kpi-val" style={{ color: "var(--amber-text)" }}>{fmtMoneda(kpis.porAutorizar.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--amber-text)" }}>{fmtMoneda(String(kpis.porAutorizar))}</div>
           <div className="kpi-sub">{kpis.porAutorizarCount} requisiciones</div>
         </div>
         <div className="kpi-box">
           <div className="kpi-lbl">Autorizadas (por pagar)</div>
-          <div className="kpi-val">{fmtMoneda(kpis.porPagar.toFixed(2))}</div>
+          <div className="kpi-val">{fmtMoneda(String(kpis.porPagar))}</div>
           <div className="kpi-sub">{kpis.porPagarCount} requisiciones</div>
         </div>
         <div className="kpi-box success">
           <div className="kpi-lbl" style={{ color: "var(--green-text)" }}>Pagado este mes</div>
-          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(kpis.pagadoMes.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(String(kpis.pagadoMes))}</div>
         </div>
       </div>
 

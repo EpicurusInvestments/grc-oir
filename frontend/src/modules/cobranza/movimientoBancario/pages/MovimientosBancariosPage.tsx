@@ -289,12 +289,12 @@ export function MovimientosBancariosPage({ filtroInicial }: Props) {
       <div className="kpi-strip">
         <div className="kpi-box success">
           <div className="kpi-lbl" style={{ color: "var(--green-text)" }}>Total abonos</div>
-          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(kpis.totalAbonos.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(String(kpis.totalAbonos))}</div>
           <div className="kpi-sub">{kpis.countAbonos} entradas</div>
         </div>
         <div className="kpi-box">
           <div className="kpi-lbl">Total cargos</div>
-          <div className="kpi-val">{fmtMoneda(kpis.totalCargos.toFixed(2))}</div>
+          <div className="kpi-val">{fmtMoneda(String(kpis.totalCargos))}</div>
           <div className="kpi-sub">{kpis.countCargos} salidas</div>
         </div>
         <div className={`kpi-box${kpis.sinConciliar > 0 ? " danger" : ""}`}>

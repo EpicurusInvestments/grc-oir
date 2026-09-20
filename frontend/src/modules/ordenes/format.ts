@@ -3,20 +3,19 @@
  * `number` puro en memoria: no hay backend que serialice.
  */
 
-/** Monto en MXN, formato `$1,234,567.89` (o "—" si es nulo).
- *
- * `truncar`: corta a 2 decimales SIN redondear (p.ej. $1,234.567 → $1,234.56, no
- * $1,234.57) — para columnas donde el valor puede traer ruido de punto flotante
- * (`oiImporte`/`totalesOC` no redondean internamente, ver `state/selectors.ts`) y no se
- * quiere que el redondeo de `toLocaleString` invente un centavo que no está ahí. */
-export function fmtMonto(v: number | null | undefined, opts?: { sinDecimales?: boolean; truncar?: boolean }): string {
+/** Monto en MXN, formato `$1,234,567.89` (o "—" si es nulo). Siempre a 2 decimales SIN
+ * redondear (p.ej. $1,234.567 → $1,234.56, no $1,234.57) — para columnas donde el valor
+ * puede traer ruido de punto flotante (`oiImporte`/`totalesOC` no redondean
+ * internamente, ver `state/selectors.ts`) y no se quiere que el redondeo de
+ * `toLocaleString` invente un centavo que no está ahí. */
+export function fmtMonto(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const valor = opts?.truncar ? Math.trunc(v * 100) / 100 : v;
+  const valor = Math.trunc(v * 100) / 100;
   return valor.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
-    maximumFractionDigits: opts?.sinDecimales ? 0 : 2,
-    minimumFractionDigits: opts?.sinDecimales ? 0 : 2,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
   });
 }
 
