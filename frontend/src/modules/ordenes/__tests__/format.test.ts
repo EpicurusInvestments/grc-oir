@@ -3,23 +3,19 @@ import { describe, expect, it } from "vitest";
 import { diaDeSemana, fmtMonto, fmtPct, fmtRangoFechas, oGuion } from "../format";
 
 describe("fmtMonto", () => {
-  it("formatea como moneda MXN con 2 decimales por default", () => {
+  it("formatea como moneda MXN con 2 decimales, siempre", () => {
     expect(fmtMonto(1234567.891)).toBe("$1,234,567.89");
   });
 
-  it("respeta sinDecimales", () => {
-    expect(fmtMonto(1234567.891, { sinDecimales: true })).toBe("$1,234,568");
+  it("fix: siempre trunca a 2 decimales sin redondear (Importe/Total en las tablas principales)", () => {
+    // Sin truncar, el default de `toLocaleString` redondearía 100.999 -> $101.00; en vez
+    // de eso se corta en 100.99 sin importar el tercer decimal.
+    expect(fmtMonto(100.999)).toBe("$100.99");
+    expect(fmtMonto(1234.565)).toBe("$1,234.56");
   });
 
-  it("truncar corta a 2 decimales sin redondear (fix: Importe/Total en las tablas principales)", () => {
-    // Sin `truncar`, el default ya redondearía 100.999 -> $101.00; con `truncar`, se corta
-    // en 100.99 sin importar el tercer decimal.
-    expect(fmtMonto(100.999, { truncar: true })).toBe("$100.99");
-    expect(fmtMonto(1234.565, { truncar: true })).toBe("$1,234.56");
-  });
-
-  it("truncar en un valor que ya trae exactamente 2 decimales no lo altera", () => {
-    expect(fmtMonto(1234.56, { truncar: true })).toBe("$1,234.56");
+  it("un valor que ya trae exactamente 2 decimales no se altera", () => {
+    expect(fmtMonto(1234.56)).toBe("$1,234.56");
   });
 
   it("formatea negativos", () => {

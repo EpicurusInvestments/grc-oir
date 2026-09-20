@@ -163,7 +163,7 @@ export function FacturaAfiliadoForm({
 
   const m = Number(watch("monto_factura_afiliado") ?? 0);
   const i = Number(watch("iva_factura_afiliado") ?? 0);
-  const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : (m + i).toFixed(2);
+  const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : String(m + i);
 
   const onValid = (v: Valores) => {
     const ordenesEstacionIds = ordenesSeleccionadas.map((oe) => oe.orden_estacion_id);

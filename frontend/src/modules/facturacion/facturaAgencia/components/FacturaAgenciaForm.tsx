@@ -122,14 +122,17 @@ export function FacturaAgenciaForm({
   const porcentajeCapturado = watch("porcentaje_comision_agencia");
   const porcentajeEfectivo =
     porcentajeCapturado || ordenSeleccionada?.porcentaje_comision_agencia_default || null;
+  // Se manda como string SIN redondear (ni aquí ni en `fmtMoneda`, que trunca en el
+  // string): `.toFixed(2)` redondearía el preview a un valor que podría no coincidir
+  // con lo que en verdad se va a guardar.
   const comisionPreview =
     ordenSeleccionada && porcentajeEfectivo
-      ? ((Number(ordenSeleccionada.total) * Number(porcentajeEfectivo)) / 100).toFixed(2)
+      ? String((Number(ordenSeleccionada.total) * Number(porcentajeEfectivo)) / 100)
       : null;
 
   const m = Number(watch("monto_factura_agencia") ?? 0);
   const i = Number(watch("iva_factura_agencia") ?? 0);
-  const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : (m + i).toFixed(2);
+  const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : String(m + i);
 
   const onValid = (v: Valores) => {
     const payload = {

@@ -5,15 +5,23 @@
  * `shared/`) — mismo criterio que F2 respecto a F1.
  */
 
-/** Formatea un monto decimal en string (p.ej. "11600.00") como moneda MXN. */
+/** Formatea un monto decimal en string (p.ej. "11600.00") como moneda MXN, siempre a 2
+ * decimales SIN redondear (p.ej. "1234.567" → $1,234.56, no $1,234.57) — se corta el
+ * STRING antes de convertir a número, así que no depende de ningún redondeo de
+ * `toLocaleString` ni de precisión de punto flotante (mismo criterio que F2,
+ * `modules/facturacion/format.ts`). */
 export function fmtMoneda(valor: string | null | undefined): string {
   if (valor == null || valor === "") return "—";
-  const n = Number(valor);
+  let v = valor;
+  const idxPunto = v.indexOf(".");
+  if (idxPunto !== -1) v = v.slice(0, idxPunto + 3);
+  const n = Number(v);
   if (Number.isNaN(n)) return "—";
   return n.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
     minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 

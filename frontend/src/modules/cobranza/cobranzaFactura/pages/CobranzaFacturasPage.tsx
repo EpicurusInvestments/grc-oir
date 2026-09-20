@@ -256,7 +256,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           <div className="mc-row">
             <div className="mc">
               <div className="mc-lbl">Total factura</div>
-              <div className="mc-val">{fmtMoneda(totalFactura.toFixed(2))}</div>
+              <div className="mc-val">{fmtMoneda(String(totalFactura))}</div>
             </div>
             <div className="mc" style={{ background: Number(selected.importe_cobrado) > 0 ? "var(--green-bg)" : undefined }}>
               <div className="mc-lbl">Cobrado</div>
@@ -519,7 +519,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                     </div>
                   )}
                 </td>
-                <td className="td-right mono">{fmtMoneda(total.toFixed(2))}</td>
+                <td className="td-right mono">{fmtMoneda(String(total))}</td>
                 <td className="td-right mono" style={{ color: Number(c.importe_cobrado) > 0 ? "var(--green-text)" : undefined }}>
                   {Number(c.importe_cobrado) > 0 ? fmtMoneda(c.importe_cobrado) : "—"}
                 </td>
@@ -568,22 +568,22 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
       <div className="kpi-strip">
         <div className="kpi-box">
           <div className="kpi-lbl">Por cobrar</div>
-          <div className="kpi-val">{fmtMoneda(kpis.porCobrar.toFixed(2))}</div>
+          <div className="kpi-val">{fmtMoneda(String(kpis.porCobrar))}</div>
           <div className="kpi-sub">{kpis.totalNoCobradas} facturas</div>
         </div>
         <div className="kpi-box danger">
           <div className="kpi-lbl" style={{ color: "var(--red-text)" }}>Vencido</div>
-          <div className="kpi-val" style={{ color: "var(--red-text)" }}>{fmtMoneda(kpis.vencido.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--red-text)" }}>{fmtMoneda(String(kpis.vencido))}</div>
           <div className="kpi-sub">{kpis.vencidasCount} facturas vencidas</div>
         </div>
         <div className="kpi-box warn">
           <div className="kpi-lbl" style={{ color: "var(--amber-text)" }}>Vence en 7 días</div>
-          <div className="kpi-val" style={{ color: "var(--amber-text)" }}>{fmtMoneda(kpis.porVencer7d.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--amber-text)" }}>{fmtMoneda(String(kpis.porVencer7d))}</div>
           <div className="kpi-sub">próximas a vencer</div>
         </div>
         <div className="kpi-box success">
           <div className="kpi-lbl" style={{ color: "var(--green-text)" }}>Cobrado este mes</div>
-          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(kpis.cobradoMes.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(String(kpis.cobradoMes))}</div>
           <div className="kpi-sub">{kpis.cobradasMesCount} facturas</div>
         </div>
       </div>

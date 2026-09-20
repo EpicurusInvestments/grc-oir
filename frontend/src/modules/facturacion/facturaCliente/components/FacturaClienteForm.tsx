@@ -392,14 +392,14 @@ export function FacturaClienteForm({
             <div className="fl">
               IVA <FieldTag origin="calculado" />
             </div>
-            <div className="fv mono big">{fmtMoneda(iva.toFixed(2))}</div>
+            <div className="fv mono big">{fmtMoneda(String(iva))}</div>
           </div>
           <div>
             <div className="fl">
               Total <FieldTag origin="calculado" />
             </div>
             <div className="fv mono big" style={{ color: "var(--blue-text)" }}>
-              {fmtMoneda(total.toFixed(2))}
+              {fmtMoneda(String(total))}
             </div>
           </div>
         </div>

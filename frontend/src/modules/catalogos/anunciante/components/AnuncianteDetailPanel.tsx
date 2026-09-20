@@ -17,10 +17,21 @@ const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
 const fmtFechaHora = (iso: string): string =>
   new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
 
-const fmtMonto = (v: string | null): string =>
-  v == null
-    ? "—"
-    : Number(v).toLocaleString("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
+// Siempre a 2 decimales SIN redondear (mismo criterio que el resto del sistema,
+// `modules/facturacion/format.ts`): se corta el STRING antes de convertir a número.
+const fmtMonto = (v: string | null): string => {
+  if (v == null) return "—";
+  const idxPunto = v.indexOf(".");
+  const truncado = idxPunto === -1 ? v : v.slice(0, idxPunto + 3);
+  const n = Number(truncado);
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
 
 const ESTADO_BADGE: Record<AnuncianteContrato["estado_contrato"], string> = {
   vigente: "b-green",

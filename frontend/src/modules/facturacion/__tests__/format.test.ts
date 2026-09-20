@@ -17,14 +17,14 @@ describe("fmtMoneda", () => {
     expect(fmtMoneda("no-es-un-numero")).toBe("—");
   });
 
-  it("fix: truncar corta a 2 decimales sin redondear (columna Total de la tabla de afiliado)", () => {
-    // Sin `truncar`, el default ya redondearía 388488.635 -> $388,488.64; con `truncar`,
-    // se corta el string en 388488.63 antes de convertir a número.
-    expect(fmtMoneda("388488.635", { truncar: true })).toBe("$388,488.63");
-    expect(fmtMoneda("100.999", { truncar: true })).toBe("$100.99");
+  it("fix: siempre trunca a 2 decimales sin redondear (columna Total de la tabla de afiliado)", () => {
+    // `toLocaleString` por sí solo redondearía 388488.635 -> $388,488.64; `fmtMoneda`
+    // corta el string en 388488.63 antes de convertir a número, para no redondear.
+    expect(fmtMoneda("388488.635")).toBe("$388,488.63");
+    expect(fmtMoneda("100.999")).toBe("$100.99");
   });
 
-  it("truncar en un valor que ya trae exactamente 2 decimales no lo altera", () => {
-    expect(fmtMoneda("334904.00", { truncar: true })).toBe("$334,904.00");
+  it("un valor que ya trae exactamente 2 decimales no se altera", () => {
+    expect(fmtMoneda("334904.00")).toBe("$334,904.00");
   });
 });

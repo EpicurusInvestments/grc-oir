@@ -1,11 +1,26 @@
 /** Utilidades de formato/derivación de la UI de tarifas (moneda MXN, fecha, vigencia). */
 
-const MXN = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
+const MXN = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
-/** Formatea un monto (string Decimal o número) como moneda MXN; "—" si no es número. */
+/** Formatea un monto (string Decimal o número) como moneda MXN, siempre a 2 decimales
+ * SIN redondear (mismo criterio que F2/F3, `modules/facturacion/format.ts`); "—" si no
+ * es número. Trunca en el STRING cuando el valor llega como string, para no depender
+ * del redondeo de `toLocaleString`; un `number` ya recibido (p.ej. un preview
+ * calculado en el cliente) se trunca aritméticamente con `Math.trunc`. */
 export function fmtMoneda(valor: string | number): string {
-  const n = typeof valor === "string" ? Number(valor) : valor;
-  return Number.isFinite(n) ? MXN.format(n) : "—";
+  if (typeof valor === "string") {
+    const idxPunto = valor.indexOf(".");
+    const truncado = idxPunto === -1 ? valor : valor.slice(0, idxPunto + 3);
+    const n = Number(truncado);
+    return Number.isFinite(n) ? MXN.format(n) : "—";
+  }
+  if (!Number.isFinite(valor)) return "—";
+  return MXN.format(Math.trunc(valor * 100) / 100);
 }
 
 /** Fecha ISO `YYYY-MM-DD` → `dd/mm/yyyy` sin construir Date (evita corrimientos de zona). */

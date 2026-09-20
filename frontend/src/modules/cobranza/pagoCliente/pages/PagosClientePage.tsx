@@ -96,7 +96,9 @@ export function PagosClientePage() {
             <span className="mono">{selected.cobranza.numero_factura ?? "—"}</span>
             <span className="mono">
               {fmtMoneda(
-                (Number(selected.cobranza.importe_cobrado) + Number(selected.cobranza.importe_pendiente_cobro)).toFixed(2),
+                String(
+                  Number(selected.cobranza.importe_cobrado) + Number(selected.cobranza.importe_pendiente_cobro),
+                ),
               )}
             </span>
           </div>
@@ -153,12 +155,12 @@ export function PagosClientePage() {
       <div className="kpi-strip">
         <div className="kpi-box success">
           <div className="kpi-lbl" style={{ color: "var(--green-text)" }}>Cobrado este mes</div>
-          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(totalMes.toFixed(2))}</div>
+          <div className="kpi-val" style={{ color: "var(--green-text)" }}>{fmtMoneda(String(totalMes))}</div>
           <div className="kpi-sub">{delMes.length} pagos</div>
         </div>
         <div className="kpi-box">
           <div className="kpi-lbl">Total histórico</div>
-          <div className="kpi-val">{fmtMoneda(totalHistorico.toFixed(2))}</div>
+          <div className="kpi-val">{fmtMoneda(String(totalHistorico))}</div>
           <div className="kpi-sub">{(historial.data ?? []).length} pagos registrados</div>
         </div>
       </div>

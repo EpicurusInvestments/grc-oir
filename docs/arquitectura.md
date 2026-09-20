@@ -3035,3 +3035,57 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `FacturasVendedorPage.test.tsx` (10 pruebas), paridad 1:1 con sus equivalentes de
   Agencia; suite `vitest` del módulo `facturacion` completa en verde (93/93); `tsc` y
   `eslint` limpios.
+
+### ADR-090 — Auditoría de presentación: todo campo de dinero muestra 2 decimales, sin redondear (frontend, todos los módulos)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-18.
+- **Contexto:** el usuario pidió una auditoría de TODO el sistema: donde se maneje un
+  campo de tipo dinero, mostrar siempre 2 decimales y no redondear. Se confirmó
+  explícitamente que el alcance es **solo presentación en pantalla** — NO se toca
+  ningún cálculo del backend (IVA, comisiones, subtotales, totales siguen
+  `.quantize(CENTAVOS)` exactamente igual que antes; cero riesgo fiscal). La auditoría
+  encontró tres clases de bug repetidas en 5 módulos (F0 catálogos, F1 órdenes, F2
+  facturación, F3 cobranza):
+  1. Cuatro implementaciones de `fmtMoneda`/`fmtMonto` (una por módulo, duplicación a
+     propósito — ver sus propios docstrings, "lo compartido va a `shared/`" no aplica
+     porque cada una recibe distinto tipo de entrada) redondeaban por defecto vía
+     `toLocaleString`, y solo una (`facturacion/format.ts`, desde ADR-084) tenía un
+     `truncar` opcional para evitarlo — nadie lo usaba en producción.
+  2. Dos pantallas mostraban dinero con **0 decimales**: `contrato/format.ts` (`fmtMonto`
+     sin `{ full: true }`, usado en la lista de Contratos) y una copia inline idéntica
+     en `AnuncianteDetailPanel.tsx` (monto del contrato en la sección anidada); y una
+     tercera en `ordenes/format.ts` con `{ sinDecimales: true }` (importe de OI en el
+     detalle de OC).
+  3. ~15 formularios/pantallas hacían `valor.toFixed(2)` (redondea) ANTES de pasarle el
+     string a `fmtMoneda` — el truncado interno de `fmtMoneda` ya no podía hacer nada,
+     el redondeo ya había pasado. Afectaba KPIs de Cobranza/Requisiciones/Movimientos
+     bancarios y los previews en vivo de comisión/IVA/total de los formularios de
+     factura (Cliente, Afiliado, Agencia, Vendedor).
+- **Decisión:**
+  1. Las 5 implementaciones (`facturacion`, `cobranza`, `catalogos/tarifa`,
+     `catalogos/contrato`, `ordenes/format.ts`) truncan SIEMPRE a 2 decimales, sin
+     opción para desactivarlo — se quitan los parámetros `truncar`/`sinDecimales`/`full`
+     de sus firmas (dejar la opción abierta ya demostró que nadie la usaba). El truncado
+     corta el STRING antes de convertir a número cuando el valor entra como string
+     (Decimal serializado del backend); para los pocos casos donde entra como `number`
+     ya en memoria (`ordenes/format.ts`, previews en frontend), se trunca
+     aritméticamente con `Math.trunc(v * 100) / 100`, mismo resultado.
+  2. `AnuncianteDetailPanel.tsx` (copia inline duplicada) y `MoneyInput.tsx` (el input de
+     captura, que redondeaba la vista al perder el foco aunque el valor real que se
+     manda por `onChange` no se tocaba) se corrigen con el mismo criterio.
+  3. Los ~15 sitios con `valor.toFixed(2)` antes de `fmtMoneda` se cambian a pasar el
+     valor crudo (`String(valor)`) — el truncado ya lo hace `fmtMoneda`/`fmtMonto`, no
+     hace falta (y no conviene) redondear dos veces antes de llegar ahí.
+- **Consecuencia:** ninguna migración ni cambio de API — es presentación pura. Un monto
+  que ya tenía exactamente 2 decimales (la inmensa mayoría, porque el backend ya los
+  persiste así) se ve exactamente igual que antes; solo cambia el caso raro de un valor
+  con más de 2 decimales de precisión (ruido de punto flotante en una suma/resta del
+  cliente, o un preview calculado antes de guardar), que antes se redondeaba hacia
+  arriba/abajo y ahora se corta.
+- **Verificado:** `tsc --noEmit` y `eslint .` limpios en todo el frontend; suite
+  `vitest` completa (277 pruebas de los módulos tocados en verde; los 2 fallos de
+  `apiClient.test.ts` y los 10 de `auth`/`seguridad` son preexistentes, no relacionados
+  — no se tocó ningún archivo de esos módulos en este cambio). Pruebas actualizadas:
+  `facturacion/__tests__/format.test.ts` y `ordenes/__tests__/format.test.ts` (se quitan
+  los casos de las opciones eliminadas, se prueba el truncado como comportamiento
+  único).
