@@ -1,11 +1,13 @@
 """Catálogo Plaza (F0-01).
 
-Plaza geográfica donde operan los afiliados. Catálogo simple (solo baja lógica) montado
+Plaza geográfica donde operan las estaciones. Catálogo simple (solo baja lógica) montado
 sobre la base de F0-00: modelo + schemas + servicio (con la regla de baja con
 dependientes) + router vía `build_crud_router`.
 
-Regla de baja (E-2): no se puede desactivar una plaza que tenga AFILIADOS activos o
-ESTACIONES activas, salvo confirmación (`forzar=True`).
+Regla de baja (E-2, ajustada por ADR-096): no se puede desactivar una plaza que tenga
+ESTACIONES activas, salvo confirmación (`forzar=True`). Antes también bloqueaba por
+"afiliados activos" (Afiliado tenía su propia `plaza_id`); ese bloqueo se eliminó junto
+con el campo — el Afiliado ya no referencia una plaza, solo sus Estaciones lo hacen.
 """
 
 from __future__ import annotations
@@ -74,11 +76,9 @@ class PlazaService(BaseService[Plaza, PlazaCreate, PlazaUpdate, PlazaRead]):
         self,
         repo: BaseRepository[Plaza],
         *,
-        afiliado_repo: Any,
         estacion_repo: Any,
     ) -> None:
         super().__init__(repo)
-        self._afiliado_repo = afiliado_repo
         self._estacion_repo = estacion_repo
 
     # ── enriquecimiento (estaciones_count) ──────────────────────────────────────
@@ -105,25 +105,22 @@ class PlazaService(BaseService[Plaza, PlazaCreate, PlazaUpdate, PlazaRead]):
     def _pre_desactivar(self, obj: Plaza, forzar: bool, usuario: CurrentUser) -> None:
         if forzar:
             return
-        afiliados = self._afiliado_repo.contar_activos_por_plaza(obj.plaza_id)
         estaciones = self._estacion_repo.contar_activas_por_plaza(obj.plaza_id)
-        if afiliados or estaciones:
+        if estaciones:
             raise DependenciasActivasError(
-                "No se puede desactivar la plaza porque tiene dependientes activos. "
+                "No se puede desactivar la plaza porque tiene estaciones activas. "
                 "Confirma para desactivarla de todos modos.",
-                detalles={"afiliados_activos": afiliados, "estaciones_activas": estaciones},
+                detalles={"estaciones_activas": estaciones},
             )
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_plaza_service(db: Session = Depends(get_db)) -> PlazaService:
     # Import perezoso para evitar ciclos entre los módulos de catálogos operativos.
-    from app.modules.catalogos.afiliado import Afiliado, AfiliadoRepository
     from app.modules.catalogos.estacion import Estacion, EstacionRepository
 
     return PlazaService(
         BaseRepository(db, Plaza, search_columns=[Plaza.nombre_plaza, Plaza.estado]),
-        afiliado_repo=AfiliadoRepository(db, Afiliado),
         estacion_repo=EstacionRepository(db, Estacion),
     )
 

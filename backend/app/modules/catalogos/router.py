@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.modules.catalogos.afiliado import contacto_afiliado_router
 from app.modules.catalogos.afiliado import router as afiliado_router
+from app.modules.catalogos.agencia import contacto_agencia_router
 from app.modules.catalogos.agencia import router as agencia_router
-from app.modules.catalogos.anunciante import marca_router
+from app.modules.catalogos.anunciante import contacto_anunciante_router, marca_router
 from app.modules.catalogos.anunciante import router as anunciante_router
 from app.modules.catalogos.categoria import router as categoria_router
 from app.modules.catalogos.codigo_postal import router as codigo_postal_router
@@ -29,6 +31,7 @@ router = APIRouter(prefix="/catalogos", tags=["catalogos"])
 # F0-01 · catálogos operativos (Plaza → Afiliado → Estación).
 router.include_router(plaza_router)
 router.include_router(afiliado_router)
+router.include_router(contacto_afiliado_router)
 router.include_router(estacion_router)
 
 # F0-02 · tarifas por plaza (depende de Plaza).
@@ -37,8 +40,10 @@ router.include_router(tarifa_router)
 # F0-03 · catálogos comerciales (Agencia → Anunciante → Marca/Contrato).
 # Tanda 1: Agencia · Tanda 2: Anunciante + Marca anidada · Tanda 3: Contrato.
 router.include_router(agencia_router)
+router.include_router(contacto_agencia_router)
 router.include_router(anunciante_router)
 router.include_router(marca_router)
+router.include_router(contacto_anunciante_router)
 router.include_router(contrato_router)
 
 # F0-04 · catálogos de facturación/finanzas (menú "Soporte").

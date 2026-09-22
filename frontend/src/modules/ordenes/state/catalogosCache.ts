@@ -97,7 +97,6 @@ export interface PlazaRef {
 export interface AfiliadoRef {
   id: string;
   nombre_afiliado: string;
-  plaza_id: string;
   porcentaje_participacion_oir_default: number;
 }
 

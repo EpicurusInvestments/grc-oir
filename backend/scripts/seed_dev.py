@@ -259,18 +259,18 @@ PLAZAS = [
 ]
 
 # El mock no trae razon_social_afiliado ni rfc_afiliado (req. + único en el modelo real) —
-# se INVENTAN a partir del nombre (ver hallazgo).
+# se INVENTAN a partir del nombre (ver hallazgo). Ya NO trae plaza (ADR-096: el Afiliado
+# no tiene plaza propia, solo sus Estaciones — ver ESTACIONES abajo, que sí la capturan).
 AFILIADOS = [
     (
         "af1",
         "Multimedios Estrellas de Oro",
-        "pl2",
         "Multimedios Estrellas de Oro SA de CV",
         "MEO900101AB1",
     ),
-    ("af2", "OIR Bajío", "pl4", "OIR Bajío SA de CV", "OBA900101AB2"),
-    ("af3", "Grupo Radio Centro", "pl1", "Grupo Radio Centro SA de CV", "GRC900101AB3"),
-    ("af4", "Radiorama Jalisco", "pl3", "Radiorama Jalisco SA de CV", "RJA900101AB4"),
+    ("af2", "OIR Bajío", "OIR Bajío SA de CV", "OBA900101AB2"),
+    ("af3", "Grupo Radio Centro", "Grupo Radio Centro SA de CV", "GRC900101AB3"),
+    ("af4", "Radiorama Jalisco", "Radiorama Jalisco SA de CV", "RJA900101AB4"),
 ]
 
 ESTACIONES = [
@@ -406,7 +406,7 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
         "lo tiene): el % de participación OIR de cada OrdenEstacion se sembró tal cual lo "
         "trae el mock de la orden, no derivado de un default de catálogo inexistente."
     )
-    for clave, nombre, plaza_clave, razon_social, rfc in AFILIADOS:
+    for clave, nombre, razon_social, rfc in AFILIADOS:
         u = uid(f"afiliado:{clave}")
         db.merge(
             Afiliado(
@@ -414,7 +414,6 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
                 nombre_afiliado=nombre,
                 razon_social_afiliado=razon_social,
                 rfc_afiliado=rfc,
-                plaza_id=ids["plaza"][plaza_clave],
             )
         )
         ids["afiliado"][clave] = u
@@ -425,7 +424,7 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
             Estacion(
                 estacion_id=u,
                 afiliado_id=ids["afiliado"][af_clave],
-                plaza_id=ids["plaza"][plaza_clave],  # ADR-005: igual al de su afiliado
+                plaza_id=ids["plaza"][plaza_clave],  # captura propia (ADR-094/ADR-096)
                 nombre_estacion=nombre,
                 frecuencia=frecuencia,
                 tipo_senal=tipo_senal,
@@ -1292,8 +1291,8 @@ def seed_ordenes_estacion(
         u = uid(f"orden_estacion:{oe['clave']}")
         oc_mock = next(o for o in OC_MOCKS if o["clave"] == oe["oc"])
         estacion_clave = oe["estacion"]
-        # plaza_id heredada de la Estacion (ADR-005) — resuelta contra el propio mock de
-        # catálogos, no inventada aquí.
+        # plaza_id de la OrdenEstacion = la de su Estacion (captura propia, ADR-094) —
+        # resuelta contra el propio mock de catálogos, no inventada aquí.
         plaza_clave = next(e[2] for e in ESTACIONES if e[0] == estacion_clave)
 
         precio_spot = Decimal(oe["precio_spot"])
