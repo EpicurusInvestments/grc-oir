@@ -1,6 +1,11 @@
-/** Panel de detalle del Anunciante: identificación fiscal + contacto + condiciones
- * (días de crédito, sensible) + Marcas ANIDADAS (add/edit/desactivar inline, patrón
- * Estación-en-Afiliado) + Contratos (lectura) + Historial de cambios.
+/** Panel de detalle del Anunciante: identificación fiscal + contacto legado + condiciones
+ * (días de crédito, sensible) + Marcas y Contactos ANIDADOS (add/edit/desactivar inline,
+ * patrón Estación-en-Afiliado) + Contratos (lectura) + Historial de cambios.
+ *
+ * "Contacto comercial" (`contacto_nombre`/`contacto_email`/`contacto_telefono`) es el
+ * único contacto plano de la spec original — queda como LEGADO, de solo lectura aquí (ya
+ * no se captura desde el formulario). "Contactos" es la lista nueva (varios), entidad
+ * fuera de la spec BD v2, mismo patrón anidado que Marca.
  */
 
 import { useState } from "react";
@@ -10,6 +15,7 @@ import { FieldTag, StatusBadge } from "@/shared/ui";
 
 import { useContratosPorAnunciante, useHistorialAnunciante, useMarcas } from "../hooks";
 import type { Anunciante, AnuncianteContrato, Marca } from "../types";
+import { ContactosSection } from "./ContactosSection";
 import { MarcaInlineForm, type MarcaFormData } from "./MarcaInlineForm";
 
 const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
@@ -128,13 +134,27 @@ export function AnuncianteDetailPanel({
         <div className="fl">Referencia interna</div>
         <div className="fv mono">{oGuion(anunciante.referencia_anunciante)}</div>
 
-        <div className="sec">Contacto comercial</div>
-        <div className="fl">Nombre</div>
-        <div className="fv">{oGuion(anunciante.contacto_nombre)}</div>
-        <div className="fl">Correo</div>
-        <div className="fv link">{oGuion(anunciante.contacto_email)}</div>
-        <div className="fl">Teléfono</div>
-        <div className="fv">{oGuion(anunciante.contacto_telefono)}</div>
+        {(anunciante.contacto_nombre || anunciante.contacto_email || anunciante.contacto_telefono) && (
+          <>
+            <div className="sec">
+              Contacto comercial <FieldTag origin="derivado" text="Legado" />
+            </div>
+            <div className="fl">Nombre</div>
+            <div className="fv">{oGuion(anunciante.contacto_nombre)}</div>
+            <div className="fl">Correo</div>
+            <div className="fv link">{oGuion(anunciante.contacto_email)}</div>
+            <div className="fl">Teléfono</div>
+            <div className="fv">{oGuion(anunciante.contacto_telefono)}</div>
+          </>
+        )}
+
+        {/* ── Contactos anidados (entidad nueva, reemplaza al contacto único de arriba) ── */}
+        <ContactosSection
+          anuncianteId={anunciante.anunciante_id}
+          canWrite={canWrite}
+          contactosNuevos={[]}
+          onContactosNuevosChange={() => {}}
+        />
 
         <div className="sec">Condiciones default</div>
         <div className="fl">

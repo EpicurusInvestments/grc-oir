@@ -9,7 +9,16 @@ import { apiClient } from "@/shared/lib/apiClient";
 import { createCatalogApi } from "@/shared/lib/createCatalogApi";
 import type { ListParams, Page } from "@/shared/types";
 
-import type { Agencia, AgenciaAnunciante, AgenciaCreate, AgenciaUpdate, HistorialCambio } from "./types";
+import type {
+  Agencia,
+  AgenciaAnunciante,
+  AgenciaCreate,
+  AgenciaUpdate,
+  ContactoAgencia,
+  ContactoAgenciaCreate,
+  ContactoAgenciaUpdate,
+  HistorialCambio,
+} from "./types";
 
 const crud = createCatalogApi<Agencia, AgenciaCreate, AgenciaUpdate>("agencias");
 
@@ -30,6 +39,24 @@ export const agenciaApi = {
   async historial(agenciaId: string): Promise<HistorialCambio[]> {
     const { data } = await apiClient.get<HistorialCambio[]>(
       `/catalogos/agencias/${agenciaId}/historial`,
+    );
+    return data;
+  },
+};
+
+const contactoAgenciaCrud = createCatalogApi<
+  ContactoAgencia,
+  ContactoAgenciaCreate,
+  ContactoAgenciaUpdate
+>("contactos-agencia");
+
+export const contactoAgenciaApi = {
+  ...contactoAgenciaCrud,
+  /** Contactos de una agencia (sección anidada del detalle). */
+  async listPorAgencia(agenciaId: string, params?: ListParams): Promise<Page<ContactoAgencia>> {
+    const { data } = await apiClient.get<Page<ContactoAgencia>>(
+      `/catalogos/contactos-agencia/agencia/${agenciaId}`,
+      { params },
     );
     return data;
   },

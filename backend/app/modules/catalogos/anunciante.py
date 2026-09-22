@@ -17,6 +17,17 @@ agencia** (`agencia_id` con FK) o **directo** (`agencia_id` NULL). Reglas propia
 propia), igual que Estación dentro de Afiliado. Expone su CRUD completo + la ruta
 `GET /catalogos/marcas/anunciante/{anunciante_id}` para el panel anidado.
 
+**ContactoAnunciante** (entidad NUEVA, fuera de la spec BD v2 — ADR, petición del
+usuario): el Anunciante ya traía un solo contacto plano (`contacto_nombre`/
+`contacto_email`/`contacto_telefono`, arriba). El usuario pidió poder guardar VARIOS
+contactos. Mismo patrón que Marca (anidada, mirror línea por línea: CRUD completo +
+`GET /catalogos/contactos-anunciante/anunciante/{anunciante_id}`), en tabla propia
+(no comparte tabla con `ContactoAgencia` — sin discriminador ni FK polimórfica, cada
+una con su FK simple al padre). Los 3 campos planos existentes quedan como LEGADO, sin
+tocar: se dejan de capturar desde el formulario pero se siguen mostrando de solo
+lectura en el detalle si una fila vieja los trae (mismo criterio que
+`archivo_nombre`/`archivo_path` en Facturas).
+
 Portabilidad SQL Server (ADR-014): el filtro Directo usa `agencia_id IS NULL`
 (`.is_(None)`, válido para NULL); los conteos usan `activo == True` (→ `activo = 1`).
 """
@@ -491,6 +502,119 @@ class MarcaService(BaseService[Marca, MarcaCreate, MarcaUpdate, MarcaRead]):
             )
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# ContactoAnunciante (anidada en Anunciante — entidad nueva, mirror de Marca)
+# ════════════════════════════════════════════════════════════════════════════════
+class ContactoAnunciante(Base):
+    __tablename__ = "contacto_anunciante"
+
+    contacto_anunciante_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    anunciante_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anunciante.anunciante_id"), index=True
+    )
+    nombre_contacto: Mapped[str] = mapped_column(Unicode(160))
+    puesto_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    telefono_contacto: Mapped[str | None] = mapped_column(Unicode(40), default=None)
+    email_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    activo: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        datetime2(), default=None, onupdate=datetime.now
+    )
+
+
+class ContactoAnuncianteCreate(BaseModel):
+    anunciante_id: uuid.UUID
+    nombre_contacto: str = Field(min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAnuncianteUpdate(BaseModel):
+    anunciante_id: uuid.UUID | None = None
+    nombre_contacto: str | None = Field(default=None, min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAnuncianteRead(CatalogoReadBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    contacto_anunciante_id: uuid.UUID
+    anunciante_id: uuid.UUID
+    nombre_contacto: str
+    puesto_contacto: str | None = None
+    telefono_contacto: str | None = None
+    email_contacto: str | None = None
+
+
+class ContactoAnuncianteRepository(BaseRepository[ContactoAnunciante]):
+    def list_por_anunciante(
+        self, anunciante_id: uuid.UUID, params: ListParams
+    ) -> tuple[Sequence[ContactoAnunciante], int]:
+        base = select(ContactoAnunciante).where(ContactoAnunciante.anunciante_id == anunciante_id)
+        if params.activo is not None:
+            base = base.where(ContactoAnunciante.activo == params.activo)
+        if params.q:
+            base = base.where(ContactoAnunciante.nombre_contacto.ilike(f"%{params.q.strip()}%"))
+        total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
+        stmt = (
+            base.order_by(ContactoAnunciante.nombre_contacto)
+            .offset((params.page - 1) * params.size)
+            .limit(params.size)
+        )
+        return self.db.scalars(stmt).all(), int(total)
+
+
+class ContactoAnuncianteService(
+    BaseService[
+        ContactoAnunciante,
+        ContactoAnuncianteCreate,
+        ContactoAnuncianteUpdate,
+        ContactoAnuncianteRead,
+    ]
+):
+    read_schema = ContactoAnuncianteRead
+    entidad = "ContactoAnunciante"
+
+    def __init__(
+        self, repo: ContactoAnuncianteRepository, *, anunciante_repo: AnuncianteRepository
+    ) -> None:
+        super().__init__(repo)
+        self._contacto_repo = repo
+        self._anunciante_repo = anunciante_repo
+
+    def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        self._verificar_anunciante(payload["anunciante_id"])
+
+    def _pre_update(
+        self, obj: ContactoAnunciante, payload: dict[str, Any], usuario: CurrentUser
+    ) -> None:
+        if "anunciante_id" in payload:
+            self._verificar_anunciante(payload["anunciante_id"])
+
+    def list_por_anunciante(
+        self, anunciante_id: uuid.UUID, params: ListParams
+    ) -> Page[ContactoAnuncianteRead]:
+        items, total = self._contacto_repo.list_por_anunciante(anunciante_id, params)
+        return Page[ContactoAnuncianteRead](
+            items=[self._to_read(o) for o in items],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
+
+    def _verificar_anunciante(self, anunciante_id: uuid.UUID) -> None:
+        if self._anunciante_repo.get(anunciante_id) is None:
+            raise NotFoundError(
+                "Anunciante no encontrado para el contacto.",
+                detalles={"anunciante_id": str(anunciante_id)},
+            )
+
+
 # ── Dependencias + routers ──────────────────────────────────────────────────────
 def get_anunciante_service(db: Session = Depends(get_db)) -> AnuncianteService:
     # Import perezoso para evitar el ciclo anunciante ↔ contrato (contrato importa Anunciante
@@ -517,6 +641,15 @@ def get_anunciante_service(db: Session = Depends(get_db)) -> AnuncianteService:
 def get_marca_service(db: Session = Depends(get_db)) -> MarcaService:
     repo = MarcaRepository(db, Marca, search_columns=[Marca.nombre_marca])
     return MarcaService(repo, anunciante_repo=AnuncianteRepository(db, Anunciante))
+
+
+def get_contacto_anunciante_service(
+    db: Session = Depends(get_db),
+) -> ContactoAnuncianteService:
+    repo = ContactoAnuncianteRepository(
+        db, ContactoAnunciante, search_columns=[ContactoAnunciante.nombre_contacto]
+    )
+    return ContactoAnuncianteService(repo, anunciante_repo=AnuncianteRepository(db, Anunciante))
 
 
 router = build_crud_router(
@@ -603,6 +736,36 @@ def listar_marcas_por_anunciante(
     svc: MarcaService = Depends(get_marca_service),
 ) -> Page[MarcaRead]:
     """Marcas de un anunciante (para el panel anidado de la pantalla de anunciantes)."""
+    return svc.list_por_anunciante(
+        anunciante_id, ListParams(page=page, size=size, activo=activo, q=q)
+    )
+
+
+contacto_anunciante_router = build_crud_router(
+    prefix="/contactos-anunciante",
+    tags=["catalogos:contactos-anunciante"],
+    permiso_base="catalogos",
+    read_schema=ContactoAnuncianteRead,
+    create_schema=ContactoAnuncianteCreate,
+    update_schema=ContactoAnuncianteUpdate,
+    get_service=get_contacto_anunciante_service,
+    id_type=uuid.UUID,
+)
+
+
+@contacto_anunciante_router.get(
+    "/anunciante/{anunciante_id}", response_model=Page[ContactoAnuncianteRead]
+)
+def listar_contactos_por_anunciante(
+    anunciante_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por nombre de contacto"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContactoAnuncianteService = Depends(get_contacto_anunciante_service),
+) -> Page[ContactoAnuncianteRead]:
+    """Contactos de un anunciante (para el panel anidado de la pantalla de anunciantes)."""
     return svc.list_por_anunciante(
         anunciante_id, ListParams(page=page, size=size, activo=activo, q=q)
     )

@@ -16,7 +16,8 @@ import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator
 import type { AnuncianteListParams } from "../api";
 import { AnuncianteDetailPanel } from "../components/AnuncianteDetailPanel";
 import { AnuncianteForm, type AnuncianteFormOutput } from "../components/AnuncianteForm";
-import { useAnunciantes } from "../hooks";
+import type { ContactoFormData } from "../components/ContactoInlineForm";
+import { useAnunciantes, useContactosAnunciante } from "../hooks";
 import type { Anunciante, Relacion } from "../types";
 
 type Filtro = "todos" | "activos" | "inactivos";
@@ -64,6 +65,7 @@ export function AnuncianteCatalogPage() {
   const crear = useCreate();
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
+  const crearContacto = useContactosAnunciante().useCreate();
 
   // Agencias activas para el select del formulario.
   const agenciasQuery = useAgencias().useList({ activo: true, size: 100 });
@@ -95,10 +97,15 @@ export function AnuncianteCatalogPage() {
     throw e;
   };
 
-  const onCrear = async (data: AnuncianteFormOutput) => {
+  const onCrear = async (data: AnuncianteFormOutput, contactosNuevos: ContactoFormData[]) => {
     setSubmitError(null);
     try {
       const nuevo = await crear.mutateAsync(data);
+      // Los contactos se capturaron en memoria durante el alta (todavía no había
+      // anunciante_id) — se crean ahora, uno por uno, ya con el id real.
+      for (const contacto of contactosNuevos) {
+        await crearContacto.mutateAsync({ anunciante_id: nuevo.anunciante_id, ...contacto });
+      }
       setSelected(nuevo);
       setModo("view");
     } catch (e) {
@@ -157,6 +164,7 @@ export function AnuncianteCatalogPage() {
       <AnuncianteForm
         title={`Editar: ${selected.nombre_comercial}`}
         agencias={agencias}
+        anuncianteId={selected.anunciante_id}
         isEdit
         diasOriginal={String(selected.dias_credito_default)}
         defaultValues={{
@@ -178,9 +186,6 @@ export function AnuncianteCatalogPage() {
           regimen_fiscal: selected.regimen_fiscal ?? "",
           uso_cfdi_default: selected.uso_cfdi_default ?? "",
           referencia_anunciante: selected.referencia_anunciante ?? "",
-          contacto_nombre: selected.contacto_nombre ?? "",
-          contacto_email: selected.contacto_email ?? "",
-          contacto_telefono: selected.contacto_telefono ?? "",
           dias_credito_default: String(selected.dias_credito_default),
         }}
         submitting={actualizar.isPending}

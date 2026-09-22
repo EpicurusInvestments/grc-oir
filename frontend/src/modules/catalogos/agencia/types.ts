@@ -48,3 +48,28 @@ export interface AgenciaUpdate extends Partial<AgenciaCreate> {
   /** Requerido por el backend si se modifica el % (parámetro sensible). */
   motivo_cambio?: string | null;
 }
+
+// ── ContactoAgencia (anidado en Agencia — entidad nueva) ───────────────────────────
+// La Agencia ya trae un solo contacto plano (`contacto_nombre`/`contacto_email`/
+// `contacto_telefono`, arriba) — queda como LEGADO, sin tocar. Este es el nuevo
+// "varios contactos", mismo patrón anidado que `ContactoAnunciante`.
+export interface ContactoAgencia extends CatalogoBase {
+  contacto_agencia_id: string;
+  agencia_id: string;
+  nombre_contacto: string;
+  puesto_contacto: string | null;
+  telefono_contacto: string | null;
+  email_contacto: string | null;
+}
+
+export interface ContactoAgenciaCreate {
+  agencia_id: string;
+  nombre_contacto: string;
+  puesto_contacto?: string | null;
+  telefono_contacto?: string | null;
+  email_contacto?: string | null;
+}
+
+export type ContactoAgenciaUpdate = Partial<Omit<ContactoAgenciaCreate, "agencia_id">> & {
+  agencia_id?: string;
+};
