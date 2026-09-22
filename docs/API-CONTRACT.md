@@ -220,108 +220,151 @@ endpoints** bajo `/api/v1/catalogos/<recurso>` (p.ej. `/catalogos/plazas`). Perm
 
 ### Catálogos operativos (F0-01) — Plaza · Afiliado · Estación
 
-Tres catálogos encadenados (Plaza ← Afiliado ← Estación) sobre el patrón CRUD estándar.
-PKs `UNIQUEIDENTIFIER`; textos `NVARCHAR`; `created_at`/`updated_at` en las tres
-entidades (`DATETIME2`). Escritura solo **admin** en F0.
+Tres catálogos sobre el patrón CRUD estándar. PKs `UNIQUEIDENTIFIER`; textos `NVARCHAR`;
+`created_at`/`updated_at` en las tres entidades (`DATETIME2`). Escritura solo **admin**
+en F0. Desde ADR-096, Afiliado y Estación son independientes entre sí en cuanto a plaza —
+ya no hay una cadena Plaza ← Afiliado ← Estación: Plaza se referencia directo desde
+Estación (y desde TarifaPlaza, F0-02), y Afiliado no referencia una plaza en absoluto.
 
 **`/catalogos/plazas`** — campos: `plaza_id`, `nombre_plaza` (req.), `estado`, `activo`,
 `created_at`, `updated_at`. Búsqueda `?q` sobre nombre y estado.
 - **Derivado (solo lectura):** `estaciones_count` = nº de estaciones en la plaza (**todas**,
   activas e inactivas). No se acepta en Create/Update; se calcula en el servicio con una
   consulta agregada por lote (sin N+1).
-- **Baja con dependientes:** no se puede desactivar una plaza con **afiliados activos o
-  estaciones activas** sin `forzar:true` (→ 409 `dependencias_activas`,
-  `detalles: { afiliados_activos, estaciones_activas }`).
+- **Baja con dependientes:** no se puede desactivar una plaza con **estaciones activas**
+  sin `forzar:true` (→ 409 `dependencias_activas`, `detalles: { estaciones_activas }`).
+  Antes también bloqueaba por "afiliados activos" — eliminado en ADR-096 junto con
+  `Afiliado.plaza_id`.
 
 **`/catalogos/afiliados`** — campos: `afiliado_id`, `nombre_afiliado` (req.),
-`razon_social_afiliado` (req.), `rfc_afiliado` (req., **único**), `plaza_id` (req., FK),
-`contacto_nombre`, `contacto_email`, `contacto_telefono`, `activo`, timestamps.
-- **Derivados (solo lectura):** `plaza_nombre` = `nombre_plaza` de la plaza referenciada
-  por `plaza_id`; `estaciones_count` = nº de estaciones del afiliado (**todas**, mismo
-  criterio que Plaza). No se aceptan en Create/Update; se calculan en el servicio por lote
-  (sin N+1).
+`razon_social_afiliado` (req.), `rfc_afiliado` (req., **único**), `contacto_nombre`,
+`contacto_email`, `contacto_telefono`, `activo`, timestamps. **Sin `plaza_id`** (ADR-096,
+petición del usuario — lo tuvo hasta 2026-09-21): la plaza es propiedad de la Estación,
+no del Afiliado.
+- **Derivado (solo lectura):** `estaciones_count` = nº de estaciones del afiliado
+  (**todas**, mismo criterio que Plaza). No se acepta en Create/Update; se calcula en el
+  servicio por lote (sin N+1).
 - **RFC:** formato oficial mexicano de **12-13 caracteres** (12 = persona moral, 13 =
   física); se normaliza a mayúsculas. Único: RFC repetido → **409 `conflicto`**.
 - **Baja con dependientes:** afiliado con **estaciones activas** → 409 `dependencias_activas`
   (`detalles: { estaciones_activas }`) salvo `forzar:true`.
 - Búsqueda `?q` sobre nombre, razón social y RFC.
+- `contacto_nombre`/`contacto_email`/`contacto_telefono` son **LEGADO** desde ADR-094: ya
+  no se capturan en Create/Update (siguen aceptándose en el schema por compatibilidad con
+  filas viejas, pero el formulario no los manda); el reemplazo es `ContactoAfiliado`.
+
+**`/catalogos/contactos-afiliado`** (entidad NUEVA, fuera de la spec BD v2 — ADR-094) —
+campos: `contacto_afiliado_id`, `afiliado_id` (req., FK), `nombre_contacto` (req.),
+`puesto_contacto`, `telefono_contacto`, `email_contacto`, `activo`, timestamps.
+- Mismo patrón que `/catalogos/contactos-anunciante`/`contactos-agencia` (ADR-091, F0-03):
+  CRUD estándar + `_verificar_afiliado` en alta/edición (404 si no existe).
+- **`GET /catalogos/contactos-afiliado/afiliado/{afiliado_id}`** (`catalogos:leer`):
+  contactos de un afiliado, paginado (`?page&size&activo`). Alimenta la sección anidada
+  "Contactos" del afiliado.
+- Sin dependientes: la baja es directa (sin confirmación).
 
 **`/catalogos/estaciones`** — campos: `estacion_id`, `afiliado_id` (req., FK),
-`plaza_id` (**derivada**, FK), `nombre_estacion` (req.), `frecuencia`,
-`tipo_senal` (`fm|am|tv`, CHECK), `activo`, timestamps.
-- **Herencia de plaza (ADR-005):** `plaza_id` NO se envía en `POST`/`PUT`; el servicio la
-  asigna = `Afiliado.plaza_id` (si cambia el afiliado en un `PUT`, se recalcula). Si el
-  `afiliado_id` no existe → 404.
+`plaza_id` (req., FK, **selección libre** desde ADR-094), `nombre_estacion` (req.),
+`siglas` (opcional, **campo nuevo** ADR-094), `frecuencia`, `tipo_senal` (`fm|am|tv`,
+CHECK), `activo`, timestamps.
+- **Plaza y Afiliado son independientes (ADR-094, revierte ADR-005):** ambos son
+  **obligatorios** en `POST` y capturables en `PUT`; cada uno se valida contra su catálogo
+  por separado (`_verificar_afiliado`/`_verificar_plaza`) → **404** si no existe. La plaza
+  ya NO se deriva de nada — es propiedad exclusiva de la Estación (ADR-096: el Afiliado ni
+  siquiera tiene `plaza_id`).
+- **Derivados (solo lectura):** `afiliado_nombre`, `plaza_nombre` — calculados por lote
+  (sin N+1). No se aceptan en Create/Update.
+- **Filtros de lista:** `GET /catalogos/estaciones?afiliado_id=&plaza_id=` (además de los
+  estándar `page&size&activo&q`) — alimentan la pantalla propia "Estaciones".
 - **`GET /catalogos/estaciones/afiliado/{afiliado_id}`** (`catalogos:leer`): estaciones de
-  un afiliado, paginado con los mismos filtros `?page&size&activo&q`. Alimenta el panel
-  anidado de la pantalla de afiliados.
+  un afiliado, paginado (`?page&size&activo&q`). Se conserva como endpoint de solo
+  lectura para la sección informativa de estaciones dentro del detalle del afiliado
+  (la gestión completa vive en la pantalla "Estaciones", no ahí).
+- Sin dependientes: la baja es directa (sin confirmación).
 
-Ejemplo alta de estación (sin `plaza_id`):
+Ejemplo alta de estación (Plaza y Afiliado, ambos explícitos):
 ```json
-{ "afiliado_id": "3f...", "nombre_estacion": "XHMT-FM", "frecuencia": "90.1 FM", "tipo_senal": "fm" }
+{
+  "afiliado_id": "3f...",
+  "plaza_id": "9a...",
+  "nombre_estacion": "La que buena",
+  "siglas": "XEW",
+  "frecuencia": "97.7",
+  "tipo_senal": "fm"
+}
 ```
 
-### Tarifas por plaza (F0-02) — TarifaPlaza
+### Tarifas (F0-02) — TarifaPlaza
 
-Catálogo de tarifas de referencia por **plaza + tipo de señal + duración de spot**, con
-vigencia, sobre el patrón CRUD estándar (escritura solo **admin** en F0). Depende de Plaza.
+Catálogo de tarifas de referencia por **estación + tipo de señal + duración de spot +
+producto**, sobre el patrón CRUD estándar (escritura solo **admin** en F0). Depende de
+Estación. **ADR-097 (petición del usuario):** el diseño original de F0-02 era por
+**plaza** y con **vigencia** — ambos se eliminaron; ver ADR-097 en `docs/arquitectura.md`.
 
-**`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `plaza_id` (req., FK),
-`tipo_senal` (`fm|am|tv`, CHECK), `duracion_spot` (`20s|30s|60s|mencion`, CHECK),
-`tarifa_bruta` (req., ≥0), `descuento_pct` (req., 0–100), **`tarifa_neta` (Calculado)**,
-`vigencia_desde` (req.), `vigencia_hasta` (req.), `notas`, `activo`, `created_at`,
-`created_by`, `updated_at`.
+**`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `estacion_id` (req., FK),
+`tipo_senal` (`fm|am|tv`, CHECK), `duracion_spot` (`20s|30s|60s`, CHECK — **ya sin
+`mencion`**, ver ADR-098),
+`producto` (`spot|mencion|control_remoto|patrocinio`, CHECK, **campo nuevo** ADR-097,
+fuera de la spec BD v2), **`tarifa_bruta` (req., ≥0, PARÁMETRO SENSIBLE, ADR-099)**,
+**`descuento_pct` (req., 0–100, PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta`
+(Calculado)**, `notas`, `activo`, `created_at`, `created_by`, `updated_at`. **Ya NO
+tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097).
 - **Montos como string:** `tarifa_bruta`, `descuento_pct` y `tarifa_neta` viajan como
   **string** en el JSON (entrada y salida) para preservar la precisión `Decimal` (E-4). El
   servidor acepta también número, pero devuelve string.
 - **Campo calculado `tarifa_neta`:** `tarifa_bruta * (1 - descuento_pct/100)`, redondeado a
   2 decimales. **NO se acepta en Create/Update** (no está en el request); lo calcula y
   persiste el servidor, y lo recalcula en cada edición.
-- **Derivados (solo lectura):** `plaza_nombre` y `plaza_estado` (nombre y estado geográfico
-  de la plaza referenciada), calculados por lote (sin N+1). No se aceptan en Create/Update.
+- **`tarifa_bruta`/`descuento_pct` son sensibles (ADR-099):** alta y edición pasan por el
+  mecanismo de auditoría descrito en "Parámetros sensibles y auditoría" (abajo) —
+  `motivo_cambio` requerido al modificar CUALQUIERA de los dos (un solo motivo cubre
+  ambos, no uno por campo).
+- **Derivado (solo lectura):** `estacion_nombre` (nombre de la estación referenciada),
+  calculado por lote (sin N+1). No se acepta en Create/Update.
 - **`created_by`:** username del capturista (texto, no FK; la entidad Usuario llega en
   F0-04). Lo fija el servidor desde el usuario autenticado, no el cliente.
-- **Vigencia:** `vigencia_hasta >= vigencia_desde` (ambas obligatorias). Violarla → **422**
-  en el request (validación de schema) o **400 `error_dominio`** si se detecta en el
-  servicio con valores efectivos (edición parcial que solo cambia una fecha).
-- **Sin solapamiento (409 `conflicto`):** al crear, editar o **reactivar** una tarifa
-  activa, no puede existir OTRA tarifa activa con la misma combinación (plaza + tipo_senal +
-  duracion_spot) cuyo rango `[vigencia_desde, vigencia_hasta]` se solape (bordes
-  **inclusivos**: tocarse un día ya es solape). `detalles` incluye la tarifa en conflicto y
-  su vigencia.
-- **Filtros de lista:** además de `?activo` y `?q` (busca en notas), acepta:
-  - **`?vigencia=todas|vigente|expirada`** (derivado de `vigencia_hasta` vs la fecha del
-    servidor: `vigente` = no vencida, `expirada` = vencida). Dimensión independiente de
-    `activo`. La fecha "hoy" la fija el servidor, no el cliente.
-  - **`?plaza_id`** (UUID): acota a una plaza. Combinado con `activo=true&vigencia=vigente`
-    alimenta la sección "Tarifas vigentes" del panel de detalle de Plaza.
-- **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la plaza,
-  estado de la plaza y notas** (coincide en cualquiera). Resuelta con un JOIN a `plaza` en
-  el repositorio (sin N+1); `ilike` portable a SQL Server.
+- **Sin duplicado activo (409 `conflicto`, ADR-097 — reemplaza la validación de
+  solapamiento por vigencia):** al crear, editar o **reactivar** una tarifa activa, no
+  puede existir OTRA tarifa activa con la misma combinación (estación + tipo_senal +
+  duracion_spot + producto). `detalles` incluye la tarifa en conflicto.
+- **Filtros de lista:** `?activo` y `?q` (busca en nombre/siglas de la estación y en
+  notas) — el CRUD genérico alcanza sin filtros extra desde que se eliminó la vigencia.
+- **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la estación,
+  siglas de la estación y notas** (coincide en cualquiera). Resuelta con un JOIN a
+  `estacion` en el repositorio (sin N+1); `ilike` portable a SQL Server.
+
+**`GET /catalogos/tarifas/{id}/historial`** (`catalogos:leer`) — historial de auditoría de
+UNA tarifa: lee `LogCambioParametro` filtrado por (`entidad="TarifaPlaza"`, `entidad_id=id`),
+ordenado del **más reciente al más antiguo**. Mismo shape de respuesta que Agencia (ver
+"Parámetros sensibles y auditoría"). 404 si la tarifa no existe.
 
 Ejemplo alta de tarifa (sin `tarifa_neta`):
 ```json
 {
-  "plaza_id": "1a...", "tipo_senal": "fm", "duracion_spot": "30s",
+  "estacion_id": "1a...", "tipo_senal": "fm", "duracion_spot": "30s", "producto": "spot",
   "tarifa_bruta": "9000.00", "descuento_pct": "10",
-  "vigencia_desde": "2025-01-01", "vigencia_hasta": "2025-12-31",
   "notas": "Tarifa general FM CDMX"
 }
 ```
-Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivados):
+Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivado):
 ```json
 {
   "tarifa_plaza_id": "9c...", "tarifa_bruta": "9000.00", "descuento_pct": "10",
-  "tarifa_neta": "8100.00", "plaza_nombre": "CDMX", "plaza_estado": "Ciudad de México",
+  "tarifa_neta": "8100.00", "estacion_nombre": "XHRC-FM",
   "created_by": "admin", "activo": true
 }
+```
+Ejemplo edición del monto (requiere `motivo_cambio`):
+```json
+{ "tarifa_bruta": "9500.00", "motivo_cambio": "Ajuste de temporada" }
 ```
 
 ### Parámetros sensibles y auditoría (F0-03) — mecanismo transversal
 
 Algunos campos de la spec están marcados como **PARÁMETRO SENSIBLE** (p.ej.
 `porcentaje_comision_agencia_default`, `dias_credito_default`,
-`porcentaje_comision_contrato`). Al **crear o modificar** uno de ellos, el servicio aplica
+`porcentaje_comision_contrato`; y, fuera de la spec, `TarifaPlaza.tarifa_bruta`/
+`descuento_pct` — ADR-099). Al **crear o modificar** uno de ellos, el servicio aplica
 —una sola vez, en `core/`— el mecanismo de campo sensible (ver ADR-016):
 
 1. **Permiso por campo:** `field_permissions.verificar(...)`. Por ahora **solo `admin`**

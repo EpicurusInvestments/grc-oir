@@ -45,6 +45,19 @@ mano.
   Estación dentro de Afiliado en F0-01.
 - **`updated_at`** no está en la spec de Marca; se añadió por uniformidad (ADR-011).
 
+### ContactoAnunciante / ContactoAgencia (entidades NUEVAS, fuera de la spec BD v2 — ADR-091)
+`contacto_anunciante_id`/`contacto_agencia_id` (PK), `anunciante_id`/`agencia_id` (FK NOT
+NULL a su padre), `nombre_contacto` (NOT NULL), `puesto_contacto`, `telefono_contacto`,
+`email_contacto`, `activo`, `created_at`, `updated_at`.
+- **Sin pantalla propia:** anidadas dentro de Anunciante y Agencia respectivamente
+  (sub-lista en el detalle: agregar/editar/desactivar ahí mismo), mismo patrón que Marca.
+- **Dos tablas separadas** (no una compartida con discriminador): cada una con su FK
+  simple al padre — decisión confirmada con el usuario, ver ADR-091.
+- Los 3 campos planos que YA existían en Agencia/Anunciante (`contacto_nombre`/
+  `contacto_email`/`contacto_telefono`) quedan como **LEGADO**: ya no se capturan desde el
+  formulario, pero se siguen mostrando de solo lectura en el detalle si una fila vieja los
+  trae.
+
 ### Contrato (16 campos)
 `contrato_id` (PK), `anunciante_id` (FK NOT NULL), `numero_contrato` (NOT NULL),
 `nombre_contrato` (NOT NULL), `fecha_inicio_contrato` (NOT NULL), `fecha_fin_contrato`
@@ -87,16 +100,24 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 ## Dependencias entre entidades (baja lógica)
 - **Agencia** con anunciantes activos → 409 `dependencias_activas` (salvo `forzar`).
 - **Anunciante** con marcas o contratos activos → 409 `dependencias_activas` (salvo `forzar`).
-- Marca y Contrato no tienen dependientes.
+- Marca, Contrato y los Contacto (Anunciante/Agencia) no tienen dependientes.
 
 ## Pantallas (implementadas, grupo "Comerciales")
+- **Contactos anidados (Agencia/Anunciante), en las TRES pantallas (ADR-091/ADR-092):**
+  alta (captura varios en memoria, se crean junto con el padre al guardar), edición
+  (add/edit/desactivar en vivo, sin esperar al botón "Guardar cambios") y detalle
+  (add/edit/desactivar en vivo, igual que edición) — mismo componente `ContactosSection`
+  en los tres lugares. Marca NO tiene este mismo tratamiento (solo se pidió para
+  Contactos): sigue solo en el detalle, como antes.
 - **Agencia**: lista (Agencia · RFC · Contacto · % comisión · Anunciantes · Estatus) +
   detalle. Filtros Activas/Inactivas/Todas. % comisión con tag «Audit log» y motivo. Panel:
-  datos fiscales, contacto, **Anunciantes representados** e **Historial de cambios**.
+  datos fiscales, contacto legado (solo si trae datos), **Contactos anidados**,
+  **Anunciantes representados** e **Historial de cambios**.
 - **Anunciante**: lista (Nombre comercial · Razón social · RFC · Agencia · Crédito ·
   Estatus) + detalle. Filtros Estatus + **Relación (Todas / Vía agencia / Sin agencia)**.
-  Panel: identificación, contacto, días de crédito (sensible), **Marcas anidadas**
-  (add/edit/desactivar inline), **Contratos** (lectura) e **Historial de cambios**.
+  Panel: identificación, contacto legado (solo si trae datos), días de crédito (sensible),
+  **Marcas anidadas** (solo detalle) y **Contactos anidados** (alta/edición/detalle),
+  **Contratos** (lectura) e **Historial de cambios**.
 - **Contrato**: lista (Número · Nombre · Anunciante · Vigencia · Monto · % Com. · Estado) +
   detalle. Filtros por estado (Todos / Vigentes / Finalizados). Panel: anunciante,
   vigencia+monto, % comisión (sensible), condiciones, observaciones, **adjuntos
@@ -140,6 +161,7 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
 - `c4e7a1b93f20` — `log_cambio_parametro` + `agencia`.
 - `d5b8c2a71f36` — `anunciante` + `marca`.
 - `e7f2a9c14b58` — `contrato`.
+- `70aa84d34900` — `contacto_anunciante` + `contacto_agencia` (ADR-091).
 
 ## Dependencias
 - F0-00 (fundamentos) y los hooks de permiso por campo + auditoría de `core/` (estrenados
@@ -166,6 +188,13 @@ Los tres campos sensibles (`porcentaje_comision_agencia_default`, `dias_credito_
   factura (`regimen_fiscal` sí se timbra directo de la columna del emisor/receptor). Ver
   también `docs/modulos/f2-facturacion/f2-facturacion.md`, donde vive la resolución en
   `FacturaClienteService.create()`/`_datos_timbrado()`.
+- **ADR-091** — `ContactoAnunciante`/`ContactoAgencia` (entidades nuevas, fuera de la spec
+  BD v2): varios contactos por Anunciante/Agencia, anidados igual que Marca, en dos tablas
+  separadas. Los 3 campos de contacto plano existentes quedan como legado, sin tocar.
+- **ADR-092** — Fix inmediato a ADR-091: Contactos también se capturan en el alta (en
+  memoria, se crean junto con el padre) y se editan en vivo desde el formulario de
+  edición, no solo desde el detalle de solo lectura. `ContactosSection` (un componente
+  por módulo) queda como la única implementación, reusada en alta/edición/detalle.
 
 ## Pendientes / dudas
 - (Resuelto) Marca → solo anidada en Anunciante, sin pantalla propia.
