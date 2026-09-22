@@ -18,9 +18,9 @@ vi.mock("../adapters/pdfsApi", () => ({
 
 // `state/catalogosCache.ts` nace vacío; el componente resuelve `estacion`/`tarifaReferencia`
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
-// necesitan: es6 = XHRC-FM (plaza pl1, fm), ta1 = pl1/fm/30s → tarifa_bruta 9500, descuento 10%.
+// necesitan: es6 = XHRC-FM (fm), ta1 = es6/fm/30s → tarifa_bruta 9500, descuento 10%.
 estaciones.push({ id: "es6", afiliado_id: "af3", plaza_id: "pl1", nombre_estacion: "XHRC-FM", frecuencia: "100.9 FM", tipo_senal: "fm" });
-tarifas.push({ id: "ta1", plaza_id: "pl1", tipo_senal: "fm", duracion_spot: "30s", tarifa_bruta: 9500, descuento_pct: 10 });
+tarifas.push({ id: "ta1", estacion_id: "es6", tipo_senal: "fm", duracion_spot: "30s", tarifa_bruta: 9500, descuento_pct: 10 });
 
 // Nota: SIN valor por defecto para `oc` a propósito — un parámetro con default no puede
 // distinguir "no lo pasé" de "pasé undefined a propósito" (ambos casos activan el default),

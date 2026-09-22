@@ -1,13 +1,23 @@
 /** API de TarifaPlaza sobre el CRUD genérico (/api/v1/catalogos/tarifas).
  *
- * `list` acepta el filtro extra `vigencia` (vigente/expirada), que el backend resuelve
- * contra la fecha del servidor; el cliente genérico reenvía todo `params` como query.
+ * Además del CRUD estándar, expone el historial de auditoría de `tarifa_bruta`/
+ * `descuento_pct` (parámetros sensibles, ADR-099): `/catalogos/tarifas/{id}/historial`.
  */
 
+import { apiClient } from "@/shared/lib/apiClient";
 import { createCatalogApi } from "@/shared/lib/createCatalogApi";
 
-import type { TarifaPlaza, TarifaPlazaCreate, TarifaPlazaUpdate } from "./types";
+import type { HistorialCambio, TarifaPlaza, TarifaPlazaCreate, TarifaPlazaUpdate } from "./types";
 
-export const tarifaApi = createCatalogApi<TarifaPlaza, TarifaPlazaCreate, TarifaPlazaUpdate>(
-  "tarifas",
-);
+const crud = createCatalogApi<TarifaPlaza, TarifaPlazaCreate, TarifaPlazaUpdate>("tarifas");
+
+export const tarifaApi = {
+  ...crud,
+  /** Historial de cambios a `tarifa_bruta`/`descuento_pct` (más reciente primero). */
+  async historial(tarifaId: string): Promise<HistorialCambio[]> {
+    const { data } = await apiClient.get<HistorialCambio[]>(
+      `/catalogos/tarifas/${tarifaId}/historial`,
+    );
+    return data;
+  },
+};

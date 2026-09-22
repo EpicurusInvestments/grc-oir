@@ -34,8 +34,9 @@ import {
 import { esComisionOverride } from "../../state/selectors";
 import type { EstadoOC, OrdenClienteInput } from "../../types";
 
-/** El backend real (spec `DuracionSpot`) solo acepta estos 4 valores. */
-const OPCIONES_DURACION = ["20s", "30s", "60s", "mencion"] as const;
+/** El backend real (`DuracionSpot`) solo acepta estos 3 valores (ADR-098: se retiró
+ * "mencion" — ahora vive solo como `producto` de TarifaPlaza, F0-02). */
+const OPCIONES_DURACION = ["20s", "30s", "60s"] as const;
 
 const numeroOpcionalPct = () =>
   z
@@ -811,7 +812,7 @@ export function OrdenClienteForm({
               </div>
               <div>
                 <div className="fl">
-                  Categoría comercial <FieldTag origin="catalogo" />
+                  Giro empresarial <FieldTag origin="catalogo" />
                 </div>
                 <select className="fsel" disabled={congelado} {...register("categoria_id")}>
                   <option value="">Selecciona…</option>

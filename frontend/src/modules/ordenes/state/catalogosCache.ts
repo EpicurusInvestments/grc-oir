@@ -117,7 +117,7 @@ export interface EstacionRef {
 
 export interface TarifaRef {
   id: string;
-  plaza_id: string;
+  estacion_id: string;
   tipo_senal: TipoSenal;
   duracion_spot: string;
   tarifa_bruta: number;
@@ -174,8 +174,8 @@ export function findAfiliado(id: string): AfiliadoRef | undefined {
 export function findPlaza(id: string): PlazaRef | undefined {
   return plazas.find((p) => p.id === id);
 }
-export function tarifaReferencia(plazaId: string, tipoSenal: TipoSenal, duracionSpot: string): TarifaRef | undefined {
+export function tarifaReferencia(estacionId: string, tipoSenal: TipoSenal, duracionSpot: string): TarifaRef | undefined {
   return tarifas.find(
-    (t) => t.plaza_id === plazaId && t.tipo_senal === tipoSenal && t.duracion_spot === duracionSpot,
+    (t) => t.estacion_id === estacionId && t.tipo_senal === tipoSenal && t.duracion_spot === duracionSpot,
   );
 }
