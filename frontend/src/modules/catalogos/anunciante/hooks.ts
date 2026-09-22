@@ -10,8 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCatalog } from "@/shared/lib/useCatalog";
 import type { ListParams } from "@/shared/types";
 
-import { anuncianteApi, type AnuncianteListParams, marcaApi } from "./api";
-import type { MarcaCreate, MarcaUpdate } from "./types";
+import { anuncianteApi, type AnuncianteListParams, contactoAnuncianteApi, marcaApi } from "./api";
+import type { ContactoAnuncianteCreate, ContactoAnuncianteUpdate, MarcaCreate, MarcaUpdate } from "./types";
 
 export function useAnunciantes() {
   const catalog = useCatalog("anunciante", anuncianteApi);
@@ -52,6 +52,46 @@ export function useMarcas() {
     useMutation({
       mutationFn: ({ id, activo, forzar }: { id: string; activo: boolean; forzar?: boolean }) =>
         marcaApi.setEstado(id, activo, forzar),
+      onSuccess: invalidate,
+    });
+
+  return { useListPorAnunciante, useCreate, useUpdate, useSetEstado };
+}
+
+const CONTACTO_ANUNCIANTE_KEY = "contacto-anunciante";
+
+/** Contactos anidados del Anunciante (entidad nueva) — mismo patrón que `useMarcas`. */
+export function useContactosAnunciante() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: [CONTACTO_ANUNCIANTE_KEY] });
+    qc.invalidateQueries({ queryKey: ["anunciante"] });
+  };
+
+  const useListPorAnunciante = (anuncianteId: string | null, params?: ListParams) =>
+    useQuery({
+      queryKey: [CONTACTO_ANUNCIANTE_KEY, "por-anunciante", anuncianteId, params ?? {}],
+      queryFn: () => contactoAnuncianteApi.listPorAnunciante(anuncianteId as string, params),
+      enabled: anuncianteId != null,
+    });
+
+  const useCreate = () =>
+    useMutation({
+      mutationFn: (data: ContactoAnuncianteCreate) => contactoAnuncianteApi.create(data),
+      onSuccess: invalidate,
+    });
+
+  const useUpdate = () =>
+    useMutation({
+      mutationFn: ({ id, data }: { id: string; data: ContactoAnuncianteUpdate }) =>
+        contactoAnuncianteApi.update(id, data),
+      onSuccess: invalidate,
+    });
+
+  const useSetEstado = () =>
+    useMutation({
+      mutationFn: ({ id, activo, forzar }: { id: string; activo: boolean; forzar?: boolean }) =>
+        contactoAnuncianteApi.setEstado(id, activo, forzar),
       onSuccess: invalidate,
     });
 

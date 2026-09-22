@@ -1,7 +1,9 @@
-/** Hooks de Afiliado (CRUD genérico) y de Estación anidada (lista por afiliado + mutations).
+/** Hooks de Afiliado (CRUD genérico) y de ContactoAfiliado anidado (lista por afiliado +
+ * mutaciones, ADR-094).
  *
- * Las mutaciones de estación invalidan tanto las queries de estación como las de afiliado
- * (el detalle del afiliado muestra el conteo de sus estaciones).
+ * Las mutaciones de contacto invalidan tanto las queries de contacto como las de
+ * afiliado. La Estación tiene sus propios hooks desde ADR-094
+ * (`modules/catalogos/estacion/hooks.ts`).
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,40 +11,44 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCatalog } from "@/shared/lib/useCatalog";
 import type { ListParams } from "@/shared/types";
 
-import { afiliadoApi, estacionApi } from "./api";
-import type { EstacionCreate, EstacionUpdate } from "./types";
+import { afiliadoApi, contactoAfiliadoApi } from "./api";
+import type { ContactoAfiliadoCreate, ContactoAfiliadoUpdate } from "./types";
 
 export const useAfiliados = () => useCatalog("afiliado", afiliadoApi);
 
-const ESTACION_KEY = "estacion";
+const CONTACTO_AFILIADO_KEY = "contacto-afiliado";
 
-export function useEstaciones() {
+export function useContactosAfiliado() {
   const qc = useQueryClient();
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: [ESTACION_KEY] });
+    qc.invalidateQueries({ queryKey: [CONTACTO_AFILIADO_KEY] });
     qc.invalidateQueries({ queryKey: ["afiliado"] });
   };
 
   const useListPorAfiliado = (afiliadoId: string | null, params?: ListParams) =>
     useQuery({
-      queryKey: [ESTACION_KEY, "por-afiliado", afiliadoId, params ?? {}],
-      queryFn: () => estacionApi.listPorAfiliado(afiliadoId as string, params),
+      queryKey: [CONTACTO_AFILIADO_KEY, "por-afiliado", afiliadoId, params ?? {}],
+      queryFn: () => contactoAfiliadoApi.listPorAfiliado(afiliadoId as string, params),
       enabled: afiliadoId != null,
     });
 
   const useCreate = () =>
-    useMutation({ mutationFn: (data: EstacionCreate) => estacionApi.create(data), onSuccess: invalidate });
+    useMutation({
+      mutationFn: (data: ContactoAfiliadoCreate) => contactoAfiliadoApi.create(data),
+      onSuccess: invalidate,
+    });
 
   const useUpdate = () =>
     useMutation({
-      mutationFn: ({ id, data }: { id: string; data: EstacionUpdate }) => estacionApi.update(id, data),
+      mutationFn: ({ id, data }: { id: string; data: ContactoAfiliadoUpdate }) =>
+        contactoAfiliadoApi.update(id, data),
       onSuccess: invalidate,
     });
 
   const useSetEstado = () =>
     useMutation({
       mutationFn: ({ id, activo, forzar }: { id: string; activo: boolean; forzar?: boolean }) =>
-        estacionApi.setEstado(id, activo, forzar),
+        contactoAfiliadoApi.setEstado(id, activo, forzar),
       onSuccess: invalidate,
     });
 

@@ -2,6 +2,9 @@
  *
  * Catálogo simple (sin campos sensibles). Filtros Activos/Inactivos/Todos, búsqueda y
  * paginación. `nombre_categoria` único CI (409 `conflicto` desde el backend → submitError).
+ *
+ * La entidad y sus campos (`Categoria`, `nombre_categoria`, ...) se mantienen tal cual la
+ * spec BD v2; solo cambia el nombre que ve el usuario, a "Giro empresarial" en toda la UI.
  */
 
 import { useState } from "react";
@@ -25,9 +28,9 @@ type Filtro = "todos" | "activos" | "inactivos";
 type Modo = "view" | "new" | "edit";
 
 const FILTROS: { key: Filtro; label: string }[] = [
-  { key: "activos", label: "Activas" },
-  { key: "inactivos", label: "Inactivas" },
-  { key: "todos", label: "Todas" },
+  { key: "activos", label: "Activos" },
+  { key: "inactivos", label: "Inactivos" },
+  { key: "todos", label: "Todos" },
 ];
 
 const activoDeFiltro = (f: Filtro): boolean | undefined =>
@@ -109,7 +112,7 @@ export function CategoriaCatalogPage() {
   if (modo === "new") {
     detail = (
       <CategoriaForm
-        title="Nueva categoría"
+        title="Nuevo giro empresarial"
         submitting={crear.isPending}
         submitError={submitError}
         onSubmit={onCrear}
@@ -152,7 +155,7 @@ export function CategoriaCatalogPage() {
           </div>
         </div>
         <div className="db">
-          <div className="sec">Datos de la categoría</div>
+          <div className="sec">Datos del giro empresarial</div>
           <div className="fl">Descripción</div>
           <div className="fv muted">{oGuion(selected.descripcion_categoria)}</div>
         </div>
@@ -171,7 +174,7 @@ export function CategoriaCatalogPage() {
       </>
     );
   } else {
-    detail = <DetailEmpty message="Selecciona una categoría para ver el detalle." />;
+    detail = <DetailEmpty message="Selecciona un giro empresarial para ver el detalle." />;
   }
 
   // ── lista ───────────────────────────────────────────────────────────────────
@@ -181,7 +184,7 @@ export function CategoriaCatalogPage() {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: "30%" }}>Categoría</th>
+            <th style={{ width: "30%" }}>Giro empresarial</th>
             <th>Descripción</th>
             <th className="td-center" style={{ width: 90 }}>
               Estatus
@@ -204,10 +207,12 @@ export function CategoriaCatalogPage() {
           ))}
         </tbody>
       </table>
-      {list.isLoading && <div className="state-msg">Cargando categorías…</div>}
-      {list.isError && <div className="state-msg error">No se pudieron cargar las categorías.</div>}
+      {list.isLoading && <div className="state-msg">Cargando giros empresariales…</div>}
+      {list.isError && (
+        <div className="state-msg error">No se pudieron cargar los giros empresariales.</div>
+      )}
       {!list.isLoading && !list.isError && items.length === 0 && (
-        <div className="state-msg">No hay categorías para el filtro seleccionado.</div>
+        <div className="state-msg">No hay giros empresariales para el filtro seleccionado.</div>
       )}
       {list.data && list.data.total > 0 && (
         <Paginator
@@ -227,8 +232,8 @@ export function CategoriaCatalogPage() {
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Categorías comerciales</div>
-          <div className="cat-sub">Categorías de industria para segmentar órdenes y reportes.</div>
+          <div className="cat-title">Giro empresarial</div>
+          <div className="cat-sub">Giros de industria para segmentar órdenes y reportes.</div>
         </div>
         {canWrite && (
           <button
@@ -240,7 +245,7 @@ export function CategoriaCatalogPage() {
               setSubmitError(null);
             }}
           >
-            + Nueva categoría
+            + Nuevo giro empresarial
           </button>
         )}
       </div>
@@ -250,7 +255,7 @@ export function CategoriaCatalogPage() {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar categoría…"
+        searchPlaceholder="Buscar giro empresarial…"
         filters={FILTROS}
         activeFilter={filtro}
         onFilter={(k) => {

@@ -137,7 +137,7 @@ class OrdenCliente(Base):
             name="ck_orden_cliente_estatus_pago_agencia",
         ),
         CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s', 'mencion')",
+            "duracion_spot IN ('20s', '30s', '60s')",
             name="ck_orden_cliente_duracion_spot",
         ),
         CheckConstraint(

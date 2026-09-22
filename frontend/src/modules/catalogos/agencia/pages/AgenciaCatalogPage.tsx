@@ -2,9 +2,15 @@
  *
  * Filtros Activas/Inactivas/Todas + búsqueda + paginación. El % de comisión es PARÁMETRO
  * SENSIBLE: se muestra con tag «Audit log» en el detalle y con `SensitiveField` (+ motivo,
- * solo al cambiarlo) en el formulario. El panel de detalle muestra, además, los anunciantes
- * representados y el historial de cambios (auditoría). La baja con anunciantes activos pide
- * confirmación y reintenta con `forzar`. Errores de negocio (409 nombre, 422 RFC) → form.
+ * solo al cambiarlo) en el formulario. El panel de detalle muestra, además, los Contactos
+ * ANIDADOS (entidad nueva, add/edit/desactivar inline — mismo patrón que Marca en
+ * Anunciante), los anunciantes representados y el historial de cambios (auditoría). La
+ * baja con anunciantes activos pide confirmación y reintenta con `forzar`. Errores de
+ * negocio (409 nombre, 422 RFC) → form.
+ *
+ * "Contacto" (`contacto_nombre`/`contacto_email`/`contacto_telefono`) es el único
+ * contacto plano de la spec original — queda como LEGADO, de solo lectura (ya no se
+ * captura desde el formulario). "Contactos" es la lista nueva (varios).
  */
 
 import { useState } from "react";
@@ -23,7 +29,9 @@ import {
 } from "@/shared/ui";
 
 import { AgenciaForm, type AgenciaFormOutput } from "../components/AgenciaForm";
-import { useAgencias, useAnunciantesPorAgencia, useHistorialAgencia } from "../hooks";
+import type { ContactoFormData } from "../components/ContactoInlineForm";
+import { ContactosSection } from "../components/ContactosSection";
+import { useAgencias, useAnunciantesPorAgencia, useContactosAgencia, useHistorialAgencia } from "../hooks";
 import type { Agencia } from "../types";
 
 type Filtro = "todos" | "activos" | "inactivos";
@@ -68,6 +76,7 @@ export function AgenciaCatalogPage() {
   const crear = useCreate();
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
+  const crearContacto = useContactosAgencia().useCreate();
 
   // Secciones del panel de detalle (solo cuando hay agencia seleccionada).
   const anunciantes = useAnunciantesPorAgencia(selected?.agencia_id ?? null);
@@ -103,10 +112,15 @@ export function AgenciaCatalogPage() {
     throw e;
   };
 
-  const onCrear = async (data: AgenciaFormOutput) => {
+  const onCrear = async (data: AgenciaFormOutput, contactosNuevos: ContactoFormData[]) => {
     setSubmitError(null);
     try {
       const nueva = await crear.mutateAsync(data);
+      // Los contactos se capturaron en memoria durante el alta (todavía no había
+      // agencia_id) — se crean ahora, uno por uno, ya con el id real.
+      for (const contacto of contactosNuevos) {
+        await crearContacto.mutateAsync({ agencia_id: nueva.agencia_id, ...contacto });
+      }
       setSelected(nueva);
       setModo("view");
     } catch (e) {
@@ -159,14 +173,12 @@ export function AgenciaCatalogPage() {
     detail = (
       <AgenciaForm
         title={`Editar: ${selected.nombre_agencia}`}
+        agenciaId={selected.agencia_id}
         isEdit
         comisionOriginal={selected.porcentaje_comision_agencia_default}
         defaultValues={{
           nombre_agencia: selected.nombre_agencia,
           rfc_agencia: selected.rfc_agencia,
-          contacto_nombre: selected.contacto_nombre ?? "",
-          contacto_email: selected.contacto_email ?? "",
-          contacto_telefono: selected.contacto_telefono ?? "",
           regimen_fiscal: selected.regimen_fiscal ?? "",
           porcentaje_comision_agencia_default: selected.porcentaje_comision_agencia_default,
         }}
@@ -213,13 +225,27 @@ export function AgenciaCatalogPage() {
           </div>
           <div className="fv mono">{selected.porcentaje_comision_agencia_default}%</div>
 
-          <div className="sec">Contacto</div>
-          <div className="fl">Nombre</div>
-          <div className="fv">{oGuion(selected.contacto_nombre)}</div>
-          <div className="fl">Correo</div>
-          <div className="fv link">{oGuion(selected.contacto_email)}</div>
-          <div className="fl">Teléfono</div>
-          <div className="fv">{oGuion(selected.contacto_telefono)}</div>
+          {(selected.contacto_nombre || selected.contacto_email || selected.contacto_telefono) && (
+            <>
+              <div className="sec">
+                Contacto <FieldTag origin="derivado" text="Legado" />
+              </div>
+              <div className="fl">Nombre</div>
+              <div className="fv">{oGuion(selected.contacto_nombre)}</div>
+              <div className="fl">Correo</div>
+              <div className="fv link">{oGuion(selected.contacto_email)}</div>
+              <div className="fl">Teléfono</div>
+              <div className="fv">{oGuion(selected.contacto_telefono)}</div>
+            </>
+          )}
+
+          {/* ── Contactos anidados (entidad nueva, reemplaza al contacto único de arriba) ── */}
+          <ContactosSection
+            agenciaId={selected.agencia_id}
+            canWrite={canWrite}
+            contactosNuevos={[]}
+            onContactosNuevosChange={() => {}}
+          />
 
           <div className="sec">Anunciantes representados ({selected.anunciantes_count})</div>
           {anunciantes.isLoading && <div className="state-msg">Cargando anunciantes…</div>}

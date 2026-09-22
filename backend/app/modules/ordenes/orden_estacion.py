@@ -106,7 +106,7 @@ class OrdenEstacion(Base):
             name="ck_orden_estacion_estatus",
         ),
         CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s', 'mencion')",
+            "duracion_spot IN ('20s', '30s', '60s')",
             name="ck_orden_estacion_duracion_spot",
         ),
         CheckConstraint(

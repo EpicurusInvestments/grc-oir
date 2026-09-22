@@ -1,9 +1,11 @@
 """Pruebas de los catálogos operativos F0-01 (Plaza · Afiliado · Estación) sobre SQLite.
 
 Se ejercitan las REGLAS de negocio (capa de servicio) sin depender de SQL Server / red:
-herencia de plaza, unicidad de RFC, validación de formato de RFC, tipo de señal y baja
-lógica bloqueada por dependientes activos. El DDL real (UNIQUEIDENTIFIER, CHECK, índices)
-se valida contra RDS con `alembic upgrade`, no aquí.
+selección libre de plaza en Estación (ADR-094, reemplaza a la herencia de ADR-005),
+Afiliado sin plaza propia (ADR-096 — la plaza es propiedad de la Estación, no del
+Afiliado), unicidad de RFC, validación de formato de RFC, tipo de señal y baja lógica
+bloqueada por dependientes activos. El DDL real (UNIQUEIDENTIFIER, CHECK, índices) se
+valida contra RDS con `alembic upgrade`, no aquí.
 """
 
 from __future__ import annotations
@@ -70,9 +72,9 @@ def servicios(sqlite_session: Session) -> tuple[PlazaService, AfiliadoService, E
     afi_repo = AfiliadoRepository(db, Afiliado)
     est_repo = EstacionRepository(db, Estacion)
     plaza_repo = BaseRepository(db, Plaza, search_columns=[Plaza.nombre_plaza])
-    plaza_svc = PlazaService(plaza_repo, afiliado_repo=afi_repo, estacion_repo=est_repo)
+    plaza_svc = PlazaService(plaza_repo, estacion_repo=est_repo)
     afi_svc = AfiliadoService(afi_repo, estacion_repo=est_repo)
-    est_svc = EstacionService(est_repo, afiliado_repo=afi_repo)
+    est_svc = EstacionService(est_repo, afiliado_repo=afi_repo, plaza_repo=plaza_repo)
     return plaza_svc, afi_svc, est_svc
 
 
@@ -83,7 +85,6 @@ def _plaza(svc: PlazaService, nombre: str = "Monterrey", estado: str = "Nuevo Le
 
 def _afiliado(
     svc: AfiliadoService,
-    plaza_id: uuid.UUID,
     rfc: str = "MEO850101OP2",
     nombre: str = "Multimedios",
 ) -> AfiliadoRead:
@@ -92,7 +93,6 @@ def _afiliado(
             nombre_afiliado=nombre,
             razon_social_afiliado=f"{nombre} SA de CV",
             rfc_afiliado=rfc,
-            plaza_id=plaza_id,
         ),
         USUARIO,
     )
@@ -101,11 +101,17 @@ def _afiliado(
 def _estacion(
     svc: EstacionService,
     afiliado_id: uuid.UUID,
+    plaza_id: uuid.UUID,
     nombre: str = "XHMT-FM",
     tipo: str = "fm",
 ) -> EstacionRead:
     return svc.create(
-        EstacionCreate(afiliado_id=afiliado_id, nombre_estacion=nombre, tipo_senal=TipoSenal(tipo)),
+        EstacionCreate(
+            afiliado_id=afiliado_id,
+            plaza_id=plaza_id,
+            nombre_estacion=nombre,
+            tipo_senal=TipoSenal(tipo),
+        ),
         USUARIO,
     )
 
@@ -119,32 +125,74 @@ def test_plaza_crud(servicios: Servicios) -> None:
     assert plaza_svc.get(p.plaza_id).estado == "Ciudad de México"
 
 
-# ── Estación: herencia de plaza (ADR-005) ─────────────────────────────────────────
-def test_estacion_hereda_plaza_del_afiliado(servicios: Servicios) -> None:
+# ── Estación: plaza de selección libre (ADR-094, reemplaza a ADR-005) ────────────
+def test_estacion_captura_su_propia_plaza(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc)
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    est = _estacion(est_svc, afi.afiliado_id)
+    afi = _afiliado(afi_svc)
+    est = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id)
     assert est.plaza_id == plaza.plaza_id
 
 
-def test_estacion_recalcula_plaza_al_cambiar_afiliado(servicios: Servicios) -> None:
+def test_estacion_editar_reasigna_plaza(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza1 = _plaza(plaza_svc, "CDMX", "CDMX")
     plaza2 = _plaza(plaza_svc, "León", "Guanajuato")
-    afi1 = _afiliado(afi_svc, plaza1.plaza_id, rfc="MEO850101OP2", nombre="Uno")
-    afi2 = _afiliado(afi_svc, plaza2.plaza_id, rfc="OIR920301AB1", nombre="Dos")
-    est = _estacion(est_svc, afi1.afiliado_id)
-    actualizado = est_svc.update(
-        est.estacion_id, EstacionUpdate(afiliado_id=afi2.afiliado_id), USUARIO
-    )
+    afi = _afiliado(afi_svc)
+    est = _estacion(est_svc, afi.afiliado_id, plaza1.plaza_id)
+    actualizado = est_svc.update(est.estacion_id, EstacionUpdate(plaza_id=plaza2.plaza_id), USUARIO)
     assert actualizado.plaza_id == plaza2.plaza_id
 
 
-def test_estacion_afiliado_inexistente_falla(servicios: Servicios) -> None:
-    _, _, est_svc = servicios
+def test_estacion_plaza_inexistente_rechazada_en_alta(servicios: Servicios) -> None:
+    _, afi_svc, est_svc = servicios
+    afi = _afiliado(afi_svc)
     with pytest.raises(NotFoundError):
-        _estacion(est_svc, uuid.uuid4())
+        _estacion(est_svc, afi.afiliado_id, uuid.uuid4())
+
+
+def test_estacion_plaza_inexistente_rechazada_en_edicion(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc)
+    est = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id)
+    with pytest.raises(NotFoundError):
+        est_svc.update(est.estacion_id, EstacionUpdate(plaza_id=uuid.uuid4()), USUARIO)
+
+
+def test_estacion_siglas_opcional(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc)
+    creada = est_svc.create(
+        EstacionCreate(
+            afiliado_id=afi.afiliado_id,
+            plaza_id=plaza.plaza_id,
+            nombre_estacion="La Que Buena",
+            siglas="XEW",
+            tipo_senal=TipoSenal.FM,
+        ),
+        USUARIO,
+    )
+    assert creada.siglas == "XEW"
+    sin_siglas = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="Sin siglas")
+    assert sin_siglas.siglas is None
+
+
+def test_estacion_afiliado_inexistente_falla(servicios: Servicios) -> None:
+    plaza_svc, _, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    with pytest.raises(NotFoundError):
+        _estacion(est_svc, uuid.uuid4(), plaza.plaza_id)
+
+
+def test_estacion_incluye_afiliado_nombre_y_plaza_nombre(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc, "Monterrey", "Nuevo León")
+    afi = _afiliado(afi_svc, nombre="OIR Bajío")
+    est = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id)
+    assert est.afiliado_nombre == "OIR Bajío"
+    assert est.plaza_nombre == "Monterrey"
 
 
 def test_tipo_senal_invalido_rechazado() -> None:
@@ -155,11 +203,11 @@ def test_tipo_senal_invalido_rechazado() -> None:
 def test_estacion_list_por_afiliado(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc)
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    otro = _afiliado(afi_svc, plaza.plaza_id, rfc="OIR920301AB1", nombre="Otro")
-    _estacion(est_svc, afi.afiliado_id, nombre="XHMT-FM")
-    _estacion(est_svc, afi.afiliado_id, nombre="XHMA-AM", tipo="am")
-    _estacion(est_svc, otro.afiliado_id, nombre="XHLE-FM")
+    afi = _afiliado(afi_svc)
+    otro = _afiliado(afi_svc, rfc="OIR920301AB1", nombre="Otro")
+    _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="XHMT-FM")
+    _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="XHMA-AM", tipo="am")
+    _estacion(est_svc, otro.afiliado_id, plaza.plaza_id, nombre="XHLE-FM")
 
     page = est_svc.list_por_afiliado(afi.afiliado_id, ListParams())
     assert page.total == 2
@@ -168,11 +216,10 @@ def test_estacion_list_por_afiliado(servicios: Servicios) -> None:
 
 # ── Afiliado: unicidad y formato de RFC ───────────────────────────────────────────
 def test_rfc_duplicado_rechazado(servicios: Servicios) -> None:
-    plaza_svc, afi_svc, _ = servicios
-    plaza = _plaza(plaza_svc)
-    _afiliado(afi_svc, plaza.plaza_id, rfc="MEO850101OP2", nombre="Uno")
+    _, afi_svc, _ = servicios
+    _afiliado(afi_svc, rfc="MEO850101OP2", nombre="Uno")
     with pytest.raises(ConflictError):
-        _afiliado(afi_svc, plaza.plaza_id, rfc="MEO850101OP2", nombre="Dos")
+        _afiliado(afi_svc, rfc="MEO850101OP2", nombre="Dos")
 
 
 def test_rfc_formato_invalido_rechazado() -> None:
@@ -181,19 +228,16 @@ def test_rfc_formato_invalido_rechazado() -> None:
             nombre_afiliado="X",
             razon_social_afiliado="X SA",
             rfc_afiliado="NO-ES-RFC",
-            plaza_id=uuid.uuid4(),
         )
 
 
 def test_rfc_se_normaliza_a_mayusculas(servicios: Servicios) -> None:
-    plaza_svc, afi_svc, _ = servicios
-    plaza = _plaza(plaza_svc)
+    _, afi_svc, _ = servicios
     afi = afi_svc.create(
         AfiliadoCreate(
             nombre_afiliado="Uno",
             razon_social_afiliado="Uno SA",
             rfc_afiliado="meo850101op2",
-            plaza_id=plaza.plaza_id,
         ),
         USUARIO,
     )
@@ -201,10 +245,9 @@ def test_rfc_se_normaliza_a_mayusculas(servicios: Servicios) -> None:
 
 
 def test_update_rfc_a_uno_existente_rechazado(servicios: Servicios) -> None:
-    plaza_svc, afi_svc, _ = servicios
-    plaza = _plaza(plaza_svc)
-    _afiliado(afi_svc, plaza.plaza_id, rfc="MEO850101OP2", nombre="Uno")
-    afi2 = _afiliado(afi_svc, plaza.plaza_id, rfc="OIR920301AB1", nombre="Dos")
+    _, afi_svc, _ = servicios
+    _afiliado(afi_svc, rfc="MEO850101OP2", nombre="Uno")
+    afi2 = _afiliado(afi_svc, rfc="OIR920301AB1", nombre="Dos")
     with pytest.raises(ConflictError):
         afi_svc.update(afi2.afiliado_id, AfiliadoUpdate(rfc_afiliado="MEO850101OP2"), USUARIO)
 
@@ -213,25 +256,13 @@ def test_update_rfc_a_uno_existente_rechazado(servicios: Servicios) -> None:
 def test_afiliado_baja_bloqueada_con_estacion_activa(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc)
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    _estacion(est_svc, afi.afiliado_id)
+    afi = _afiliado(afi_svc)
+    _estacion(est_svc, afi.afiliado_id, plaza.plaza_id)
 
     with pytest.raises(DependenciasActivasError):
         afi_svc.cambiar_estado(afi.afiliado_id, activo=False, usuario=USUARIO)
 
     forzado = afi_svc.cambiar_estado(afi.afiliado_id, activo=False, usuario=USUARIO, forzar=True)
-    assert forzado.activo is False
-
-
-def test_plaza_baja_bloqueada_con_afiliado_activo(servicios: Servicios) -> None:
-    plaza_svc, afi_svc, _ = servicios
-    plaza = _plaza(plaza_svc)
-    _afiliado(afi_svc, plaza.plaza_id)  # afiliado activo, sin estaciones
-
-    with pytest.raises(DependenciasActivasError):
-        plaza_svc.cambiar_estado(plaza.plaza_id, activo=False, usuario=USUARIO)
-
-    forzado = plaza_svc.cambiar_estado(plaza.plaza_id, activo=False, usuario=USUARIO, forzar=True)
     assert forzado.activo is False
 
 
@@ -242,13 +273,13 @@ def test_plaza_baja_permitida_sin_dependientes(servicios: Servicios) -> None:
     assert baja.activo is False
 
 
-# ── Campos derivados: conteo de estaciones y nombre de plaza ──────────────────────
+# ── Campos derivados: conteo de estaciones ────────────────────────────────────────
 def test_plaza_incluye_conteo_estaciones(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc)
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    e1 = _estacion(est_svc, afi.afiliado_id, nombre="XHMT-FM")
-    _estacion(est_svc, afi.afiliado_id, nombre="XHMA-AM", tipo="am")
+    afi = _afiliado(afi_svc)
+    e1 = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="XHMT-FM")
+    _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="XHMA-AM", tipo="am")
     # Una inactiva IGUAL cuenta (mismo criterio que el HTML aprobado).
     est_svc.cambiar_estado(e1.estacion_id, activo=False, usuario=USUARIO)
 
@@ -263,19 +294,17 @@ def test_plaza_sin_estaciones_cuenta_cero(servicios: Servicios) -> None:
     assert plaza_svc.get(plaza.plaza_id).estaciones_count == 0
 
 
-def test_afiliado_incluye_plaza_nombre_y_conteo(servicios: Servicios) -> None:
+def test_afiliado_incluye_conteo_estaciones(servicios: Servicios) -> None:
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc, "Monterrey", "Nuevo León")
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    e1 = _estacion(est_svc, afi.afiliado_id, nombre="XHMT-FM")
+    afi = _afiliado(afi_svc)
+    e1 = _estacion(est_svc, afi.afiliado_id, plaza.plaza_id, nombre="XHMT-FM")
     est_svc.cambiar_estado(e1.estacion_id, activo=False, usuario=USUARIO)  # inactiva cuenta
 
     item = next(a for a in afi_svc.list(ListParams()).items if a.afiliado_id == afi.afiliado_id)
-    assert item.plaza_nombre == "Monterrey"
     assert item.estaciones_count == 1
 
     leido = afi_svc.get(afi.afiliado_id)
-    assert leido.plaza_nombre == "Monterrey"
     assert leido.estaciones_count == 1
 
 
@@ -288,8 +317,8 @@ def test_conteo_activas_desactivacion_funciona_por_dependientes(servicios: Servi
     """
     plaza_svc, afi_svc, est_svc = servicios
     plaza = _plaza(plaza_svc)
-    afi = _afiliado(afi_svc, plaza.plaza_id)
-    _estacion(est_svc, afi.afiliado_id)  # estación activa dependiente
+    afi = _afiliado(afi_svc)
+    _estacion(est_svc, afi.afiliado_id, plaza.plaza_id)  # estación activa dependiente
 
     # Afiliado con estación activa → bloquea; con forzar procede.
     with pytest.raises(DependenciasActivasError):
@@ -299,10 +328,10 @@ def test_conteo_activas_desactivacion_funciona_por_dependientes(servicios: Servi
         is False
     )
 
-    # Plaza con afiliado/estación activos → bloquea; con forzar procede.
+    # Plaza con estación activa → bloquea; con forzar procede.
     plaza2 = _plaza(plaza_svc, "CDMX", "CDMX")
-    afi2 = _afiliado(afi_svc, plaza2.plaza_id, rfc="OIR920301AB1", nombre="Dos")
-    _estacion(est_svc, afi2.afiliado_id, nombre="XHRC-FM")
+    afi2 = _afiliado(afi_svc, rfc="OIR920301AB1", nombre="Dos")
+    _estacion(est_svc, afi2.afiliado_id, plaza2.plaza_id, nombre="XHRC-FM")
     with pytest.raises(DependenciasActivasError):
         plaza_svc.cambiar_estado(plaza2.plaza_id, activo=False, usuario=USUARIO)
     assert (

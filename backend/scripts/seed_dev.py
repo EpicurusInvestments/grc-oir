@@ -259,18 +259,18 @@ PLAZAS = [
 ]
 
 # El mock no trae razon_social_afiliado ni rfc_afiliado (req. + único en el modelo real) —
-# se INVENTAN a partir del nombre (ver hallazgo).
+# se INVENTAN a partir del nombre (ver hallazgo). Ya NO trae plaza (ADR-096: el Afiliado
+# no tiene plaza propia, solo sus Estaciones — ver ESTACIONES abajo, que sí la capturan).
 AFILIADOS = [
     (
         "af1",
         "Multimedios Estrellas de Oro",
-        "pl2",
         "Multimedios Estrellas de Oro SA de CV",
         "MEO900101AB1",
     ),
-    ("af2", "OIR Bajío", "pl4", "OIR Bajío SA de CV", "OBA900101AB2"),
-    ("af3", "Grupo Radio Centro", "pl1", "Grupo Radio Centro SA de CV", "GRC900101AB3"),
-    ("af4", "Radiorama Jalisco", "pl3", "Radiorama Jalisco SA de CV", "RJA900101AB4"),
+    ("af2", "OIR Bajío", "OIR Bajío SA de CV", "OBA900101AB2"),
+    ("af3", "Grupo Radio Centro", "Grupo Radio Centro SA de CV", "GRC900101AB3"),
+    ("af4", "Radiorama Jalisco", "Radiorama Jalisco SA de CV", "RJA900101AB4"),
 ]
 
 ESTACIONES = [
@@ -284,15 +284,18 @@ ESTACIONES = [
     ("es8", "af4", "pl3", "XHGDL-AM", "790 AM", "am"),
 ]
 
+# El mock no trae "producto" (ADR-097, campo nuevo: spot/mención/control remoto/
+# patrocinio) — se siembra "spot" para las 8, valor por defecto razonable ya que el mock
+# original solo describía spots de 30s.
 TARIFAS = [
-    ("ta1", "pl1", "fm", "30s", "9500", "10"),
-    ("ta2", "pl1", "am", "30s", "5000", "5"),
-    ("ta3", "pl2", "fm", "30s", "8500", "10"),
-    ("ta4", "pl2", "am", "30s", "4800", "0"),
-    ("ta5", "pl3", "fm", "30s", "7800", "8"),
-    ("ta6", "pl3", "am", "30s", "4200", "0"),
-    ("ta7", "pl4", "fm", "30s", "7000", "5"),
-    ("ta8", "pl4", "tv", "30s", "15000", "0"),
+    ("ta1", "es6", "fm", "30s", "spot", "9500", "10"),
+    ("ta2", "es5", "am", "30s", "spot", "5000", "5"),
+    ("ta3", "es1", "fm", "30s", "spot", "8500", "10"),
+    ("ta4", "es2", "am", "30s", "spot", "4800", "0"),
+    ("ta5", "es7", "fm", "30s", "spot", "7800", "8"),
+    ("ta6", "es8", "am", "30s", "spot", "4200", "0"),
+    ("ta7", "es3", "fm", "30s", "spot", "7000", "5"),
+    ("ta8", "es4", "tv", "30s", "spot", "15000", "0"),
 ]
 
 
@@ -406,7 +409,7 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
         "lo tiene): el % de participación OIR de cada OrdenEstacion se sembró tal cual lo "
         "trae el mock de la orden, no derivado de un default de catálogo inexistente."
     )
-    for clave, nombre, plaza_clave, razon_social, rfc in AFILIADOS:
+    for clave, nombre, razon_social, rfc in AFILIADOS:
         u = uid(f"afiliado:{clave}")
         db.merge(
             Afiliado(
@@ -414,7 +417,6 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
                 nombre_afiliado=nombre,
                 razon_social_afiliado=razon_social,
                 rfc_afiliado=rfc,
-                plaza_id=ids["plaza"][plaza_clave],
             )
         )
         ids["afiliado"][clave] = u
@@ -425,7 +427,7 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
             Estacion(
                 estacion_id=u,
                 afiliado_id=ids["afiliado"][af_clave],
-                plaza_id=ids["plaza"][plaza_clave],  # ADR-005: igual al de su afiliado
+                plaza_id=ids["plaza"][plaza_clave],  # captura propia (ADR-094/ADR-096)
                 nombre_estacion=nombre,
                 frecuencia=frecuencia,
                 tipo_senal=tipo_senal,
@@ -433,21 +435,20 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
         )
         ids["estacion"][clave] = u
 
-    for clave, plaza_clave, tipo_senal, duracion, bruta, descuento in TARIFAS:
+    for clave, estacion_clave, tipo_senal, duracion, producto, bruta, descuento in TARIFAS:
         u = uid(f"tarifa:{clave}")
         bruta_d, descuento_d = Decimal(bruta), Decimal(descuento)
         neta = (bruta_d * (Decimal(100) - descuento_d) / Decimal(100)).quantize(Decimal("0.01"))
         db.merge(
             TarifaPlaza(
                 tarifa_plaza_id=u,
-                plaza_id=ids["plaza"][plaza_clave],
+                estacion_id=ids["estacion"][estacion_clave],
                 tipo_senal=tipo_senal,
                 duracion_spot=duracion,
+                producto=producto,
                 tarifa_bruta=bruta_d,
                 descuento_pct=descuento_d,
                 tarifa_neta=neta,
-                vigencia_desde=date(2025, 1, 1),
-                vigencia_hasta=date(2025, 12, 31),
                 created_by="dev.admin",
             )
         )
@@ -1292,8 +1293,8 @@ def seed_ordenes_estacion(
         u = uid(f"orden_estacion:{oe['clave']}")
         oc_mock = next(o for o in OC_MOCKS if o["clave"] == oe["oc"])
         estacion_clave = oe["estacion"]
-        # plaza_id heredada de la Estacion (ADR-005) — resuelta contra el propio mock de
-        # catálogos, no inventada aquí.
+        # plaza_id de la OrdenEstacion = la de su Estacion (captura propia, ADR-094) —
+        # resuelta contra el propio mock de catálogos, no inventada aquí.
         plaza_clave = next(e[2] for e in ESTACIONES if e[0] == estacion_clave)
 
         precio_spot = Decimal(oe["precio_spot"])

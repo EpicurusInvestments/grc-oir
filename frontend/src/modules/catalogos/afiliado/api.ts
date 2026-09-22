@@ -1,8 +1,6 @@
-/** API de Afiliado y Estación sobre el CRUD genérico.
- *
- * Afiliado: /api/v1/catalogos/afiliados (CRUD estándar).
- * Estación: /api/v1/catalogos/estaciones (CRUD estándar) + la ruta anidada
- *           GET /catalogos/estaciones/afiliado/{afiliado_id} para listar por afiliado.
+/** API de Afiliado (CRUD estándar) y ContactoAfiliado anidado (CRUD + listado por
+ * afiliado). La Estación tiene su propia API desde ADR-094
+ * (`modules/catalogos/estacion/api.ts`).
  */
 
 import { apiClient } from "@/shared/lib/apiClient";
@@ -13,21 +11,25 @@ import type {
   Afiliado,
   AfiliadoCreate,
   AfiliadoUpdate,
-  Estacion,
-  EstacionCreate,
-  EstacionUpdate,
+  ContactoAfiliado,
+  ContactoAfiliadoCreate,
+  ContactoAfiliadoUpdate,
 } from "./types";
 
 export const afiliadoApi = createCatalogApi<Afiliado, AfiliadoCreate, AfiliadoUpdate>("afiliados");
 
-const estacionCrud = createCatalogApi<Estacion, EstacionCreate, EstacionUpdate>("estaciones");
+const contactoAfiliadoCrud = createCatalogApi<
+  ContactoAfiliado,
+  ContactoAfiliadoCreate,
+  ContactoAfiliadoUpdate
+>("contactos-afiliado");
 
-export const estacionApi = {
-  ...estacionCrud,
-  /** Estaciones de un afiliado (para el panel anidado). */
-  async listPorAfiliado(afiliadoId: string, params?: ListParams): Promise<Page<Estacion>> {
-    const { data } = await apiClient.get<Page<Estacion>>(
-      `/catalogos/estaciones/afiliado/${afiliadoId}`,
+export const contactoAfiliadoApi = {
+  ...contactoAfiliadoCrud,
+  /** Contactos de un afiliado (para el panel anidado). */
+  async listPorAfiliado(afiliadoId: string, params?: ListParams): Promise<Page<ContactoAfiliado>> {
+    const { data } = await apiClient.get<Page<ContactoAfiliado>>(
+      `/catalogos/contactos-afiliado/afiliado/${afiliadoId}`,
       { params },
     );
     return data;

@@ -13,6 +13,15 @@ Nota de dependientes: la baja de una agencia con anunciantes activos se bloquear
 `_pre_desactivar` cuando exista la entidad Anunciante (F0-03, tanda 2). En esta tanda la
 tabla `anunciante` aún no existe, por lo que la baja lógica no valida dependientes todavía.
 
+**ContactoAgencia** (entidad NUEVA, fuera de la spec BD v2 — petición del usuario): la
+Agencia ya traía un solo contacto plano (`contacto_nombre`/`contacto_email`/
+`contacto_telefono`, arriba). El usuario pidió poder guardar VARIOS contactos, mismo
+alcance que `ContactoAnunciante` (`app/modules/catalogos/anunciante.py`) — mirror línea
+por línea de esa entidad, tabla propia (no comparte tabla con `ContactoAnunciante`,
+misma razón: FKs simples en vez de una polimórfica). Los 3 campos planos existentes
+quedan como LEGADO, sin tocar: se dejan de capturar desde el formulario pero se siguen
+mostrando de solo lectura en el detalle si una fila vieja los trae.
+
 Portabilidad SQL Server (ADR-014): comparaciones booleanas con `== True`; la unicidad
 case-insensitive se resuelve con `func.lower(...)`, portable a SQL Server y SQLite.
 """
@@ -20,20 +29,21 @@ case-insensitive se resuelve con `func.lower(...)`, portable a SQL Server y SQLi
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
-from sqlalchemy import CheckConstraint, Numeric, Unicode, func, select
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
-from app.core.errors import ConflictError, DependenciasActivasError
+from app.core.errors import ConflictError, DependenciasActivasError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
 from app.shared.base_repository import BaseRepository
@@ -252,6 +262,110 @@ class AgenciaService(BaseService[Agencia, AgenciaCreate, AgenciaUpdate, AgenciaR
             )
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# ContactoAgencia (anidada en Agencia — entidad nueva, mirror de ContactoAnunciante)
+# ════════════════════════════════════════════════════════════════════════════════
+class ContactoAgencia(Base):
+    __tablename__ = "contacto_agencia"
+
+    contacto_agencia_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    agencia_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agencia.agencia_id"), index=True)
+    nombre_contacto: Mapped[str] = mapped_column(Unicode(160))
+    puesto_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    telefono_contacto: Mapped[str | None] = mapped_column(Unicode(40), default=None)
+    email_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    activo: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        datetime2(), default=None, onupdate=datetime.now
+    )
+
+
+class ContactoAgenciaCreate(BaseModel):
+    agencia_id: uuid.UUID
+    nombre_contacto: str = Field(min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAgenciaUpdate(BaseModel):
+    agencia_id: uuid.UUID | None = None
+    nombre_contacto: str | None = Field(default=None, min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAgenciaRead(CatalogoReadBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    contacto_agencia_id: uuid.UUID
+    agencia_id: uuid.UUID
+    nombre_contacto: str
+    puesto_contacto: str | None = None
+    telefono_contacto: str | None = None
+    email_contacto: str | None = None
+
+
+class ContactoAgenciaRepository(BaseRepository[ContactoAgencia]):
+    def list_por_agencia(
+        self, agencia_id: uuid.UUID, params: ListParams
+    ) -> tuple[Sequence[ContactoAgencia], int]:
+        base = select(ContactoAgencia).where(ContactoAgencia.agencia_id == agencia_id)
+        if params.activo is not None:
+            base = base.where(ContactoAgencia.activo == params.activo)
+        if params.q:
+            base = base.where(ContactoAgencia.nombre_contacto.ilike(f"%{params.q.strip()}%"))
+        total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
+        stmt = (
+            base.order_by(ContactoAgencia.nombre_contacto)
+            .offset((params.page - 1) * params.size)
+            .limit(params.size)
+        )
+        return self.db.scalars(stmt).all(), int(total)
+
+
+class ContactoAgenciaService(
+    BaseService[ContactoAgencia, ContactoAgenciaCreate, ContactoAgenciaUpdate, ContactoAgenciaRead]
+):
+    read_schema = ContactoAgenciaRead
+    entidad = "ContactoAgencia"
+
+    def __init__(self, repo: ContactoAgenciaRepository, *, agencia_repo: AgenciaRepository) -> None:
+        super().__init__(repo)
+        self._contacto_repo = repo
+        self._agencia_repo = agencia_repo
+
+    def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        self._verificar_agencia(payload["agencia_id"])
+
+    def _pre_update(
+        self, obj: ContactoAgencia, payload: dict[str, Any], usuario: CurrentUser
+    ) -> None:
+        if "agencia_id" in payload:
+            self._verificar_agencia(payload["agencia_id"])
+
+    def list_por_agencia(
+        self, agencia_id: uuid.UUID, params: ListParams
+    ) -> Page[ContactoAgenciaRead]:
+        items, total = self._contacto_repo.list_por_agencia(agencia_id, params)
+        return Page[ContactoAgenciaRead](
+            items=[self._to_read(o) for o in items],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
+
+    def _verificar_agencia(self, agencia_id: uuid.UUID) -> None:
+        if self._agencia_repo.get(agencia_id) is None:
+            raise NotFoundError(
+                "Agencia no encontrada para el contacto.",
+                detalles={"agencia_id": str(agencia_id)},
+            )
+
+
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_agencia_service(db: Session = Depends(get_db)) -> AgenciaService:
     # Import perezoso para evitar el ciclo agencia ↔ anunciante (anunciante importa Agencia
@@ -290,3 +404,38 @@ def historial_agencia(
     auditoría es de F5. Requiere permiso de lectura de catálogos (ADR-021).
     """
     return list(svc.historial(item_id))
+
+
+def get_contacto_agencia_service(db: Session = Depends(get_db)) -> ContactoAgenciaService:
+    repo = ContactoAgenciaRepository(
+        db, ContactoAgencia, search_columns=[ContactoAgencia.nombre_contacto]
+    )
+    return ContactoAgenciaService(repo, agencia_repo=AgenciaRepository(db, Agencia))
+
+
+contacto_agencia_router = build_crud_router(
+    prefix="/contactos-agencia",
+    tags=["catalogos:contactos-agencia"],
+    permiso_base="catalogos",
+    read_schema=ContactoAgenciaRead,
+    create_schema=ContactoAgenciaCreate,
+    update_schema=ContactoAgenciaUpdate,
+    get_service=get_contacto_agencia_service,
+    id_type=uuid.UUID,
+)
+
+
+@contacto_agencia_router.get("/agencia/{agencia_id}", response_model=Page[ContactoAgenciaRead])
+def listar_contactos_por_agencia(
+    agencia_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por nombre de contacto"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContactoAgenciaService = Depends(get_contacto_agencia_service),
+) -> Page[ContactoAgenciaRead]:
+    """Contactos de una agencia (para la sección anidada de la pantalla de agencias)."""
+    return svc.list_por_agencia(
+        agencia_id, ListParams(page=page, size=size, activo=activo, q=q)
+    )

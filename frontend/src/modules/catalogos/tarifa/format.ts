@@ -1,4 +1,4 @@
-/** Utilidades de formato/derivación de la UI de tarifas (moneda MXN, fecha, vigencia). */
+/** Utilidades de formato/derivación de la UI de tarifas (moneda MXN). */
 
 const MXN = new Intl.NumberFormat("es-MX", {
   style: "currency",
@@ -23,12 +23,6 @@ export function fmtMoneda(valor: string | number): string {
   return MXN.format(Math.trunc(valor * 100) / 100);
 }
 
-/** Fecha ISO `YYYY-MM-DD` → `dd/mm/yyyy` sin construir Date (evita corrimientos de zona). */
-export function fmtFecha(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return d && m && y ? `${d}/${m}/${y}` : iso;
-}
-
 /** Preview de la tarifa neta = bruta * (1 - descuento/100). NaN si algún dato no es número.
  *  El valor OFICIAL lo calcula y persiste el backend; esto es solo para mostrar en el form. */
 export function calcularNetaPreview(
@@ -39,11 +33,4 @@ export function calcularNetaPreview(
   const d = Number(descuentoPct);
   if (!Number.isFinite(b) || !Number.isFinite(d)) return NaN;
   return b * (1 - d / 100);
-}
-
-/** Derivado: una tarifa está "vigente" si `vigencia_hasta` no es anterior a hoy.
- *  Comparación lexicográfica de ISO `YYYY-MM-DD` (equivale a comparar fechas). */
-export function esVigente(vigenciaHasta: string): boolean {
-  const hoy = new Date().toISOString().slice(0, 10);
-  return vigenciaHasta >= hoy;
 }

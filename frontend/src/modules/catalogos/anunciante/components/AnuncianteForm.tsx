@@ -7,6 +7,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -19,6 +20,8 @@ import {
 
 import { useConstantes } from "../../constantesSistema/hooks";
 import type { AnuncianteCreate } from "../types";
+import type { ContactoFormData } from "./ContactoInlineForm";
+import { ContactosSection } from "./ContactosSection";
 
 export type AnuncianteFormOutput = AnuncianteCreate & { motivo_cambio?: string | null };
 
@@ -29,7 +32,6 @@ export interface AgenciaOpcion {
 }
 
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
-const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function buildSchema(isEdit: boolean, diasOriginal?: string) {
   return z
@@ -67,14 +69,6 @@ function buildSchema(isEdit: boolean, diasOriginal?: string) {
       // Clave SAT (c_UsoCFDI): solo SUGIERE el default de la factura, sin FK formal.
       uso_cfdi_default: z.string().trim().max(5).optional(),
       referencia_anunciante: z.string().trim().max(250).optional(),
-      contacto_nombre: z.string().trim().max(160).optional(),
-      contacto_email: z
-        .string()
-        .trim()
-        .max(160)
-        .refine((v) => v === "" || EMAIL_REGEX.test(v), "Correo inválido.")
-        .optional(),
-      contacto_telefono: z.string().trim().max(40).optional(),
       dias_credito_default: z
         .string()
         .trim()
@@ -106,18 +100,25 @@ type AnuncianteFormValues = z.infer<ReturnType<typeof buildSchema>>;
 interface AnuncianteFormProps {
   title: string;
   agencias: AgenciaOpcion[];
+  /** Presente SOLO en edición: habilita la sección "Contactos" en modo servidor (alta/
+   *  edición/baja pegan directo al backend). En alta (`undefined`/`null`) los contactos se
+   *  capturan en memoria y se crean justo después de guardar el anunciante. */
+  anuncianteId?: string | null;
   defaultValues?: Partial<AnuncianteFormValues>;
   diasOriginal?: string;
   isEdit?: boolean;
   submitting?: boolean;
   submitError?: string | null;
-  onSubmit: (data: AnuncianteFormOutput) => void;
+  /** `contactosNuevos` solo trae algo en ALTA (los capturados antes de guardar); en
+   *  edición siempre llega vacío, porque ahí ya se sincronizan solos contra el backend. */
+  onSubmit: (data: AnuncianteFormOutput, contactosNuevos: ContactoFormData[]) => void;
   onCancel: () => void;
 }
 
 export function AnuncianteForm({
   title,
   agencias,
+  anuncianteId = null,
   defaultValues,
   diasOriginal,
   isEdit = false,
@@ -126,6 +127,7 @@ export function AnuncianteForm({
   onSubmit,
   onCancel,
 }: AnuncianteFormProps) {
+  const [contactosNuevos, setContactosNuevos] = useState<ContactoFormData[]>([]);
   const {
     register,
     handleSubmit,
@@ -153,9 +155,6 @@ export function AnuncianteForm({
       regimen_fiscal: "",
       uso_cfdi_default: "",
       referencia_anunciante: "",
-      contacto_nombre: "",
-      contacto_email: "",
-      contacto_telefono: "",
       dias_credito_default: "0",
       motivo_cambio: "",
       ...defaultValues,
@@ -189,31 +188,31 @@ export function AnuncianteForm({
 
   const submit = handleSubmit((data) => {
     const motivo = data.motivo_cambio?.trim();
-    onSubmit({
-      nombre_comercial: data.nombre_comercial.trim(),
-      nombre_fiscal: data.nombre_fiscal.trim(),
-      rfc_anunciante: data.rfc_anunciante.toUpperCase(),
-      agencia_id: data.agencia_id?.trim() ? data.agencia_id : null,
-      localizacion: data.localizacion?.trim() || null,
-      calle: data.calle?.trim() || null,
-      numero_exterior: data.numero_exterior?.trim() || null,
-      numero_interior: data.numero_interior?.trim() || null,
-      colonia: data.colonia?.trim() || null,
-      localidad: data.localidad?.trim() || null,
-      referencia_domicilio: data.referencia_domicilio?.trim() || null,
-      municipio: data.municipio?.trim() || null,
-      estado: data.estado?.trim() || null,
-      pais: data.pais?.trim() || null,
-      codigo_postal: data.codigo_postal?.trim() || null,
-      regimen_fiscal: data.regimen_fiscal?.trim() || null,
-      uso_cfdi_default: data.uso_cfdi_default?.trim() || null,
-      referencia_anunciante: data.referencia_anunciante?.trim() || null,
-      contacto_nombre: data.contacto_nombre?.trim() || null,
-      contacto_email: data.contacto_email?.trim() || null,
-      contacto_telefono: data.contacto_telefono?.trim() || null,
-      dias_credito_default: Number(data.dias_credito_default),
-      ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
-    });
+    onSubmit(
+      {
+        nombre_comercial: data.nombre_comercial.trim(),
+        nombre_fiscal: data.nombre_fiscal.trim(),
+        rfc_anunciante: data.rfc_anunciante.toUpperCase(),
+        agencia_id: data.agencia_id?.trim() ? data.agencia_id : null,
+        localizacion: data.localizacion?.trim() || null,
+        calle: data.calle?.trim() || null,
+        numero_exterior: data.numero_exterior?.trim() || null,
+        numero_interior: data.numero_interior?.trim() || null,
+        colonia: data.colonia?.trim() || null,
+        localidad: data.localidad?.trim() || null,
+        referencia_domicilio: data.referencia_domicilio?.trim() || null,
+        municipio: data.municipio?.trim() || null,
+        estado: data.estado?.trim() || null,
+        pais: data.pais?.trim() || null,
+        codigo_postal: data.codigo_postal?.trim() || null,
+        regimen_fiscal: data.regimen_fiscal?.trim() || null,
+        uso_cfdi_default: data.uso_cfdi_default?.trim() || null,
+        referencia_anunciante: data.referencia_anunciante?.trim() || null,
+        dias_credito_default: Number(data.dias_credito_default),
+        ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
+      },
+      contactosNuevos,
+    );
   });
 
   return (
@@ -290,18 +289,12 @@ export function AnuncianteForm({
         </select>
         <div className="fe" />
 
-        <div className="sec">Contacto</div>
-        <div className="fl">Nombre</div>
-        <input className="fi" {...register("contacto_nombre")} />
-        <div className="fe">{errors.contacto_nombre?.message}</div>
-
-        <div className="fl">Correo</div>
-        <input className="fi" {...register("contacto_email")} />
-        <div className="fe">{errors.contacto_email?.message}</div>
-
-        <div className="fl">Teléfono</div>
-        <input className="fi" {...register("contacto_telefono")} />
-        <div className="fe">{errors.contacto_telefono?.message}</div>
+        <ContactosSection
+          anuncianteId={isEdit ? anuncianteId : null}
+          canWrite
+          contactosNuevos={contactosNuevos}
+          onContactosNuevosChange={setContactosNuevos}
+        />
 
         <div className="sec">Condiciones default</div>
         <SensitiveField

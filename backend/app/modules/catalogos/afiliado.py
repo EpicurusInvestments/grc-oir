@@ -10,6 +10,18 @@ base de F0-00 y añade dos reglas propias en la capa de servicio:
 Nota RFC: el RFC de una persona moral tiene 12 caracteres y el de una física 13. Los
 afiliados son empresas (morales), por lo que se valida el formato oficial mexicano de
 12-13 caracteres y la columna es `NVARCHAR(13)`. Ver nota en la ficha f0-01.
+
+**Sin `plaza_id` (ADR-096, petición del usuario):** el Afiliado ya NO tiene plaza propia
+— la plaza es una propiedad de la Estación, no del Afiliado (un afiliado puede operar
+estaciones en varias plazas). El campo `plaza_id`/`plaza_nombre` que existía aquí
+(E-1/ADR-005) se eliminó por completo; vive únicamente en `Estacion` desde ADR-094.
+
+**ContactoAfiliado** (entidad NUEVA, fuera de la spec BD v2 — ADR-094, petición del
+usuario): el Afiliado ya traía un solo contacto plano (`contacto_nombre`/
+`contacto_email`/`contacto_telefono`, arriba). Mismo patrón que `ContactoAnunciante`/
+`ContactoAgencia` (ADR-091/092): tabla propia, anidada (CRUD completo + alta/edición
+en vivo dentro del propio formulario del padre, no solo desde el detalle), los 3 campos
+planos quedan como LEGADO sin tocar.
 """
 
 from __future__ import annotations
@@ -22,15 +34,14 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import ForeignKey, Unicode, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base, datetime2, get_db
-from app.core.errors import ConflictError, DependenciasActivasError
-from app.core.security import CurrentUser
-from app.modules.catalogos.plaza import Plaza
+from app.core.errors import ConflictError, DependenciasActivasError, NotFoundError
+from app.core.security import CurrentUser, requiere_permiso
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.crud_router import build_crud_router
@@ -57,7 +68,6 @@ class Afiliado(Base):
     nombre_afiliado: Mapped[str] = mapped_column(Unicode(160), index=True)
     razon_social_afiliado: Mapped[str] = mapped_column(Unicode(200))
     rfc_afiliado: Mapped[str] = mapped_column(Unicode(13), unique=True, index=True)
-    plaza_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plaza.plaza_id"), index=True)
     contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
     contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
@@ -73,7 +83,6 @@ class AfiliadoCreate(BaseModel):
     nombre_afiliado: str = Field(min_length=1, max_length=160)
     razon_social_afiliado: str = Field(min_length=1, max_length=200)
     rfc_afiliado: str = Field(min_length=12, max_length=13)
-    plaza_id: uuid.UUID
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
     contacto_telefono: str | None = Field(default=None, max_length=40)
@@ -88,7 +97,6 @@ class AfiliadoUpdate(BaseModel):
     nombre_afiliado: str | None = Field(default=None, min_length=1, max_length=160)
     razon_social_afiliado: str | None = Field(default=None, min_length=1, max_length=200)
     rfc_afiliado: str | None = Field(default=None, min_length=12, max_length=13)
-    plaza_id: uuid.UUID | None = None
     contacto_nombre: str | None = Field(default=None, max_length=160)
     contacto_email: str | None = Field(default=None, max_length=160)
     contacto_telefono: str | None = Field(default=None, max_length=40)
@@ -106,12 +114,10 @@ class AfiliadoRead(CatalogoReadBase):
     nombre_afiliado: str
     razon_social_afiliado: str
     rfc_afiliado: str
-    plaza_id: uuid.UUID
     contacto_nombre: str | None = None
     contacto_email: str | None = None
     contacto_telefono: str | None = None
-    # Derivados (solo lectura; NO se aceptan en Create/Update):
-    plaza_nombre: str | None = None  # nombre_plaza de la plaza referenciada
+    # Derivado (solo lectura; NO se acepta en Create/Update):
     estaciones_count: int = 0  # nº de estaciones del afiliado (todas)
 
 
@@ -122,26 +128,6 @@ class AfiliadoRepository(BaseRepository[Afiliado]):
         if excluir_id is not None:
             stmt = stmt.where(Afiliado.afiliado_id != excluir_id)
         return self.db.scalars(stmt).first()
-
-    def contar_activos_por_plaza(self, plaza_id: uuid.UUID) -> int:
-        total = self.db.scalar(
-            select(func.count())
-            .select_from(Afiliado)
-            # Se compara con `== True` (SQLAlchemy lo traduce a `activo = 1`), portable a
-            # SQL Server; la variante con IS-booleano NO lo es (IS solo compara con NULL en
-            # SQL Server). Ver ADR-014.
-            .where(Afiliado.plaza_id == plaza_id, Afiliado.activo == True)  # noqa: E712
-        )
-        return int(total or 0)
-
-    def nombres_de_plazas(self, plaza_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, str]:
-        """Nombre de plaza por id, en UNA consulta (para enriquecer la lista sin N+1)."""
-        if not plaza_ids:
-            return {}
-        rows = self.db.execute(
-            select(Plaza.plaza_id, Plaza.nombre_plaza).where(Plaza.plaza_id.in_(set(plaza_ids)))
-        ).all()
-        return {row[0]: row[1] for row in rows}
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -154,27 +140,21 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
         self._afiliado_repo = repo
         self._estacion_repo = estacion_repo
 
-    # ── enriquecimiento (plaza_nombre + estaciones_count) ───────────────────────
-    def _read(self, obj: Afiliado, plaza_nombre: str | None, count: int) -> AfiliadoRead:
-        return AfiliadoRead.model_validate(obj).model_copy(
-            update={"plaza_nombre": plaza_nombre, "estaciones_count": count}
-        )
+    # ── enriquecimiento (estaciones_count) ──────────────────────────────────────
+    def _read(self, obj: Afiliado, count: int) -> AfiliadoRead:
+        return AfiliadoRead.model_validate(obj).model_copy(update={"estaciones_count": count})
 
     def _to_read(self, obj: Afiliado) -> AfiliadoRead:
-        # Camino de un solo registro (get/create/update/estado): 2 consultas puntuales.
-        nombre = self._afiliado_repo.nombres_de_plazas([obj.plaza_id]).get(obj.plaza_id)
+        # Camino de un solo registro (get/create/update/estado): 1 consulta puntual.
         count = self._estacion_repo.contar_por_afiliados([obj.afiliado_id]).get(obj.afiliado_id, 0)
-        return self._read(obj, nombre, count)
+        return self._read(obj, count)
 
     def list(self, params: ListParams) -> Page[AfiliadoRead]:
-        # Enriquecimiento por LOTE: 3 consultas por página (lista + nombres + conteos).
+        # Enriquecimiento por LOTE: 2 consultas por página (lista + conteos).
         items, total = self.repo.list(params)
-        nombres = self._afiliado_repo.nombres_de_plazas([a.plaza_id for a in items])
         counts = self._estacion_repo.contar_por_afiliados([a.afiliado_id for a in items])
         return Page[AfiliadoRead](
-            items=[
-                self._read(a, nombres.get(a.plaza_id), counts.get(a.afiliado_id, 0)) for a in items
-            ],
+            items=[self._read(a, counts.get(a.afiliado_id, 0)) for a in items],
             total=total,
             page=params.page,
             size=params.size,
@@ -207,6 +187,116 @@ class AfiliadoService(BaseService[Afiliado, AfiliadoCreate, AfiliadoUpdate, Afil
             )
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# ContactoAfiliado (anidada en Afiliado — entidad nueva, mirror de ContactoAnunciante)
+# ════════════════════════════════════════════════════════════════════════════════
+class ContactoAfiliado(Base):
+    __tablename__ = "contacto_afiliado"
+
+    contacto_afiliado_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    afiliado_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("afiliado.afiliado_id"), index=True
+    )
+    nombre_contacto: Mapped[str] = mapped_column(Unicode(160))
+    puesto_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    telefono_contacto: Mapped[str | None] = mapped_column(Unicode(40), default=None)
+    email_contacto: Mapped[str | None] = mapped_column(Unicode(160), default=None)
+    activo: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        datetime2(), default=None, onupdate=datetime.now
+    )
+
+
+class ContactoAfiliadoCreate(BaseModel):
+    afiliado_id: uuid.UUID
+    nombre_contacto: str = Field(min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAfiliadoUpdate(BaseModel):
+    afiliado_id: uuid.UUID | None = None
+    nombre_contacto: str | None = Field(default=None, min_length=1, max_length=160)
+    puesto_contacto: str | None = Field(default=None, max_length=160)
+    telefono_contacto: str | None = Field(default=None, max_length=40)
+    email_contacto: str | None = Field(default=None, max_length=160)
+
+
+class ContactoAfiliadoRead(CatalogoReadBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    contacto_afiliado_id: uuid.UUID
+    afiliado_id: uuid.UUID
+    nombre_contacto: str
+    puesto_contacto: str | None = None
+    telefono_contacto: str | None = None
+    email_contacto: str | None = None
+
+
+class ContactoAfiliadoRepository(BaseRepository[ContactoAfiliado]):
+    def list_por_afiliado(
+        self, afiliado_id: uuid.UUID, params: ListParams
+    ) -> tuple[Sequence[ContactoAfiliado], int]:
+        base = select(ContactoAfiliado).where(ContactoAfiliado.afiliado_id == afiliado_id)
+        if params.activo is not None:
+            base = base.where(ContactoAfiliado.activo == params.activo)
+        if params.q:
+            base = base.where(ContactoAfiliado.nombre_contacto.ilike(f"%{params.q.strip()}%"))
+        total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
+        stmt = (
+            base.order_by(ContactoAfiliado.nombre_contacto)
+            .offset((params.page - 1) * params.size)
+            .limit(params.size)
+        )
+        return self.db.scalars(stmt).all(), int(total)
+
+
+class ContactoAfiliadoService(
+    BaseService[
+        ContactoAfiliado, ContactoAfiliadoCreate, ContactoAfiliadoUpdate, ContactoAfiliadoRead
+    ]
+):
+    read_schema = ContactoAfiliadoRead
+    entidad = "ContactoAfiliado"
+
+    def __init__(
+        self, repo: ContactoAfiliadoRepository, *, afiliado_repo: AfiliadoRepository
+    ) -> None:
+        super().__init__(repo)
+        self._contacto_repo = repo
+        self._afiliado_repo = afiliado_repo
+
+    def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        self._verificar_afiliado(payload["afiliado_id"])
+
+    def _pre_update(
+        self, obj: ContactoAfiliado, payload: dict[str, Any], usuario: CurrentUser
+    ) -> None:
+        if "afiliado_id" in payload:
+            self._verificar_afiliado(payload["afiliado_id"])
+
+    def list_por_afiliado(
+        self, afiliado_id: uuid.UUID, params: ListParams
+    ) -> Page[ContactoAfiliadoRead]:
+        items, total = self._contacto_repo.list_por_afiliado(afiliado_id, params)
+        return Page[ContactoAfiliadoRead](
+            items=[self._to_read(o) for o in items],
+            total=total,
+            page=params.page,
+            size=params.size,
+            pages=ceil(total / params.size) if params.size else 0,
+        )
+
+    def _verificar_afiliado(self, afiliado_id: uuid.UUID) -> None:
+        if self._afiliado_repo.get(afiliado_id) is None:
+            raise NotFoundError(
+                "Afiliado no encontrado para el contacto.",
+                detalles={"afiliado_id": str(afiliado_id)},
+            )
+
+
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_afiliado_service(db: Session = Depends(get_db)) -> AfiliadoService:
     from app.modules.catalogos.estacion import Estacion, EstacionRepository
@@ -233,3 +323,40 @@ router = build_crud_router(
     get_service=get_afiliado_service,
     id_type=uuid.UUID,
 )
+
+
+def get_contacto_afiliado_service(db: Session = Depends(get_db)) -> ContactoAfiliadoService:
+    repo = ContactoAfiliadoRepository(
+        db, ContactoAfiliado, search_columns=[ContactoAfiliado.nombre_contacto]
+    )
+    return ContactoAfiliadoService(repo, afiliado_repo=AfiliadoRepository(db, Afiliado))
+
+
+contacto_afiliado_router = build_crud_router(
+    prefix="/contactos-afiliado",
+    tags=["catalogos:contactos-afiliado"],
+    permiso_base="catalogos",
+    read_schema=ContactoAfiliadoRead,
+    create_schema=ContactoAfiliadoCreate,
+    update_schema=ContactoAfiliadoUpdate,
+    get_service=get_contacto_afiliado_service,
+    id_type=uuid.UUID,
+)
+
+
+@contacto_afiliado_router.get(
+    "/afiliado/{afiliado_id}", response_model=Page[ContactoAfiliadoRead]
+)
+def listar_contactos_por_afiliado(
+    afiliado_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todos, true=activos, false=inactivos"),
+    q: str | None = Query(None, description="Búsqueda por nombre de contacto"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: ContactoAfiliadoService = Depends(get_contacto_afiliado_service),
+) -> Page[ContactoAfiliadoRead]:
+    """Contactos de un afiliado (para el panel anidado de la pantalla de afiliados)."""
+    return svc.list_por_afiliado(
+        afiliado_id, ListParams(page=page, size=size, activo=activo, q=q)
+    )

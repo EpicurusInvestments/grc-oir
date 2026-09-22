@@ -159,7 +159,7 @@ export function OrdenClienteDetailPanel({
             <div className="fv">{contrato ? contrato.nombre_contrato : <span style={{ color: "var(--text3)" }}>Sin contrato</span>}</div>
           </div>
           <div>
-            <div className="fl">Categoría</div>
+            <div className="fl">Giro empresarial</div>
             <div className="fv">{categoria ? categoria.nombre_categoria : "—"}</div>
           </div>
         </div>

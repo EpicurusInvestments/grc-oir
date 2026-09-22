@@ -42,14 +42,17 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   fases; sin microservicios en esta etapa.
 
 ### ADR-005 — Plaza de la Estación: herencia desde el Afiliado (Opción A)
-- **Estado:** aceptada · **Fecha:** (F0-01)
+- **Estado:** **revertida por [[ADR-094]]** (2026-09-20) · **Fecha:** (F0-01)
 - **Contexto:** tanto `Estacion` como `Afiliado` tienen `plaza_id`; podían divergir.
-- **Decisión:** la estación HEREDA la plaza de su afiliado. `Estacion.plaza_id` se asigna
-  en el servicio = `Afiliado.plaza_id` y no se captura en el formulario. Se asume que un
-  afiliado opera en una sola plaza.
+- **Decisión (histórica):** la estación HEREDA la plaza de su afiliado. `Estacion.plaza_id`
+  se asigna en el servicio = `Afiliado.plaza_id` y no se captura en el formulario. Se
+  asume que un afiliado opera en una sola plaza.
 - **Consecuencias:** UI más simple (inferencia automática, como en la pantalla aprobada);
   consistencia garantizada por diseño. Si a futuro un afiliado opera en varias plazas, se
   revisará para pasar a captura libre.
+- **Nota (2026-09-20):** superada por ADR-094 — la nueva pantalla "Estaciones" pide Plaza
+  como campo capturable e independiente; se confirmó con el usuario que un afiliado y sus
+  estaciones SÍ pueden estar en plazas distintas. La herencia automática se elimina.
 
 ### ADR-006 — Omisión del campo `venta_directa_carmen_aristegui_cdmx`
 - **Estado:** aceptada · **Fecha:** (F0-01)
@@ -181,7 +184,8 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   las consultas con especificidades de dialecto (BIT, tipos de fecha, `TOP`/`LIMIT`, etc.).
 
 ### ADR-015 — TarifaPlaza: neta calculada+persistida, anti-solapamiento y filtro de vigencia (F0-02)
-- **Estado:** aceptada · **Fecha:** 2026-07 (F0-02)
+- **Estado:** aceptada · **parcialmente superada por [[ADR-097]]** (2026-09-21, elimina
+  plaza/vigencia/solapamiento) · **Fecha:** 2026-07 (F0-02)
 - **Contexto:** la entidad `TarifaPlaza` introduce en F0 cosas que los catálogos previos no
   tenían: un campo **calculado** (`tarifa_neta`), **montos decimales**, **vigencias** con
   regla de no-solapamiento, y un filtro derivado Vigentes/Expiradas que el CRUD genérico de
@@ -3089,3 +3093,425 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `facturacion/__tests__/format.test.ts` y `ordenes/__tests__/format.test.ts` (se quitan
   los casos de las opciones eliminadas, se prueba el truncado como comportamiento
   único).
+
+### ADR-091 — `ContactoAnunciante`/`ContactoAgencia`: entidades NUEVAS (fuera de la spec BD v2), varios contactos por Anunciante/Agencia
+
+- **Estado:** aceptada · **Fecha:** 2026-09-19 (F0-03).
+- **Contexto:** el usuario pidió agregar, en los catálogos Anunciante y Agencia, la
+  posibilidad de guardar VARIOS contactos — hoy cada entidad solo trae un contacto plano
+  (`contacto_nombre`/`contacto_email`/`contacto_telefono`, 3 campos de la spec original).
+  Como con `FacturaVendedor` (ADR-082), esto es una entidad nueva fuera de las 33 de la
+  spec BD v2, así que antes de escribir código se confirmaron tres decisiones con el
+  usuario:
+  1. **¿Una tabla compartida o dos separadas?** → Respuesta: **dos separadas**
+     (`ContactoAnunciante`/`ContactoAgencia`), cada una con FK simple a su padre — mismo
+     patrón que `Marca` (anidada en Anunciante, F0-03 tanda 2). Se descartó una tabla
+     única con discriminador de tipo: SQL Server no puede validar una FK contra dos
+     tablas distintas, así que esa ruta pierde integridad referencial real.
+  2. **¿Qué pasa con los 3 campos planos existentes?** → Respuesta: **quedan como
+     LEGADO, sin tocar** — se quitan de los formularios de alta/edición (ya no se
+     capturan) pero se siguen mostrando de solo lectura en el detalle si una fila vieja
+     los trae (mismo criterio que `archivo_nombre`/`archivo_path` en Facturas tras
+     separarse en PDF/XML).
+  3. **¿Qué campos lleva cada contacto?** → Respuesta: nombre, teléfono, correo (los 3 de
+     siempre) **+ puesto o cargo** (nuevo). Se descartó un flag "contacto principal": no
+     se pidió y no había un caso de uso claro para ordenarlos o destacarlos.
+- **Decisión:** mirror línea por línea de `Marca` (`app/modules/catalogos/anunciante.py`),
+  una vez por cada entidad padre:
+  - Modelo con `activo` (baja lógica, sin bloqueo por dependientes — no se pidió esa
+    regla), FK `NO ACTION` al padre, mismos criterios de migración que las recientes de
+    F2/F3.
+  - CRUD completo vía `build_crud_router` + `GET /catalogos/contactos-anunciante/
+    anunciante/{id}` y `GET /catalogos/contactos-agencia/agencia/{id}` para el panel
+    anidado (mismo patrón que `GET /catalogos/marcas/anunciante/{id}`).
+  - Frontend: `ContactoInlineForm` (nombre/puesto/teléfono/correo, con la misma
+    validación de formato de correo que tenía el campo plano) + sección "Contactos"
+    anidada con agregar/editar/desactivar en línea, en `AnuncianteDetailPanel.tsx` y
+    `AgenciaCatalogPage.tsx` (esta última no tiene un `DetailPanel` propio — su detalle
+    vive inline en la página). La sección "Contacto"/"Contacto comercial" (legado) solo
+    se muestra si trae datos, con tag «Legado».
+- **Consecuencia:** `AnuncianteForm`/`AgenciaForm` pierden los 3 campos de captura del
+  contacto plano (con su validación de correo, que se movió a `ContactoInlineForm`); los
+  tipos `Anunciante`/`Agencia` conservan los 3 campos legado de solo lectura (la API no
+  cambió esos schemas). Ninguna migración de datos: son tablas nuevas, sin filas.
+- **Verificado:** backend — 14 pruebas nuevas (`test_f0_contacto_anunciante_agencia.py`,
+  mirror exacto de las de Marca: alta/listado por padre, padre inexistente en alta y
+  edición, edición de campos, campos opcionales, activar/desactivar, aislamiento por
+  padre) + suite completa (pytest) en verde; migración con round-trip
+  `upgrade → downgrade → upgrade` verificado contra la RDS real; smoke test manual del
+  ciclo completo (alta → listar → editar → desactivar) contra la API viva para ambas
+  entidades. Frontend — `tsc --noEmit` y `eslint` limpios; sin pruebas de componente
+  nuevas (`AnuncianteDetailPanel`/`AgenciaCatalogPage` no tenían suite previa que
+  extender — igual que `Marca`, que tampoco la tiene).
+
+### ADR-092 — Fix inmediato a ADR-091: Contactos también se capturan en el alta y se editan desde el formulario de edición, no solo desde el detalle
+
+- **Estado:** aceptada · **Fecha:** 2026-09-20 (F0-03).
+- **Contexto:** ADR-091 dejó la gestión de Contactos SOLO en el panel de detalle
+  (solo lectura, `modo === "view"`) — igual que Marca. El usuario probó la pantalla y
+  pidió dos cosas que Marca nunca tuvo: (1) poder agregar varios contactos **durante el
+  alta**, antes de que el Anunciante/Agencia exista todavía, y (2) poder **modificarlos
+  desde el formulario de edición**, no solo yendo de regreso al detalle de solo lectura.
+- **Decisión:** `ContactosSection` (nuevo componente, uno por módulo) con DOS modos según
+  si ya existe el id del padre:
+  1. **Alta** (`anuncianteId`/`agenciaId` es `null` — el padre todavía no existe): los
+     contactos capturados se guardan en un arreglo EN MEMORIA dentro del propio
+     `AnuncianteForm`/`AgenciaForm` (`contactosNuevos`, estado local). No hay "Desactivar"
+     en este modo (un contacto que nunca se guardó no tiene estado que desactivar), solo
+     "Quitar" de la lista. Al enviar el formulario, el `onSubmit` ahora manda un SEGUNDO
+     argumento (`contactosNuevos: ContactoFormData[]`) además del payload de la entidad;
+     la página (`AnuncianteCatalogPage`/`AgenciaCatalogPage`) primero crea el
+     Anunciante/Agencia y, ya con el id real, crea cada contacto uno por uno.
+  2. **Edición** (id presente): mismo comportamiento que ya tenía el detalle — cada
+     alta/edición/baja de un contacto pega DIRECTO al backend
+     (`useContactosAnunciante`/`useContactosAgencia`), sin esperar al botón "Guardar
+     cambios" del formulario (ese botón es solo para los campos propios de la entidad).
+  3. `AnuncianteDetailPanel.tsx` y el bloque de detalle de `AgenciaCatalogPage.tsx` se
+     refactorizan para usar el MISMO `ContactosSection` (antes tenían la lógica de
+     add/editar/desactivar duplicada inline) — una sola implementación para los tres
+     lugares donde aparece la sección (alta, edición, detalle), sin drift entre ellas.
+- **Consecuencia:** `AnuncianteForm`/`AgenciaForm` ganan un prop opcional
+  `anuncianteId`/`agenciaId` (presente solo en edición) y cambian la firma de `onSubmit`
+  para incluir `contactosNuevos`; los llamadores existentes que ignoran el segundo
+  argumento (la rama de edición, que siempre lo manda vacío) siguen compilando sin
+  cambios (TypeScript permite un callback con menos parámetros de los que el tipo
+  declara). No se tocó Marca: el usuario no pidió este mismo tratamiento ahí, y hacerlo
+  hubiera sido alcance no pedido.
+- **Verificado:** `tsc --noEmit` y `eslint` limpios en todo el frontend; suite `vitest`
+  completa sin regresiones (294/306, los 12 fallos de `auth`/`seguridad`/`apiClient` son
+  preexistentes). Sin pruebas de backend nuevas (ningún endpoint cambió, es
+  reordenamiento puro de las mismas llamadas ya probadas en ADR-091).
+- **Fix inmediato (mismo día):** al probarlo, capturar un contacto durante el alta y
+  darle "Guardar" sacaba al usuario del formulario del anunciante/agencia sin guardar
+  nada — ni el contacto ni el registro. **Causa raíz:** `ContactoInlineForm` seguía
+  siendo un `<form>` propio (heredado de antes de ADR-092, cuando solo vivía en el
+  detalle de solo lectura); al meterlo dentro de `ContactosSection` DENTRO del `<form>`
+  de `AnuncianteForm`/`AgenciaForm`, quedó un `<form>` anidado dentro de otro — HTML
+  inválido. El navegador aplana el anidado, así que el botón "Guardar" del contacto en
+  realidad quedaba asociado al `<form>` EXTERIOR (el del anunciante/agencia): al hacer
+  clic, disparaba el envío de ESE formulario, con validación de campos que casi nunca
+  estaban completos todavía (de ahí que pareciera "sacar" al usuario sin guardar nada).
+  **Corrección:** `ContactoInlineForm` (las dos copias, Anunciante y Agencia) cambia su
+  raíz de `<form>` a `<div>`, y el botón "Guardar" pasa de `type="submit"` a
+  `type="button"` con `onClick={() => void submit()}` — `handleSubmit` de
+  react-hook-form no necesita un evento nativo de `<form>`, se puede invocar directo.
+  Se agrega un `onKeyDown` en el `<div>` para que Enter siga guardando (se perdía al
+  quitar el `<form>`). Verificado: `tsc`, `eslint` y `vitest` (294/306, mismos 12
+  fallos preexistentes) en verde.
+
+### ADR-093 — `AgenciaForm` validaba el RFC solo por longitud, no por formato (bug preexistente, expuesto al probar ADR-092)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-20 (F0-03).
+- **Contexto:** al probar el alta de agencia con Contactos, un RFC de 13 caracteres pero
+  con la forma incorrecta (5 letras antes de la fecha, en vez de 3-4 — p.ej.
+  `MCCIN120815GH`) pasaba la validación del frontend (`AgenciaForm` solo checaba
+  `min(12)`/`max(13)` de longitud) y tronaba hasta el backend, que SÍ valida el formato
+  oficial MX completo (`_normaliza_rfc`/`RFC_REGEX` en `agencia.py`) y lo rechaza con un
+  422 genérico ("Datos de entrada inválidos", sin señalar el campo) — el registro
+  completo se perdía sin explicación clara de qué corregir. `AnuncianteForm` nunca tuvo
+  este problema: ya validaba el RFC con la regex completa desde su alta original.
+- **Decisión:** `AgenciaForm` adopta la MISMA regex que `AnuncianteForm`
+  (`/^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i`, igual a la del backend) en vez del chequeo de
+  longitud, con el mismo mensaje de error señalando el campo; el envío aplica
+  `.toUpperCase()` (antes mandaba el RFC tal cual se escribió); el input gana
+  `maxLength={13}` y `textTransform: uppercase` — misma UX que Anunciante.
+- **Consecuencia:** ninguna — mismo campo, mismo tipo de dato; solo se adelanta al
+  frontend una validación que el backend ya hacía, con un mensaje específico en vez de
+  un 422 genérico.
+- **Verificado:** `tsc --noEmit` y `eslint` limpios; suite `vitest` completa sin
+  regresiones (294/306, mismos 12 fallos preexistentes).
+
+### ADR-094 — Estaciones: pantalla propia (deja de vivir anidada en Afiliado), plaza de selección libre (revierte ADR-005), `siglas` nuevo, `ContactoAfiliado`
+
+- **Estado:** aceptada · **Fecha:** 2026-09-20 (F0-01/F0-03).
+- **Contexto:** el usuario pidió dos cambios sobre la pantalla "Afiliados y estaciones":
+  (1) separarla en dos pantallas independientes — Afiliados y Estaciones (Emisoras) — con
+  la nueva pantalla de Estaciones capturando Nombre, **Siglas** (campo nuevo), Frecuencia,
+  Tipo de señal, **Plaza** (select) y **Afiliado** (select, solo activos); y (2) agregar
+  Contactos múltiples a Afiliados, mismo patrón que ADR-091/092. El punto (1) entra en
+  conflicto directo con ADR-005 (plaza de la Estación heredada del Afiliado, sin captura
+  propia): la nueva pantalla pide Plaza como campo capturable. Se preguntó al usuario
+  antes de programar (dos `AskUserQuestion`): ¿la Plaza de la Estación se selecciona libre
+  e independiente del Afiliado, o se sugiere-pero-editable, o se mantiene heredada de solo
+  lectura? → **selección libre e independiente**. ¿Estaciones se sigue gestionando también
+  anidado en el detalle de Afiliado, o se quita de ahí y queda solo en la pantalla nueva?
+  → **se quita de Afiliado, solo la pantalla nueva**.
+- **Decisión:**
+  1. **ADR-005 revertida.** `Estacion.plaza_id` deja de derivarse en el servicio
+     (`_plaza_de_afiliado()` eliminado); `EstacionCreate.plaza_id` pasa a ser
+     **obligatorio** y `EstacionUpdate.plaza_id` capturable, ambos validados contra el
+     catálogo (`_verificar_plaza`, mismo patrón que `_verificar_afiliado`). Un afiliado y
+     sus estaciones YA PUEDEN estar en plazas distintas — es un caso real de negocio
+     (estación reasignada, cobertura cruzada), no un error de captura.
+  2. **`Estacion` gana `siglas`** (`Unicode(20)`, opcional) — campo pedido, no existía en
+     la spec v2 original ni en el modelo previo.
+  3. **Pantalla `Estaciones` nueva** (`modules/catalogos/estacion/`, mismo patrón
+     lista+detalle que el resto de F0): columnas Estación/Siglas/Tipo/Frecuencia/
+     Plaza/Afiliado/Estatus; alta/edición con Plaza y Afiliado como selects
+     independientes (Afiliado filtrado a `activo:true`); `afiliado_nombre`/`plaza_nombre`
+     resueltos en el backend en batch (`nombres_de_afiliados`/`nombres_de_plazas`, una
+     consulta cada una, sin N+1) para no repetir ese join en cada consumidor.
+  4. **Afiliado ya no gestiona Estaciones.** `AfiliadoDetailPanel` conserva una sección
+     "Estaciones" de SOLO LECTURA (vía `useEstacionesPorAfiliado`, nombre/frecuencia/
+     plaza/tipo/estatus, sin botones) con la nota "Alta, edición y baja de estaciones:
+     pantalla 'Estaciones'." — para no tener dos formas de hacer lo mismo. Se elimina
+     `EstacionInlineForm.tsx` del módulo `afiliado` (movida su lógica, ya sin el bloque
+     de plaza-heredada, a `EstacionForm.tsx` en el módulo nuevo).
+  5. **`ContactoAfiliado`** (entidad nueva, fuera de la spec BD v2): mismo mirror exacto
+     de `ContactoAnunciante`/`ContactoAgencia` (ADR-091/092) — tabla propia con FK a
+     `afiliado`, CRUD completo, `ContactosSection` en modo dual (alta: en memoria vía
+     `contactosNuevos`; edición/detalle: contra backend), `ContactoInlineForm` construido
+     desde el inicio como `<div>` (no `<form>`) para evitar de raíz el bug de formularios
+     anidados ya corregido en ADR-092. `AfiliadoForm` deja de capturar el contacto plano
+     legado (`contacto_nombre`/`contacto_email`/`contacto_telefono`); el detalle lo sigue
+     mostrando de solo lectura, con tag "Legado", solo si algún registro viejo lo trae.
+  6. Router del catálogo de Estación: la ruta genérica `GET ""` del `build_crud_router` se
+     reemplaza por una versión custom que acepta `afiliado_id`/`plaza_id` como filtros de
+     query (mismo patrón que otros catálogos con filtros extra) — no se modificó
+     `crud_router.py`.
+- **Consecuencia:** `EstacionCreate.plaza_id` pasa de ausente/opcional a **requerido** —
+  rompe implícitamente cualquier llamada externa que creara una `Estacion` sin plaza (no
+  las había: la única vía era el formulario, ya actualizado). Migración
+  `3d82c1b995f2` agrega `estacion.siglas` (nullable) y crea `contacto_afiliado`; aplicada
+  y verificada en round-trip (`upgrade` → `downgrade` → `upgrade`) contra la RDS real. Los
+  17 sitios de prueba que construían una `Estacion` vía el helper `_estacion()` se
+  actualizaron para pasar `plaza_id` explícito; se reemplazaron los dos tests de herencia
+  de ADR-005 por ocho nuevos (captura propia, plaza distinta a la del afiliado, reasignar
+  en edición, plaza inexistente rechazada en alta/edición, siglas opcional,
+  afiliado_nombre/plaza_nombre en el read) y se agregaron 7 tests de `ContactoAfiliado`.
+  `catalogRegistry.tsx` gana la entrada "Estaciones" (grupo Operación, junto a
+  "Afiliados"); el explorador (`CatalogosExplorerPage.tsx`) gana su contador de sidebar
+  igual que el resto de catálogos.
+- **Verificado:** backend — `ruff check` limpio, suite `pytest` completa en verde (F0-01
+  actualizado + `test_f0_contacto_afiliado.py` nuevo, 7/7), migración aplicada y
+  verificada en round-trip contra RDS real. Frontend — `tsc --noEmit` y `eslint` limpios
+  en todo el proyecto (incluyendo el ajuste del import de `estacionApi` en
+  `modules/ordenes/adapters/catalogosApi.ts`, que apuntaba al módulo `afiliado` movido);
+  suite `vitest` completa sin regresiones (294/306, mismos 12 fallos preexistentes de
+  `auth`/`seguridad`/`apiClient`, no relacionados).
+
+### ADR-095 — Catálogo `Categoria`: renombrado a "Giro Empresarial" en toda la UI (entidad/campos sin cambio)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-20 (F0-04).
+- **Contexto:** el usuario pidió renombrar el catálogo "Categorías" a "Giro Empresarial"
+  en la pantalla (sidebar, título, formulario, filtros, el select de `categoria_id` dentro
+  de `OrdenCliente` y el detalle de la orden).
+- **Decisión:** cambio de texto puro en el frontend — **la entidad y sus campos
+  (`Categoria`, `categoria_id`, `nombre_categoria`, `descripcion_categoria`) se mantienen
+  intactos**, tal como exige `CLAUDE.md §13` (no renombrar entidades/campos respecto a la
+  spec BD v2). Se actualizaron todos los textos visibles al usuario:
+  `catalogRegistry.tsx` (label del sidebar), `CategoriaCatalogPage.tsx` (título,
+  subtítulo, columna de lista, mensajes de carga/error/vacío, botón "+ Nuevo giro
+  empresarial", placeholder de búsqueda, filtros Activos/Inactivos/Todos — antes en
+  femenino por "categoría", ahora en masculino por "giro"), `CategoriaForm.tsx`
+  (encabezado de sección) y, por consistencia (mismo concepto, mismo catálogo), el campo
+  "Categoría comercial" del alta/edición de `OrdenCliente`
+  (`OrdenClienteForm.tsx`/`OrdenClienteDetailPanel.tsx`) → "Giro empresarial".
+- **Consecuencia:** ninguna a nivel de datos/API — mismo `categoria_id`, mismo endpoint
+  `/catalogos/categorias`. Solo texto de UI.
+- **Verificado:** `tsc --noEmit` y `eslint` limpios en todo el frontend; sin pruebas que
+  aserten sobre el texto anterior ("Categoría"/"Categorías"), por lo que la suite
+  `vitest` no requirió cambios.
+
+### ADR-096 — `Afiliado` pierde `plaza_id`: la plaza es propiedad exclusiva de la Estación
+
+- **Estado:** aceptada · **Fecha:** 2026-09-21 (F0-01).
+- **Contexto:** el usuario reportó como bug que el catálogo de Afiliado sigue teniendo un
+  campo Plaza: *"Se elimina el campo plaza del afiliado porque no es una propiedad del
+  afiliado, es de la estación"*. Confirmado explícitamente: *"quiero que quites el campo
+  plaza del catálogo afiliado y ese campo plaza pase a formar parte del catálogo de
+  estaciones"* — la Estación YA tenía su propio `plaza_id` independiente desde ADR-094
+  (captura libre, ya no heredada), así que el trabajo real es **eliminar** el `plaza_id`
+  redundante que le quedaba a `Afiliado` desde la decisión histórica E-1/ADR-005, no
+  moverlo (ya estaba en Estación).
+- **Decisión:**
+  1. **Backend:** se elimina la columna `plaza_id` de `Afiliado` (modelo, `AfiliadoCreate`/
+     `AfiliadoUpdate`/`AfiliadoRead`), su FK y su índice (`ix_afiliado_plaza_id`) —
+     migración `a12fc26a6504`. Se elimina también el campo derivado `plaza_nombre` de
+     `AfiliadoRead` (ya no hay plaza que resolver) y los métodos
+     `AfiliadoRepository.contar_activos_por_plaza`/`nombres_de_plazas`, que quedan sin
+     objeto.
+  2. **Consecuencia directa en Plaza:** `_pre_desactivar` de `PlazaService` YA NO puede
+     contar "afiliados activos" (ese conteo dependía de `Afiliado.plaza_id`, que deja de
+     existir) — se quita ese lado del bloqueo. Plaza ahora solo bloquea su baja por
+     **estaciones activas**. `PlazaService.__init__` pierde el parámetro `afiliado_repo`
+     (ya no lo usa).
+  3. **Migración (SQL Server):** la FK de `afiliado.plaza_id` se creó SIN nombre explícito
+     en `7300e6f940a3`, así que SQL Server le asignó un nombre de sistema no determinista
+     — se descubre y suelta dinámicamente vía `sys.foreign_keys` antes de soltar la
+     columna (mismo patrón que `_drop_default_constraint_mssql` de `a4c7fe6279b2`/ADR-067,
+     adaptado de DEFAULT a FOREIGN KEY constraints). El índice sí es determinista
+     (`ix_afiliado_plaza_id`), se suelta por nombre directo. Verificado en round-trip
+     (`upgrade` → `downgrade` → `upgrade`) contra la RDS real.
+  4. **`backend/scripts/seed_dev.py`:** el seed de `Afiliado` deja de pasar `plaza_id`;
+     la tupla `AFILIADOS` pierde su campo `plaza_clave` (ya no se usa — cada `Estacion`
+     en `ESTACIONES` sigue capturando su propia plaza, sin cambios ahí).
+  5. **Frontend — módulo `afiliado`:** se quita `plaza_id`/`plaza_nombre` de los tipos, el
+     select de Plaza y su validación Zod del formulario (alta y edición), la columna
+     "Plaza principal" de la lista y la línea de plaza en el detalle. `catalogosCache.ts`
+     (módulo `ordenes`) pierde el campo `plaza_id`, muerto en `AfiliadoRef` (ningún
+     consumidor lo leía).
+  6. **Frontend — módulo `plaza`:** el manejo del 409 `dependencias_activas` deja de
+     esperar `afiliados_activos` en `detalles`, solo `estaciones_activas`.
+- **Consecuencia:** ninguna entidad queda sin plaza resoluble — `Estacion.plaza_id`
+  (ADR-094) sigue siendo la única fuente de verdad, y `OrdenEstacion.plaza_id` ya se
+  resolvía desde la Estación, no desde el Afiliado. Nada en F1/F2/F3 leía
+  `Afiliado.plaza_id` (confirmado por búsqueda exhaustiva antes de implementar).
+- **Verificado:** backend — `ruff check` limpio, suite `pytest` completa en verde (61
+  tests, incluye los 2 archivos de F0-01/ContactoAfiliado reescritos para el nuevo
+  helper `_afiliado()` sin `plaza_id`, y el ajuste mecánico de `plaza_id=` en las 7
+  fixtures `Afiliado(...)` de los tests de F1-F3 que solo necesitaban satisfacer el FK
+  NOT NULL, sin aserciones sobre el valor). Migración `a12fc26a6504` aplicada y
+  verificada en round-trip contra RDS real. Frontend — `tsc --noEmit` y `eslint` limpios
+  en todo el proyecto; suite `vitest` completa sin regresiones (294/306, mismos 12
+  fallos preexistentes de `auth`/`seguridad`/`apiClient`, no relacionados).
+
+### ADR-097 — Tarifas: de "por plaza + vigencia" a "por estación + producto, sin vigencia"
+
+- **Estado:** aceptada · **Fecha:** 2026-09-21 (F0-02).
+- **Contexto:** el usuario reportó como bug el diseño original de F0-02 (ADR-015, fiel a
+  la spec BD v2): *"EN EL CATALOGO DE TARIFAS QUITA NUEVA TARIFA QUITA LOS CAMPOS
+  VIGENCIA DESDE Y HASTA YA NO DEBEN IR, QUITA EL CAMPO PLAZA Y CAMBIALO POR NOMBRE DE LA
+  EMISORA CON UN SELECTOR QUE TRAIGA LAS EMISORAS Y JUSTO ABAJO AGREGA UN SELECTOR CON
+  LOS CAMPOS: Producto: Spot/Mención/Control remoto/Patrocinio (se selecciona)"*. Antes de
+  implementar se investigó el alcance completo (agente de exploración): la validación de
+  solapamiento por vigencia vive enteramente dentro de `tarifa.py` (repo + servicio, sin
+  dependientes externos); el único consumidor fuera del módulo es
+  `OrdenEstacionDetailPanel.tsx` (F1), que solo LEE la tarifa de referencia para mostrar un
+  desvío informativo (nunca prellenaba `precio_spot` en el formulario de captura); y
+  `Estacion` (ADR-094) ya es un catálogo maduro e independientemente seleccionable, con su
+  propia plaza — un reemplazo natural para el `plaza_id` de Tarifa.
+- **Decisión:**
+  1. **`plaza_id` → `estacion_id`** (FK a `Estacion`): el formulario captura "Nombre de la
+     emisora" (select de estaciones activas), no "Plaza". El derivado `plaza_nombre`/
+     `plaza_estado` se reemplaza por `estacion_nombre`.
+  2. **`vigencia_desde`/`vigencia_hasta` eliminados por completo** — ya no hay tarifas con
+     periodo de vigencia. Con ellas cae la validación de solapamiento de fechas y el
+     filtro derivado Vigentes/Expiradas (E-1/E-3 de ADR-015, ver nota en esa entrada).
+     Al desaparecer el filtro extra, la ruta `listar` custom del router ya no hace falta:
+     `build_crud_router` genérico alcanza (la búsqueda `q` sigue en
+     `TarifaRepository._apply_filters`, independiente de la ruta).
+  3. **`producto`** (entidad NUEVA, fuera de la spec BD v2): enum
+     `spot│mencion│control_remoto│patrocinio`, selector justo debajo de la emisora, tal
+     como se pidió. Coexiste con `duracion_spot` (20s/30s/60s/mencion) — son dimensiones
+     distintas (aunque ambas tengan un valor llamado "mención"): `duracion_spot` es cuánto
+     dura un spot: `producto` es qué tipo de colocación publicitaria es. No se pidió tocar
+     `duracion_spot`, así que se dejó intacto.
+  4. **"Sin duplicado activo" reemplaza "sin solapamiento":** sin fechas que solapar, la
+     regla equivalente que preserva la intención original (no dos precios activos
+     ambiguos para la misma combinación) es: no puede existir otra tarifa **activa** con
+     la misma combinación estación+tipo_senal+duracion_spot+producto. Se valida al crear,
+     editar y reactivar, mismo criterio que antes → 409 `conflicto`.
+  5. **Migración `96798afba3cc`:** la FK de `plaza_id` y su índice SÍ tenían nombre
+     explícito (`fk_tarifa_plaza_plaza`/`ix_tarifa_plaza_plaza_id`, a diferencia de la FK
+     anónima de `afiliado.plaza_id` en ADR-096), así que se sueltan por nombre directo,
+     sin descubrimiento dinámico. Sin migración de datos: no hay un mapeo 1:1 determinista
+     de plaza→estación (una plaza tiene N estaciones) y la tabla solo traía datos mock de
+     `seed_dev.py` (reseedable) — se vacía antes de recomponer columnas.
+  6. **`seed_dev.py`:** las 8 tarifas mock se re-mapean 1:1 de su plaza original a la
+     estación de esa plaza con el mismo tipo de señal (p.ej. `ta1` plaza `pl1`/fm → ahora
+     estación `es6`, la única fm de esa plaza); `producto` se siembra como `"spot"` para
+     las 8 (el mock no distinguía producto — valor por defecto razonable, documentado como
+     hallazgo en el propio seed).
+  7. **Consecuencia en Plaza (F0-01):** la sección "Tarifas vigentes" del panel de detalle
+     de Plaza (que combinaba `plaza_id` + `activo` + `vigencia=vigente`) se retira por
+     completo junto con su hook `useTarifasVigentesPorPlaza` — ninguno de los dos
+     conceptos que la alimentaban sigue existiendo.
+  8. **Consecuencia en Órdenes (F1):** `tarifaReferencia()` en
+     `modules/ordenes/state/catalogosCache.ts` pasa a buscar por `estacion_id` en vez de
+     `plaza_id` — más directo, ya que `OrdenEstacionDetailPanel.tsx` ya resuelve la
+     `Estacion` de la `OrdenEstacion` antes de llamarla.
+- **Consecuencia:** el modelo de `TarifaPlaza` se aleja de la spec BD v2 (que la definía
+  por plaza y con vigencia) — desviación consciente por petición explícita del usuario,
+  documentada aquí y en la ficha `docs/modulos/f0-catalogos/f0-02-tarifas.md`. El nombre
+  de la entidad/tabla (`TarifaPlaza`/`tarifa_plaza`) se conserva sin cambio (mismo
+  criterio que ADR-096 con `Afiliado`): renombrarla habría sido un cambio de alcance
+  mayor no pedido, y el nombre desactualizado se documenta en vez de arrastrar una
+  migración de renombrado.
+- **Verificado:** backend — `ruff check` limpio, suite `pytest` completa en verde (61
+  tests, incluye `test_f0_02_tarifas.py` reescrito: 23 casos — neta/redondeo, ausencia de
+  vigencia, duplicado activo y reactivación, dependencia de Estación, enums incl.
+  `producto`, búsqueda por nombre/siglas/notas, enriquecimiento). Migración `96798afba3cc`
+  aplicada y verificada en round-trip (`upgrade` → `downgrade` → `upgrade`) contra RDS
+  real. Frontend — `tsc --noEmit` y `eslint` limpios en todo el proyecto; suite `vitest`
+  completa sin regresiones (294/306, mismos 12 fallos preexistentes de
+  `auth`/`seguridad`/`apiClient`, no relacionados).
+
+### ADR-098 — `DuracionSpot` pierde el valor `mencion` (ya vive solo como `producto`)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-21 (F0-02/F1).
+- **Contexto:** el usuario, al ver el selector "Duración del spot" de la pantalla de
+  Tarifas mostrando "Mención" junto a 20/30/60 segundos (captura de pantalla), reportó
+  como bug: *"Quitar el valor mención en tarifas y donde se use"*. Es la ambigüedad que
+  ya se había anotado como riesgo consciente en ADR-097 (`producto` y `duracion_spot`
+  compartían un valor con el mismo nombre, "mención", pero significados distintos: una
+  duración de spot vs. un tipo de colocación publicitaria) — el usuario confirma que
+  "Mención" debe vivir SOLO como `producto`.
+- **Decisión:** se retira `MENCION`/`"mencion"` del enum compartido `DuracionSpot`
+  (`app/shared/enums.py`, ADR-032), usado por **tres** tablas: `TarifaPlaza` (F0-02),
+  `OrdenCliente` y `OrdenEstacion` (F1). Queda `20s│30s│60s`. `ProductoTarifa` (ADR-097)
+  no se toca — "Mención" sigue siendo un `producto` válido.
+- **Consecuencia:** los 3 CHECK constraints (`ck_tarifa_plaza_duracion_spot`,
+  `ck_orden_cliente_duracion_spot`, `ck_orden_estacion_duracion_spot`) se actualizan para
+  ya no aceptar `'mencion'`. Se verificó contra RDS que ninguna fila de las tres tablas
+  tenía `duracion_spot = 'mencion'` — sin datos que migrar. En frontend, `TarifaForm.tsx`
+  (`DURACION_SPOT_OPCIONES`) y `OrdenClienteForm.tsx` (`OPCIONES_DURACION`, que ya
+  angostaba el dropdown de 8 valores de la demo a los 4 reales del backend, F1 tanda 1)
+  bajan a 3 valores.
+- **Verificado:** backend — `ruff check` limpio, suite `pytest` completa en verde (61
+  tests; ningún fixture usaba `duracion_spot="mencion"`, solo `producto="mencion"` en
+  `test_f0_02_tarifas.py`, que no se tocó). Migración `8fb8151c75c3` aplicada y
+  verificada en round-trip contra RDS real (constraint definitions leídas directo de
+  `sys.check_constraints` antes/después). Frontend — `tsc --noEmit` y `eslint` limpios;
+  suite `vitest` sin regresiones (294/306, mismos 12 fallos preexistentes).
+
+### ADR-099 — `TarifaPlaza.tarifa_bruta`/`descuento_pct` como PARÁMETROS SENSIBLES
+
+- **Estado:** aceptada · **Fecha:** 2026-09-21 (F0-02).
+- **Contexto:** el usuario, mostrando una captura del panel de detalle de Tarifas junto a
+  la de "Historial de cambios de comisión" de otro catálogo, pidió: *"en el catálogo de
+  tarifa, cada ves que hagan un cambio en la tarifa bruta o en el descuento que se guarde
+  el log de quien lo hizo de como estaba antes y ahora"*, señalando el ejemplo existente
+  como guía. Esa "guía" es el mecanismo de "parámetro sensible" ya establecido para
+  Agencia/Vendedor/Contrato (ADR-016: permiso por campo + `motivo_cambio` + bitácora en
+  `LogCambioParametro`) y su lectura acotada (ADR-021: `GET .../{id}/historial`) — se
+  investigó el mecanismo exacto antes de implementar, para replicarlo sin inventar una
+  variante nueva.
+- **Decisión:**
+  1. **Mismo mecanismo, aplicado a `tarifa_bruta` y `descuento_pct`:** cada uno se marca
+     como PARÁMETRO SENSIBLE; el alta audita ambos con `anterior=None` (sin exigir
+     motivo); la edición exige `field_permissions.verificar` (hoy: solo Admin, mismo
+     placeholder de F0) y `motivo_cambio` (transitorio, solo en `TarifaPlazaUpdate`) SOLO
+     si el campo efectivamente cambió, y audita cada campo cambiado por separado —mismo
+     patrón per-campo que Agencia (un `registrar_cambio_sensible` por campo), no el canal
+     dedicado con permiso especial que usa `OrdenCliente.actualizar_comisiones`, porque
+     Tarifa no tiene ese caso (edición siempre por el área Admin del catálogo, sin
+     excepción de área como Dirección).
+  2. **Dos campos sensibles en una entidad — SIN precedente exacto (Agencia/Vendedor/
+     Contrato tienen uno cada uno):** se resolvió con UN solo "Motivo del cambio"
+     compartido en la pantalla, requerido si CUALQUIERA de los dos cambió — mismo
+     criterio ya usado por `OrdenClienteForm.tsx` para sus 3 % de comisión (un motivo
+     compartido, validado a mano en el submit porque el schema de Zod no conoce los
+     valores originales al definirse). En el backend esto se traduce en llamar
+     `audit.registrar_cambio_sensible` una vez por campo que cambió, con el mismo
+     `motivo` para ambas llamadas.
+  3. **`GET /catalogos/tarifas/{id}/historial`** (ADR-021): mismo endpoint/formato que
+     Agencia — protegido por `catalogos:leer` (lectura abierta a todas las áreas; solo la
+     escritura es Admin-only).
+  4. **Sin migración:** no se agrega ninguna columna — `LogCambioParametro` ya existe
+     (ADR-016) y el `entidad="TarifaPlaza"` la distingue de las demás entidades
+     auditadas. `motivo_cambio` es transitorio (solo en el schema `Update`, nunca en
+     Create/Read, nunca persiste).
+- **Consecuencia:** ninguna a nivel de esquema. `TarifaPlazaCreate` gana la PK explícita
+  (`payload["tarifa_plaza_id"] = uuid4()`) antes de auditar el alta, mismo patrón que
+  `Agencia._pre_create` — para poder registrar el `entidad_id` real desde la primera
+  auditoría, en vez de esperar a que el repositorio genere el id por su cuenta.
+- **Verificado:** backend — `ruff check` limpio, suite `pytest` completa en verde (61
+  tests; `test_f0_02_tarifas.py` gana 10 casos nuevos: alta audita ambos campos con
+  `anterior=None`, edición con motivo audita, un solo motivo audita los dos campos
+  cambiados, edición sin motivo rechazada, edición por área no-Admin rechazada, mismo
+  valor no audita, campo no sensible no audita, `motivo_cambio` no es columna, historial
+  completo con alta+edición, historial de tarifa inexistente → 404). Sin migración que
+  aplicar/verificar (no toca el esquema). Frontend — `tsc --noEmit` y `eslint` limpios en
+  todo el proyecto; suite `vitest` sin regresiones (294/306, mismos 12 fallos
+  preexistentes de `auth`/`seguridad`/`apiClient`, no relacionados).

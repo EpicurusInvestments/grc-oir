@@ -14,6 +14,9 @@ import type {
   AnuncianteContrato,
   AnuncianteCreate,
   AnuncianteUpdate,
+  ContactoAnunciante,
+  ContactoAnuncianteCreate,
+  ContactoAnuncianteUpdate,
   Marca,
   MarcaCreate,
   MarcaUpdate,
@@ -64,6 +67,27 @@ export const marcaApi = {
   async listPorAnunciante(anuncianteId: string, params?: ListParams): Promise<Page<Marca>> {
     const { data } = await apiClient.get<Page<Marca>>(
       `/catalogos/marcas/anunciante/${anuncianteId}`,
+      { params },
+    );
+    return data;
+  },
+};
+
+const contactoAnuncianteCrud = createCatalogApi<
+  ContactoAnunciante,
+  ContactoAnuncianteCreate,
+  ContactoAnuncianteUpdate
+>("contactos-anunciante");
+
+export const contactoAnuncianteApi = {
+  ...contactoAnuncianteCrud,
+  /** Contactos de un anunciante (para el panel anidado). */
+  async listPorAnunciante(
+    anuncianteId: string,
+    params?: ListParams,
+  ): Promise<Page<ContactoAnunciante>> {
+    const { data } = await apiClient.get<Page<ContactoAnunciante>>(
+      `/catalogos/contactos-anunciante/anunciante/${anuncianteId}`,
       { params },
     );
     return data;

@@ -56,7 +56,7 @@ export function CategoriaForm({
         <div className="dh-name">{title}</div>
       </div>
       <div className="db">
-        <div className="sec">Datos de la categoría</div>
+        <div className="sec">Datos del giro empresarial</div>
 
         <div className="fl fl-required">Nombre</div>
         <input className="fi" autoFocus {...register("nombre_categoria")} />

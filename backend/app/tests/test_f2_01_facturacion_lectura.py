@@ -81,7 +81,6 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
             nombre_afiliado="Afiliado Uno",
             razon_social_afiliado="Afiliado Uno SA de CV",
             rfc_afiliado="AUN900101AB1",
-            plaza_id=plaza_id,
         )
     )
     estacion_id = uuid.uuid4()

@@ -1,5 +1,7 @@
-/** Pantalla del catálogo "Afiliados y estaciones": lista de afiliados + panel de detalle
- * con estaciones anidadas (patrón de la pantalla aprobada F0).
+/** Pantalla del catálogo "Afiliados": lista de afiliados + panel de detalle (patrón F0).
+ *
+ * Las Estaciones tienen pantalla propia desde ADR-094 (`modules/catalogos/estacion/`);
+ * el detalle del afiliado solo las muestra de solo lectura.
  *
  * Baja lógica del afiliado con confirmación cuando tiene estaciones activas (409
  * `dependencias_activas` → confirmar → reintento con `forzar`).
@@ -7,7 +9,6 @@
 
 import { useState } from "react";
 
-import { usePlazas } from "@/modules/catalogos/plaza/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
 import type { ListParams } from "@/shared/types";
@@ -22,7 +23,8 @@ import {
 
 import { AfiliadoDetailPanel } from "../components/AfiliadoDetailPanel";
 import { AfiliadoForm } from "../components/AfiliadoForm";
-import { useAfiliados } from "../hooks";
+import type { ContactoFormData } from "../components/ContactoInlineForm";
+import { useAfiliados, useContactosAfiliado } from "../hooks";
 import type { Afiliado, AfiliadoCreate } from "../types";
 
 type Filtro = "todos" | "activos" | "inactivos";
@@ -54,18 +56,20 @@ export function AfiliadoCatalogPage() {
   const crear = useCreate();
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
-
-  // Plazas activas para el select del formulario y para resolver el nombre en el detalle.
-  const plazasQuery = usePlazas().useList({ activo: true, size: 100 });
-  const plazas = plazasQuery.data?.items ?? [];
+  const crearContacto = useContactosAfiliado().useCreate();
 
   const reset = () => {
     setSelected(null);
     setModo("view");
   };
 
-  const onCrear = async (data: AfiliadoCreate) => {
+  const onCrear = async (data: AfiliadoCreate, contactosNuevos: ContactoFormData[]) => {
     const nuevo = await crear.mutateAsync(data);
+    // Los contactos se capturaron en memoria durante el alta (todavía no había
+    // afiliado_id) — se crean ahora, uno por uno, ya con el id real.
+    for (const contacto of contactosNuevos) {
+      await crearContacto.mutateAsync({ afiliado_id: nuevo.afiliado_id, ...contacto });
+    }
     setSelected(nuevo);
     setModo("view");
   };
@@ -100,7 +104,6 @@ export function AfiliadoCatalogPage() {
     detail = (
       <AfiliadoForm
         title="Nuevo afiliado"
-        plazas={plazas}
         submitting={crear.isPending}
         onSubmit={onCrear}
         onCancel={reset}
@@ -110,15 +113,12 @@ export function AfiliadoCatalogPage() {
     detail = (
       <AfiliadoForm
         title={`Editar: ${selected.nombre_afiliado}`}
-        plazas={plazas}
+        afiliadoId={selected.afiliado_id}
+        isEdit
         defaultValues={{
           nombre_afiliado: selected.nombre_afiliado,
           razon_social_afiliado: selected.razon_social_afiliado,
           rfc_afiliado: selected.rfc_afiliado,
-          plaza_id: selected.plaza_id,
-          contacto_nombre: selected.contacto_nombre ?? "",
-          contacto_email: selected.contacto_email ?? "",
-          contacto_telefono: selected.contacto_telefono ?? "",
         }}
         submitting={actualizar.isPending}
         onSubmit={onActualizar}
@@ -129,7 +129,6 @@ export function AfiliadoCatalogPage() {
     detail = (
       <AfiliadoDetailPanel
         afiliado={selected}
-        plazas={plazas}
         canWrite={canWrite}
         onEdit={() => setModo("edit")}
         onToggleActivo={() => cambiarEstado(selected, !selected.activo)}
@@ -137,7 +136,7 @@ export function AfiliadoCatalogPage() {
       />
     );
   } else {
-    detail = <DetailEmpty message="Selecciona un afiliado para ver sus estaciones." />;
+    detail = <DetailEmpty message="Selecciona un afiliado para ver su detalle." />;
   }
 
   // ── lista ─────────────────────────────────────────────────────────────────
@@ -148,7 +147,6 @@ export function AfiliadoCatalogPage() {
         <thead>
           <tr>
             <th>Afiliado</th>
-            <th style={{ width: "18%" }}>Plaza principal</th>
             <th style={{ width: 130 }}>RFC</th>
             <th className="td-center" style={{ width: 90 }}>
               Estaciones
@@ -181,7 +179,6 @@ export function AfiliadoCatalogPage() {
                   {a.razon_social_afiliado}
                 </div>
               </td>
-              <td className="td-2">{a.plaza_nombre ?? "—"}</td>
               <td className="td-mono">{a.rfc_afiliado}</td>
               <td className="td-center td-2">{a.estaciones_count}</td>
               <td className="td-center">
@@ -214,10 +211,10 @@ export function AfiliadoCatalogPage() {
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Afiliados y estaciones</div>
+          <div className="cat-title">Afiliados</div>
           <div className="cat-sub">
-            Empresas que operan estaciones. Cada afiliado opera en una plaza; sus estaciones
-            la heredan.
+            Empresas que operan estaciones. La gestión de estaciones vive en su propia
+            pantalla.
           </div>
         </div>
         {canWrite && (

@@ -2,13 +2,12 @@
  *
  * Filtros Activos/Inactivos/Todos + búsqueda + paginación por página. Alta/edición con
  * formulario en el panel derecho. La baja lógica que choca con dependientes activos
- * (afiliados/estaciones) pide confirmación y reintenta con `forzar`.
+ * (estaciones — ADR-096: el Afiliado ya no tiene plaza propia, así que ya no cuenta
+ * aquí) pide confirmación y reintenta con `forzar`.
  */
 
 import { useState } from "react";
 
-import { fmtMoneda } from "@/modules/catalogos/tarifa/format";
-import { useTarifasVigentesPorPlaza } from "@/modules/catalogos/tarifa/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
 import type { ListParams } from "@/shared/types";
@@ -55,9 +54,6 @@ export function PlazaCatalogPage() {
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
 
-  // Tarifas vigentes de la plaza seleccionada (sección del panel de detalle, F0-02).
-  const tarifasVigentes = useTarifasVigentesPorPlaza(selected?.plaza_id ?? null);
-
   const reset = () => {
     setSelected(null);
     setModo("view");
@@ -88,14 +84,10 @@ export function PlazaCatalogPage() {
       setConfirmBaja(null);
     } catch (e) {
       if (e instanceof ApiRequestError && e.codigo === "dependencias_activas") {
-        const d = (e.detalles ?? {}) as { afiliados_activos?: number; estaciones_activas?: number };
-        const partes = [
-          d.afiliados_activos ? `${d.afiliados_activos} afiliado(s) activo(s)` : null,
-          d.estaciones_activas ? `${d.estaciones_activas} estación(es) activa(s)` : null,
-        ].filter(Boolean);
+        const d = (e.detalles ?? {}) as { estaciones_activas?: number };
         setConfirmBaja({
           plaza: p,
-          message: `Esta plaza tiene ${partes.join(" y ")} que dependen de ella. ¿Desactivarla de todos modos?`,
+          message: `Esta plaza tiene ${d.estaciones_activas ?? ""} estación(es) activa(s) que dependen de ella. ¿Desactivarla de todos modos?`,
         });
       } else {
         throw e;
@@ -149,29 +141,6 @@ export function PlazaCatalogPage() {
           <div className="fv">{selected.nombre_plaza}</div>
           <div className="fl">Estado</div>
           <div className="fv">{selected.estado ?? "—"}</div>
-
-          <div className="sec">Tarifas vigentes</div>
-          {tarifasVigentes.isLoading && <div className="state-msg">Cargando tarifas…</div>}
-          {tarifasVigentes.isError && (
-            <div className="state-msg error">No se pudieron cargar las tarifas.</div>
-          )}
-          {!tarifasVigentes.isLoading &&
-            !tarifasVigentes.isError &&
-            (tarifasVigentes.data?.items.length ?? 0) === 0 && (
-              <div className="fv muted">Sin tarifas vigentes.</div>
-            )}
-          {tarifasVigentes.data?.items.map((t) => (
-            <div className="rel-item" key={t.tarifa_plaza_id}>
-              <div>
-                <div className="rel-name">
-                  {t.tipo_senal.toUpperCase()} · {t.duracion_spot}
-                </div>
-                <div className="rel-sub">
-                  {fmtMoneda(t.tarifa_bruta)} bruta · {t.descuento_pct}% desc.
-                </div>
-              </div>
-            </div>
-          ))}
         </div>
         {canWrite && (
           <div className="df">

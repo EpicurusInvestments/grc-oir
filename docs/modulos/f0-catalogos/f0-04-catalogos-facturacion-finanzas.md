@@ -40,11 +40,16 @@ escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editabl
 - **Pantalla:** menú "Soporte", lista + detalle. Lista: Nombre · Correo · % Comisión ·
   Estatus. Detalle con "Historial de cambios" del %.
 
-### Categoria (5 campos + `updated_at`)
+### Categoria (5 campos + `updated_at`) — en pantalla: "Giro Empresarial"
 `categoria_id` (PK), `nombre_categoria` (NOT NULL, **único case-insensitive**),
 `descripcion_categoria` (TEXT), `activo`, `created_at`, `updated_at`. (Automotriz, Alimentos,
 Telecom, etc.)
-- **Pantalla:** menú "Soporte", lista + detalle. Lista: Categoría · Descripción · Estatus.
+- **Pantalla:** menú "Soporte", lista + detalle. Lista: Giro empresarial · Descripción ·
+  Estatus.
+- **Nombre visible al usuario:** la entidad/campos (`Categoria`, `nombre_categoria`, ...) se
+  mantienen tal cual la spec BD v2 — solo el texto que ve el usuario cambió de "Categorías"
+  a **"Giro Empresarial"** (sidebar, título de pantalla, formulario y el select de
+  `categoria_id` en `OrdenCliente`), a petición del equipo.
 
 ### Usuario (7 campos) — solo el MODELO aquí
 `usuario_id` (PK), `nombre_usuario` (NOT NULL), `email` (NOT NULL), `area` (ENUM:
@@ -68,10 +73,11 @@ ventas│facturacion│tesoreria│cxc│cxp│direccion│nominas│admin), `ro
 - Todos por `activo` (baja lógica). Sin máquina de estados.
 
 ## Pantallas (de la pantalla F0)
-- **Vendedor** y **Categoria**: grupo propio en el sidebar, bajo el menú **"Soporte"**
-  (lista + detalle, filtros Activos/Inactivos/Todos, paginación por página).
+- **Vendedor** y **Categoria** (etiqueta en pantalla: "Giro Empresarial"): grupo propio en
+  el sidebar, bajo el menú **"Soporte"** (lista + detalle, filtros Activos/Inactivos/Todos,
+  paginación por página).
 - **EmpresaFacturadora**: catálogo simple, también bajo el menú **"Soporte"**.
-- Botones `+ Nuevo vendedor`, `+ Nueva categoría`, `+ Nueva empresa facturadora`.
+- Botones `+ Nuevo vendedor`, `+ Nuevo giro empresarial`, `+ Nueva empresa facturadora`.
 
 ## Roles / permisos (matriz RBAC)
 - **Captura/edición: solo Admin (IT)** por ahora (consistente con F0-01..F0-03). El

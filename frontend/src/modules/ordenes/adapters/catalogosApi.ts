@@ -13,13 +13,14 @@
  * con un placeholder inerte, nunca se muestran.
  */
 
-import { afiliadoApi, estacionApi } from "@/modules/catalogos/afiliado/api";
+import { afiliadoApi } from "@/modules/catalogos/afiliado/api";
 import { agenciaApi } from "@/modules/catalogos/agencia/api";
 import { anuncianteApi, marcaApi } from "@/modules/catalogos/anunciante/api";
 import { categoriaApi } from "@/modules/catalogos/categoria/api";
 import type { EstadoContrato } from "@/modules/catalogos/contrato/types";
 import { contratoApi } from "@/modules/catalogos/contrato/api";
 import { empresaFacturadoraApi } from "@/modules/catalogos/empresaFacturadora/api";
+import { estacionApi } from "@/modules/catalogos/estacion/api";
 import { plazaApi } from "@/modules/catalogos/plaza/api";
 import { tarifaApi } from "@/modules/catalogos/tarifa/api";
 import { vendedorApi } from "@/modules/catalogos/vendedor/api";
@@ -168,7 +169,6 @@ export async function cargarCatalogosReales(): Promise<void> {
     afiliadosReales.map((a) => ({
       id: a.afiliado_id,
       nombre_afiliado: a.nombre_afiliado,
-      plaza_id: a.plaza_id,
       // La spec no tiene un % de participación OIR por AFILIADO (es por OrdenEstacion,
       // por venta); nadie lo lee desde AfiliadoRef — placeholder inerte.
       porcentaje_participacion_oir_default: 0,
@@ -192,7 +192,7 @@ export async function cargarCatalogosReales(): Promise<void> {
     tarifas,
     tarifasReales.map((t) => ({
       id: t.tarifa_plaza_id,
-      plaza_id: t.plaza_id,
+      estacion_id: t.estacion_id,
       tipo_senal: t.tipo_senal,
       duracion_spot: t.duracion_spot,
       tarifa_bruta: Number(t.tarifa_bruta),

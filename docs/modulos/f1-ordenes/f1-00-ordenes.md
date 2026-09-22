@@ -280,6 +280,9 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   - `duracion_spot`: el formulario ofrecía 8 valores (herencia del prototipo), el
     backend real (`DuracionSpot`) solo acepta 4 (`20s`/`30s`/`60s`/`mencion`) — el
     dropdown se angosta a esos 4 SOLO en modo `api` (`OrdenClienteForm.tsx`).
+    **Actualización (2026-09-21, ADR-098):** el backend retiró `mencion` de
+    `DuracionSpot` — ahora vive solo como `producto` de `TarifaPlaza` (F0-02, ADR-097).
+    El dropdown de `OrdenClienteForm.tsx` quedó en 3 valores (`20s`/`30s`/`60s`).
 
   Aspereza conocida, NO corregida esta tanda (es "solo UX" per `frontend/CLAUDE.md`): el
   mock de la demo deja editar comisión a Ventas mientras la OC no esté congelada

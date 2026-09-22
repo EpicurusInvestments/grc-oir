@@ -9,6 +9,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -16,8 +17,17 @@ import { SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { useConstantes } from "../../constantesSistema/hooks";
 import type { AgenciaCreate } from "../types";
+import type { ContactoFormData } from "./ContactoInlineForm";
+import { ContactosSection } from "./ContactosSection";
 
 export type AgenciaFormOutput = AgenciaCreate & { motivo_cambio?: string | null };
+
+// Mismo patrón que `AnuncianteForm`: el backend rechaza (422 genérico, sin campo
+// señalado) cualquier RFC que no cumpla el formato oficial MX, no solo la longitud. Sin
+// esta regex, un RFC de 12-13 caracteres pero con la forma equivocada (p.ej. 5 letras en
+// vez de 3-4 antes de la fecha) pasaba la validación del front y tronaba hasta el back
+// con "Datos de entrada inválidos" — sin decir por qué ni en qué campo.
+const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
 
 function buildSchema(isEdit: boolean, comisionOriginal?: string) {
   return z
@@ -26,11 +36,10 @@ function buildSchema(isEdit: boolean, comisionOriginal?: string) {
       rfc_agencia: z
         .string()
         .trim()
-        .min(12, "El RFC debe tener 12 o 13 caracteres.")
-        .max(13, "El RFC debe tener 12 o 13 caracteres."),
-      contacto_nombre: z.string().trim().max(160).optional(),
-      contacto_email: z.string().trim().max(160).optional(),
-      contacto_telefono: z.string().trim().max(40).optional(),
+        .regex(
+          RFC_REGEX,
+          "RFC inválido: 3-4 letras + 6 dígitos (fecha AAMMDD) + 3 alfanuméricos (homoclave).",
+        ),
       // Clave SAT (c_RegimenFiscal), sugerida desde ConstantesSistema, sin FK formal.
       regimen_fiscal: z.string().trim().max(4).optional(),
       porcentaje_comision_agencia_default: z
@@ -64,18 +73,25 @@ type AgenciaFormValues = z.infer<ReturnType<typeof buildSchema>>;
 
 interface AgenciaFormProps {
   title: string;
+  /** Presente SOLO en edición: habilita la sección "Contactos" en modo servidor. En alta
+   *  (`undefined`/`null`) los contactos se capturan en memoria y se crean justo después
+   *  de guardar la agencia. */
+  agenciaId?: string | null;
   defaultValues?: Partial<AgenciaFormValues>;
   /** % original (en edición) para decidir si el motivo es obligatorio. */
   comisionOriginal?: string;
   isEdit?: boolean;
   submitting?: boolean;
   submitError?: string | null;
-  onSubmit: (data: AgenciaFormOutput) => void;
+  /** `contactosNuevos` solo trae algo en ALTA; en edición siempre llega vacío, porque ahí
+   *  ya se sincronizan solos contra el backend. */
+  onSubmit: (data: AgenciaFormOutput, contactosNuevos: ContactoFormData[]) => void;
   onCancel: () => void;
 }
 
 export function AgenciaForm({
   title,
+  agenciaId = null,
   defaultValues,
   comisionOriginal,
   isEdit = false,
@@ -84,6 +100,7 @@ export function AgenciaForm({
   onSubmit,
   onCancel,
 }: AgenciaFormProps) {
+  const [contactosNuevos, setContactosNuevos] = useState<ContactoFormData[]>([]);
   const {
     register,
     handleSubmit,
@@ -94,9 +111,6 @@ export function AgenciaForm({
     defaultValues: {
       nombre_agencia: "",
       rfc_agencia: "",
-      contacto_nombre: "",
-      contacto_email: "",
-      contacto_telefono: "",
       regimen_fiscal: "",
       porcentaje_comision_agencia_default: "0",
       motivo_cambio: "",
@@ -115,16 +129,16 @@ export function AgenciaForm({
 
   const submit = handleSubmit((data) => {
     const motivo = data.motivo_cambio?.trim();
-    onSubmit({
-      nombre_agencia: data.nombre_agencia.trim(),
-      rfc_agencia: data.rfc_agencia.trim(),
-      contacto_nombre: data.contacto_nombre?.trim() || null,
-      contacto_email: data.contacto_email?.trim() || null,
-      contacto_telefono: data.contacto_telefono?.trim() || null,
-      regimen_fiscal: data.regimen_fiscal?.trim() || null,
-      porcentaje_comision_agencia_default: data.porcentaje_comision_agencia_default.trim(),
-      ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
-    });
+    onSubmit(
+      {
+        nombre_agencia: data.nombre_agencia.trim(),
+        rfc_agencia: data.rfc_agencia.toUpperCase(),
+        regimen_fiscal: data.regimen_fiscal?.trim() || null,
+        porcentaje_comision_agencia_default: data.porcentaje_comision_agencia_default.trim(),
+        ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
+      },
+      contactosNuevos,
+    );
   });
 
   return (
@@ -144,7 +158,8 @@ export function AgenciaForm({
         <input
           className="fi"
           placeholder="XXX000000XXX"
-          style={{ fontFamily: "var(--mono)" }}
+          maxLength={13}
+          style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
           {...register("rfc_agencia")}
         />
         <div className="fe">{errors.rfc_agencia?.message}</div>
@@ -178,18 +193,12 @@ export function AgenciaForm({
           }
         />
 
-        <div className="sec">Contacto</div>
-        <div className="fl">Nombre</div>
-        <input className="fi" {...register("contacto_nombre")} />
-        <div className="fe">{errors.contacto_nombre?.message}</div>
-
-        <div className="fl">Correo</div>
-        <input className="fi" type="email" {...register("contacto_email")} />
-        <div className="fe">{errors.contacto_email?.message}</div>
-
-        <div className="fl">Teléfono</div>
-        <input className="fi" {...register("contacto_telefono")} />
-        <div className="fe">{errors.contacto_telefono?.message}</div>
+        <ContactosSection
+          agenciaId={isEdit ? agenciaId : null}
+          canWrite
+          contactosNuevos={contactosNuevos}
+          onContactosNuevosChange={setContactosNuevos}
+        />
       </div>
 
       <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>

@@ -1,6 +1,6 @@
 /** Panel de detalle de OrdenEstacion: datos heredados de la OC, estación/plaza/afiliado,
  * tabla de `periodo_transmision`, desglose económico completo (OIR/emisora) y comparación
- * de `precio_spot` contra la tarifa de referencia vigente.
+ * de `precio_spot` contra la tarifa de referencia (catálogo de Tarifas, por estación).
  */
 
 import { useState } from "react";
@@ -49,7 +49,7 @@ export function OrdenEstacionDetailPanel({
   const ivaEmisora = importeEmisora * IVA_RATE;
   const totalEmisora = importeEmisora + ivaEmisora;
 
-  const tarRef = estacion ? tarifaReferencia(oe.plaza_id, estacion.tipo_senal, oc?.duracion_spot ?? "30s") : undefined;
+  const tarRef = estacion ? tarifaReferencia(estacion.id, estacion.tipo_senal, oc?.duracion_spot ?? "30s") : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;
 

@@ -23,6 +23,7 @@ import { ConstantesSistemaPage } from "./constantesSistema/pages/ConstantesSiste
 import { ContratoCatalogPage } from "./contrato/pages/ContratoCatalogPage";
 import { CuentaContableCatalogPage } from "./cuentaContable/pages/CuentaContableCatalogPage";
 import { EmpresaFacturadoraCatalogPage } from "./empresaFacturadora/pages/EmpresaFacturadoraCatalogPage";
+import { EstacionCatalogPage } from "./estacion/pages/EstacionCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
 import { TarifaCatalogPage } from "./tarifa/pages/TarifaCatalogPage";
 import { VendedorCatalogPage } from "./vendedor/pages/VendedorCatalogPage";
@@ -61,9 +62,15 @@ export const catalogRegistry: CatalogEntry[] = [
   },
   {
     key: "afiliado",
-    label: "Afiliados y estaciones",
+    label: "Afiliados",
     group: "Operación",
     render: () => <AfiliadoCatalogPage />,
+  },
+  {
+    key: "estacion",
+    label: "Estaciones",
+    group: "Operación",
+    render: () => <EstacionCatalogPage />,
   },
   { key: "plaza", label: "Plazas", group: "Operación", render: () => <PlazaCatalogPage /> },
   {
@@ -80,7 +87,7 @@ export const catalogRegistry: CatalogEntry[] = [
   },
   {
     key: "categoria",
-    label: "Categorías",
+    label: "Giro Empresarial",
     group: "Soporte",
     render: () => <CategoriaCatalogPage />,
   },

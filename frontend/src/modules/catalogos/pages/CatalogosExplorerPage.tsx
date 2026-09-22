@@ -16,6 +16,7 @@ import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useContratos } from "@/modules/catalogos/contrato/hooks";
 import { useCuentasContables } from "@/modules/catalogos/cuentaContable/hooks";
 import { useEmpresasFacturadoras } from "@/modules/catalogos/empresaFacturadora/hooks";
+import { useEstaciones } from "@/modules/catalogos/estacion/hooks";
 import { useVendedores } from "@/modules/catalogos/vendedor/hooks";
 import {
   buildSidebarGroups,
@@ -36,6 +37,7 @@ export function CatalogosExplorerPage() {
   // implementados (F0-03/04/05) no consultan nada y el Sidebar los muestra en 0.
   const plazaTotal = usePlazas().useList({ page: 1, size: 1 }).data?.total;
   const afiliadoTotal = useAfiliados().useList({ page: 1, size: 1 }).data?.total;
+  const estacionTotal = useEstaciones().useList({ page: 1, size: 1 }).data?.total;
   const tarifaTotal = useTarifas().useList({ page: 1, size: 1 }).data?.total;
   const agenciaTotal = useAgencias().useList({ page: 1, size: 1 }).data?.total;
   const anuncianteTotal = useAnunciantes().useList({ page: 1, size: 1 }).data?.total;
@@ -50,6 +52,7 @@ export function CatalogosExplorerPage() {
     const counts: Record<string, number | undefined> = {
       plaza: plazaTotal,
       afiliado: afiliadoTotal,
+      estacion: estacionTotal,
       tarifa: tarifaTotal,
       agencia: agenciaTotal,
       anunciante: anuncianteTotal,
@@ -68,6 +71,7 @@ export function CatalogosExplorerPage() {
   }, [
     plazaTotal,
     afiliadoTotal,
+    estacionTotal,
     tarifaTotal,
     agenciaTotal,
     anuncianteTotal,

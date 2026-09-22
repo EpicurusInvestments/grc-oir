@@ -1,19 +1,29 @@
 /** Formulario de alta/edición de Afiliado (React Hook Form + Zod). Refleja las
  * validaciones del backend: nombre y razón social requeridos, RFC MX (12-13, único —
- * la unicidad la valida el backend), plaza obligatoria.
+ * la unicidad la valida el backend).
+ *
+ * Sin campo Plaza (ADR-096, petición del usuario): la plaza es una propiedad de la
+ * Estación, no del Afiliado — se captura en la pantalla "Estaciones", no aquí.
+ *
+ * El contacto plano (`contacto_nombre`/`contacto_email`/`contacto_telefono`) ya NO se
+ * captura aquí (ADR-094, mismo criterio que Anunciante/Agencia — ADR-091/092): queda de
+ * solo lectura en el detalle si una fila vieja lo trae. "Contactos" (varios, sección
+ * `ContactosSection`) es el reemplazo — en alta se capturan en memoria y se crean junto
+ * con el afiliado; en edición, en vivo contra el backend.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import type { Plaza } from "@/modules/catalogos/plaza/types";
 import { SavingOverlay } from "@/shared/ui";
 
 import type { AfiliadoCreate } from "../types";
+import type { ContactoFormData } from "./ContactoInlineForm";
+import { ContactosSection } from "./ContactosSection";
 
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
-const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 const schema = z.object({
   nombre_afiliado: z.string().trim().min(1, "El nombre es obligatorio.").max(160),
@@ -25,36 +35,35 @@ const schema = z.object({
       RFC_REGEX,
       "RFC inválido: 3-4 letras + 6 dígitos (fecha AAMMDD) + 3 alfanuméricos (homoclave).",
     ),
-  plaza_id: z.string().min(1, "Selecciona una plaza."),
-  contacto_nombre: z.string().trim().max(160).optional(),
-  contacto_email: z
-    .string()
-    .trim()
-    .max(160)
-    .refine((v) => v === "" || EMAIL_REGEX.test(v), "Correo inválido.")
-    .optional(),
-  contacto_telefono: z.string().trim().max(40).optional(),
 });
 
 type AfiliadoFormValues = z.infer<typeof schema>;
 
 interface AfiliadoFormProps {
   title: string;
-  plazas: Plaza[];
+  /** Presente SOLO en edición: habilita la sección "Contactos" en modo servidor. En alta
+   *  (`undefined`/`null`) los contactos se capturan en memoria y se crean justo después
+   *  de guardar el afiliado. */
+  afiliadoId?: string | null;
   defaultValues?: Partial<AfiliadoFormValues>;
+  isEdit?: boolean;
   submitting?: boolean;
-  onSubmit: (data: AfiliadoCreate) => void;
+  /** `contactosNuevos` solo trae algo en ALTA; en edición siempre llega vacío, porque ahí
+   *  ya se sincronizan solos contra el backend. */
+  onSubmit: (data: AfiliadoCreate, contactosNuevos: ContactoFormData[]) => void;
   onCancel: () => void;
 }
 
 export function AfiliadoForm({
   title,
-  plazas,
+  afiliadoId = null,
   defaultValues,
+  isEdit = false,
   submitting,
   onSubmit,
   onCancel,
 }: AfiliadoFormProps) {
+  const [contactosNuevos, setContactosNuevos] = useState<ContactoFormData[]>([]);
   const {
     register,
     handleSubmit,
@@ -65,24 +74,19 @@ export function AfiliadoForm({
       nombre_afiliado: "",
       razon_social_afiliado: "",
       rfc_afiliado: "",
-      plaza_id: "",
-      contacto_nombre: "",
-      contacto_email: "",
-      contacto_telefono: "",
       ...defaultValues,
     },
   });
 
   const submit = handleSubmit((data) => {
-    onSubmit({
-      nombre_afiliado: data.nombre_afiliado,
-      razon_social_afiliado: data.razon_social_afiliado,
-      rfc_afiliado: data.rfc_afiliado.toUpperCase(),
-      plaza_id: data.plaza_id,
-      contacto_nombre: data.contacto_nombre?.trim() || null,
-      contacto_email: data.contacto_email?.trim() || null,
-      contacto_telefono: data.contacto_telefono?.trim() || null,
-    });
+    onSubmit(
+      {
+        nombre_afiliado: data.nombre_afiliado,
+        razon_social_afiliado: data.razon_social_afiliado,
+        rfc_afiliado: data.rfc_afiliado.toUpperCase(),
+      },
+      contactosNuevos,
+    );
   });
 
   return (
@@ -102,44 +106,21 @@ export function AfiliadoForm({
         <input className="fi" {...register("razon_social_afiliado")} />
         <div className="fe">{errors.razon_social_afiliado?.message}</div>
 
-        <div className="r2">
-          <div>
-            <div className="fl fl-required">RFC</div>
-            <input
-              className="fi"
-              maxLength={13}
-              style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
-              {...register("rfc_afiliado")}
-            />
-            <div className="fe">{errors.rfc_afiliado?.message}</div>
-          </div>
-          <div>
-            <div className="fl fl-required">Plaza</div>
-            <select className="fsel" {...register("plaza_id")}>
-              <option value="">Selecciona…</option>
-              {plazas.map((p) => (
-                <option key={p.plaza_id} value={p.plaza_id}>
-                  {p.nombre_plaza}
-                  {p.estado ? ` · ${p.estado}` : ""}
-                </option>
-              ))}
-            </select>
-            <div className="fe">{errors.plaza_id?.message}</div>
-          </div>
-        </div>
+        <div className="fl fl-required">RFC</div>
+        <input
+          className="fi"
+          maxLength={13}
+          style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
+          {...register("rfc_afiliado")}
+        />
+        <div className="fe">{errors.rfc_afiliado?.message}</div>
 
-        <div className="sec">Contacto</div>
-        <div className="fl">Nombre</div>
-        <input className="fi" {...register("contacto_nombre")} />
-        <div className="fe">{errors.contacto_nombre?.message}</div>
-
-        <div className="fl">Correo</div>
-        <input className="fi" {...register("contacto_email")} />
-        <div className="fe">{errors.contacto_email?.message}</div>
-
-        <div className="fl">Teléfono</div>
-        <input className="fi" {...register("contacto_telefono")} />
-        <div className="fe">{errors.contacto_telefono?.message}</div>
+        <ContactosSection
+          afiliadoId={isEdit ? afiliadoId : null}
+          canWrite
+          contactosNuevos={contactosNuevos}
+          onContactosNuevosChange={setContactosNuevos}
+        />
       </div>
       <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>

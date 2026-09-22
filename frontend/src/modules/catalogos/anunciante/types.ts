@@ -92,6 +92,31 @@ export type MarcaUpdate = Partial<Omit<MarcaCreate, "anunciante_id">> & {
   anunciante_id?: string;
 };
 
+// ── ContactoAnunciante (anidado en Anunciante — entidad nueva) ────────────────────
+// El Anunciante ya trae un solo contacto plano (`contacto_nombre`/`contacto_email`/
+// `contacto_telefono`, arriba) — queda como LEGADO, sin tocar. Este es el nuevo
+// "varios contactos", mismo patrón anidado que `Marca`.
+export interface ContactoAnunciante extends CatalogoBase {
+  contacto_anunciante_id: string;
+  anunciante_id: string;
+  nombre_contacto: string;
+  puesto_contacto: string | null;
+  telefono_contacto: string | null;
+  email_contacto: string | null;
+}
+
+export interface ContactoAnuncianteCreate {
+  anunciante_id: string;
+  nombre_contacto: string;
+  puesto_contacto?: string | null;
+  telefono_contacto?: string | null;
+  email_contacto?: string | null;
+}
+
+export type ContactoAnuncianteUpdate = Partial<Omit<ContactoAnuncianteCreate, "anunciante_id">> & {
+  anunciante_id?: string;
+};
+
 /** Contrato mínimo para la sección "Contratos" del panel (lectura). El módulo Contrato
  * completo llega en la Tanda 6. */
 export interface AnuncianteContrato extends CatalogoBase {
