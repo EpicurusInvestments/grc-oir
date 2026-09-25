@@ -37,12 +37,12 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
         <div className="sec">Origen</div>
         {oe ? (
           <div className="fv">
-            Orden interna <strong style={{ fontFamily: "var(--mono)" }}>{oe.folio_orden_interna}</strong> ·{" "}
+            Orden de Transmisión <strong style={{ fontFamily: "var(--mono)" }}>{oe.folio_orden_interna}</strong> ·{" "}
             {estacion?.nombre_estacion ?? "—"} · {afiliado?.nombre_afiliado ?? "—"}
             {plaza && <span className="muted"> ({plaza.nombre_plaza})</span>}
           </div>
         ) : (
-          <div className="fv muted">La orden interna ya no existe.</div>
+          <div className="fv muted">La Orden de Transmisión ya no existe.</div>
         )}
 
         <div className="sec">Comparación del día</div>
@@ -99,7 +99,7 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
 
       <div className="df">
         <button type="button" className="btn btn-sm" onClick={onVerOE} disabled={!oe}>
-          Ver orden interna →
+          Ver Orden de Transmisión →
         </button>
         <button type="button" className="btn btn-sm" onClick={onVerVerificacion} disabled={!oe}>
           Ver verificación →

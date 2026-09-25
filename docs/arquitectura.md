@@ -3515,3 +3515,1392 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   aplicar/verificar (no toca el esquema). Frontend — `tsc --noEmit` y `eslint` limpios en
   todo el proyecto; suite `vitest` sin regresiones (294/306, mismos 12 fallos
   preexistentes de `auth`/`seguridad`/`apiClient`, no relacionados).
+
+### ADR-100 — Se elimina el checklist de Vo.Bo. de OrdenCliente: guardar pasa directo a `capturada`
+
+- **Estado:** aceptada · **Fecha:** 2026-09-22 (F1, fase 1 del rediseño "Orden de
+  Servicio y Orden de Transmisión").
+- **Contexto:** el usuario pidió un rediseño grande de Órdenes (renombrar OC/OE a "Orden
+  de Servicio"/"Orden de Transmisión", unificar su alta, cambiar cómo se asignan
+  estaciones, etc.). Como parte del **Flujo base** (fase 1 de 5 del rediseño, la primera
+  aprobada para implementar), preguntado explícitamente "¿el checklist de Vo.Bo. sigue
+  igual?", el usuario contestó: *"solo rename texto en la UI"* para el resto del rediseño,
+  pero para este punto específico: *"correcto la Orden ya pasa directo a capturada"* — es
+  decir, se elimina el checklist por completo, no solo se renombra. El checklist
+  (`OrdenClienteVoBoItem`, 10 ítems fijos, transición `recibida → capturada` gateada) era
+  **100% un agregado del proyecto** (ADR-033), no algo de la spec BD v2: la spec solo
+  define el enum de `estatus_orden`, sin mecanismo de aprobación intermedio.
+- **Decisión:**
+  1. **`OrdenClienteService.create()`** ya no acepta `revision_checklist`/`dar_vobo`: guarda
+     y fija `estatus_orden = capturada` de forma incondicional. Se eliminan por completo
+     `vobo_toggle()`/`dar_vobo()` del servicio, `listar_vobo()` del repositorio, y los 3
+     endpoints `GET/PATCH .../vobo/*` + `POST .../dar-vobo` del router.
+  2. **`recibida` sigue en el enum** (la spec lo define) pero queda **inalcanzable** por
+     el flujo normal — mismo tipo de hueco ya documentado para `cancelada` (ADR-035): no
+     se elimina el valor del `CHECK`/`StrEnum`, solo deja de producirse.
+  3. **Migración** `51d8601f7779`: `DROP TABLE orden_cliente_vobo_item` (sin migración de
+     datos — solo guardaba bitácora del propio checklist, sin nada más colgando). El
+     `downgrade()` recrea la tabla con la DDL original exacta.
+  4. **Frontend:** se elimina `ChecklistVoBo.tsx`, las constantes/funciones de checklist
+     en `constants.ts` (`ODC_REVIEW_CHECKLIST`/`isChecklistComplete`/`checklistProgress`/
+     `ChecklistItem`), el campo `revision_checklist` de `OrdenCliente`/`OrdenClienteInput`
+     (`types.ts`), y todo el wiring de `dar-vobo`/`vobo` en los adaptadores
+     (`escrituraApi.ts`, `ordenesApi.ts`, `toApi.ts`, `fromApi.ts`, `refrescar.ts`,
+     `cargarEstadoReal.ts`). El formulario (`OrdenClienteForm.tsx`) queda con un solo
+     botón "Guardar" (create) / "Guardar cambios" (edit) — sin "Dar Vo.Bo.". El gate de
+     `OrdenClienteDetailPanel.tsx` que bloqueaba "+ Asignar estaciones" mientras la OC
+     estuviera "sin Vo.Bo." se elimina (ya no aplica: toda OC nace `capturada`).
+  5. **Solo rename de texto** (mismo criterio que ADR-095, Categoria→Giro Empresarial):
+     las claves TypeScript internas del "vocabulario v5" (`orden_cliente_sin_vobo`/
+     `orden_cliente_con_vobo` como identificadores, `MAPA_ESTATUS_OC` en
+     `adapters/vocabulario.ts`) **no se tocan** — solo cambian los `STATUS_LABELS` que se
+     muestran ("1.1 ODC sin Vo.Bo."→"1.1 Recibida", "1.2 Con Vo.Bo."→"1.2 Capturada") y
+     los nombres de pantalla ("Órdenes del cliente"→"Órdenes de Servicio", "Órdenes
+     internas"→"Órdenes de Transmisión", en `constants.ts`/`OrdenesExplorerPage.tsx`/
+     páginas y paneles de detalle). `numero_orden_cliente` (el número de orden PROPIO del
+     cliente) no se renombra: es un dato distinto al nombre de la pantalla.
+- **Consecuencia:** `OrdenEstacionService.create()` exige `oc.estatus_orden` en
+  `(capturada, en_transmision, en_verificacion)` — precondición ya satisfecha
+  automáticamente (antes requería pasar primero por Vo.Bo.; ahora toda OC recién creada
+  ya está en `capturada`). Sin cambio necesario en esa precondición.
+- **Verificado:** backend — `ruff check` limpio en los archivos tocados; suite `pytest`
+  completa en verde tras arreglar `test_f1_03/05/06_*.py` y `scripts/seed_dev.py`
+  (`MAPEO_ESTATUS_OC` pierde la entrada `orden_cliente_sin_vobo→recibida`, ya sin ningún
+  mock que la use). Migración `51d8601f7779` aplicada y verificada en round-trip completo
+  (`upgrade`→`downgrade`→`upgrade`) contra la RDS real de desarrollo
+  (`devapps.../GRC-OIR`): se confirmó por SQL crudo (`sys.check_constraints`,
+  `sys.tables`) que cada paso deja el esquema exactamente como se espera. Frontend —
+  `tsc --noEmit` y `eslint` limpios (2 warnings preexistentes, sin relación); suite
+  `vitest` sin regresiones nuevas (287/299, mismos 12 fallos preexistentes de
+  `auth`/`seguridad`/`apiClient`).
+
+### ADR-101 — `OrdenEstacion`: se permite `precio_spot > OrdenCliente.precio_unitario` (margen OIR negativo)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-22 (F1, fase 1 del rediseño, junto con ADR-100).
+- **Contexto:** el candado que impedía capturar una `OrdenEstacion` con `precio_spot`
+  mayor al `precio_unitario` de su `OrdenCliente` (rechazaba con `DomainError`) era, igual
+  que el checklist de Vo.Bo., un agregado no pedido por la spec BD v2 — la spec solo
+  define las fórmulas de `porcentaje_participacion_oir`/`importe_oir` sin exigir que el
+  resultado sea positivo. El usuario pidió explícitamente quitarlo, y ante la pregunta de
+  qué hacer con el % OIR cuando eso pase, contestó: *"yo concidero manejar números
+  negativos por ahora más adelante revisamos ese punto"*.
+- **Decisión:**
+  1. Se elimina el bloqueo en `OrdenEstacionService.create()`/`update()` (el
+     `if data.precio_spot > oc.precio_unitario: raise DomainError(...)`).
+  2. **CHECK constraints relajados** en `orden_estacion`: `ck_orden_estacion_pct_oir` pasa
+     de `>= 0 AND <= 100` a solo `<= 100` (el tope superior sigue aplicando — matemáticamente
+     no se puede superar con `precio_spot >= 0`); se eliminan
+     `ck_orden_estacion_importe_oir`/`ck_orden_estacion_iva_oir`/`ck_orden_estacion_total_oir`
+     (ya no exigen `>= 0`). El lado "emisora" (`importe_emisora`/`iva_emisora`/
+     `total_emisora`) **no cambia**: `importe_emisora = importe_estacion - importe_oir` se
+     vuelve MÁS grande (nunca negativo) cuando `importe_oir` se vuelve negativo, así que su
+     CHECK `>= 0` se deja intacto. Los 3 CHECK de invariante de suma tampoco cambian:
+     valen algebraicamente sin importar el signo.
+  3. **Migración** `51d8601f7779` (compartida con ADR-100): dialect-branch SQLite/mssql
+     para el drop/recreate de los 4 CHECK constraints; `downgrade()` los restaura tal cual
+     estaban.
+  4. **Frontend:** se elimina el mismo candado duplicado del lado cliente
+     (`tarifaEstMayorQueCliente` en `OrdenEstacionForm.tsx`) — ya no bloquea "Guardar" ni
+     muestra el error inline; el panel "Cálculos en vivo" sigue mostrando `% participación
+     OIR` (ahora puede salir negativo, p.ej. "-50%").
+- **Consecuencia:** el margen OIR negativo se propaga sin más ajuste a
+  `iva_oir`/`total_oir` (mismas fórmulas, ahora con signo). Pendiente explícito del
+  usuario, no resuelto aquí: si el negocio más adelante quiere limitar qué tan negativo
+  puede llegar a ser (hoy no hay piso).
+- **Verificado:** mismo verificado que ADR-100 (backend/frontend/migración compartidos —
+  ver arriba). Casos nuevos en `test_f1_05_ordenes_escritura.py`:
+  `test_crear_oe_precio_mayor_a_tarifa_cliente_permite_pct_oir_negativo` y
+  `test_editar_oe_permite_tarifa_mayor_a_la_de_la_oc_con_pct_oir_negativo` (20 spots *
+  1500 = 30000; % OIR = (1000-1500)/1000*100 = -50.0; importe_oir = 30000 * -50/100 =
+  -15000.00). Nuevo caso en `OrdenEstacionForm.test.tsx` cubre el mismo escenario en el
+  frontend (tarifa 1500 > precio_unitario 1000 → "-50%" visible, Guardar habilitado).
+
+### ADR-102 — Asignar estaciones: tarifa del catálogo sugerida + auditoría condicional (Fase 2 del rediseño)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-22 (F1, fase 2 del rediseño "Orden de
+  Servicio y Orden de Transmisión", continuación de ADR-100/ADR-101).
+- **Contexto:** la especificación original del rediseño (fase 2 de 5, aprobada para
+  implementar tras la fase 1) pedía: al asignar una estación a una Orden de Servicio, el
+  usuario elige Estación → Producto (Spot/Mención/Control remoto/Patrocinio) → Duración,
+  y el sistema auto-carga la tarifa del catálogo (`TarifaPlaza`, F0-02), editable, con el
+  mismo mecanismo de bitácora que sus parámetros sensibles (`tarifa_bruta`/
+  `descuento_pct`, ADR-099). Dos decisiones se resolvieron con el usuario antes de
+  programar (`AskUserQuestion`, ver hilo de la conversación):
+  1. **Duración:** se mantiene heredada de la Orden de Servicio (sin cambio de
+     arquitectura) — NO se independiza por estación en esta fase. Solo el Producto es
+     nuevo y se elige por estación.
+  2. **Permiso de sobrescritura:** Ventas sigue capturando/editando `precio_spot`
+     LIBREMENTE (sin candado de `field_permissions`, a diferencia de
+     `TarifaPlaza.tarifa_bruta`/`descuento_pct`, hoy solo-Admin) — se audita SOLO cuando
+     el valor final no coincide con la tarifa sugerida, exigiendo entonces
+     `motivo_cambio_tarifa`. Mismo criterio ya usado por
+     `OrdenClienteService.actualizar_comisiones` (ADR-029): el placeholder genérico
+     "solo Admin" no encaja porque el capturista normal de Órdenes es Ventas.
+- **Decisión:**
+  1. **`catalogos/tarifa.py`:** nuevos filtros `estacion_id`/`tipo_senal`/
+     `duracion_spot`/`producto` en el listado (`TarifaListParams`) — se retira la ruta
+     `listar` genérica de `build_crud_router` y se registra una propia con esos query
+     params (mismo patrón que Estación/Anunciante/Contrato/ConstantesSistema, ADR-015
+     E-3) — evita el problema de colisión de rutas que tuvo `/clientes/vobo` antes de
+     ADR-100 (un `GET /tarifas/buscar` agregado DESPUÉS de `/{item_id}` habría sido
+     interceptado por esa ruta genérica).
+  2. **`ordenes/orden_estacion.py`:** nueva columna `producto_tarifa` (`ProductoTarifa`
+     del catálogo Tarifa), elegida por estación — **NO reutiliza** la columna `producto`
+     ya existente en esta tabla (esa es "Campaña", texto libre heredado de
+     `OrdenCliente.producto`, un concepto distinto). Nullable (filas sembradas antes de
+     esta fase no la tienen); `OrdenEstacionCreate` sí la exige, `OrdenEstacionUpdate` es
+     opcional (no fuerza a elegirla al editar una OE vieja sin este dato). Migración
+     `5b3010573980`.
+  3. **Tarifa sugerida + auditoría condicional:** en `create()`/`update()`, el servicio
+     resuelve `Estacion.tipo_senal` (vía la FK ya cargada) + `duracion_spot` (heredada de
+     la OC) + `producto_tarifa` (elegido), busca la tarifa ACTIVA para esa combinación
+     exacta (reusa `TarifaRepository.existe_duplicado_activo`, mismo criterio "sin
+     duplicado activo" de ADR-097) y, **solo si** `precio_spot` no coincide con
+     `tarifa_neta`, exige `motivo_cambio_tarifa` (400 si falta) y registra en
+     `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`,
+     `anterior=tarifa_neta`, `nuevo=precio_spot`) vía `audit.log_cambio_parametro`
+     directo — **sin** pasar por `audit.registrar_cambio_sensible`/
+     `field_permissions.verificar` (por la decisión 2 de arriba). Si no hay ninguna
+     tarifa activa para la combinación, no hay nada contra qué comparar y no se audita
+     nada (mismo comportamiento 100% libre que antes de esta fase).
+  4. **`GET /ordenes/estaciones/{id}/historial-tarifa`:** mismo endpoint/formato que
+     `GET /catalogos/tarifas/{id}/historial` (reusa `BaseService.historial()`, ya
+     heredado por `OrdenEstacionService`).
+  5. **Frontend:** `catalogosCache.ts` gana `producto`/`tarifa_neta` en `TarifaRef` (antes
+     solo tenía 6 de los 12 campos del backend) + `tarifaReferencia()` gana un 4º
+     parámetro opcional `producto` (antes solo filtraba por
+     estación+tipo_señal+duración, ambiguo si hay más de un producto para la misma
+     combinación); el cache ahora solo trae tarifas ACTIVAS (`activo: true` en el fetch).
+     `OrdenEstacionForm.tsx` gana un select "Producto" y auto-llena `precio_spot` al
+     resolver Estación+Producto (con un `ref` que recuerda la ÚLTIMA sugerencia aplicada,
+     para no pisar un valor que el usuario ya escribió a mano); si el precio final
+     diverge de la tarifa sugerida, exige "Motivo del cambio de tarifa" antes de dejar
+     guardar. `OrdenEstacionDetailPanel.tsx` (el único consumidor previo de
+     `tarifaReferencia`, ADR-097) ahora le pasa `oe.producto_tarifa` para que su cálculo
+     de "desvío" ya no sea ambiguo entre productos.
+- **Consecuencia:** ninguna sobre el candado de permiso existente de `TarifaPlaza`
+  (`tarifa_bruta`/`descuento_pct` siguen solo-Admin, sin cambio) — este ADR crea un
+  segundo criterio de auditoría (condicional, sin permiso) deliberadamente distinto,
+  documentado aquí para que no se confunda con el de ADR-099 en revisiones futuras.
+- **Verificado:** backend — `ruff check` limpio; suite `pytest` completa en verde (64
+  tests; 6 nuevos en `test_f1_05_ordenes_escritura.py` cubren: sin tarifa en catálogo no
+  audita, precio igual a la sugerida no audita, precio distinto sin motivo → 400, precio
+  distinto con motivo audita con los valores correctos, mismo par de casos en `update()`).
+  Migración `5b3010573980` aplicada y verificada en round-trip completo
+  (`upgrade`→`downgrade`→`upgrade`) contra la RDS real de desarrollo, confirmado por SQL
+  crudo (columna + CHECK). Frontend — `tsc --noEmit` y `eslint` limpios (2 warnings
+  preexistentes, sin relación); suite `vitest` sin regresiones nuevas (287/299, mismos 12
+  fallos preexistentes de `auth`/`seguridad`/`apiClient`).
+
+### ADR-103 — "Material a Transmitir": audios de OrdenEstacion (Fase 3 del rediseño)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, fase 3 del rediseño "Orden de
+  Servicio y Orden de Transmisión", continuación de ADR-100/101/102).
+- **Contexto:** la especificación original pedía poder subir uno o más archivos de audio
+  (el material real a transmitir) a una Orden de Transmisión, descargables, con una
+  regla de asignación por defecto: si solo hay un audio, se usa para todos los días; si
+  hay varios, el primero es el default y cada día puede sobrescribirlo por su cuenta. El
+  formato debía ser "los más conocidos en audio", tope 15 MB (ambos "modificables en un
+  futuro" — palabras del usuario). Investigación previa confirmó que el mecanismo
+  existente de adjuntos (`app/modules/ordenes/adjuntos.py` + `build_adjuntos_router`,
+  ADR-042) asume EXPLÍCITAMENTE "un archivo por campo, sin lista" — la premisa central
+  que esta fase rompe para el caso de audio, por eso es un ADR nuevo y no una enmienda al
+  042. Dos decisiones se resolvieron con el usuario antes de programar
+  (`AskUserQuestion`): (1) lista de formatos → mp3/wav/ogg (los 3 cuya firma de contenido
+  cae en el byte 0, verificable con el mismo mecanismo `startswith` que ya usa
+  `leer_adjunto`; m4a/aac quedan fuera por ahora — su firma vive en el byte 4, no vale la
+  pena generalizar el chequeo para un caso no pedido); (2) flujo de captura → la sección
+  se habilita EN LA MISMA pantalla justo después de "Guardar" (no en un paso de "editar"
+  aparte), porque subir un audio requiere un `orden_estacion_id` real.
+- **Decisión:**
+  1. **Tabla nueva `OrdenEstacionAudio`** (mismo patrón que `OrdenEstacionDia`): PK, FK a
+     `orden_estacion_id` (`NO ACTION`, sin excepciones — mismo criterio de todo el
+     módulo), `ref` (clave S3), `nombre_archivo`, `orden` (0, 1, 2… — `orden=0` es el
+     DEFAULT). Altas/bajas van por endpoints DEDICADOS
+     (`POST`/`GET`/`DELETE /ordenes/estaciones/{id}/audios`), **NO** por el
+     `create()`/`update()` genérico de la OE: a diferencia de
+     `reporte_programados_ref`/`reporte_reales_ref` (una referencia que se reemplaza),
+     aquí hay una LISTA con altas/bajas independientes — un "reemplazo completo" (como sí
+     hace `dias`) invalidaría los `orden_estacion_audio_id` que ya hubiera asignados por
+     día. Al borrar un audio, los que quedan se renumeran (el nuevo `orden=0` pasa a ser
+     el default automáticamente) y los días que lo tenían asignado vuelven al default.
+  2. **`OrdenEstacionDia` gana `orden_estacion_audio_id`** (nullable, FK a
+     `OrdenEstacionAudio`): NULL = usa el default; con valor = ese día transmite un audio
+     puntual distinto — "solo las excepciones", mismo criterio que `spots_programados`.
+     Se asigna con `PUT /ordenes/estaciones/{id}/dias/{dia_id}/audio`, endpoint dedicado
+     y separado de `dias`/`PUT /{id}` por la misma razón del punto 1.
+  3. **Lista blanca y tope propios**, ninguno comparte constante con los adjuntos de
+     documentos (para no afectarlos): `EXTENSIONES_AUDIO_ORDENES` (mp3/wav/ogg,
+     `app/integrations/almacenamiento/documentos.py`) y `S3_MAX_AUDIO_BYTES` (15 MB,
+     `app/core/config.py` — nueva variable de entorno, no reusa `S3_MAX_PDF_BYTES`).
+  4. **Descarga con endpoint propio** (`GET .../audios/{audio_id}/archivo`), no el
+     genérico `/ordenes/adjuntos`: ese guarda el nombre original DENTRO de la clave S3
+     (`<uuid>_<nombre>`) y lo reconstruye quitando el prefijo al descargar;
+     `OrdenEstacionAudio.nombre_archivo` ya lo persiste aparte, así que el endpoint nuevo
+     no necesita ese truco. El objeto en S3 NO se borra al quitar un audio (mismo
+     trade-off aceptado que el resto de adjuntos de Órdenes, ADR-042).
+  5. **Frontend:** componente nuevo `MaterialATransmitir.tsx` (lista + subir/descargar/
+     quitar), visible en `OrdenEstacionForm.tsx` SOLO en edición. `PeriodoTransmisionGrid.tsx`
+     gana una columna "Audio" opcional (aparece solo si el padre pasa `audios`/
+     `onAsignarAudio`) que llama al endpoint dedicado de inmediato al cambiar — no se
+     acumula con "Guardar". `OrdenEstacionListPage.tsx`: al crear una OE nueva, en vez de
+     volver a la lista, la pantalla pasa a modo edición de la OE recién creada (mismo
+     componente, sin navegar) para que "Material a Transmitir" quede disponible de
+     inmediato — decisión explícita del usuario.
+- **Consecuencia:** ninguna sobre los 5 adjuntos existentes de Órdenes (ADR-042, siguen
+  intactos). El "reemplazo completo" de `dias` en `update()` sigue sin tocar
+  `orden_estacion_audio_id` de las filas que sobreviven (solo se recrean cuando el
+  cliente manda `dias` en el body — los overrides de audio de esos días específicos se
+  perderían si el usuario reemplaza el periodo completo Y tenía overrides puestos; caso
+  de borde aceptado, no resuelto aquí).
+- **Verificado:** backend — `ruff check` limpio; suite `pytest` nueva
+  (`test_f1_07_material_a_transmitir.py`, 11 casos): lista blanca de audio, orden
+  incremental al subir, renumeración + limpieza de overrides al borrar (incluida la
+  variante “se borra el default” y “se borra el que tenía un día asignado”), rechazo de
+  asignar un audio de OTRA OE (404), y el flujo HTTP completo (subir/listar/descargar/
+  borrar + RBAC + formato no permitido). 75 tests totales en verde. Migración
+  `a361d2e883be` aplicada y verificada en round-trip completo
+  (`upgrade`→`downgrade`→`upgrade`) contra la RDS real de desarrollo (confirmado por SQL
+  crudo: tabla + columna + FKs). Frontend — `tsc --noEmit` y `eslint` limpios (2 warnings
+  preexistentes, sin relación); suite `vitest` sin regresiones nuevas (287/299, mismos 12
+  fallos preexistentes de `auth`/`seguridad`/`apiClient`).
+
+### ADR-104 — "Cancelar transmisión": cancelación de un día puntual de OrdenEstacion (Fase 4b del rediseño)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, fase 4 del rediseño "Orden de
+  Servicio y Orden de Transmisión", continuación de ADR-100/101/102/103).
+- **Contexto:** el calendario de la fase 4a (generador de `periodo_transmision` con
+  `react-day-picker`, sin cambio de backend) necesitaba un complemento operativo: poder
+  cancelar la transmisión de UN día puntual — no la `OrdenEstacion` completa — en
+  cualquier momento después de guardada la orden, sin importar su sub-estado. Tres
+  decisiones se resolvieron con el usuario antes de programar (`AskUserQuestion`): (1)
+  el botón "Sustitución de Material" NO es una función nueva — es el mismo selector de
+  audio por día de ADR-103, solo con un ícono en vez de un combo completo (sin trabajo de
+  backend); (2) "Cancelar transmisión" actúa sobre un DÍA puntual de la Orden de
+  Transmisión, no sobre la OE completa; (3) la cancelación se permite en cualquier
+  momento después de guardada la OE, sin candado de `estatus`.
+- **Decisión:**
+  1. **Columna nueva `OrdenEstacionDia.cancelada`** (`BIT NOT NULL DEFAULT 0`,
+     migración `e262550019b7`). Un día cancelado NUNCA se borra ni se oculta: conserva su
+     fila, su horario y sus spots originales (auditoría), pero queda excluido de las 3
+     sumas de `spots_asignados` que usan `create()`/`update()` para el balance de spots
+     de la OC (propia OE y OE hermanas) y del recálculo de `importe_estacion`/
+     `importe_oir`/`importe_emisora` de la propia OE — libera su cupo para que otra OE
+     pueda usarlo.
+  2. **`cancelar_dia()` reutiliza el mecanismo YA existente de `Verificacion`+
+     `Incidencia`** (el mismo que `avanzar_reales`, en vez de inventar uno paralelo):
+     como `Incidencia.verificacion_id` es `NOT NULL`, cancelar crea primero una
+     `Verificacion` con `spots_verificados=0` para ese día (con
+     `notas_verificacion` documentando el motivo) y luego una `Incidencia` tipo
+     `spot_no_emitido` (uno de los 5 tipos de la spec, hasta ahora documentado como "alta
+     manual" — esta es su primera generación automática) con
+     `monto_ajuste = -programado_efectivo × precio_spot`. La `UniqueConstraint` de
+     `Verificacion.orden_estacion_dia_id` es, de hecho, el candado natural: un día que ya
+     tiene una `Verificacion` (por cancelación previa, o porque ya pasó por el flujo
+     normal 2.2→2.3) no se puede volver a cancelar — sin necesitar ninguna regla de
+     `estatus` explícita, coincide exactamente con "en cualquier momento" que pidió el
+     usuario.
+  3. **Endpoint dedicado** `POST /ordenes/estaciones/{id}/dias/{dia_id}/cancelar`
+     (body `{motivo}`, obligatorio — queda en `descripcion_incidencia`), no una bandera
+     dentro del `PUT` genérico de la OE: mismo criterio de "acción con efectos
+     colaterales propios, no un campo más" que ya usan `POST .../reales` y
+     `PUT .../dias/{id}/audio`.
+  4. **Efectos colaterales en `update()`/`avanzar_reales()` que había que blindar
+     ANTES de que ocurriera un `IntegrityError` en producción** (encontrados por
+     análisis del esquema, no por un bug reportado): el reemplazo completo de `dias` en
+     `update()` (DELETE + recrea todo) habría violado la FK de la `Verificacion` de un
+     día ya cancelado — se filtran los días cancelados tanto del DELETE como del payload
+     entrante (se preservan intactos, el frontend puede seguir mandándolos de vuelta sin
+     que se dupliquen). El loop de `avanzar_reales()` habría violado la
+     `UniqueConstraint` de `Verificacion` al intentar crear una segunda para el mismo
+     día — se salta los días con `cancelada=True`.
+  5. **Frontend:** `PeriodoTransmisionGrid.tsx` gana un botón "Cancelar transmisión"
+     (🚫, junto al de quitar fila) por cada día con `orden_estacion_dia_id` real y aún no
+     cancelado — solo aparece si el padre pasa `onCancelarDia` (mismo criterio que la
+     columna de audio de ADR-103). Al pulsarlo, revela un campo de texto en línea para el
+     motivo (NO `window.prompt`, para no romper el patrón ya establecido de "Motivo del
+     cambio de tarifa"/"Motivo del cambio" del resto del módulo) con "Confirmar"/
+     "Cancelar". Una fila cancelada se muestra atenuada, de solo lectura, con la
+     etiqueta "Cancelado" en vez de sus acciones. `OrdenesContext.tsx` gana la acción
+     `cancelarDia` (mismo patrón que `avanzarAReales`: refresca la OE, agrega la
+     incidencia nueva y refresca la OC — cancelar libera cupo de su balance de spots).
+     `oiTotalSpots` (selectors.ts) y el total de `PeriodoTransmisionGrid`/
+     `OrdenEstacionDetailPanel` excluyen los días cancelados, igual que el backend.
+- **Consecuencia:** `TipoIncidencia.SPOT_NO_EMITIDO` deja de ser "solo alta manual" —
+  ahora también la genera este flujo automáticamente. Ninguna migración de datos: los
+  días existentes nacen con `cancelada=0` (no cancelados).
+- **Verificado:** backend — `ruff check` limpio; suite `pytest` nueva
+  (`test_f1_08_cancelar_transmision.py`, 8 casos): genera Verificacion+Incidencia y
+  recalcula la OE, rechaza cancelar un día ya cancelado o ya verificado por el flujo
+  normal (409 ambos), libera cupo para que otra OE lo use, rechaza si excedería los
+  spots bonificables restantes (400), preserva un día cancelado en el reemplazo completo
+  de `dias` de `update()` (regresión del punto 4), `avanzar_reales` no truena con un día
+  ya cancelado en medio (regresión del punto 4, verifica exactamente 2 `Verificacion` al
+  final), y asignar audio a un día cancelado sigue permitido. 83 tests totales en verde.
+  Migración `e262550019b7` aplicada y verificada en round-trip completo
+  (`upgrade`→`downgrade`→`upgrade`) contra la RDS real de desarrollo (confirmado por SQL
+  crudo: columna `cancelada` BIT NOT NULL DEFAULT 0, y su ausencia total tras el
+  downgrade). Smoke test HTTP en vivo contra la RDS real (servidor reiniciado en limpio):
+  `POST .../dias/{dia_id}/cancelar` genera la `Verificacion`+`Incidencia` esperadas,
+  recalcula `importe_estacion`/`importe_oir`/`importe_emisora` excluyendo el día, y un
+  segundo intento sobre el mismo día responde 409 — datos de prueba limpiados después.
+  Frontend — `tsc --noEmit` limpio; `eslint` limpio (mismos 2 warnings preexistentes de
+  `react-refresh`, sin relación); nueva prueba unitaria (`oiTotalSpots excluye los días
+  con cancelada=true`, `selectors.test.ts`); suite `vitest` sin regresiones nuevas
+  (287/299, mismos 12 fallos preexistentes de `auth`/`seguridad`).
+
+### ADR-105 — Envío de los PDFs de OrdenEstacion por correo (Fase 5 del rediseño)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, fase 5 y última del rediseño "Orden de
+  Servicio y Orden de Transmisión", continuación de ADR-100/101/102/103/104).
+- **Contexto:** los 3 PDFs de OrdenEstacion (ADR-043: servicio/programados/reales) ya se
+  podían VER (abrir en una pestaña nueva), pero no había forma de mandarlos directo al
+  contacto de la estación/afiliado — el usuario tenía que descargar y adjuntar a mano en
+  su propio cliente de correo. Cuatro decisiones se resolvieron con el usuario antes de
+  programar (`AskUserQuestion`): (1) los 3 PDFs son enviables, no solo el de servicio;
+  (2) el destinatario se sugiere del contacto YA capturado en Estación/Afiliado (editable
+  antes de enviar, nunca bloqueante — un afiliado sin correo capturado simplemente
+  arranca con el campo vacío); (3) mecanismo de envío = Amazon SES (mismo proveedor/cuenta
+  que ya usa S3, ADR-027); (4) se guarda bitácora de cada envío (a quién, cuándo, qué PDF,
+  si falló).
+- **Decisión:**
+  1. **Integración nueva `app/integrations/correo/`**, MISMO patrón anti-corrupción que
+     `AlmacenamientoPort`/ADR-027: puerto `CorreoPort` (`enviar(destinatario, asunto,
+     cuerpo_texto, adjuntos)`), adaptador `CorreoSES` (real, `boto3.client("ses")
+     .send_raw_email` — SES no soporta adjuntos en `send_email`, se arma un MIME
+     multiparte a mano) y adaptador `CorreoLocal` (default de dev/pruebas: NO envía nada
+     real, solo registra el intento en el log). `get_correo()` decide por
+     `CORREO_BACKEND` (`local`/`ses`), inyectado en el router vía `Depends()` — igual que
+     `get_almacenamiento()`, nunca instanciado a mano dentro del servicio. Reusa
+     `AWS_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (misma cuenta AWS que S3);
+     variables nuevas: `SES_FROM_EMAIL`, `SES_FROM_NAME`.
+  2. **`CorreoLocal` como DEFAULT, no un caso de borde**: SES en modo sandbox (el estado
+     inicial de cualquier cuenta nueva) exige verificar CADA destinatario de antemano, así
+     que un envío real de extremo a extremo no es viable sin acceso a la cuenta de AWS del
+     cliente — decisión explícita de dejar el envío real behind a un flag hasta que el
+     equipo confirme el dominio/cuenta SES de producción (sigue `[[POR LLENAR]]`, sección
+     14 de `CLAUDE.md`).
+  3. **Tabla nueva `LogEnvioCorreoOrdenEstacion`** (`app/modules/ordenes/envio_correo_pdf.py`):
+     un registro por INTENTO (exitoso o no) — `orden_estacion_id`, `tipo_pdf`,
+     `destinatario_email`, `usuario`, `exitoso`, `mensaje_error`, `fecha_envio`. Mismo
+     criterio de auditoría que `LogCambioParametro`, pero en tabla propia: esto registra
+     una ACCIÓN externa (se mandó o no un correo), no el cambio de valor de un campo. Si
+     el envío falla, el registro se persiste IGUAL (con `exitoso=False` y el detalle) y
+     LUEGO se relanza el error — la bitácora nunca se pierde solo porque SES/el adaptador
+     falló.
+  4. **Reusa los generadores YA existentes** de `orden_estacion_pdf.py`
+     (`generar_pdf_servicio/programados/reales`, bytes en memoria) como adjunto — el mismo
+     gateo por sub-estado que ya tenían sus `GET` (p.ej. "reales" antes de 2.3) sigue
+     aplicando: si el PDF no se puede generar, el error se lanza ANTES de intentar
+     cualquier envío, y no se genera bitácora (no hubo intento real).
+  5. **Endpoint dedicado** `POST /ordenes/estaciones/{id}/pdf/{tipo}/enviar-correo` (body
+     `{destinatario_email}`, validado como correo con `pydantic.EmailStr` — nueva
+     dependencia `email-validator`), más `GET .../envios-correo` para el historial. Mismo
+     criterio que ADR-103/104: acción con efectos colaterales propios, endpoint dedicado,
+     no un campo más del `PUT` genérico de la OE.
+  6. **Frontend:** `OrdenEstacionDetailPanel.tsx` — cada PDF (`FilaPdf`) gana un botón
+     "✉️" junto al de ver, que revela un campo de destinatario en línea (sugerido de
+     `Afiliado.contacto_email` vía `AfiliadoRef` en `catalogosCache.ts`, editable — NO
+     `window.prompt`, mismo patrón que "Motivo del cambio de tarifa") y, tras enviar,
+     una nota "Enviado a X el DD/MM HH:MM" con el último envío EXITOSO de ese tipo
+     (`GET .../envios-correo` se carga una vez al montar el panel).
+- **Consecuencia:** ninguna sobre los PDFs existentes (siguen viéndose igual, ADR-043
+  intacto). El envío real a un destinatario de verdad queda pendiente de que el equipo
+  active `CORREO_BACKEND=ses` con una cuenta/dominio SES fuera de sandbox — hasta
+  entonces, en dev/qa el botón "Enviar" completa el flujo (bitácora incluida) pero no
+  manda nada a una bandeja de entrada real.
+- **Verificado:** backend — `ruff check` limpio; suite `pytest` nueva
+  (`test_f1_09_envio_correo_pdf.py`, 7 casos): envío exitoso registra bitácora, envío que
+  falla (adaptador falso que lanza `CorreoError`) también registra bitácora
+  (`exitoso=False`) y relanza 502, "reales" antes de 2.3 responde 400 SIN generar
+  bitácora (el gateo por sub-estado corre antes del intento de envío), 404 de OE
+  inexistente, historial ordenado del más reciente al más antiguo, y el flujo HTTP
+  completo (envío + historial, con `CorreoLocal`/un correo falso inyectado por
+  dependencia — mismo patrón que `AlmacenamientoLocal` en
+  `test_f1_07_material_a_transmitir.py`) incluida la validación 422 de un correo con
+  formato inválido. 90 tests totales en verde. Migración `fb5e4af2dd28` aplicada y
+  verificada en round-trip completo (`upgrade`→`downgrade`→`upgrade`) contra la RDS real
+  de desarrollo (confirmado por SQL crudo: tabla, columnas, FK y su ausencia total tras
+  el downgrade). Frontend — `tsc --noEmit` y `eslint` limpios (mismos 2 warnings
+  preexistentes, sin relación); suite `vitest` sin regresiones nuevas frente al baseline
+  previo.
+
+### ADR-106 — "Asignar estaciones": Duración por estación, no heredada de la OC (corrección de ADR-102)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección de alcance sobre la Fase 2
+  del rediseño "Asignar estaciones", tras revisión en vivo del usuario).
+- **Contexto:** ADR-102 había decidido que `duracion_spot` de una `OrdenEstacion` se
+  heredara SIN cambio de `OrdenCliente.duracion_spot` ("decisión explícita del usuario:
+  no independizarla por estación en esta fase"). Al revisar el flujo terminado en vivo,
+  el usuario pidió lo contrario: la secuencia de captura por estación debe ser
+  **Estación → Producto → Duración → Tarifa**, con Duración como un combo propio
+  (20s/30s/60s — se confirmó con el usuario que son los 3 valores que ya existen en el
+  catálogo de Tarifa, no un cuarto valor "10s" que no existe en ningún lado del sistema).
+  Este ADR revierte esa parte puntual de ADR-102; el resto (producto por estación,
+  auditoría condicional de `precio_spot`) no cambia.
+- **Decisión:**
+  1. **`OrdenEstacionCreate.duracion_spot`** (nuevo campo, requerido) y
+     **`OrdenEstacionUpdate.duracion_spot`** (opcional — mismo criterio que
+     `producto_tarifa`: no forzar a una OE existente sin este dato a capturarlo antes de
+     poder editar cualquier otra cosa). La COLUMNA `OrdenEstacion.duracion_spot` ya
+     existía (con su mismo CHECK `20s│30s│60s`) — el cambio es de ORIGEN del dato
+     (capturado vs. copiado de la OC), no de esquema: **ninguna migración nueva**.
+  2. `create()`/`update()` dejan de copiar `oc.duracion_spot` y usan el valor de la OE
+     (nuevo en `create`, o el existente/actualizado en `update`) para `_tarifa_sugerida()`
+     — la búsqueda de tarifa del catálogo (ADR-102) ahora depende 100% de datos propios
+     de la OE (estación, producto, duración), nunca de la OC.
+  3. **Frontend — revelado progresivo** (`OrdenEstacionForm.tsx`): al CREAR, Producto
+     solo aparece tras elegir Estación; Duración tras elegir Producto; Tarifa (y su
+     sugerencia del catálogo) tras elegir Duración — igual que pidió el usuario. Al
+     EDITAR se muestran los 4 de una vez (sin gateo), para no dejar inaccesible un campo
+     de una OE existente que no lo tenía capturado (mismo criterio de `producto_tarifa`).
+     "Spots bonificables" NO se gatea — sigue siempre visible/editable, sin relación con
+     la secuencia de la tarifa.
+  4. `OrdenEstacionDetailPanel.tsx`: la comparación contra la tarifa de referencia del
+     catálogo ("Desvío contra tarifa de referencia") también pasa a usar
+     `oe.duracion_spot` en vez de `oc.duracion_spot`; se agregó una fila nueva
+     "Producto"/"Duración" en el desglose económico (antes ninguno de los dos se
+     mostraba en el detalle).
+  5. **Verificación cruzada de lo que el usuario reportó como "no hecho" y que SÍ ya
+     estaba implementado** (sin cambios en esta corrección, solo confirmado): spot
+     bonificable (ADR-068, intacto); candado de tarifa estación > cliente (ADR-101, ya
+     removido, confirmado sin rastro en backend ni frontend); "Material a Transmitir"
+     (ADR-103, audios en el MISMO bucket/adaptador S3 que los adjuntos de documentos,
+     descargables, visible automáticamente justo después de guardar cada estación nueva
+     — el flujo ya redirige a modo edición de la OE recién creada para exactamente ese
+     propósito).
+- **Consecuencia:** ninguna sobre datos existentes (`duracion_spot` de las OE sembradas
+  sigue siendo la misma; el cambio solo afecta de dónde sale el valor en altas/ediciones
+  NUEVAS a partir de ahora).
+- **Verificado:** backend — `ruff check` limpio; 3 pruebas nuevas en
+  `test_f1_05_ordenes_escritura.py` (la tarifa se busca con la duración de la OE, no la
+  de la OC; sin tarifa sembrada para la duración elegida sigue libre aunque exista para
+  otra duración de la misma estación; editar la duración recalcula la tarifa sugerida).
+  93 tests totales en verde (ninguna regresión en los archivos que ya mandaban
+  `producto_tarifa` sin `duracion_spot` — se les agregó el campo, ahora requerido, en sus
+  payloads de prueba). Frontend — `tsc --noEmit` y `eslint` limpios (mismos 2 warnings
+  preexistentes); suite `vitest` sin regresiones nuevas frente al baseline (287/300,
+  mismos 12 fallos preexistentes) tras actualizar las pruebas de `OrdenEstacionForm`
+  (agregar la selección de "Duración" al flujo) y de `OrdenEstacionDetailPanel` (mover el
+  control de la duración de prueba de la OC a la OE, que es ahora la fuente real).
+
+**Corrección adicional (misma fecha, segunda revisión en vivo del usuario):**
+1. **Layout:** "Producto" y "Duración" ahora van en la MISMA fila (antes cada uno ocupaba
+   su propio renglón completo) — mismo patrón `r2` que ya usaban "Tarifa"/"Spots
+   bonificables" (esos dos ya estaban en una fila, confirmado; no tenían el problema).
+2. **"Material a Transmitir" — reubicado al DETALLE, no solo al formulario de edición:**
+   el usuario reportó (por segunda vez) no encontrarlo — la causa real: el componente
+   SOLO vivía dentro de `OrdenEstacionForm.tsx` (modo edición), nunca en
+   `OrdenEstacionDetailPanel.tsx` (la vista de "lista + panel de detalle", el flujo
+   normal de navegación de CLAUDE.md — clic en una fila de la lista). Ahí es exactamente
+   donde YA viven los botones de PDF, así que es donde el usuario lo esperaba. Se agregó
+   `<MaterialATransmitir>` también al panel de detalle, con su propio estado
+   (`audios`/fetch independiente del que ya tenía el formulario — cada pantalla se
+   recarga la lista por su cuenta, sin compartir estado entre las dos). Se conserva
+   también en el formulario de edición (no se quita; ahí sigue sirviendo además para el
+   selector de audio POR DÍA de `PeriodoTransmisionGrid.tsx`, que si necesita conocer la
+   lista de audios disponibles).
+3. **Cobertura de prueba faltante — bitácora al modificar la tarifa:** el mecanismo YA
+   estaba implementado y probado a nivel de servicio (ADR-102), pero NINGUNA prueba de
+   frontend sembraba una tarifa real en `state/catalogosCache.ts` — sin eso,
+   `tarifaDivergente` nunca se activaba en los tests, así que el campo "Motivo del cambio
+   de tarifa" nunca se ejercitaba en la UI. Se agregaron 2 pruebas nuevas en
+   `OrdenEstacionForm.test.tsx` (con una tarifa sembrada en `60s` para no interferir con
+   las pruebas ya existentes que usan `30s` sin esperar ninguna tarifa del catálogo):
+   coincide con la sugerida → no pide motivo; diverge → exige motivo, bloquea "Guardar"
+   sin él, lo manda en el payload con él. Además, **smoke test HTTP en vivo contra la RDS
+   real** (tarifa sembrada, servidor reiniciado en limpio): crear una OE con precio
+   divergente SIN motivo → 400; con motivo → 201 y fila real en `log_cambio_parametro`
+   (`valor_anterior`/`valor_nuevo`/`motivo_cambio` correctos); **editar** esa misma OE con
+   un precio divergente distinto y su propio motivo → una SEGUNDA fila en la bitácora,
+   confirmando que la auditoría también corre en `update()`, no solo en `create()` — datos
+   de prueba (tarifa, OC, OE, ambas filas de la bitácora) limpiados después.
+- **Verificado (esta corrección):** frontend — `tsc --noEmit` limpio; 19 pruebas en
+  `OrdenEstacionForm.test.tsx` en verde (2 nuevas); suite `vitest` completa sin
+  regresiones nuevas (290/302, mismos 12 fallos preexistentes). Backend sin cambios de
+  código en esta corrección (solo verificación en vivo); ambos servidores reiniciados en
+  limpio antes de las pruebas HTTP.
+
+### ADR-107 — Rediseño de `PeriodoTransmisionGrid`: "Horario de transmisión" único + "Material a Transmitir" con default visible
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección adicional sobre la Fase 4
+  del rediseño "Orden de Servicio y Orden de Transmisión", tras una tercera revisión en
+  vivo del usuario).
+- **Contexto:** dos pedidos puntuales sobre la tabla de `periodo_transmision`
+  (`PeriodoTransmisionGrid.tsx`): (1) "Hora inicio"/"Hora término" ocupaban 2 columnas
+  completas — se piden como UNA sola columna "Horario de transmisión"; (2) la columna de
+  audio (ADR-103) mostraba un guion ("—") para cualquier día sin
+  `orden_estacion_dia_id` real — es decir, TODOS los días recién generados por el
+  calendario (ADR-104/Fase 4) antes de guardar — en vez de mostrar qué material le toca
+  por default. El usuario aclaró el comportamiento esperado: un solo audio subido → se
+  usa para todas las fechas; dos o más → el primero subido es el default de todas,
+  cambiable por fecha con un combo. Ese comportamiento YA existía a nivel de negocio
+  (`orden_estacion_audio_id = NULL` siempre significó "usa el default", ver ADR-103) — el
+  hueco era puramente de PRESENTACIÓN: no se veía.
+- **Decisión:**
+  1. **Columna única "Horario de transmisión":** sigue siendo 2 campos capturados
+     (`hora_inicio`/`hora_termino`, sin cambio de modelo/spec) — se muestran como 2
+     `<input type="time">` uno junto al otro DENTRO de una sola celda/columna, en vez de
+     2 columnas de tabla separadas. `problemasDeFila` (validación) no cambia.
+  2. **Columna "Material a Transmitir" (antes "Audio") — nombre resuelto SIEMPRE
+     visible, sin importar si el día ya tiene `orden_estacion_dia_id`:** nueva función
+     `nombreMaterial(row)` — si el día tiene su propio `orden_estacion_audio_id`, muestra
+     ESE nombre; si no (incluidos los días recién generados por el calendario, sin
+     guardar todavía), muestra `audios[0].nombre_archivo` (el primero subido, el
+     default real). Sin ningún audio subido, muestra "—".
+  3. **"Sustitución de Material" — ícono en vez de combo siempre visible:** un botón 🔄
+     ("Sustitución de Material") junto al nombre, SOLO para días con
+     `orden_estacion_dia_id` real (cambiar el default de un día puntual sigue siendo el
+     endpoint dedicado `PUT .../dias/{id}/audio`, que necesita un id real — un día recién
+     generado por el calendario, sin guardar, no tiene id todavía, así que solo se le
+     muestra el nombre, sin botón, hasta que se guarde la orden). Al pulsar el ícono,
+     revela el `<select>` (mismo mecanismo ya existente de ADR-103: opción "Default
+     (nombre)" limpia el override con `null`, o cualquier otro audio de la lista); se
+     cierra solo al elegir o al perder el foco.
+  4. **Sin cambios de esquema ni de backend:** la semántica de `orden_estacion_audio_id
+     = NULL` ya era "usa el default" desde ADR-103 — esta corrección es 100% frontend
+     (presentación).
+- **Consecuencia:** el botón "Cancelar transmisión" (ADR-104) y el botón "✕" de quitar
+  fila NO cambian — ya cumplían exactamente lo pedido.
+- **Verificado:** frontend — `tsc --noEmit` y `eslint` limpios (mismos 2 warnings
+  preexistentes); prueba de render NUEVA (`PeriodoTransmisionGrid.render.test.tsx`, 8
+  casos — no existía ninguna prueba de render de este componente antes, solo de su
+  función pura `problemasDeFila`): la columna vieja de 2 horas ya no aparece, sigue
+  capturando inicio/término por separado, un día sin id muestra el default sin botón, un
+  día con id sin override muestra el default CON botón (y sustituir llama a
+  `onAsignarAudio` con el id correcto), un día con override propio muestra SU nombre,
+  un día cancelado no muestra nada, y sin audios subidos muestra "—". Suite `vitest`
+  completa sin regresiones nuevas frente al baseline.
+
+### ADR-108 — "Horario de transmisión": una sola hora (no un rango) + "Material a Transmitir" visible desde el alta
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, cuarta revisión en vivo del usuario
+  sobre la Fase 4 del rediseño, corrección directa sobre ADR-107).
+- **Contexto:** tras ver capturas de pantalla reales del generador por calendario y de la
+  tabla ya con días generados, el usuario señaló dos cosas puntuales: (1) "Horario de
+  transmisión — inicio"/"— término" seguían siendo 2 campos (el calendario NUNCA se había
+  tocado en ADR-107, solo la tabla) — pidió explícitamente, dos veces, UNA sola hora, sin
+  inicio ni fin; (2) al dar de alta una estación nueva (antes de guardar) la columna
+  "Material a Transmitir" no aparecía en absoluto — causa: la columna requería
+  `onAsignarAudio` además de `audios`, y ese primero solo existe en edición; el usuario
+  interpretó la ausencia total como "no se hizo", cuando en realidad es una restricción
+  arquitectónica real (no se puede asignar un audio a un día sin id todavía) que no se
+  estaba comunicando en la UI.
+- **Decisión:**
+  1. **Un solo horario, no un rango:** `CalendarioPeriodoTransmision.tsx` pasa de 2
+     estados (`horaInicio`/`horaTermino`) a uno (`horario`) y de 2 `<input type="time">` a
+     uno; al generar, cada fila nueva recibe `hora_inicio = hora_termino = horario`.
+     `PeriodoTransmisionGrid.tsx` hace lo mismo: el único `<input type="time">` de la
+     columna "Horario de transmisión" actualiza AMBOS campos a la vez
+     (`actualizarFila(idx, { hora_inicio: v, hora_termino: v })`). `hora_inicio`/
+     `hora_termino` SIGUEN siendo 2 columnas del modelo (spec/ADR-030, sin migración) —
+     el cambio es 100% de captura: ya no se le pide al usuario un rango, solo un punto en
+     el tiempo, y ambas columnas se llenan iguales. `problemasDeFila` deja de validar
+     "inicio < término" (ya no aplica: siempre son iguales por construcción).
+  2. **"Material a Transmitir" visible desde el ALTA, con nota explicativa:** la columna
+     ahora aparece con solo pasar `audios` (aunque venga vacía `[]`, como al crear una OE
+     nueva) — ya NO requiere también `onAsignarAudio`. Sin ningún audio subido todavía,
+     cada fila muestra "—" y, debajo de la tabla, una nota: *"El material a transmitir
+     (audios) se sube y se asigna desde 'Material a Transmitir' después de guardar la
+     orden — necesita un id real."* — para que la ausencia de funcionalidad sea EXPLICADA,
+     no un vacío sin explicación. El botón "Sustitución de Material" sigue exactamente
+     igual que ADR-107 (solo para un día con `orden_estacion_dia_id` real).
+  3. **Sin cambios de esquema ni de backend** — ambas correcciones son 100% frontend.
+- **Verificado:** frontend — `tsc --noEmit` y `eslint` limpios (mismos 2 warnings
+  preexistentes). Pruebas actualizadas/nuevas: `PeriodoTransmisionGrid.test.ts` (ya no
+  exige un rango válido entre horas; nueva prueba de horario vacío), 2 pruebas nuevas en
+  `PeriodoTransmisionGrid.render.test.tsx` (un solo input de hora que llena ambos campos;
+  la columna de material aparece vacía con su nota al crear), y `CalendarioPeriodoTransmision.test.tsx`
+  NUEVO (no existía ninguna prueba de este componente antes — 3 casos: un solo campo de
+  horario, no renderiza nada si `disabled`, cambiar el horario actualiza el único input).
+  Suite `vitest` completa sin regresiones nuevas frente al baseline. Servidor de
+  frontend reiniciado en limpio y verificado sirviendo sin errores.
+
+### ADR-109 — "Material a Transmitir" subible DURANTE la captura (antes de guardar la OE)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, quinta revisión en vivo del usuario
+  sobre la Fase 4 del rediseño, corrección directa sobre ADR-107/ADR-108).
+- **Contexto:** ADR-107/108 ya dejaban visible la columna "Material a Transmitir" desde
+  el alta, con una nota explicando que subir el audio requería guardar primero (ninguna
+  fila tiene un `orden_estacion_id` real todavía). El usuario rechazó esa limitación:
+  pidió explícitamente que se pudiera subir el material DURANTE la captura, "como hacemos
+  con los PDF's que cargamos" — señalando un precedente YA implementado en el mismo
+  módulo: `AdjuntoOrdenInput`/`subirAdjuntoOrden` sube el PDF de la Orden de Servicio a S3
+  de inmediato al elegirlo, vía un endpoint SIN ningún id de padre
+  (`POST /ordenes/adjuntos?tipo=odc`) — el archivo ya está en S3 antes de que exista la
+  OrdenCliente; el `ref` que devuelve solo se manda como parte del payload final de
+  "Guardar", que persiste la referencia en la columna correspondiente.
+- **Decisión:**
+  1. **Nuevo router `material_staging.py`** (mismo mecanismo que `adjuntos.py`, MISMA
+     factory `build_adjuntos_router`, pero NO el mismo router): un audio no puede
+     compartir la lista blanca/tope de los 5 tipos PDF de `adjuntos.py`
+     (`EXTENSIONES_ADJUNTO_ORDENES`/`s3_max_pdf_bytes`), así que se monta un router
+     SEPARADO en `/ordenes/material-staging` (`extensiones_permitidas=
+     EXTENSIONES_AUDIO_ORDENES`, `max_bytes=settings.s3_max_audio_bytes` — 15 MB). La
+     factory ganó 2 parámetros opcionales para esto (`max_bytes`, `prefix`), con default
+     igual al comportamiento de SIEMPRE — cero cambio para sus consumidores existentes
+     (`adjuntos.py` de Órdenes y de Facturación).
+  2. **`OrdenEstacionCreate.audios`** (nuevo campo opcional, `list[OrdenEstacionAudioStagedIn]`,
+     `ref`+`nombre_archivo` — lo que devolvió el staging): el servicio, al crear la OE,
+     crea las filas REALES de `OrdenEstacionAudio` en el mismo orden de la lista (el
+     primero = `orden=0` = default) — mismo criterio que `agregar_audio()` (el endpoint
+     dedicado de SIEMPRE, sin cambios, sigue siendo el único camino para agregar más
+     material DESPUÉS de que la OE ya existe). **`OrdenEstacionUpdate` NO gana este
+     campo** — editar sigue siendo exclusivamente vía el endpoint dedicado.
+  3. **Por qué esto NO contradice el razonamiento original de ADR-103** ("altas/bajas
+     van por endpoints dedicados, no por create()/update() genérico — reemplazar
+     `dias` completo invalidaría los overrides por día ya asignados"): ese riesgo
+     únicamente existe en una EDICIÓN de una OE que YA tiene días con overrides de
+     audio asignados — imposible en `create()`, donde la OE (y sus días) apenas se
+     están creando. Sembrar la lista inicial en el alta es seguro por construcción.
+  4. **Frontend:** `OrdenEstacionForm.tsx` reemplaza el mecanismo "guardar archivos en
+     memoria y subirlos después de guardar" (que se había armado un momento antes, sin
+     llegar a usarse en producción) por subida INMEDIATA al elegir el archivo —
+     `subirMaterialStagingApi()` nueva en `escrituraApi.ts`, mismo patrón que
+     `subirAdjuntoOrden`. El `{ref, nombre_archivo}` se guarda en estado local
+     (`audiosStaging`) y se manda en `audios_staging` del `OrdenEstacionInput` — SOLO al
+     crear (`toApi.ts#ordenEstacionCreateToApi`; `ordenEstacionUpdateToApi` no lo toca).
+     La vista previa de la tabla (`PeriodoTransmisionGrid`) usa este mismo estado para
+     mostrar el nombre real del default incluso antes de guardar la orden.
+- **Consecuencia:** un archivo subido a staging y luego abandonado (el usuario cierra el
+  formulario sin guardar) queda huérfano en S3 — mismo trade-off YA aceptado para el PDF
+  de la Orden de Servicio (ADR-042), no es un caso nuevo de este módulo.
+- **Verificado:** backend — `ruff check` limpio; 5 pruebas nuevas en
+  `test_f1_07_material_a_transmitir.py` (crear con audios sembrados los persiste en
+  orden; crear sin audios no crea ninguna fila — el campo es 100% opcional; sembrar y
+  luego agregar más por el endpoint dedicado continúa el orden sin colisión; HTTP: subir
+  a `/material-staging` sin ningún id de padre, rechaza formato no permitido, y el flujo
+  completo real — subir en staging → crear la OE con ese `ref` → aparece en el listado
+  normal de audios de esa OE). Suite completa en verde. Sin migración (ninguna columna
+  nueva — `OrdenEstacionAudio` ya existía tal cual). Frontend — `tsc --noEmit` y
+  `eslint` limpios (mismos 2 warnings preexistentes); 3 pruebas nuevas en
+  `OrdenEstacionForm.test.tsx` (subir se refleja en la lista y en la tabla de inmediato;
+  "Guardar" manda los refs ya subidos en el orden correcto; "Quitar" descarta uno antes
+  de guardar). Suite `vitest` completa sin regresiones nuevas frente al baseline.
+
+### ADR-110 — "Material a Transmitir" obligatorio para habilitar el calendario (por ahora)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección inmediatamente posterior a
+  ADR-109, mismo módulo).
+- **Contexto:** con ADR-109 el usuario ya podía subir el material durante la captura,
+  pero nada impedía continuar sin subir ninguno: el calendario y la tabla de periodo
+  quedaban usables igual, con solo una nota informativa. El usuario pidió que, por ahora,
+  se exija al menos un audio antes de habilitar la generación de fechas: "se requiere al
+  menos agregar un audio para que permita habilitar el calendario y seleccionar las
+  fechas".
+- **Decisión:**
+  1. `OrdenEstacionForm.tsx` calcula `hayMaterial = isEdit || audiosVistaPrevia.length > 0`
+     — en **edición** la regla NO aplica (una OE existente, capturada antes de esta
+     regla o con sus días ya asignados, no debe quedar bloqueada retroactivamente; el
+     propósito de la regla es específicamente el flujo de alta). En **alta**, exige al
+     menos un audio en `audiosStaging`.
+  2. `disabled={!hayMaterial}` se pasa tanto a `CalendarioPeriodoTransmision` (que con
+     `disabled` no se renderiza — semántica ya existente, reusada tal cual) como a
+     `PeriodoTransmisionGrid` (que con `disabled` bloquea todos los inputs de fila y
+     oculta "+ Agregar día" — también semántica ya existente).
+  3. Reordenamiento de la pantalla: la sección "Material a Transmitir" ahora aparece
+     ANTES de "Periodo de transmisión", para que el requisito sea visible antes del
+     bloque que desbloquea. Mientras no haya material se muestra una nota: "Sube al
+     menos un material a transmitir (arriba) para habilitar el calendario y capturar
+     fechas."
+  4. Validación de guardado: `errores.push("Sube al menos un material a transmitir.")`
+     si `oc && !hayMaterial` — mismo lugar que las demás validaciones de la lista de
+     periodo, antes del guardado.
+- **Consecuencia:** el gate es binario a nivel de sección completa (no granular por
+  fila) porque así es como ya funcionaban los `disabled` de ambos componentes — no se
+  tocó su API para este cambio, dado el alcance acordado ("por ahora"). Si más adelante
+  se requiere granularidad (p.ej. permitir agregar días sin material pero bloquear solo
+  el guardado final), se revisita como un cambio de alcance aparte.
+- **Verificado:** 100% frontend, sin cambios de backend. `tsc --noEmit` limpio; `eslint`
+  limpio (mismos 2 warnings preexistentes, ninguno nuevo). `OrdenEstacionForm.test.tsx`:
+  se agregó el helper `asegurarMaterial()` (sube un audio de staging antes de operar el
+  calendario) y se convirtieron a `async`/`await` los 22 tests y los 15 call-sites de
+  `agregarDia()` que dependían de que "+ Agregar día" ya estuviera visible — 22/22 en
+  verde. Suite `vitest` completa: 304/316 (12 fallas, exactamente el baseline
+  preexistente de auth/seguridad/apiClient — cero regresiones nuevas).
+
+### ADR-111 — "Sustitución de Material" también disponible en el ALTA (antes de guardar)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección inmediatamente posterior a
+  ADR-110, mismo módulo).
+- **Contexto:** con ADR-109/110 ya se podían subir varios audios durante la captura y el
+  calendario quedaba habilitado en cuanto había al menos uno, pero el botón "Sustitución
+  de Material" (🔄) seguía requiriendo un `orden_estacion_dia_id` real — es decir, solo
+  funcionaba en EDICIÓN. En el alta, con 2+ audios subidos, cada día generado por el
+  calendario mostraba SIEMPRE el primero (el default) sin forma de elegir otro. El
+  usuario lo pidió explícitamente viendo la tabla ya funcionando: agregar el mismo botón
+  junto al de eliminar, que permita elegir entre los audios ya cargados y pinte el nombre
+  elegido en la columna.
+- **Decisión:**
+  1. **Frontend** (`PeriodoTransmisionGrid.tsx`): nuevo prop `permiteAsignacionLocal`
+     (`OrdenEstacionForm.tsx` lo pasa como `!isEdit`). El botón/select de "Sustitución de
+     Material" ahora aparece también para filas SIN `orden_estacion_dia_id` cuando
+     `permiteAsignacionLocal` es verdadero — el cambio se guarda EN LA FILA misma
+     (`actualizarFila(idx, { orden_estacion_audio_id: ref })`, sin llamar a
+     `onAsignarAudio`, que sigue siendo exclusivo del camino de edición con id real).
+     Durante el alta, `audiosVistaPrevia` usa el `ref` de S3 como id "de vista previa"
+     (ya sembrado desde ADR-109) — es lo que queda guardado en la fila hasta el guardado.
+  2. **`toApi.ts`**: `ordenEstacionCreateToApi` manda, por cada día,
+     `audio_staging_ref: row.orden_estacion_audio_id || null` — el `ref` de S3 elegido
+     (o `null` = usa el default). `ordenEstacionUpdateToApi` NO gana este campo (la
+     sustitución en edición sigue siendo, como siempre, el endpoint dedicado e inmediato
+     `PUT .../dias/{id}/audio` — sin cambio).
+  3. **Backend** (`OrdenEstacionDiaCreate.audio_staging_ref: str | None`): referencia a
+     uno de los `OrdenEstacionCreate.audios` de la MISMA solicitud. En `create()`, las
+     filas de `OrdenEstacionAudio` ahora se crean ANTES que las de `OrdenEstacionDia`
+     (con un `db.flush()` explícito entre ambos bloques, para no depender de que el
+     unit-of-work de SQLAlchemy infiera el orden correcto sin `relationship()` declarada)
+     — así se arma un mapa `ref → orden_estacion_audio_id` real y cada día ya nace con su
+     `orden_estacion_audio_id` resuelto (o `None` si no trae `audio_staging_ref`, o si
+     trae uno que no está entre `data.audios` → `DomainError`, 422).
+- **Consecuencia:** en edición, agregar un día NUEVO (sin guardar todavía) y elegir un
+  audio para él con este mismo botón NO se persiste al hacer "Guardar" — `update()` no
+  lee ningún override de audio de `dias` (su reemplazo de días es completo pero ciego a
+  audio, un límite preexistente fuera del alcance de este ADR). Por eso
+  `permiteAsignacionLocal` se pasa como `!isEdit`: el botón de asignación LOCAL solo
+  aparece en el alta, donde sí viaja y se persiste correctamente; en edición, sigue
+  existiendo el camino de siempre (día ya guardado + `onAsignarAudio`, inmediato contra
+  el backend).
+- **Verificado:** backend — `ruff check` limpio; 2 pruebas nuevas en
+  `test_f1_07_material_a_transmitir.py` (un día sin `audio_staging_ref` se queda con el
+  default, otro con `audio_staging_ref` apunta al audio correcto; un `audio_staging_ref`
+  que no existe entre los audios de la solicitud lanza `DomainError`). Suite completa en
+  verde (19/19 en el archivo, sin regresiones en el resto). Sin migración (columna ya
+  existente desde ADR-103). Frontend — `tsc --noEmit` y `eslint` limpios (mismos 2
+  warnings preexistentes); 1 prueba nueva en `OrdenEstacionForm.test.tsx` (con 2 audios
+  subidos, sustituir el de un día ya generado pinta el nombre correcto y lo manda en
+  `periodo_transmision[].orden_estacion_audio_id` al guardar). Suite `vitest` completa:
+  305/317 (12 fallas, mismo baseline preexistente — cero regresiones nuevas).
+
+### ADR-112 — FIX: `ck_orden_estacion_dia_horas` seguía exigiendo un rango real, rompía TODO alta/edición desde ADR-108
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección crítica detectada en vivo
+  al probar el flujo completo tras ADR-111).
+- **Contexto:** el usuario probó el flujo de captura completo (subir 2 audios, generar
+  días, sustituir material, Guardar) y el guardado falló con "Datos de entrada
+  inválidos" (422 genérico). La causa NO tenía relación con ADR-111: **ADR-108** (varias
+  correcciones atrás) cambió "Horario de transmisión" de un RANGO (hora inicio / hora
+  término, dos inputs) a UN SOLO valor — desde entonces el frontend manda siempre
+  `hora_inicio == hora_fin` (mismo valor en ambas columnas). Pero ni el validador
+  Pydantic (`OrdenEstacionDiaCreate._valida_horas`, `hora_fin <= hora_inicio` → error) ni
+  el CHECK de la base (`ck_orden_estacion_dia_horas: hora_fin > hora_inicio`) se
+  relajaron en ese momento — ambos seguían exigiendo una desigualdad ESTRICTA. Resultado:
+  **toda alta o edición real de una OrdenEstacion desde la app ha estado fallando desde
+  ADR-108**, sin que ninguna prueba lo detectara porque los fixtures de
+  `test_f1_05_ordenes_escritura.py`/`test_f1_07_material_a_transmitir.py` siguen usando
+  un rango real (7:00–9:00) heredado de antes de ADR-108, nunca el caso real
+  (`hora_inicio == hora_fin`) que manda la app.
+- **Decisión:**
+  1. `OrdenEstacionDiaCreate._valida_horas`: `hora_fin <= hora_inicio` → `hora_fin <
+     hora_inicio` (solo rechaza si termina ANTES de empezar; igual ya es válido).
+  2. `ck_orden_estacion_dia_horas`: `hora_fin > hora_inicio` → `hora_fin >= hora_inicio`,
+     vía migración `c3162961f659` (mismo patrón que ADR-101/`51d8601f7779`: rama por
+     dialecto, `batch_alter_table` en SQLite, `drop_constraint`/`create_check_constraint`
+     directo en SQL Server). Aplicada contra RDS (`devapps.../GRC-OIR`).
+- **Consecuencia:** ninguna — la desigualdad relajada sigue rechazando el único caso que
+  de verdad no tiene sentido (`hora_fin` antes de `hora_inicio`); el caso real de la app
+  (iguales) y el caso legacy de pruebas (un rango de verdad) siguen ambos aceptados.
+- **Verificado:** `ruff check` limpio. Migración: `alembic upgrade head` contra RDS sin
+  error; round-trip completo (`upgrade head` desde vacío + `downgrade -1` → `upgrade
+  head`) verificado en SQLite vía `test_migraciones_sqlite.py` (4/4 en verde, cubre
+  exactamente esta migración por ser la punta). Prueba nueva de regresión en
+  `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oe_con_hora_inicio_igual_a_hora_fin_no_falla`, el caso real que rompía).
+  Suite completa del backend en verde (mismo conteo que antes + 1). **Lección**: cuando
+  un ADR de frontend cambia la FORMA de un dato que un backend valida con una
+  desigualdad estricta, hay que revisar también los CHECK/validators del lado del
+  servidor en el mismo ADR — no solo lo que el frontend manda, sino lo que el backend
+  todavía exige.
+
+### ADR-113 — FIX: el formulario se quedaba con datos viejos tras "Guardar" (alta → edición)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, corrección crítica detectada en vivo
+  justo después de ADR-112: con el 422 ya resuelto, el usuario probó guardar de nuevo).
+- **Contexto:** el usuario reportó que, al guardar, "parece que lo guardó pero no se
+  salió del formulario, pero tampoco mandó error". La OE en realidad SÍ se creaba bien en
+  el backend (confirmado): el bug estaba en el frontend. `OrdenEstacionListPage.tsx`
+  implementa a propósito (ADR-103) que tras crear, la pantalla NO vuelve a la lista sino
+  que pasa a modo edición de la MISMA OE recién creada (`setModo("edit")`) — pero
+  `<OrdenEstacionForm>` sigue siendo la MISMA instancia de React (sin `key` que cambie),
+  y casi todo su estado local se inicializa con `useState(oe?.campo ?? default)`, que
+  React solo evalúa UNA vez al montar. Sin remount, ese estado (`periodo`, `estacionId`,
+  `productoTarifa`, `precioSpot`, etc.) se queda con los valores de ANTES de guardar —
+  la OE real ya existe con folio, ids de día y de audio reales, pero el formulario sigue
+  mostrando su copia local vieja. Solo lo que se lee directo del prop `oe` en cada render
+  (el título, `isEdit`) se actualiza; todo lo demás queda obsoleto en silencio.
+- **Decisión:** se agrega `key={modo === "edit" ? (selected?.id ?? "edit") : "new"}` al
+  `<OrdenEstacionForm>` en `OrdenEstacionListPage.tsx`. Al cambiar la `key` en la
+  transición alta → edición, React desmonta la instancia vieja y monta una nueva, que
+  inicializa TODO su estado local desde el `oe` real (ya con folio, ids de día/audio
+  reales, `periodo_transmision` recién refrescado vía `refrescarOrdenEstacion`).
+- **Consecuencia:** ninguna negativa — es el patrón estándar de React para este caso
+  ("estado derivado de props que debe resetear cuando cambia la identidad lógica del
+  recurso"). No afecta la edición normal (entrar a editar una OE ya existente desde la
+  lista) porque ahí `selected.id` no cambia de una sola vez sin pasar por "view" primero.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (mismos 2 warnings preexistentes).
+  Prueba nueva en `OrdenEstacionListPage.test.tsx` (mockeando `crearOrdenEstacionApi`/
+  `refrescarOrdenEstacion`/`refrescarOrdenCliente` para simular el ciclo completo de
+  alta): sin la `key`, el título se queda en "Nueva Orden de Transmisión" y el botón
+  "Cancelar transmisión" nunca aparece (porque la fila de `periodo` sigue sin
+  `orden_estacion_dia_id` real); con la `key`, el título cambia a "Editar: OE-2026-9999A"
+  (el folio REAL devuelto por el mock) y el botón sí aparece — se confirmó manualmente
+  revirtiendo la `key` y viendo la prueba fallar exactamente así, antes de restaurarla.
+  Suite `vitest` completa: 306/318 (12 fallas, mismo baseline preexistente + 1 prueba
+  nueva — cero regresiones). **Lección**: cuando una pantalla decide deliberadamente NO
+  remontar/navegar tras guardar (para mantener contexto, como ADR-103), hay que revisar
+  si el componente hijo tiene estado local `useState(prop ?? default)` que dependa de esa
+  identidad — si la hay, necesita una `key` explícita o se queda con datos obsoletos sin
+  ningún error visible.
+
+### ADR-114 — FIX: "Network Error" al guardar — `get_db()` no debe reventar al cerrar una conexión ya muerta
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, reportado justo después de ADR-113:
+  con ese fix ya puesto, el usuario probó guardar de nuevo y esta vez el navegador mostró
+  directamente "Network Error", sin ningún 4xx/5xx con detalle).
+- **Contexto:** el log del backend mostraba `pyodbc.OperationalError: ... Communication
+  link failure ... TCP Provider: Se ha anulado una conexión establecida por el software
+  en su equipo host` (WSAECONNABORTED, código 10053) — un corte de red intermitente
+  hacia RDS, NO específico de este endpoint (aparecía también en `historial_comisiones`
+  y otros, endpoints sin relación entre sí — confirma que es de conectividad, no de una
+  consulta particular). El problema real no era el corte en sí (inevitable de vez en
+  cuando con una BD remota) sino la CONSECUENCIA: `get_db()` (dependencia de FastAPI)
+  tenía `finally: session.close()` SIN try/except. Cuando la conexión ya está muerta,
+  `close()` intenta un rollback implícito que también falla, lanzando una SEGUNDA
+  excepción DENTRO del `finally` de un generador — en un punto que ya no está envuelto
+  por el middleware de manejo de errores de FastAPI. Esa segunda excepción se escapa y
+  aborta la conexión ASGI entera: el cliente nunca recibe el 500 con JSON que FastAPI ya
+  iba a mandar por la excepción original, solo ve el socket cortado ("Network Error" en
+  axios/el navegador).
+- **Decisión:** envolver `session.close()` en un `try/except Exception: pass` — un
+  cierre "best effort". No oculta nada: la sesión de todos modos se descarta aquí
+  (viene de un `finally`, no hay nada más que hacer con ella) y `pool_pre_ping` ya se
+  encarga de no reutilizar una conexión muerta en el siguiente request.
+- **Consecuencia:** con el fix, un corte de red durante un request YA no mata la
+  conexión ASGI — el cliente recibe el 500 limpio con JSON de la excepción ORIGINAL
+  (p.ej. el error de RDS), en vez de un corte crudo sin ningún mensaje. El corte de red
+  en sí sigue pudiendo pasar (es infraestructura, no algo que el código controle); lo
+  que cambia es que deja de convertirse en un segundo fallo silencioso.
+- **Verificado:** `ruff check` limpio. 2 pruebas nuevas en `test_core_db.py` (con un
+  mock cuyo `close()` revienta, `get_db()` termina limpio en vez de propagar esa
+  excepción; con un cierre normal, sigue cerrando igual que siempre) — se confirmó
+  manualmente revirtiendo el `try/except` y viendo la primera prueba fallar exactamente
+  así, antes de restaurarlo. Suite completa del backend en verde (mismo conteo + 2).
+
+### ADR-115 — FIX: "Tarifa por spot" se quedaba con el valor de la duración ANTERIOR cuando la nueva no tenía tarifa en catálogo
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, mismo reporte que ADR-114 — el
+  usuario pidió corregirlo de una vez: "si no hay tarifa... que no ponga nada en el
+  campo tarifa para que el usuario la capture, caso contrario si hay tarifa que se quede
+  así como está").
+- **Contexto:** el `useEffect` que auto-carga `precioSpot` desde `tarifaReferencia(...)`
+  ya sabía "no pisar un valor que el usuario escribió a mano" (comparaba el precio
+  actual contra la ÚLTIMA sugerencia, guardada en un `ultimaSugeridaRef`), pero cuando
+  la combinación (estación/producto/duración) NO tenía tarifa, el efecto simplemente
+  hacía `return` sin tocar nada — dejaba pegado el precio de la ÚLTIMA combinación que
+  sí tenía tarifa, en vez de vaciar el campo para que el usuario la capturara.
+- **Primer intento (con bug) y su causa real:** agregar una rama "sin tarifa → limpiar"
+  pareció no funcionar — el campo seguía sin vaciarse. La causa NO era de lógica de
+  negocio sino una condición de carrera con `useRef`: el callback de
+  `setPrecioSpot((actual) => ...)` no se ejecuta de inmediato — React lo difiere a
+  cuando procesa la cola de estado — así que si ese callback lee
+  `ultimaSugeridaRef.current` directo, para cuando por fin corre, la línea siguiente del
+  MISMO efecto (`ultimaSugeridaRef.current = null`, o `= sugerida`) ya se ejecutó de
+  forma síncrona y el callback termina comparando contra el valor NUEVO del ref, no el
+  que existía cuando se decidió actualizar. Fix real: capturar `ultimaSugeridaRef.current`
+  en un `const anteriorSugerida` AL PRINCIPIO del efecto, antes de mutar el ref, y usar
+  esa constante (no el ref) dentro de ambos callbacks de `setPrecioSpot`.
+- **Decisión:** rama "sin tarifa" limpia el campo (`setPrecioSpot(actual => actual === ""
+  || actual === anteriorSugerida ? "" : actual)`) — mismo candado que la rama "con
+  tarifa" de siempre, ahora ambas usando la constante capturada en vez del ref mutable.
+- **Consecuencia:** ninguna negativa; corrige además un bug LATENTE que ya existía en la
+  rama "con tarifa" desde antes de este ADR (la misma condición de carrera), que no se
+  había notado porque el caso más común (`actual === ""`) lo enmascaraba.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (mismos 2 warnings preexistentes). 2
+  pruebas nuevas en `OrdenEstacionForm.test.tsx` (cambiar de una duración CON tarifa a
+  una SIN tarifa vacía el campo, y volver a la que sí tiene la reautocompleta; un precio
+  tecleado a mano NO se borra al cambiar a una duración sin tarifa). Se depuró el bug
+  real con logging temporal antes de escribir el fix definitivo (confirmado que
+  desaparece con la captura en `const`, no con más parches sobre el ref). Suite `vitest`
+  completa: 308/320 (12 fallas, mismo baseline preexistente + 2 pruebas nuevas — cero
+  regresiones).
+
+### ADR-116 — Confirmar "¿generar otra?" tras guardar el alta; "Cancelar" va a Órdenes de Servicio
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, petición directa del usuario sobre el
+  flujo de alta de OrdenEstacion).
+- **Contexto:** desde ADR-103, guardar una OE nueva pasaba directo a modo edición de esa
+  misma OE (para poder subir "Material a Transmitir" de inmediato, porque en ese momento
+  el audio solo se podía subir con la OE ya creada). Desde ADR-109 eso ya no aplica: el
+  material se sube DURANTE la captura, antes de guardar — ese motivo original para
+  quedarse en el formulario ya no existe. El usuario pidió un flujo distinto: al guardar,
+  preguntar si se quiere capturar otra OE (para ir asignando varias estaciones de la
+  misma OC seguidas, sin volver a la lista cada vez); si no, ir derecho a la lista con la
+  recién creada arriba. También pidió que "Cancelar" en el alta —que hasta ahora no hacía
+  nada útil— regrese a "Órdenes de Servicio" en vez de solo cerrar el formulario; y que
+  este flujo de confirmación sea EXCLUSIVO del alta — en edición, "Guardar" debe seguir
+  guardando sin preguntar nada más.
+- **Decisión:**
+  1. `OrdenEstacionListPage.tsx`: el branch de creación de `onGuardar` ya NO hace
+     `setModo("edit")` — guarda la OE recién creada en un nuevo estado `oeReciente` (esto
+     dispara el modal) y recuerda la OC usada en `ocParaNuevaActual` (para poder repetir
+     sobre la MISMA OC en la siguiente vuelta). El branch de EDICIÓN (`actualizarOE`) no
+     cambia: sigue guardando y volviendo a "view" directo, sin ningún modal — el pedido de
+     "en ediciones solo debe guardar" ya era el comportamidiento existente, no hubo que
+     tocarlo.
+  2. Nuevo `<ConfirmDialog>` (componente ya existente, reusado — `shared/ui`), visible
+     mientras `oeReciente != null`: "¿Deseas generar otra Orden de Transmisión para esta
+     misma Orden de Servicio?". "Sí, generar otra" limpia `oeReciente` y sube un contador
+     `intentoNuevo` que cambia la `key` de `<OrdenEstacionForm>` (`new-${intentoNuevo}`)
+     — fuerza un remount con estado en blanco (mismo mecanismo que ADR-113 para la
+     transición alta→edición, aplicado aquí a "otra alta más"). "No, ir a la lista" fija
+     `selectedId` a la OE recién creada y pone `modo("view")` — la lista ya ordena por
+     `created_at` descendente con las nuevas al frente (mismo criterio de siempre), así
+     que aparece arriba sin lógica extra.
+  3. `onCancelar` de `OrdenEstacionForm.tsx` cambia de `() => void` a `(ocId?: string) =>
+     void` — el formulario manda la OC actualmente elegida (`oc?.id`, puede no haber
+     ninguna si se canceló antes de elegir). En el alta, `OrdenEstacionListPage.tsx` usa
+     ese id para navegar a "Órdenes de Servicio" vía el `onVerOC` que ya recibía como
+     prop (mismo callback que usa el resto de la pantalla); sin OC elegida, se queda en
+     la lista de Transmisión. En edición, el comportamiento no cambia (vuelve a "view").
+- **Consecuencia:** el botón "+ Nueva Orden de Transmisión" de la lista reinicia
+  `ocParaNuevaActual` al valor del prop original — evita que una sesión de "generar
+  otra" anterior deje la OC fija para una sesión de alta completamente nueva y suelta.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (mismos 2 warnings preexistentes). Se
+  reemplazó la prueba de ADR-113 que verificaba la transición automática a edición (ya
+  no existe con este cambio) por 4 pruebas nuevas en `OrdenEstacionListPage.test.tsx`:
+  el modal aparece al guardar (y ya NO pasa a modo edición); "Sí, generar otra" deja el
+  formulario en blanco; "No, ir a la lista" regresa a la lista con la OE recién creada
+  visible; "Cancelar" en el alta llama a `onVerOC` con la OC elegida. Suite `vitest`
+  completa: 311/323 (12 fallas, mismo baseline preexistente — cero regresiones).
+- **Pendiente:** el usuario reportó además que el botón "Editar" de una Orden de
+  Transmisión existente aparecía inhabilitado/ausente en un caso puntual — se investigó
+  la condición que lo controla (`OrdenEstacionDetailPanel.tsx`: solo se muestra si
+  `oe.estatus === "asignada_afiliado"`, reflejo de `FROZEN_STATES_OE` del backend: una OE
+  solo se puede corregir en `borrador`/`asignada`, antes de que existan `Verificacion`
+  ligadas a sus días) y se encontró un defecto real pero DISTINTO al reportado:
+  `MAPA_ESTATUS_OE` (`adapters/vocabulario.ts`) mapea `cancelada` al mismo bucket que
+  `borrador`/`asignada` (`asignada_afiliado`), así que una OE CANCELADA muestra
+  incorrectamente el botón "Editar" (el backend la rechazaría con 409 si se intentara
+  guardar). No se encontró una forma de reproducir "un botón que debería estar
+  habilitado y no lo está" sin saber el folio/estado exacto de la OE en cuestión — se le
+  preguntó al usuario para poder reproducirlo antes de tocar la condición.
+
+### ADR-117 — Toda OE nueva salta 2.1 "Asignada" y nace directo en 2.2 "Programados" (REVERTIDA)
+
+- **Estado:** ~~aceptada~~ **REVERTIDA el mismo día (2026-09-24)** — el usuario pidió
+  probar el comportamiento antes de darlo por definitivo ("necesito analizar algo
+  primero") y luego confirmó explícitamente deshacerlo por completo. Se restauraron
+  `orden_estacion.py::create()` (vuelve a dejar la OE en `asignada`, sin
+  `spots_programados` automático) y las ~9 pruebas de backend que se habían
+  quitado/reescrito para este ADR, línea por línea, contra lo que ya estaba antes de
+  esta entrada — no se usó `git checkout` porque los archivos tocados mezclaban ADR-117
+  con otros ADRs de la misma sesión (109/111/112/113/114/115/116/118) que SÍ se
+  conservan; revertir por git habría tirado esos también. Se deja el contexto completo
+  abajo, tal como se pensó, por si se retoma más adelante — nada de esto llegó a tocar
+  datos reales (la conexión a RDS estuvo caída durante toda la ventana en que este ADR
+  estuvo activo, así que no hay ninguna OE real creada bajo este comportamiento que
+  limpiar).
+- **Fecha:** 2026-09-24 (F1, petición directa del usuario sobre el
+  ciclo de vida de OrdenEstacion — se conservan los 3 sub-estados visibles 2.1/2.2/2.3,
+  solo cambia CUÁNDO se alcanza cada uno).
+- **Contexto:** el usuario pidió que, al guardar una OE nueva, se salte 2.1 "Asignada" y
+  quede directo en 2.2 "Programados" — conservando los reportes PDF ya existentes (#1
+  Orden de servicio, etc.). Antes de programar, se investigaron y confirmaron
+  explícitamente con el usuario DOS consecuencias que este salto trae consigo (rondas de
+  preguntas por separado, ambas con la misma respuesta: "sí, acepto"):
+  1. **Edición permanentemente bloqueada.** Hoy, corregir tarifa/días/estación
+     (`OrdenEstacionUpdate`) solo se permite en `borrador`/`asignada`
+     (`FROZEN_STATES_OE`) — nunca en `en_transmision` en adelante, porque ya existen
+     `Verificacion` ligadas a los días. Si la OE nace directo en `en_transmision`,
+     **nunca** pasa por un estado editable: un error de captura ya no se corrige, hay
+     que cancelar la orden y crear otra. Usuario: confirmado, así lo quiere.
+  2. **El paso de confirmación "Programados" pierde sus dos capacidades propias.** Hoy
+     "Capturar Programados" (2.1→2.2, `avanzar_programados()`) permite (a) confirmar un
+     número de spots DISTINTO al asignado para algún día, y (b) adjuntar un PDF de
+     "reporte programados" (`reporte_programados_ref`). Si la OE ya nace en 2.2, este
+     paso deja de ser alcanzable — `spots_programados` siempre será igual a
+     `spots_asignados`, sin reporte adjunto en ese punto; cualquier diferencia real solo
+     se ve hasta "Capturar Reales" (2.3), como ya funciona ahí. Usuario: confirmado,
+     correcto, ya no hacen falta.
+- **Decisión:**
+  1. `OrdenEstacionService.create()`: el `estatus` inicial de la fila
+     (`OrdenEstacion(...)`) cambia de `EstatusOrdenEstacion.ASIGNADA.value` a
+     `EstatusOrdenEstacion.EN_TRANSMISION.value` — la OE nunca existe en la base como
+     "asignada".
+  2. Cada `OrdenEstacionDia` creada en el mismo `create()` recibe
+     `spots_programados=dia.spots_asignados` (mismo default que usaba
+     `avanzar_programados()` sin overrides — "confirmado tal cual lo asignado").
+     `reporte_programados_ref` de la OE se queda en `None` (default de la columna, sin
+     cambio).
+  3. `avanzar_programados()` (el método/endpoint) **no se tocó** — sigue existiendo, con
+     su guarda de siempre (`solo desde 'asignada'`), pero ahora es efectivamente
+     inalcanzable (ninguna OE llega ahí desde `create()`). No se retiró el código: es
+     exactamente el mismo criterio que ya aplicaba a otros estados terminales
+     (`cerrada`/`cancelada`) — mecanismo defensivo que se queda, aunque en la práctica no
+     se dispare.
+- **Consecuencia (efecto dominó en el frontend, SIN cambios de código):** el frontend ya
+  reacciona dinámicamente al `estatus` real de cada OE — no había ningún supuesto
+  hardcodeado de "una OE recién creada está en 2.1". Por eso, este ADR es 100% backend:
+  - El botón "Editar" (`oe.estatus === "asignada_afiliado"`) deja de aparecer de
+    inmediato para OEs nuevas — coherente con que editar ya no es posible.
+  - El botón "→ Capturar programados (2.2)" deja de aparecer (esa OE ya está más allá);
+    en su lugar aparece directo "→ Capturar reales (2.3)".
+  - "PDF #1 · Orden de servicio" sigue disponible siempre (nunca estuvo gateado por
+    estatus — confirmado en `orden_estacion_pdf.py`, sin cambios). "PDF #2 · Programados"
+    (gateado a `estatus !== "asignada_afiliado"`) queda disponible de inmediato, en vez de
+    hasta después de un paso manual — exactamente lo que pedía "conservando los reportes
+    PDF's que venimos creando".
+  - El tab "2.1 Asignadas" de la lista de Órdenes de Transmisión queda vacío para
+    cualquier OE creada desde este ADR en adelante (las que ya existían de antes, en
+    "asignada", se quedan ahí hasta que alguien las avance normalmente).
+- **Pruebas de backend retocadas/retiradas** (el estado que guardaban dejó de ser
+  alcanzable — se documenta cada caso, no se "arreglaron a la fuerza"):
+  - **Retiradas por completo** (probaban ÚNICAMENTE que `update()` funcionara sobre una
+    OE recién creada — capacidad que ya no existe):
+    `test_editar_oe_recalcula_al_cambiar_solo_spots_bonificables`,
+    `test_editar_oe_en_asignada_permite_corregir_tarifa_y_dias`,
+    `test_editar_oe_solo_tarifa_conserva_los_dias_existentes`,
+    `test_editar_oe_permite_tarifa_mayor_a_la_de_la_oc_con_pct_oir_negativo`,
+    `test_editar_oe_cambia_duracion_y_recalcula_tarifa_sugerida`,
+    `test_editar_oe_precio_distinto_a_tarifa_sugerida_con_motivo_audita`/`_sin_motivo_400`
+    (`test_f1_05_ordenes_escritura.py`), y `test_update_con_dias_preserva_el_dia_cancelado`
+    (`test_f1_08_cancelar_transmision.py` — su regresión, "no romper la FK de un día
+    cancelado al editar", ya no aplica: no hay forma de llegar a editar).
+  - **Simplificadas** (ya no hace falta forzar el estatus a mano, ya nace así):
+    `test_editar_oe_congelada_en_transmision_409`, `test_pdf_reales_rechaza_si_aun_no_se_captura`.
+  - **Reescritas quitando el paso `avanzar_programados()` redundante** (y recalculando
+    valores esperados donde ese paso SÍ traía un override real, p.ej. la incidencia de
+    `test_flujo_programados_reales_genera_incidencia_y_cascada` pasó de -2/-1600.00 a
+    -4/-3200.00 porque ya no se puede confirmar 8 en vez de 10):
+    `test_flujo_programados_reales_genera_incidencia_y_cascada`,
+    `test_cascada_solo_al_cerrar_la_ultima_oe`,
+    `test_crear_oe_permitido_en_verificacion_si_quedan_spots_sin_asignar`,
+    `test_cerrar_backfill_comisiones_y_flags`,
+    `test_cancelar_dia_ya_verificado_por_flujo_normal_409`,
+    `test_avanzar_reales_no_truena_con_un_dia_ya_cancelado`,
+    `test_pdf_programados_se_genera_tras_avanzar` (renombrada
+    `test_pdf_programados_se_genera_desde_que_se_crea`).
+  - `test_cancelar_dia_con_bonificables_que_excederian_lo_restante_400`: capturaba
+    `cantidad_spots_bonificables` vía `update()` DESPUÉS de crear — se movió a
+    `_oe_payload(..., cantidad_spots_bonificables=15)` en el propio `create()` (ese campo
+    sigue siendo 100% capturable en el alta, solo cambió DÓNDE se fija en la prueba).
+  - `test_editar_oe_rechaza_dia_fuera_de_campania`/`_rechaza_exceder_balance_de_spots_de_la_oc`
+    NO se tocaron — siguen en verde porque `StateTransitionError` (la que ahora se lanza
+    primero, por estar congelada) es subclase de `DomainError` (lo que ya esperaban) — el
+    `pytest.raises(DomainError)` sigue siendo válido, aunque técnicamente ya no ejercita
+    la validación específica que su nombre describe (ambas rutas de `update()` son código
+    muerto en la práctica). No se profundizó más ahí por alcance/tiempo.
+  - Corrección de comentarios desactualizados (sin cambio de aserciones):
+    `test_cerrar_con_oe_pendiente_409` ("se queda en asignada" → "en_transmision").
+- **Verificado:** `ruff check` limpio en todos los archivos tocados. Suite completa del
+  backend en verde (todos los archivos, incluyendo F2/F3, que no usan `avanzar_programados`
+  ni dependen de este flujo — sin regresiones fuera de F1). Sin migración: ni `estatus` ni
+  `spots_programados` son columnas nuevas, solo cambió CUÁNDO se llenan. Prueba de humo en
+  vivo contra RDS **no se pudo completar**: la instancia real
+  (`devapps.cyd2zy4jjmkm.us-west-2.rds.amazonaws.com`) estaba inalcanzable desde esta
+  máquina en el momento de la verificación (`/health/db` → `"unreachable"`, timeout de
+  conexión — un problema de red distinto al de ADR-114, aquí ni siquiera se logra
+  conectar, no es una caída a media transacción); la cobertura automatizada (SQLite,
+  ADR-028) no depende de esa conectividad y ya ejercita el flujo completo
+  create→reales→cierre con las nuevas reglas.
+
+### ADR-118 — PDF "Horarios Programados": quita Pedidos/Asignados, agrega Material a Transmitir, un solo Horario
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, petición directa del usuario tras
+  probar el reporte en vivo).
+- **Contexto:** el usuario probó el PDF #2 (Horarios Programados, `generar_pdf_programados`)
+  y pidió 3 cambios a su tabla de días: (1) quitar las columnas "Pedidos" y "Asignados",
+  (2) agregar una columna "Material a Transmitir", (3) dejar un solo valor de horario en
+  vez de "Hora Inicio"/"Hora Término" por separado — mismo criterio que ya se aplicó en la
+  captura web (ADR-107/108: desde entonces `hora_inicio`/`hora_fin` se capturan siempre
+  iguales, así que mostrar las dos por separado en el PDF ya no aportaba nada).
+- **Decisión:**
+  1. `_Contexto` (el objeto interno que arma `_cargar_contexto` para los 3 PDFs) gana
+     `audios: list[OrdenEstacionAudio]` — se cargan una sola vez, ordenados por `orden`
+     (0 = default). Antes no se cargaban en absoluto para ningún PDF.
+  2. Nueva función `_nombre_material(dia, audios)`: mismo criterio que `nombreMaterial()`
+     del frontend (`PeriodoTransmisionGrid.tsx`) — el override propio del día
+     (`dia.orden_estacion_audio_id`) si tiene uno, si no el default (`audios[0]`); "—" si
+     no hay ningún audio subido.
+  3. `_fila_dia_programado(dia, nombre_material)` (antes recibía `programado: int`, ya
+     no): la fila pasa de 5 columnas (`Fecha | Hora Inicio | Hora Término | Pedidos |
+     Asignados`) a 3 (`Fecha | Horario | Material a Transmitir`), con `colWidths`
+     reajustados (`[1.4, 1.1, 2.5]` en vez de `[1.7, 1.25, 1.25, 0.7, 0.75]`, dándole más
+     espacio a la columna nueva por si el nombre del archivo es largo).
+  4. El total de "TOTAL SPOTS" del encabezado (`total_programado`, arriba de la tabla) NO
+     se tocó — sigue sumando `spots_programados`/`spots_asignados` por día, solo se quitó
+     de la TABLA de abajo (ya vivía redundante en 2 lugares).
+- **Consecuencia:** ninguna negativa — es un cambio puramente de presentación del PDF #2;
+  no toca el modelo de datos, `generar_pdf_reales`/`generar_pdf_servicio`, ni la captura
+  web (que ya mostraba exactamente este mismo criterio desde ADR-107/108/109).
+- **Verificado:** `ruff check` limpio. Como el resto de este archivo (ver docstring de
+  `test_f1_06_ordenes_pdf.py`), el contenido de texto del PDF no se afirma directamente
+  (reportlab genera binario, sin un extractor de texto en el proyecto) — se cubre en 2
+  niveles: (a) 3 pruebas unitarias puras sobre `_nombre_material` (sin audios → "—"; sin
+  override → el primero subido; con override → el del día, no el default) y (b) una
+  prueba de integración que sube 2 audios reales, asigna el segundo a un día por
+  override, y confirma que `generar_pdf_programados` no truena con esos datos. Suite
+  completa del archivo: 10/10 en verde.
+
+### ADR-119 — "Capturar Reales" cambia testigos por "Evidencias de lo Transmitido" (audios)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, petición directa del usuario sobre la
+  pantalla "Capturar Reales", 2.2→2.3).
+- **Contexto:** el usuario pidió quitar los campos "URL de testigos" y "Ubicación
+  alterna" (`testigos_url`/`testigos_ubicacion_alterna`, texto libre sin ningún
+  mecanismo de carga) y sustituirlos por "Evidencias de lo Transmitido": subida de
+  audios, replicando la funcionalidad YA existente de "Material a Transmitir"
+  (ADR-103/ADR-109). Antes de implementar se confirmaron 2 decisiones con el usuario:
+  1. Las columnas `testigos_url`/`testigos_ubicacion_alterna` en `OrdenEstacion` **NO se
+     eliminan** de la base (sin migración de columnas) — se preserva cualquier dato ya
+     capturado en RDS; simplemente dejan de leerse/escribirse desde el flujo de captura.
+  2. "Evidencias" queda **opcional** (mismo criterio que tenían los campos de testigos
+     que reemplaza) — NO se replica la regla de ADR-110 ("Material a Transmitir"
+     obligatorio para crear una OE).
+- **Decisión:**
+  1. Tabla nueva `orden_estacion_evidencia` (modelo `OrdenEstacionEvidencia`, migración
+     `0b643d77d4cc`) — mismo patrón que `OrdenEstacionAudio` pero **lista PLANA**: sin
+     `orden` ni concepto de default/override por día (a diferencia de "Material a
+     Transmitir", una evidencia no se "asigna" a un día en particular — es prueba
+     general de lo transmitido). Ordenada por `created_at`.
+  2. Servicio: `evidencias()`/`agregar_evidencia()`/`eliminar_evidencia()`/
+     `obtener_evidencia()` — mismo criterio que sus contrapartes de audio
+     (`leer_adjunto` con `EXTENSIONES_AUDIO_ORDENES`/`s3_max_audio_bytes`, el objeto en
+     S3 no se borra al quitar la fila, ADR-042). Sin lógica de renumeración (no hay
+     `orden` que renumerar). Endpoints dedicados
+     `GET`/`POST /{item_id}/evidencias`, `GET /{item_id}/evidencias/{id}/archivo`,
+     `DELETE /{item_id}/evidencias/{id}` — mismos permisos que audio
+     (`ordenes:leer`/`ordenes:editar`). Sin variante de "staging": a diferencia de
+     "Material a Transmitir" (que necesitaba subir ANTES de que la OE existiera, ADR-109),
+     "Capturar Reales" siempre ocurre sobre una OE YA guardada — la subida es directa
+     desde el principio.
+  3. `OrdenEstacionRealesIn` ya NO acepta `testigos_url`/`testigos_ubicacion_alterna`
+     (se quitaron de la clase, con docstring explicando el reemplazo); `avanzar_reales()`
+     ya no los escribe. Las columnas de `OrdenEstacion` se quedan intactas (ver
+     contexto) — Pydantic simplemente ignora esas claves si un cliente viejo las manda
+     (sin `extra="forbid"` en ese schema), no truena.
+  4. Frontend: `EvidenciasTransmitido.tsx` (nuevo, calcado de `MaterialATransmitir.tsx`,
+     sin el badge "Default"/"#N" ni la recarga completa al borrar — al no haber
+     `orden` que renumerar, basta con filtrar la lista en el cliente). `RealesForm.tsx`
+     reemplaza la sección "Testigos y notas" por "Evidencias y notas" (el campo de notas
+     de transmisión se conserva, sin cambios); carga las evidencias existentes vía
+     `useEffect` keyed en `oe.id` (la OE siempre existe aquí, a diferencia del alta de
+     OE — sin la complejidad de `audiosStaging`/`hayMaterial` de ADR-109/110).
+     `testigos_url`/`testigos_ubicacion_alterna` se quitan de `types.ts`
+     (`OrdenEstacion`), `fromApi.ts` y `toApi.ts#realesToApi`/`AvanzarARealesInput` — el
+     DTO crudo (`ordenesApiDTO.ts`) SÍ los conserva (el backend los sigue devolviendo,
+     por fidelidad al contrato real; solo la capa de la app deja de consumirlos).
+- **Consecuencia:** ninguna negativa. Cualquier OE con `testigos_url`/
+  `testigos_ubicacion_alterna` ya capturados antes de este ADR conserva esos valores en
+  la base (consultables directo en RDS si algún día hicieran falta) — simplemente ya no
+  se ven ni se editan desde la pantalla.
+- **Verificado:** `ruff check`/`tsc --noEmit`/`eslint` limpios. Backend: nuevo archivo
+  `test_f1_10_evidencias_transmitido.py` (7 pruebas: alta en orden de llegada, borrar
+  una no afecta a las demás, 404 cruzado entre OEs, HTTP subir/listar/descargar/borrar,
+  RBAC Nóminas sin acceso, formato no permitido 400, y que `POST .../reales` con
+  `testigos_url` en el body ya no lo persiste). Migración verificada contra RDS
+  (`alembic upgrade head`) y round-trip completo en SQLite
+  (`test_migraciones_sqlite.py`, cubre esta migración por ser la punta). Suite completa
+  del backend en verde. Frontend: nuevo `RealesForm.test.tsx` (2 pruebas: los campos de
+  testigos ya no aparecen; subir una evidencia la refleja en la lista y el payload de
+  "Avanzar" ya no trae `testigosUrl`/`testigosUbicacionAlterna`) — primera vez que este
+  componente tiene cobertura de pruebas. Suite `vitest` completa: 313/325 (12 fallas,
+  mismo baseline preexistente + 2 pruebas nuevas — cero regresiones).
+
+### ADR-120 — "Enviar por correo"/"Imprimir" al generar cualquiera de los 3 PDFs de OrdenEstacion (bundle fijo a contactos del afiliado)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-24 (F1, petición directa del usuario).
+- **Contexto:** el usuario pidió que, al generar el PDF de la Orden de Transmisión
+  (cualquiera de los 3: Servicio/Programados/Reales), la pantalla proponga dos opciones
+  — "Enviar por correo" o "Imprimir" — en vez de abrir el PDF directo. El envío por
+  correo debía: ir a los correos cargados de los contactos de la estación, con Asunto
+  fijo "Orden de Transmisión", y adjuntar el material de transmisión + el PDF de
+  Programados. Antes de implementar se confirmaron con el usuario 4 decisiones (todas
+  vía preguntas explícitas, no asumidas):
+  1. **Vía de entrega:** el backend sigue enviando el correo directo (como ADR-105,
+     SES/local), NO se abre un cliente de correo local — un `mailto:` no puede llevar
+     adjuntos automáticos (limitación del navegador/SO, no del código), y adjuntar los
+     audios + el PDF era un requisito explícito del usuario.
+  2. **Alcance del diálogo:** aparece al generar CUALQUIERA de los 3 PDFs, y en los 3
+     casos "Enviar por correo" manda SIEMPRE el mismo paquete fijo (Programados + Material
+     a Transmitir), sin importar cuál PDF disparó el diálogo.
+  3. **Destinatarios:** automático, a TODOS los `ContactoAfiliado` **activos** con correo
+     cargado del Afiliado dueño de la Estación (la Estación no tiene contactos propios) —
+     sin captura ni edición manual por parte del usuario.
+  4. **Alcance de "Imprimir":** solo el PDF que se estaba generando (no los 3 juntos).
+  5. **Sin contactos activos con correo:** el botón "Enviar por correo" se deshabilita de
+     antemano (con explicación), no se deja fallar el intento.
+- **Decisión:**
+  1. `CorreoPort.enviar()` (`app/integrations/correo/`) — `destinatario` pasa de `str` a
+     `str | list[str]` (adapters `local`/`ses` actualizados; SES usa `Destinations`/`To`
+     con la lista completa). Cambio de la capa de integración únicamente, sin tocar el
+     envío individual existente (ADR-105) que sigue mandando un solo string.
+  2. `envio_correo_pdf.py`: `TipoPdfOrdenEstacion` gana un 4º valor,
+     `ORDEN_TRANSMISION = "orden_transmision"` — NO es un PDF generable (no vive en
+     `_GENERADORES`; el envío individual por-tipo ahora guarda ese caso explícitamente).
+     Nueva función `enviar_correo_orden_transmision()`: resuelve `Estacion.afiliado_id` →
+     `ContactoAfiliado` activos con `email_contacto` no vacío (400 si no hay ninguno, sin
+     tocar la bitácora); genera el PDF de Programados + junta todo `OrdenEstacionAudio` de
+     la OE vía `AlmacenamientoPort.obtener()`; un solo envío con TODOS los destinatarios.
+     Reusa `LogEnvioCorreoOrdenEstacion` (mismo criterio de auditoría, un registro por
+     intento) — `destinatario_email` se ensancha de 320 a 2000 caracteres (lista
+     separada por coma; no amerita tabla hija, nunca se filtra por destinatario
+     individual). Migración `a7c1f3e9b2d4` (CHECK constraint + ancho de columna, con
+     rama `batch_alter_table` para SQLite). Endpoint nuevo
+     `POST /ordenes/estaciones/{id}/correo-orden-transmision` (sin body,
+     `ordenes:editar`).
+  3. Frontend: `FilaPdf`/`BotonPdf` de `OrdenEstacionDetailPanel.tsx` se fusionan — el
+     clic en "📄 PDF #N" ya NO abre el visor directo, revela un mini-diálogo con
+     "✉️ Enviar por correo" (nuevo `enviarCorreoOrdenTransmisionApi`, sin captura de
+     destinatario) / "🖨️ Imprimir" (mismo `previsualizarPdfOrdenEstacion` de siempre) /
+     "Cancelar". `puedeEnviarCorreo` se resuelve UNA vez por OE con
+     `contactoAfiliadoApi.listPorAfiliado(afiliado.id, {activo: true})` (endpoint ya
+     existente de catálogos, sin crear uno nuevo) — deshabilita "Enviar por correo" con
+     tooltip si no hay ningún contacto activo con correo. El "último envío" ya no se
+     muestra por-PDF (el envío no es por-tipo): se muestra UNA vez para toda la OE,
+     buscando el más reciente `tipoPdf === "orden_transmision" && exitoso` del historial
+     ya existente (`GET /envios-correo`, sin cambios).
+- **Consecuencia:** el envío individual por-tipo de ADR-105 (un PDF, un destinatario
+  capturado a mano) sigue existiendo en el backend (`enviar_pdf_orden_estacion_por_correo`,
+  endpoint `POST .../pdf/{tipo}/enviar-correo`) pero YA NO tiene UI propia — quedó
+  reemplazado en la pantalla por este flujo. Se deja el código/endpoint viejo intacto
+  (con sus pruebas) en vez de borrarlo, por si se necesita reactivar un envío puntual
+  distinto al paquete fijo. Sigue pendiente `CORREO_BACKEND=ses` en producción (mismo
+  `[[POR LLENAR]]` de ADR-105) — en dev el envío solo se registra en log.
+- **Verificado:** `ruff check` limpio. Backend: nuevo `test_f1_11_correo_orden_transmision.py`
+  (8 pruebas: manda solo a activos con correo, ignora inactivos/sin correo, 400 sin
+  contactos activos, adjunta PDF Programados + N audios, falla del adaptador registra
+  bitácora con `exitoso=False`, 404 de OE inexistente, HTTP envío exitoso, HTTP 400 sin
+  contactos). Migración verificada con `test_migraciones_sqlite.py` (fresh + round-trip).
+  Suite completa del backend en verde (todas las pruebas, sin regresiones). Frontend:
+  `tsc --noEmit`/`eslint` limpios; `OrdenEstacionDetailPanel.test.tsx` actualizado (el
+  test de "abre el visor con su propio tipo" ahora pasa primero por "Imprimir"). Suite
+  `vitest` completa: mismo baseline preexistente de 12 fallas (auth, no relacionado) —
+  cero regresiones nuevas.
+
+### ADR-121 — Se salta "2.2 Capturar Programados" como paso manual (2.1 → 2.3 directo, sin perder edición)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-25 (F1, petición directa del usuario).
+- **Contexto:** el usuario pidió saltarse "2.2 Capturar Programados" porque los datos que
+  ese paso confirmaba (el `periodo_transmision`) ya se capturan completos desde el alta de
+  la OE. Pidió además conservar la edición de la orden mientras no se llegue a "2.3
+  Reales", y seguir permitiendo adjuntar el "reporte del afiliado" (antes solo capturable
+  en ese paso 2.2). **Precedente directo: ADR-117** (mismo día, revertida) intentó algo
+  parecido haciendo que la OE naciera directo en `en_transmision` — eso rompía la edición
+  para siempre, porque `FROZEN_STATES_OE` congela justo desde ese estado. Se evitó
+  repetir el problema con un enfoque distinto (confirmado con el usuario antes de
+  programar): la OE se queda en `asignada` (que YA es editable hoy) y "Capturar Reales"
+  se habilita para avanzar DIRECTO desde ahí, sin pasar por `en_transmision`.
+- **Decisión:**
+  1. `OrdenEstacionCreate`/`OrdenEstacionUpdate` ganan `reporte_programados_ref` (mismo
+     campo/columna que ya existía, antes solo expuesto en `OrdenEstacionProgramadosIn`) —
+     se puede adjuntar/corregir desde el alta o mientras la OE siga editable. Sin cambio
+     de esquema (la columna ya existía).
+  2. `avanzar_reales()`: la precondición pasa de exigir `estatus == en_transmision` a
+     aceptar `asignada` **o** `en_transmision` — cubre tanto el flujo nuevo (salta 2.2)
+     como cualquier OE que ya haya avanzado por la vía manual de siempre (que se deja
+     intacta, sin UI propia — ver `avanzar_programados()`/endpoint `POST .../programados`,
+     todavía funcionales por si hiciera falta un envío puntual).
+  3. `generar_pdf_programados()`: se quita el rechazo cuando `estatus == asignada` — el
+     PDF de Programados ya está listo desde que la OE existe (el fallback
+     `spots_programados` → `spots_asignados` ya cubría la comparación).
+  4. Frontend: se retira el botón "→ Capturar programados (2.2)" y toda la pantalla que
+     disparaba (`ProgramadosForm.tsx`, borrado — quedaba inalcanzable) — "→ Capturar
+     reales (2.3)" ahora aparece desde `asignada_afiliado` (además de
+     `programados_conciliados`, por compatibilidad con OEs ya avanzadas). El PDF #2 ya no
+     se oculta en `asignada_afiliado`. "Reporte del afiliado" se agrega a
+     `OrdenEstacionForm.tsx` (alta/edición), reusando `AdjuntoOrdenInput` — igual que ya
+     lo hacía `ProgramadosForm.tsx`.
+- **Consecuencia:** el endpoint `POST .../programados` sigue vivo en el backend (con sus
+  pruebas) pero sin entrada en la UI — se conserva por si se necesita reactivar un ajuste
+  puntual de `spots_programados` distinto al asignado, caso que ya no tiene pantalla
+  dedicada.
+- **Verificado:** backend: 2 pruebas nuevas (avanzar directo desde `asignada` genera
+  incidencias correctamente contra `spots_asignados`; `reporte_programados_ref` se
+  guarda desde alta y se corrige por edición) + `test_pdf_programados_rechaza_si_aun_no_se_captura`
+  actualizado a `test_pdf_programados_se_genera_desde_asignada`. Suite completa del
+  backend en verde. Frontend: `tsc --noEmit`/`eslint` limpios, `OrdenEstacionDetailPanel.test.tsx`
+  actualizado (PDF #2 ya aparece en `asignada_afiliado`). Sin regresiones nuevas.
+
+### ADR-122 — El adaptador `local` de correo guarda un `.eml` real (revisar el mensaje sin SES/AWS)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-25 (F1, petición directa del usuario, tras
+  reportar que el correo "nunca le llega" — diagnóstico: `CORREO_BACKEND` sin configurar
+  usa `local` por default, que nunca envía nada real, solo lo registra en la bitácora
+  como `exitoso=true`, ver ADR-105).
+- **Contexto:** el usuario propuso "inventar" un remitente con `CORREO_BACKEND=ses` para
+  probar cómo queda armado el correo — se explicó que esa vía SÍ llama a la API real de
+  AWS SES (con las credenciales ya presentes en `.env` para S3), así que no simula, falla
+  o intenta enviar de verdad. Se propuso en su lugar mejorar el adaptador `local` para
+  construir el mismo mensaje MIME real y guardarlo en disco — confirmado con el usuario.
+- **Decisión:**
+  1. `app/integrations/correo/mime.py` (nuevo): `construir_mime()` — arma el
+     `MIMEMultipart` (asunto, cuerpo, adjuntos) una sola vez, compartido por ambos
+     adaptadores (antes vivía solo dentro de `CorreoSES.enviar()`).
+  2. `CorreoLocal.enviar()`: además de loguear, arma el mensaje con `construir_mime()`
+     (remitente de mentira, `pruebas-grc-oir@simulado.local` — en modo local nunca hace
+     falta un `SES_FROM_EMAIL` real configurado) y lo guarda como
+     `<STORAGE_LOCAL_ROOT>/correos_simulados/<fecha>_<destinatario>.eml` — un archivo de
+     correo real, abrible con doble clic en cualquier cliente de escritorio (Outlook,
+     Thunderbird...), con los adjuntos reales adentro. Nada sale a internet.
+  3. `get_correo()` pasa `settings.storage_local_root` a `CorreoLocal` (antes no recibía
+     nada).
+- **Consecuencia:** ninguna negativa — es aditivo, no cambia el comportamiento de
+  `CorreoSES` ni la bitácora. La carpeta `correos_simulados/` no se limpia sola (mismo
+  criterio que el resto de `_storage_local/`); si crece mucho, se borra a mano.
+- **Verificado:** nuevo `test_integraciones_correo.py` (4 pruebas: `construir_mime` con
+  un destinatario y con lista, `CorreoLocal` guarda un `.eml` parseable con asunto/
+  adjuntos correctos, no truena sin destinatarios). Probado además end-to-end contra el
+  backend real: un envío generó un `.eml` de ~1 MB con el PDF de Programados y un audio
+  adjuntos correctamente. Suite completa del backend en verde.
+
+### ADR-123 — "Formato de Horarios Reales" junto a "Evidencias de lo Transmitido" (cualquier formato, lista negra)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-25 (F1, petición directa del usuario).
+- **Contexto:** el usuario pidió un campo nuevo en "Capturar Reales", al lado de
+  "Evidencias de lo Transmitido", con la misma funcionalidad (subir/listar/descargar/
+  quitar) pero que aceptara CUALQUIER formato (PDF, Excel, TXT, audio...) salvo `.exe`.
+  Se le explicó que esto es lo OPUESTO al criterio de todo el módulo (lista BLANCA +
+  validación de contenido/magic bytes en cada campo existente) y se confirmaron 2
+  decisiones antes de programar: (1) reforzar el bloqueo más allá de solo `.exe`
+  (ejecutables/scripts en general) y (2) revisar el contenido real del archivo (firma de
+  ejecutable de Windows, "MZ") sin importar la extensión declarada — para que un
+  ejecutable renombrado no se cuele.
+- **Decisión:**
+  1. `app/integrations/almacenamiento/documentos.py`: nueva función `leer_adjunto_libre()`
+     — único caso del módulo con LISTA NEGRA (`EXTENSIONES_PELIGROSAS`, ~40 extensiones
+     de ejecutables/scripts, referencia: lista de adjuntos bloqueados de Gmail) en vez de
+     blanca. Rechaza también cualquier contenido que empiece con la firma DOS/PE `"MZ"`
+     (todo ejecutable/DLL de Windows), sin importar la extensión que declare el archivo.
+     No fuerza ninguna extensión de salida (a diferencia de `leer_pdf`): conserva la
+     extensión original del archivo subido.
+  2. Tabla nueva `orden_estacion_formato_real` (modelo `OrdenEstacionFormatoReal`,
+     migración `b8d4c1a5e0f7`) — mismo patrón que `OrdenEstacionEvidencia` (ADR-119):
+     lista PLANA, sin `orden` ni default/override por día, ordenada por `created_at`.
+  3. Servicio: `formatos_reales()`/`agregar_formato_real()`/`eliminar_formato_real()`/
+     `obtener_formato_real()` — calcados de sus contrapartes de evidencia, usando
+     `leer_adjunto_libre()` en vez de `leer_adjunto()`. Tope propio,
+     `S3_MAX_FORMATO_REAL_BYTES` (default 20 MB, no reusa el de audio/PDF). Endpoints
+     dedicados `GET`/`POST /{item_id}/formatos-reales`,
+     `GET /{item_id}/formatos-reales/{id}/archivo`, `DELETE /{item_id}/formatos-reales/{id}`
+     — mismos permisos que evidencias (`ordenes:leer`/`ordenes:editar`).
+  4. Frontend: `FormatoHorariosReales.tsx` (nuevo, calcado de `EvidenciasTransmitido.tsx`)
+     — sin `accept` en el `<input type="file">` (no hay un conjunto cerrado de formatos
+     que sugerir) y con validación de lista negra en vez de blanca
+     (`EXTENSIONES_PELIGROSAS_FORMATO_REAL`, solo UX — el backend es la defensa real).
+     `RealesForm.tsx` lo coloca EN LA MISMA fila que `EvidenciasTransmitido` (grid de 2
+     columnas), tal como se pidió.
+- **Consecuencia:** ninguna negativa. Es el único punto de subida de archivos del sistema
+  sin validación de contenido POSITIVA (no hay firma que revisar para "cualquier
+  formato") — la defensa es la lista negra + el chequeo de "MZ", no una lista blanca con
+  magic bytes como el resto del módulo. Documentado explícitamente en el código para que
+  no se use como plantilla de un futuro campo que sí debería ser lista blanca.
+- **Verificado:** `ruff check` limpio. Backend: nuevo `test_f1_12_formato_horarios_reales.py`
+  (8 pruebas: acepta PDF/Excel/TXT, rechaza `.exe` por extensión, rechaza un ejecutable
+  renombrado a `.pdf` por la firma MZ, borrar uno no afecta a los demás, 404 cruzado
+  entre OEs, HTTP subir/listar/descargar/borrar, RBAC Nóminas sin acceso, HTTP `.exe` →
+  400). Migración verificada con `test_migraciones_sqlite.py` (fresh + round-trip). Suite
+  completa del backend en verde. Frontend: `tsc --noEmit`/`eslint` limpios;
+  `RealesForm.test.tsx` con prueba nueva (sube un `.xlsx` y aparece en su propia lista).
+  Suite `vitest` completa: mismo baseline preexistente de 12 fallas (auth, no
+  relacionado) — cero regresiones nuevas.

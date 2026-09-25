@@ -6,10 +6,12 @@
  */
 
 import type { AvanzarARealesInput, CerrarOCInput } from "../state/OrdenesContext";
-import type { OrdenCliente, OrdenClienteInput, OrdenEstacionInput, PeriodoTransmisionRow } from "../types";
+import type { OrdenCliente, OrdenClienteInput, OrdenEstacionInput } from "../types";
 
 // ── OrdenCliente: alta ────────────────────────────────────────────────────────
-export function ordenClienteCreateToApi(input: OrdenClienteInput, darVobo: boolean) {
+// ADR-100: sin checklist de Vo.Bo. — la orden se guarda y el backend la pasa directo a
+// `capturada`, sin ningún flag que lo pida desde aquí.
+export function ordenClienteCreateToApi(input: OrdenClienteInput) {
   return {
     numero_orden_cliente: input.numero_orden_cliente,
     fecha_venta: input.fecha_venta,
@@ -40,16 +42,14 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput, darVobo: boole
     porcentaje_comision_agencia_snap: input.porcentaje_comision_agencia_snap,
     observaciones_predefinidas: input.observaciones_predefinidas || null,
     observaciones_libres: input.observaciones_libres || null,
-    revision_checklist: input.revision_checklist,
-    dar_vobo: darVobo,
   };
 }
 
 // ── OrdenCliente: edición normal (PUT) ─────────────────────────────────────────
-// Lista blanca deliberada (no "omitir los que no van"): los 3 % de comisión, el
-// checklist y `estatus_orden` NO se mandan aquí — cada uno tiene su propio canal
-// (comisiones, vobo/dar-vobo). `odc_pdf_ref` tampoco está en la lista porque su nombre
-// en el backend es distinto (`archivo_orden_original_path`) — se agrega aparte, abajo.
+// Lista blanca deliberada (no "omitir los que no van"): los 3 % de comisión y
+// `estatus_orden` NO se mandan aquí — tienen su propio canal (comisiones). `odc_pdf_ref`
+// tampoco está en la lista porque su nombre en el backend es distinto
+// (`archivo_orden_original_path`) — se agrega aparte, abajo.
 const CAMPOS_ACTUALIZABLES = [
   "numero_orden_cliente",
   "fecha_venta",
@@ -97,6 +97,8 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
   return {
     orden_id: ocId,
     estacion_id: input.estacion_id,
+    producto_tarifa: input.producto_tarifa,
+    duracion_spot: input.duracion_spot,
     precio_spot: input.precio_spot,
     cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     observaciones_estacion: input.observaciones_estacion || null,
@@ -105,7 +107,18 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
       hora_inicio: row.hora_inicio,
       hora_fin: row.hora_termino,
       spots_asignados: row.spots_diarios,
+      // ADR-111: en el alta, `orden_estacion_audio_id` de la fila (vista previa) en
+      // realidad guarda el `ref` de S3 (los audios ni siquiera tienen id real todavía) —
+      // el backend lo resuelve contra `audios` de este mismo payload.
+      audio_staging_ref: row.orden_estacion_audio_id || null,
     })),
+    // ADR-102: transitorio — el backend solo lo exige si `precio_spot` no coincide con
+    // la tarifa sugerida del catálogo.
+    motivo_cambio_tarifa: input.motivo_cambio_tarifa || null,
+    // ADR-109: material a transmitir ya subido a S3 durante la captura (solo en alta).
+    audios: (input.audios_staging ?? []).map((a) => ({ ref: a.ref, nombre_archivo: a.nombre_archivo })),
+    // ADR-121: "Reporte del afiliado" — ya se puede adjuntar desde el alta.
+    reporte_programados_ref: input.reporte_programados_ref ?? null,
   };
 }
 
@@ -115,6 +128,8 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
 // en la práctica, otra OE distinta.
 export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
   return {
+    producto_tarifa: input.producto_tarifa,
+    duracion_spot: input.duracion_spot,
     precio_spot: input.precio_spot,
     cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     observaciones_estacion: input.observaciones_estacion || null,
@@ -124,23 +139,16 @@ export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
       hora_fin: row.hora_termino,
       spots_asignados: row.spots_diarios,
     })),
+    motivo_cambio_tarifa: input.motivo_cambio_tarifa || null,
+    // ADR-121: corregible mientras la OE siga editable (antes de 2.3 Reales).
+    reporte_programados_ref: input.reporte_programados_ref ?? null,
   };
 }
 
-// ── OrdenEstacion: 2.1 → 2.2 ────────────────────────────────────────────────────
-export function programadosToApi(horarios: PeriodoTransmisionRow[], reporteRef: string | null | undefined) {
-  return {
-    dias: horarios.map((row) => ({ fecha_transmision: row.fecha, spots_programados: row.spots_diarios })),
-    reporte_programados_ref: reporteRef ?? null,
-  };
-}
-
-// ── OrdenEstacion: 2.2 → 2.3 ────────────────────────────────────────────────────
+// ── OrdenEstacion: 2.1 → 2.3 (ADR-121: 2.2 ya no es un paso manual — se salta) ──
 export function realesToApi(input: AvanzarARealesInput) {
   return {
     dias: input.horariosReales.map((row) => ({ fecha_transmision: row.fecha, spots_verificados: row.spots_diarios })),
-    testigos_url: input.testigosUrl,
-    testigos_ubicacion_alterna: input.testigosUbicacionAlterna,
     notas_transmision: input.notasTransmision,
     reporte_reales_ref: input.reporteRef ?? null,
   };

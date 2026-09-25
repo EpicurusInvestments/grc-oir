@@ -59,15 +59,6 @@ export interface OrdenClienteApiDTO {
   fecha_cierre: string | null;
 }
 
-export interface OrdenClienteVoBoItemApiDTO {
-  orden_cliente_vobo_item_id: string;
-  orden_id: string;
-  item_clave: string;
-  completado: boolean;
-  usuario_id: string | null;
-  fecha_completado: string | null;
-}
-
 export interface OrdenEstacionApiDTO {
   orden_estacion_id: string;
   folio_orden_estacion: string;
@@ -79,6 +70,7 @@ export interface OrdenEstacionApiDTO {
   agencia_id: string | null;
   categoria_id: string | null;
   producto: string | null;
+  producto_tarifa: string | null;
   estacion_id: string;
   plaza_id: string;
   duracion_spot: string;
@@ -117,8 +109,44 @@ export interface OrdenEstacionDiaApiDTO {
   spots_solicitados: number;
   spots_asignados: number;
   spots_programados: number | null;
+  orden_estacion_audio_id: string | null;
+  cancelada: boolean;
   created_at: string;
   updated_at: string | null;
+}
+
+export interface OrdenEstacionAudioApiDTO {
+  orden_estacion_audio_id: string;
+  orden_estacion_id: string;
+  nombre_archivo: string;
+  orden: number;
+  created_at: string;
+}
+
+/** ADR-109: respuesta de `POST /ordenes/material-staging` — un audio YA subido a S3
+ *  ANTES de que exista la OrdenEstacion. `ref` se manda tal cual en `audios` al crear
+ *  la OE (`OrdenEstacionCreate.audios`, backend). */
+export interface MaterialStagingApiDTO {
+  ref: string;
+  nombre_archivo: string;
+}
+
+/** ADR-119: "Evidencias de lo Transmitido" — lista PLANA (a diferencia de
+ *  `OrdenEstacionAudioApiDTO`, sin `orden` ni concepto de default). */
+export interface OrdenEstacionEvidenciaApiDTO {
+  orden_estacion_evidencia_id: string;
+  orden_estacion_id: string;
+  nombre_archivo: string;
+  created_at: string;
+}
+
+/** ADR-123: "Formato de Horarios Reales" — igual que evidencias, pero cualquier
+ * formato salvo ejecutables/scripts. */
+export interface OrdenEstacionFormatoRealApiDTO {
+  orden_estacion_formato_real_id: string;
+  orden_estacion_id: string;
+  nombre_archivo: string;
+  created_at: string;
 }
 
 export interface VerificacionApiDTO {
@@ -146,4 +174,17 @@ export interface IncidenciaApiDTO {
   fecha_incidencia: string;
   resolucion: string;
   monto_ajuste: string | null;
+}
+
+/** ADR-105/ADR-120: bitácora de un envío por correo de un PDF de OrdenEstacion (o del
+ * "bundle" de Orden de Transmisión, `tipo_pdf: "orden_transmision"`). */
+export interface LogEnvioCorreoApiDTO {
+  log_envio_correo_id: string;
+  orden_estacion_id: string;
+  tipo_pdf: "servicio" | "programados" | "reales" | "orden_transmision";
+  destinatario_email: string;
+  usuario: string;
+  exitoso: boolean;
+  mensaje_error: string | null;
+  fecha_envio: string;
 }

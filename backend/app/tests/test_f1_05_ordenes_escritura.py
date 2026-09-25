@@ -35,10 +35,10 @@ from app.modules.catalogos.contrato import Contrato
 from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
+from app.modules.catalogos.tarifa import TarifaPlaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.ordenes.incidencia import Incidencia
 from app.modules.ordenes.orden_cliente import (
-    ITEMS_VOBO,
     EstatusOrden,
     OrdenCliente,
     OrdenClienteCerrarIn,
@@ -246,12 +246,6 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
     return OrdenClienteCreate(**base)
 
 
-def _dar_vobo_completo(oc_svc: OrdenClienteService, orden_id: uuid.UUID) -> None:
-    for item in ITEMS_VOBO:
-        oc_svc.vobo_toggle(orden_id, item, True, ADMIN)
-    oc_svc.dar_vobo(orden_id, VENTAS)
-
-
 # ── Alta de OrdenCliente ──────────────────────────────────────────────────────
 def test_crear_oc_calcula_totales_y_folio(
     oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
@@ -266,7 +260,7 @@ def test_crear_oc_calcula_totales_y_folio(
     assert oc.anio_venta == 2026
     assert oc.mes_venta == 1
     assert oc.total_dias_campania == 28
-    assert oc.estatus_orden == EstatusOrden.RECIBIDA
+    assert oc.estatus_orden == EstatusOrden.CAPTURADA  # ADR-100: sin Vo.Bo., directo aquí
     assert oc.folio_orden == "OC-2026-0041"
 
 
@@ -276,15 +270,6 @@ def test_crear_oc_folio_correlativo(oc_svc: OrdenClienteService, cat: dict[str, 
     n1 = int(primera.folio_orden.rsplit("-", 1)[1])
     n2 = int(segunda.folio_orden.rsplit("-", 1)[1])
     assert n2 == n1 + 1
-
-
-def test_crear_oc_checklist_creado_vacio(
-    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
-) -> None:
-    oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    items = oc_svc.vobo(oc.orden_id)
-    assert {i.item_clave for i in items} == set(ITEMS_VOBO)
-    assert all(not i.completado for i in items)
 
 
 def test_crear_oc_fk_inexistente_404(
@@ -325,38 +310,12 @@ def test_crear_oc_comision_auditada_sin_motivo(
     assert logs[0].motivo_cambio is None
 
 
-# ── Checklist / Vo.Bo. ────────────────────────────────────────────────────────
-def test_dar_vobo_incompleto_409(oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]) -> None:
-    oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    oc_svc.vobo_toggle(oc.orden_id, ITEMS_VOBO[0], True, VENTAS)
-    with pytest.raises(StateTransitionError):
-        oc_svc.dar_vobo(oc.orden_id, VENTAS)
-
-
-def test_dar_vobo_completo_transiciona(
+# ── Sin checklist de Vo.Bo. (ADR-100) ─────────────────────────────────────────
+def test_crear_oc_pasa_directo_a_capturada(
     oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
-    actualizada = oc_svc.get(oc.orden_id)
-    assert actualizada.estatus_orden == EstatusOrden.CAPTURADA
-
-
-def test_dar_vobo_al_crear_con_checklist_completo(
-    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
-) -> None:
-    checklist = dict.fromkeys(ITEMS_VOBO, True)
-    oc = oc_svc.create(_oc_payload(cat, revision_checklist=checklist, dar_vobo=True), VENTAS)
     assert oc.estatus_orden == EstatusOrden.CAPTURADA
-
-
-def test_dar_vobo_al_crear_incompleto_409(
-    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
-) -> None:
-    with pytest.raises(StateTransitionError):
-        oc_svc.create(
-            _oc_payload(cat, revision_checklist={ITEMS_VOBO[0]: True}, dar_vobo=True), VENTAS
-        )
 
 
 # ── Edición normal ────────────────────────────────────────────────────────────
@@ -476,7 +435,6 @@ def test_editar_oc_amplia_rango_libremente_aunque_haya_dias_de_oe(
     """Ampliar el rango de campaña NUNCA rompe nada: todo día ya capturado seguía
     cabiendo, así que no se valida contra las OE hijas."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)  # -> capturada
     oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
 
     editada = oc_svc.update(
@@ -497,7 +455,6 @@ def test_editar_oc_angosta_rango_sin_tocar_dias_de_oe_se_permite(
 ) -> None:
     """Angostar es válido en tanto ningún día ya capturado quede fuera del nuevo rango."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
 
     editada = oc_svc.update(
@@ -517,7 +474,6 @@ def test_editar_oc_angosta_fecha_fin_dejando_fuera_un_dia_de_oe_400(
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
 
     with pytest.raises(DomainError):
@@ -535,7 +491,6 @@ def test_editar_oc_angosta_fecha_inicio_dejando_fuera_un_dia_de_oe_400(
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # días en hoy+32 y hoy+39
 
     with pytest.raises(DomainError):
@@ -635,6 +590,8 @@ def _oe_payload(
     base: dict[str, object] = dict(
         orden_id=orden_id,
         estacion_id=cat["estacion"],
+        producto_tarifa="spot",
+        duracion_spot="30s",
         precio_spot=Decimal("800.00"),
         observaciones_estacion=None,
         # Mismo rango relativo que la campaña de `_oc_payload` (hoy+30 .. hoy+57).
@@ -664,7 +621,6 @@ def test_crear_oe_hereda_calcula_y_promueve_oc(
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)  # -> capturada
 
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
 
@@ -684,20 +640,50 @@ def test_crear_oe_hereda_calcula_y_promueve_oc(
     assert oc_tras.estatus_orden == EstatusOrden.EN_TRANSMISION
 
 
-def test_crear_oe_precio_mayor_a_tarifa_cliente_400(
+def test_crear_oe_con_hora_inicio_igual_a_hora_fin_no_falla(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
+    """ADR-108/ADR-112: "Horario de transmisión" es un solo valor — el frontend manda
+    SIEMPRE `hora_inicio == hora_fin`. Antes de ADR-112 esto era rechazado (422 en el
+    schema, CHECK en la base): un día real capturado desde la app nunca llegaba a
+    guardarse. Regresión detectada en vivo, no por ninguna prueba (los fixtures de este
+    archivo siguen usando un rango real de 7:00 a 9:00 para las demás pruebas)."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
-    with pytest.raises(DomainError):
-        oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("1500.00")), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=date.today() + timedelta(days=32),
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(7, 0),
+                    spots_asignados=20,
+                ),
+            ],
+        ),
+        VENTAS,
+    )
+    assert oe.orden_estacion_id is not None
+
+
+def test_crear_oe_precio_mayor_a_tarifa_cliente_permite_pct_oir_negativo(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-101: ya no se rechaza que `precio_spot` supere `precio_unitario` de la OC —
+    el margen OIR simplemente se vuelve negativo (20 spots * 1500 = 30000; % OIR =
+    (1000-1500)/1000*100 = -50.0; importe_oir = 30000 * -50/100 = -15000.00)."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("1500.00")), VENTAS)
+    assert oe.importe_estacion == Decimal("30000.00")
+    assert oe.porcentaje_participacion_oir == Decimal("-50.0")
+    assert oe.importe_oir == Decimal("-15000.00")
 
 
 def test_crear_oe_excede_balance_de_spots_400(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=15), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     with pytest.raises(DomainError):
         oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots > 15
 
@@ -710,7 +696,6 @@ def test_crear_oe_con_spots_bonificables_reduce_el_importe(
     = 15*800 = 12000.00 (antes hubiera sido 16000.00). Los bonificables SIGUEN contando
     para el balance de spots de la OC (no se valida aquí; ver test de balance aparte)."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id, cantidad_spots_bonificables=5), VENTAS)
     assert oe.cantidad_spots_bonificables == 5
     assert oe.importe_estacion == Decimal("12000.00")
@@ -723,7 +708,6 @@ def test_crear_oe_spots_bonificables_excede_asignados_400(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     with pytest.raises(DomainError):
         # 20 spots asignados, 21 bonificables.
         oe_svc.create(_oe_payload(cat, oc.orden_id, cantidad_spots_bonificables=21), VENTAS)
@@ -733,7 +717,6 @@ def test_editar_oe_recalcula_al_cambiar_solo_spots_bonificables(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800, sin bonificar
     assert oe.importe_estacion == Decimal("16000.00")
 
@@ -748,7 +731,6 @@ def test_crear_oe_fecha_fuera_de_campania_400(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     with pytest.raises(DomainError):
         oe_svc.create(
             _oe_payload(
@@ -772,7 +754,6 @@ def test_editar_oe_en_asignada_permite_corregir_tarifa_y_dias(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800
 
     editada = oe_svc.update(
@@ -805,7 +786,6 @@ def test_editar_oe_solo_tarifa_conserva_los_dias_existentes(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 spots, precio 800
 
     editada = oe_svc.update(
@@ -816,23 +796,24 @@ def test_editar_oe_solo_tarifa_conserva_los_dias_existentes(
     assert len(oe_svc.dias(oe.orden_estacion_id)) == 2
 
 
-def test_editar_oe_rechaza_tarifa_mayor_a_la_de_la_oc(
+def test_editar_oe_permite_tarifa_mayor_a_la_de_la_oc_con_pct_oir_negativo(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
+    """ADR-101: la edición ya no rechaza `precio_spot > precio_unitario` — mismo criterio
+    que el alta (test hermano de arriba)."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
-    with pytest.raises(DomainError):
-        oe_svc.update(
-            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("1500.00")), VENTAS
-        )
+    editada = oe_svc.update(
+        oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("1500.00")), VENTAS
+    )
+    assert editada.porcentaje_participacion_oir == Decimal("-50.0")
+    assert editada.importe_oir == Decimal("-15000.00")
 
 
 def test_editar_oe_rechaza_dia_fuera_de_campania(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     with pytest.raises(DomainError):
         oe_svc.update(
@@ -855,7 +836,6 @@ def test_editar_oe_rechaza_exceder_balance_de_spots_de_la_oc(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=25), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 20 de 25 ya asignados
     with pytest.raises(DomainError):
         oe_svc.update(
@@ -881,7 +861,6 @@ def test_editar_oe_congelada_en_transmision_409(
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     obj = db.get(OrdenEstacion, oe.orden_estacion_id)
     assert obj is not None
@@ -894,6 +873,215 @@ def test_editar_oe_congelada_en_transmision_409(
         )
 
 
+# ── Tarifa sugerida del catálogo (ADR-102) ─────────────────────────────────────
+def _seed_tarifa(
+    db: Session,
+    cat: dict[str, uuid.UUID],
+    *,
+    tarifa_bruta: Decimal,
+    descuento_pct: Decimal = Decimal("0"),
+    producto: str = "spot",
+    duracion_spot: str = "30s",
+) -> None:
+    factor = (Decimal(100) - descuento_pct) / Decimal(100)
+    tarifa_neta = (tarifa_bruta * factor).quantize(Decimal("0.01"))
+    db.add(
+        TarifaPlaza(
+            tarifa_plaza_id=uuid.uuid4(),
+            estacion_id=cat["estacion"],
+            tipo_senal="fm",
+            duracion_spot=duracion_spot,
+            producto=producto,
+            tarifa_bruta=tarifa_bruta,
+            descuento_pct=descuento_pct,
+            tarifa_neta=tarifa_neta,
+            activo=True,
+        )
+    )
+    db.commit()
+
+
+def test_crear_oe_sin_tarifa_en_catalogo_no_exige_motivo_ni_audita(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Sin ninguna `TarifaPlaza` activa para la combinación, no hay nada contra qué
+    comparar: `precio_spot` sigue siendo 100% libre, igual que antes de esta fase."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("12345.00")), VENTAS)
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_precio_igual_a_tarifa_sugerida_no_exige_motivo_ni_audita(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    # `_oe_payload` default: precio_spot=800.00, producto_tarifa="spot" — coincide.
+    oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_usa_duracion_propia_no_la_de_la_oc_para_buscar_tarifa(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-106: la duración de la OE es propia (capturada por el usuario), no heredada
+    de la OC — la tarifa se busca con la duración de ESTA OE, aunque sea distinta a la
+    de la Orden de Servicio (que sigue en "30s", el default de `_oc_payload`)."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("1000.00"), duracion_spot="60s")
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(cat, oc.orden_id, duracion_spot="60s", precio_spot=Decimal("1000.00")),
+        VENTAS,
+    )
+    assert oe.duracion_spot == "60s"
+    # Coincide con la tarifa sembrada para 60s → no exige motivo ni audita.
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_duracion_sin_tarifa_sembrada_para_esa_duracion_sigue_libre(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Hay una tarifa activa para 30s, pero la OE se captura en 60s: no hay nada contra
+    qué comparar para esa combinación — sigue 100% libre (no exige motivo ni audita),
+    aunque SÍ exista tarifa para otra duración de la misma estación/producto."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"), duracion_spot="30s")
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe_svc.create(
+        _oe_payload(cat, oc.orden_id, duracion_spot="60s", precio_spot=Decimal("12345.00")),
+        VENTAS,
+    )
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_editar_oe_cambia_duracion_y_recalcula_tarifa_sugerida(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """Al editar, cambiar `duracion_spot` vuelve a buscar la tarifa con la duración
+    NUEVA — no se queda pegada a la que tenía la OE al crearse."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("1000.00"), duracion_spot="60s")
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 30s, sin tarifa sembrada
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(duracion_spot="60s", precio_spot=Decimal("1000.00")),
+        VENTAS,
+    )
+    actualizada = oe_svc.get(oe.orden_estacion_id)
+    assert actualizada.duracion_spot == "60s"
+    # Coincide con la tarifa de 60s → sigue sin auditar.
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(precio_spot=Decimal("1200.00"), motivo_cambio_tarifa="Ajuste"),
+        VENTAS,
+    )
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 1
+
+
+def test_crear_oe_precio_distinto_a_tarifa_sugerida_sin_motivo_400(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    with pytest.raises(DomainError):
+        oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("950.00")), VENTAS)
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_precio_distinto_a_tarifa_sugerida_con_motivo_audita(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-102: sin candado de permiso (a diferencia de `TarifaPlaza.tarifa_bruta`) —
+    Ventas sigue pudiendo capturar un precio distinto al sugerido, solo que queda
+    auditado con el motivo que dio."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            precio_spot=Decimal("950.00"),
+            motivo_cambio_tarifa="Negociación especial con el afiliado",
+        ),
+        VENTAS,
+    )
+    log = (
+        db.query(LogCambioParametro)
+        .filter_by(entidad="OrdenEstacion", entidad_id=str(oe.orden_estacion_id))
+        .one()
+    )
+    assert log.campo == "precio_spot"
+    assert log.valor_anterior == "800.00"
+    assert log.valor_nuevo == "950.00"
+    assert log.motivo_cambio == "Negociación especial con el afiliado"
+
+
+def test_editar_oe_precio_distinto_a_tarifa_sugerida_sin_motivo_400(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 800.00, coincide
+
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("700.00")), VENTAS
+        )
+
+
+def test_editar_oe_precio_distinto_a_tarifa_sugerida_con_motivo_audita(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 800.00, coincide
+
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            precio_spot=Decimal("700.00"), motivo_cambio_tarifa="Ajuste por baja demanda"
+        ),
+        VENTAS,
+    )
+    log = (
+        db.query(LogCambioParametro)
+        .filter_by(entidad="OrdenEstacion", entidad_id=str(oe.orden_estacion_id))
+        .one()
+    )
+    assert log.valor_anterior == "800.00"
+    assert log.valor_nuevo == "700.00"
+
+
 # ── Programados / Reales / cascada de estatus ─────────────────────────────────
 def test_flujo_programados_reales_genera_incidencia_y_cascada(
     db: Session,
@@ -902,7 +1090,6 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
 
     # 2.1 -> 2.2: confirma un día distinto (el primer día, hoy+32 -> 8, en vez de 10).
@@ -930,7 +1117,6 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
                     fecha_transmision=date.today() + timedelta(days=32), spots_verificados=6
                 )
             ],
-            testigos_url="https://ejemplo.com/testigo.mp3",
             notas_transmision="Corte de programación.",
         ),
         VENTAS,
@@ -953,13 +1139,81 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
     assert oc_tras.estatus_orden == EstatusOrden.EN_VERIFICACION
 
 
+def test_avanzar_reales_directo_desde_asignada_salta_2_2(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-121: "Capturar Programados" (2.2) ya no es un paso obligatorio — se puede
+    avanzar a reales directo desde 'asignada', sin pasar por `avanzar_programados`. El
+    fallback de `spots_programados` (None) a `spots_asignados` cubre la comparación de
+    incidencias exactamente igual que si sí se hubiera confirmado "tal cual asignado"."""
+    oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    assert oe.estatus == EstatusOrdenEstacion.ASIGNADA
+
+    cerrada = oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=6
+                )
+            ],
+            notas_transmision="Corte de programación.",
+        ),
+        VENTAS,
+    )
+    assert cerrada.estatus == EstatusOrdenEstacion.CERRADA
+
+    verificaciones = db.scalars(select(Verificacion)).all()
+    assert len(verificaciones) == 2
+
+    incidencias = db.scalars(select(Incidencia)).all()
+    assert len(incidencias) == 1
+    inc = incidencias[0]
+    # El día sin verificado explícito (hoy+39) sigue en 10 (spots_asignados, sin
+    # spots_programados): faltante calculado contra el ASIGNADO, no contra un
+    # "programado" que en este flujo nunca se llegó a capturar.
+    assert inc.diferencia_spots == -4  # 6 verificados vs 10 asignados
+
+
+def test_crear_oe_guarda_reporte_del_afiliado(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-121: el reporte del afiliado (antes solo en `avanzar_programados`) ya se puede
+    adjuntar desde el alta — mismo campo/columna, sin cambio de esquema."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(cat, oc.orden_id, reporte_programados_ref="reporte_afiliado.pdf"), VENTAS
+    )
+    assert oe.reporte_programados_ref == "reporte_afiliado.pdf"
+
+
+def test_editar_oe_en_asignada_permite_corregir_reporte_del_afiliado(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-121: mientras la OE siga editable (no llegó a 2.3 Reales), el reporte del
+    afiliado se puede adjuntar o corregir por la vía normal de edición."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    assert oe.reporte_programados_ref is None
+
+    editada = oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(reporte_programados_ref="reporte_afiliado_v2.pdf"),
+        VENTAS,
+    )
+    assert editada.reporte_programados_ref == "reporte_afiliado_v2.pdf"
+
+
 def test_cascada_solo_al_cerrar_la_ultima_oe(
     oc_svc: OrdenClienteService,
     oe_svc: OrdenEstacionService,
     cat: dict[str, uuid.UUID],
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=40), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe1 = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     oe2 = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
 
@@ -982,7 +1236,6 @@ def test_crear_oe_permitido_en_verificacion_si_quedan_spots_sin_asignar(
     existe EN ESE MOMENTO cierra — no cuando ya no quedan spots de la OC por asignar. Si
     la primera OE no agotó el total_spots, debe poder seguir agregándose otra."""
     oc = oc_svc.create(_oc_payload(cat, total_spots=30), VENTAS)  # 20 en la 1a OE, 10 sobran
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     oe_svc.avanzar_reales(oe.orden_estacion_id, OrdenEstacionRealesIn(), VENTAS)
@@ -1030,7 +1283,6 @@ def test_cerrar_sin_orden_estacion_409(
     oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     with pytest.raises(StateTransitionError):
         oc_svc.cerrar(oc.orden_id, OrdenClienteCerrarIn(), VENTAS)
 
@@ -1039,7 +1291,6 @@ def test_cerrar_con_oe_pendiente_409(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # se queda en "asignada"
     with pytest.raises(StateTransitionError):
         oc_svc.cerrar(oc.orden_id, OrdenClienteCerrarIn(), VENTAS)
@@ -1049,7 +1300,6 @@ def test_cerrar_backfill_comisiones_y_flags(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)  # sin comisiones
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     oe_svc.avanzar_reales(oe.orden_estacion_id, OrdenEstacionRealesIn(), VENTAS)

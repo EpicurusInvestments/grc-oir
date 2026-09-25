@@ -1,20 +1,19 @@
-/** Pantalla "Órdenes internas": lista + panel de detalle, con filtro por sub-estado y
- * buscador. El alta (Tanda 3) abre a pantalla completa, igual que en Órdenes del cliente.
+/** Pantalla "Órdenes de Transmisión": lista + panel de detalle, con filtro por sub-estado y
+ * buscador. El alta (Tanda 3) abre a pantalla completa, igual que en Órdenes de Servicio.
  */
 
 import { useMemo, useState } from "react";
 
-import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
+import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { fmtMonto } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oiImporte, oiPeriodoTexto, oiTotalSpots } from "../../state/selectors";
-import type { EstadoOI, OrdenEstacionInput, PeriodoTransmisionRow } from "../../types";
+import type { EstadoOI, OrdenEstacion, OrdenEstacionInput, PeriodoTransmisionRow } from "../../types";
 import { OrdenEstacionDetailPanel } from "../components/OrdenEstacionDetailPanel";
 import { OrdenEstacionForm } from "../components/OrdenEstacionForm";
-import { ProgramadosForm } from "../components/ProgramadosForm";
 import { RealesForm } from "../components/RealesForm";
 
 export type FiltroOI = "todas" | EstadoOI;
@@ -26,7 +25,7 @@ const FILTROS: { key: FiltroOI; label: string }[] = [
   { key: "reales_conciliados", label: "2.3 Reales" },
 ];
 
-type Modo = "view" | "new" | "edit" | "programados" | "reales";
+type Modo = "view" | "new" | "edit" | "reales";
 
 interface OrdenEstacionListPageProps {
   filtroInicial?: FiltroOI;
@@ -43,7 +42,7 @@ export function OrdenEstacionListPage({
   onVerOC,
   onVerVerificacion,
 }: OrdenEstacionListPageProps) {
-  const { state, crearOE, actualizarOE, avanzarAProgramados, avanzarAReales } = useOrdenes();
+  const { state, crearOE, actualizarOE, avanzarAReales } = useOrdenes();
   const [filtro, setFiltro] = useState<FiltroOI>(filtroInicial ?? "todas");
   // Al llegar con una OI preseleccionada (p.ej. "Ver orden interna →" desde Verificaciones
   // o Incidencias), el buscador arranca filtrado por su folio: así la tabla muestra SOLO
@@ -58,6 +57,17 @@ export function OrdenEstacionListPage({
   const [modo, setModo] = useState<Modo>(ocIdParaNueva ? "new" : "view");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // La OC a la que se le está asignando estación en el alta — arranca en la que llegó
+  // fija por prop; si el usuario la elige suelta (sin `ocIdParaNueva`), se recuerda aquí
+  // después del primer "Guardar" para que "generar otra" (abajo) siga sobre la misma OC.
+  const [ocParaNuevaActual, setOcParaNuevaActual] = useState<string | undefined>(ocIdParaNueva);
+  // ADR-116: tras crear una OE, en vez de pasar directo a modo edición (ADR-103, que ya
+  // no hace falta desde que ADR-109 permite subir material DURANTE el alta), se pregunta
+  // si se quiere capturar otra — la OE recién creada se guarda aquí mientras se decide.
+  const [oeReciente, setOeReciente] = useState<OrdenEstacion | null>(null);
+  // Cambia en cada "Sí, generar otra" para forzar que `<OrdenEstacionForm>` se remonte en
+  // blanco (si se reusara la misma key, se quedaría con los datos de la OE anterior).
+  const [intentoNuevo, setIntentoNuevo] = useState(0);
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -85,13 +95,20 @@ export function OrdenEstacionListPage({
       if (modo === "edit" && selected) {
         const actualizada = await actualizarOE(selected.id, input);
         setSelectedId(actualizada.id);
+        setModo("view");
+        return actualizada;
       } else {
         const nueva = await crearOE(ocId, input);
-        setSelectedId(nueva.id);
+        // ADR-116: ya no se pasa directo a modo edición (ADR-103) — desde ADR-109 el
+        // material se sube DURANTE el alta, así que ese paso extra ya no hace falta.
+        // En su lugar se pregunta si se quiere capturar otra OE para la misma OC.
+        setOcParaNuevaActual(ocId);
+        setOeReciente(nueva);
+        return nueva;
       }
-      setModo("view");
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : "No se pudo guardar la orden interna.");
+      setSubmitError(e instanceof Error ? e.message : "No se pudo guardar la Orden de Transmisión.");
+      return undefined;
     } finally {
       setSubmitting(false);
     }
@@ -99,43 +116,54 @@ export function OrdenEstacionListPage({
 
   if (modo === "new" || (modo === "edit" && selected)) {
     return (
-      <OrdenEstacionForm
-        ocIdFijo={ocIdParaNueva}
-        oe={modo === "edit" ? (selected ?? undefined) : undefined}
-        submitError={submitError}
-        submitting={submitting}
-        onGuardar={onGuardar}
-        onCancelar={() => {
-          setModo("view");
-          setSubmitError(null);
-        }}
-      />
-    );
-  }
-
-  if (modo === "programados" && selected) {
-    return (
-      <ProgramadosForm
-        oe={selected}
-        submitError={submitError}
-        submitting={submitting}
-        onAvanzar={async (horariosProgramados, reporteRef) => {
-          setSubmitError(null);
-          setSubmitting(true);
-          try {
-            await avanzarAProgramados(selected.id, horariosProgramados, reporteRef);
+      <>
+        <OrdenEstacionForm
+          // El estado local del formulario (periodo, estación, audios, etc.) se inicializa
+          // desde `oe` solo UNA vez, al montar (`useState(oe?.x ?? ...)`). Sin esta `key`,
+          // React no lo remonta al cambiar de identidad lógica — se quedaría mostrando
+          // datos viejos. En "edit" cambia con el id de la OE (ADR-113); en "new" cambia
+          // con `intentoNuevo`, que sube en cada "Sí, generar otra" (ADR-116) para que el
+          // siguiente formulario nazca en blanco, no con los datos de la OE anterior.
+          key={modo === "edit" ? (selected?.id ?? "edit") : `new-${intentoNuevo}`}
+          ocIdFijo={modo === "edit" ? undefined : ocParaNuevaActual}
+          oe={modo === "edit" ? (selected ?? undefined) : undefined}
+          submitError={submitError}
+          submitting={submitting}
+          onGuardar={onGuardar}
+          onCancelar={(ocId) => {
+            setSubmitError(null);
+            if (modo === "new") {
+              // ADR-116 (petición del usuario): cancelar el alta regresa a "Órdenes de
+              // Servicio" — a la OC elegida si ya se había seleccionado una, o a la lista
+              // suelta si el usuario canceló antes de elegir ninguna.
+              if (ocId) onVerOC(ocId);
+              else setModo("view");
+              return;
+            }
             setModo("view");
-          } catch (e) {
-            setSubmitError(e instanceof Error ? e.message : "No se pudo avanzar la orden interna.");
-          } finally {
-            setSubmitting(false);
-          }
-        }}
-        onCancelar={() => {
-          setModo("view");
-          setSubmitError(null);
-        }}
-      />
+          }}
+        />
+        {/* ADR-116: se pregunta DESPUÉS de guardar (no antes) — "Sí" limpia el formulario
+            para la siguiente OE de la misma OC; "No" va a la lista con la recién creada
+            arriba (orden ya la antepone, ver REEMPLAZAR_OE en OrdenesContext.tsx). Nunca
+            aparece en edición: ahí "Guardar" solo guarda, sin preguntar nada más. */}
+        <ConfirmDialog
+          visible={oeReciente !== null}
+          title="Orden de Transmisión guardada"
+          message="¿Deseas generar otra Orden de Transmisión para esta misma Orden de Servicio?"
+          confirmLabel="Sí, generar otra"
+          cancelLabel="No, ir a la lista"
+          onConfirm={() => {
+            setOeReciente(null);
+            setIntentoNuevo((n) => n + 1);
+          }}
+          onCancel={() => {
+            if (oeReciente) setSelectedId(oeReciente.id);
+            setOeReciente(null);
+            setModo("view");
+          }}
+        />
+      </>
     );
   }
 
@@ -152,7 +180,7 @@ export function OrdenEstacionListPage({
             await avanzarAReales(selected.id, { horariosReales, ...extra });
             setModo("view");
           } catch (e) {
-            setSubmitError(e instanceof Error ? e.message : "No se pudo avanzar la orden interna.");
+            setSubmitError(e instanceof Error ? e.message : "No se pudo avanzar la Orden de Transmisión.");
           } finally {
             setSubmitting(false);
           }
@@ -169,9 +197,9 @@ export function OrdenEstacionListPage({
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Órdenes internas</div>
+          <div className="cat-title">Órdenes de Transmisión</div>
           <div className="cat-sub">
-            Derivación por estación de una orden del cliente. El sub-estado (2.1/2.2/2.3) vive aquí; el estado raíz de la OC solo refleja
+            Derivación por estación de una Orden de Servicio. El sub-estado (2.1/2.2/2.3) vive aquí; el estado raíz de la orden solo refleja
             que existe al menos una.
           </div>
         </div>
@@ -180,10 +208,13 @@ export function OrdenEstacionListPage({
           className="btn btn-phase"
           onClick={() => {
             setSubmitError(null);
+            // Sesión nueva y suelta: no debe arrastrar la OC de una sesión anterior de
+            // "generar otra" (ADR-116) si el usuario ya había dicho que no quería más.
+            setOcParaNuevaActual(ocIdParaNueva);
             setModo("new");
           }}
         >
-          + Nueva orden interna
+          + Nueva Orden de Transmisión
         </button>
       </div>
 
@@ -258,7 +289,7 @@ export function OrdenEstacionListPage({
               {items.length === 0 && (
                 <tr>
                   <td colSpan={10} className="state-msg">
-                    No hay órdenes internas para los filtros seleccionados.
+                    No hay Órdenes de Transmisión para los filtros seleccionados.
                   </td>
                 </tr>
               )}
@@ -276,10 +307,6 @@ export function OrdenEstacionListPage({
                 setSubmitError(null);
                 setModo("edit");
               }}
-              onCapturarProgramados={() => {
-                setSubmitError(null);
-                setModo("programados");
-              }}
               onCapturarReales={() => {
                 setSubmitError(null);
                 setModo("reales");
@@ -287,7 +314,7 @@ export function OrdenEstacionListPage({
               onVerVerificacion={() => onVerVerificacion(selected.id)}
             />
           ) : (
-            <DetailEmpty message="Selecciona una orden interna para ver su detalle." />
+            <DetailEmpty message="Selecciona una Orden de Transmisión para ver su detalle." />
           )
         }
       />

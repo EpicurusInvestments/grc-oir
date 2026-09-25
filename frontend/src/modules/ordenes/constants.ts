@@ -21,6 +21,33 @@ export const ADJUNTO_ORDEN_ACCEPT = EXTENSIONES_ADJUNTO_ORDENES.map((ext) => `.$
  * el backend revalida siempre. */
 export const ADJUNTO_ORDEN_MAX_BYTES = 10 * 1024 * 1024;
 
+/** ADR-103 — "Material a Transmitir" (audios de OrdenEstacion). Lista aparte (NO se
+ * mezcla con `EXTENSIONES_ADJUNTO_ORDENES`, que es de documentos) — debe coincidir con
+ * `EXTENSIONES_AUDIO_ORDENES` del backend. */
+export const EXTENSIONES_AUDIO_ORDENES = ["mp3", "wav", "ogg"] as const;
+export const AUDIO_ORDEN_ACCEPT = EXTENSIONES_AUDIO_ORDENES.map((ext) => `.${ext}`).join(",");
+/** Igual que `S3_MAX_AUDIO_BYTES` del backend (15 MB, petición del usuario) — validación
+ * en el front es solo UX; el backend revalida siempre. */
+export const AUDIO_ORDEN_MAX_BYTES = 15 * 1024 * 1024;
+
+/** ADR-123 — "Formato de Horarios Reales": ÚNICO campo del módulo con lista NEGRA (no
+ * blanca) — acepta cualquier formato salvo ejecutables/scripts. Debe coincidir con
+ * `EXTENSIONES_PELIGROSAS` del backend (`documentos.py`); el backend además revisa el
+ * contenido real (firma de ejecutable de Windows) sin importar la extensión declarada —
+ * esta lista del front es solo la validación rápida de UX, no la defensa real. */
+export const EXTENSIONES_PELIGROSAS_FORMATO_REAL = [
+  "exe", "bat", "cmd", "com", "cpl", "msi", "msp", "mst",
+  "js", "jse", "vbs", "vbe", "vb", "ws", "wsf", "wsh", "wsc",
+  "ps1", "ps1xml", "psc1", "psd1", "psm1",
+  "scr", "pif", "lnk", "hta", "reg", "gadget",
+  "sh", "bash", "dll", "sys", "vxd", "jar",
+  "apk", "app", "deb", "rpm",
+  "msix", "msixbundle", "appx", "appxbundle",
+] as const;
+/** Igual que `S3_MAX_FORMATO_REAL_BYTES` del backend (20 MB) — validación en el front es
+ * solo UX; el backend revalida siempre. */
+export const FORMATO_REAL_MAX_BYTES = 20 * 1024 * 1024;
+
 export const OBS_PREDEFINIDAS = [
   "Sujeto a disponibilidad de horarios prime",
   "No combinable con otros descuentos",
@@ -32,9 +59,9 @@ export const OBS_PREDEFINIDAS = [
  * ───────────────────────────────────────────────────────────────────────────── */
 
 export const STATUS_LABELS: Record<EstadoOC | EstadoOI, string> = {
-  orden_cliente_sin_vobo: "1.1 ODC sin Vo.Bo.",
-  orden_cliente_con_vobo: "1.2 Con Vo.Bo.",
-  orden_interna: "2 Orden interna",
+  orden_cliente_sin_vobo: "1.1 Recibida",
+  orden_cliente_con_vobo: "1.2 Capturada",
+  orden_interna: "2 Orden de Transmisión",
   orden_cerrada: "3 Orden cerrada",
   facturada_archivo_plano: "4.1 Archivo plano",
   facturada_timbrada: "4.2 Factura timbrada",
@@ -57,8 +84,8 @@ export const ROOT_STATE: Record<EstadoOC, number | null> = {
 };
 
 export const ROOT_LABEL: Record<number, string> = {
-  1: "Orden cliente",
-  2: "Orden interna",
+  1: "Orden de Servicio",
+  2: "Orden de Transmisión",
   3: "Orden cerrada",
   4: "Facturada",
   5: "Cobrada",
@@ -140,35 +167,3 @@ export const ESTADO_OI_BADGE_CLASS: Record<EstadoOI, string> = {
   programados_conciliados: "b-amber",
   reales_conciliados: "b-teal",
 };
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * Checklist de revisión PO §2 — recepción de ODC del cliente (transición 1.1 → 1.2).
- * ───────────────────────────────────────────────────────────────────────────── */
-
-export interface ChecklistItem {
-  key: string;
-  label: string;
-}
-
-export const ODC_REVIEW_CHECKLIST: ChecklistItem[] = [
-  { key: "razon_social", label: "Razón social del cliente correcta" },
-  { key: "plaza", label: "Plaza(s) solicitada(s)" },
-  { key: "emisora", label: "Emisora(s) solicitada(s)" },
-  { key: "duracion", label: "Duración del spot" },
-  { key: "tarifa", label: "Tarifa negociada coincide" },
-  { key: "distribucion", label: "Distribución de pauta clara" },
-  { key: "horario", label: "Horario solicitado especificado" },
-  { key: "importes", label: "Importes / IVA / Totales cuadran" },
-  { key: "audio", label: "Audio del spot revisado (duración + audible)" },
-  { key: "odc_firmada", label: "ODC firmada y devuelta con Vo.Bo." },
-];
-
-export function isChecklistComplete(checklist: Record<string, boolean> | undefined): boolean {
-  if (!checklist) return false;
-  return ODC_REVIEW_CHECKLIST.every((it) => checklist[it.key] === true);
-}
-
-export function checklistProgress(checklist: Record<string, boolean> | undefined): number {
-  if (!checklist) return 0;
-  return ODC_REVIEW_CHECKLIST.filter((it) => checklist[it.key] === true).length;
-}

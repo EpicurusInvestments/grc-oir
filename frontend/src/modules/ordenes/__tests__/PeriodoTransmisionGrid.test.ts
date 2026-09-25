@@ -30,19 +30,16 @@ describe("problemasDeFila", () => {
     expect(problemas).toContain("Falta la fecha.");
   });
 
-  it("rechaza hora_termino igual a hora_inicio (no es un rango válido)", () => {
-    const problemas = problemasDeFila(makeRow({ hora_inicio: "08:00", hora_termino: "08:00" }), RANGO);
-    expect(problemas).toContain("La hora de inicio debe ser antes que la de término.");
+  it("rechaza horario vacío", () => {
+    const problemas = problemasDeFila(makeRow({ hora_inicio: "", hora_termino: "" }), RANGO);
+    expect(problemas).toContain("Falta el horario de transmisión.");
   });
 
-  it("rechaza hora_termino menor que hora_inicio", () => {
-    const problemas = problemasDeFila(makeRow({ hora_inicio: "10:00", hora_termino: "09:00" }), RANGO);
-    expect(problemas).toContain("La hora de inicio debe ser antes que la de término.");
-  });
-
-  it("acepta hora_termino mayor que hora_inicio", () => {
-    const problemas = problemasDeFila(makeRow({ hora_inicio: "07:00", hora_termino: "07:30" }), RANGO);
-    expect(problemas).toEqual([]);
+  // ADR-108: "Horario de transmisión" es UNA sola hora — hora_inicio/hora_termino se
+  // capturan siempre iguales; ya no se valida un rango entre ambos.
+  it("ADR-108: ya no valida un rango entre hora_inicio/hora_termino (es un solo horario)", () => {
+    expect(problemasDeFila(makeRow({ hora_inicio: "08:00", hora_termino: "08:00" }), RANGO)).toEqual([]);
+    expect(problemasDeFila(makeRow({ hora_inicio: "10:00", hora_termino: "09:00" }), RANGO)).toEqual([]);
   });
 
   it("rechaza spots_diarios en 0 o negativos", () => {
@@ -51,7 +48,7 @@ describe("problemasDeFila", () => {
   });
 
   it("una fila puede acumular varios problemas a la vez", () => {
-    const problemas = problemasDeFila(makeRow({ fecha: "", hora_inicio: "10:00", hora_termino: "09:00", spots_diarios: 0 }), RANGO);
+    const problemas = problemasDeFila(makeRow({ fecha: "", hora_inicio: "", spots_diarios: 0 }), RANGO);
     expect(problemas.length).toBeGreaterThanOrEqual(3);
   });
 });

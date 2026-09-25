@@ -19,9 +19,13 @@ aprobadas:
   Calculado (spec): el SERVICIO los calcula con `Decimal` y los persiste (mismo patrón que
   `TarifaPlaza.tarifa_neta`) — nunca se aceptan del cliente ni se recalculan on-the-fly aquí.
 
-Checklist de Vo.Bo. (transición previa a `capturada`, no está en la spec porque es
-posterior): tabla hija `OrdenClienteVoBoItem`, NO JSON (ADR-033) — F4 necesita reportar
-por ítem, y una columna BIT por ítem no escala si el checklist cambia.
+**ADR-100 (petición del usuario) — se elimina el checklist de Vo.Bo.:** existía una
+transición previa `recibida → capturada` gateada por un checklist de 10 ítems
+(`OrdenClienteVoBoItem`, ADR-033) — un agregado del proyecto, no de la spec BD v2. Ahora
+"Orden de Servicio" (nombre en pantalla de OrdenCliente) se guarda y pasa DIRECTO a
+`capturada`: no hay checklist, no hay paso intermedio. `recibida` sigue existiendo en el
+enum (la spec la define) pero queda **inalcanzable** por el flujo normal — mismo tipo de
+hueco ya documentado para `cancelada` (ADR-035).
 """
 
 from __future__ import annotations
@@ -42,7 +46,6 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     Unicode,
-    UniqueConstraint,
     or_,
     select,
 )
@@ -101,21 +104,6 @@ class EstatusPago(StrEnum):
 # del servicio) incluso ANTES de llegar a estos estados.
 FROZEN_STATES_OC: frozenset[str] = frozenset(
     {EstatusOrden.ORDEN_CERRADA.value, EstatusOrden.FACTURADA.value, EstatusOrden.COBRADA.value}
-)
-
-
-# Los 10 ítems del checklist Vo.Bo. (PO §2) — claves fijas, NO configurables por el usuario.
-ITEMS_VOBO: tuple[str, ...] = (
-    "razon_social",
-    "plaza",
-    "emisora",
-    "duracion",
-    "tarifa",
-    "distribucion",
-    "horario",
-    "importes",
-    "audio",
-    "odc_firmada",
 )
 
 
@@ -320,43 +308,6 @@ class OrdenCliente(Base):
     fecha_cierre: Mapped[date | None] = mapped_column(fecha_sql(), default=None)
 
 
-# ── Checklist de Vo.Bo. (ADR-033) ────────────────────────────────────────────────
-class OrdenClienteVoBoItem(Base):
-    __tablename__ = "orden_cliente_vobo_item"
-    __table_args__ = (
-        CheckConstraint(
-            "item_clave IN ('razon_social', 'plaza', 'emisora', 'duracion', 'tarifa', "
-            "'distribucion', 'horario', 'importes', 'audio', 'odc_firmada')",
-            name="ck_orden_cliente_vobo_item_clave",
-        ),
-        UniqueConstraint("orden_id", "item_clave", name="uq_orden_cliente_vobo_item_orden_clave"),
-    )
-
-    orden_cliente_vobo_item_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
-    # Sin `index=True`: sería redundante con `uq_orden_cliente_vobo_item_orden_clave`
-    # (UNIQUE sobre orden_id+item_clave) — SQL Server usa ese índice único como columna
-    # líder para consultas por `orden_id` solo. Auditoría de migración a RDS, Tanda 4:
-    # costo de escritura sin beneficio de lectura.
-    orden_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey(
-            "orden_cliente.orden_id", name="fk_orden_cliente_vobo_item_orden", ondelete="NO ACTION"
-        )
-    )
-    item_clave: Mapped[str] = mapped_column(Unicode(30))
-    completado: Mapped[bool] = mapped_column(default=False)
-    usuario_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey(
-            "usuario.usuario_id", name="fk_orden_cliente_vobo_item_usuario", ondelete="NO ACTION"
-        ),
-        default=None,
-    )
-    fecha_completado: Mapped[datetime | None] = mapped_column(datetime2(), default=None)
-    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
-    updated_at: Mapped[datetime | None] = mapped_column(
-        datetime2(), default=None, onupdate=datetime.now
-    )
-
-
 # ── Schemas de lectura (Tanda 3 — API de lectura; Create/Update llegan en Tanda 5) ────
 class OrdenClienteRead(BaseModel):
     """Espejo de las columnas reales de `OrdenCliente` (sin `CatalogoReadBase`: esta
@@ -426,17 +377,6 @@ class OrdenClienteRead(BaseModel):
         return None if valor is None else str(valor)
 
 
-class OrdenClienteVoBoItemRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    orden_cliente_vobo_item_id: uuid.UUID
-    orden_id: uuid.UUID
-    item_clave: str
-    completado: bool
-    usuario_id: uuid.UUID | None = None
-    fecha_completado: datetime | None = None
-
-
 class OrdenClienteListParams(ListParams):
     """`ListParams` + filtros propios. Hereda `activo`, pero NUNCA se expone como query
     param (el router no lo declara): `OrdenCliente` no tiene baja lógica, usa la máquina
@@ -495,12 +435,6 @@ class OrdenClienteCreate(BaseModel):
     )
     observaciones_predefinidas: str | None = Field(default=None, max_length=1000)
     observaciones_libres: str | None = Field(default=None, max_length=1000)
-    # Checklist de Vo.Bo. (ADR-033): qué ítems ya vienen marcados al capturar (los no
-    # listados nacen `completado=False`). `dar_vobo=True` intenta la transición
-    # recibida→capturada en el MISMO alta (409 si faltan ítems) — atajo para el caso
-    # común de "checklist ya completo al guardar" (mismo flujo que `OrdenClienteForm`).
-    revision_checklist: dict[str, bool] | None = None
-    dar_vobo: bool = False
 
     @model_validator(mode="after")
     def _valida_fechas(self) -> OrdenClienteCreate:
@@ -562,10 +496,6 @@ class OrdenClienteComisionesUpdate(BaseModel):
     motivo_cambio: str | None = Field(default=None, max_length=500)
 
 
-class VoBoToggleIn(BaseModel):
-    completado: bool
-
-
 class OrdenClienteCerrarIn(BaseModel):
     """`POST /clientes/{id}/cerrar`. Los % de comisión NO se mandan aquí: el servicio
     rellena cualquiera que siga `None` con el default vigente del catálogo (Vendedor/
@@ -599,14 +529,6 @@ class OrdenClienteRepository(BaseRepository[OrdenCliente]):
                 stmt = stmt.where(getattr(OrdenCliente, campo) == valor)
         return stmt
 
-    def listar_vobo(self, orden_id: uuid.UUID) -> Sequence[OrdenClienteVoBoItem]:
-        stmt = (
-            select(OrdenClienteVoBoItem)
-            .where(OrdenClienteVoBoItem.orden_id == orden_id)
-            .order_by(OrdenClienteVoBoItem.item_clave)
-        )
-        return self.db.scalars(stmt).all()
-
 
 _FOLIO_RE = re.compile(r"^OC-\d{4}-(\d+)$")
 
@@ -626,13 +548,6 @@ class OrdenClienteService(
     def __init__(self, repo: OrdenClienteRepository) -> None:
         super().__init__(repo)
         self._repo = repo
-
-    def vobo(self, orden_id: uuid.UUID) -> Sequence[OrdenClienteVoBoItemRead]:
-        self._get_or_404(orden_id)
-        return [
-            OrdenClienteVoBoItemRead.model_validate(item)
-            for item in self._repo.listar_vobo(orden_id)
-        ]
 
     def historial_comisiones(self, orden_id: uuid.UUID) -> Sequence[audit.LogCambioParametroRead]:
         """Historial de cambios a los % de comisión snapshot (ADR-029), más reciente
@@ -752,37 +667,14 @@ class OrdenClienteService(
 
     def create(self, data: OrdenClienteCreate, usuario: CurrentUser) -> OrdenClienteRead:
         payload = data.model_dump()
-        checklist = payload.pop("revision_checklist", None) or {}
-        dar_vobo = payload.pop("dar_vobo", False)
 
         self._pre_create(payload, usuario)
-
-        if dar_vobo:
-            faltantes = [k for k in ITEMS_VOBO if not checklist.get(k, False)]
-            if faltantes:
-                raise StateTransitionError(
-                    "No se puede dar Vo.Bo. al crear: faltan ítems del checklist.",
-                    detalles={"faltantes": faltantes},
-                )
-            payload["estatus_orden"] = EstatusOrden.CAPTURADA.value
-        else:
-            payload["estatus_orden"] = EstatusOrden.RECIBIDA.value
+        # ADR-100: sin checklist de Vo.Bo. — se guarda y pasa directo a `capturada`.
+        payload["estatus_orden"] = EstatusOrden.CAPTURADA.value
 
         obj = self.repo.create(payload)
         db = self._repo.db
 
-        for item_clave in ITEMS_VOBO:
-            completado = bool(checklist.get(item_clave, False))
-            db.add(
-                OrdenClienteVoBoItem(
-                    orden_cliente_vobo_item_id=uuid4(),
-                    orden_id=obj.orden_id,
-                    item_clave=item_clave,
-                    completado=completado,
-                    usuario_id=obj.created_by if completado else None,
-                    fecha_completado=datetime.now() if completado else None,
-                )
-            )
         # Comisiones capturadas al vuelo: es ALTA, no "cambio" — sin motivo (mismo
         # espíritu que `Contrato._pre_create` con `porcentaje_comision_contrato`).
         # NOTA: se llama a `audit.log_cambio_parametro` directo, NO a
@@ -936,51 +828,6 @@ class OrdenClienteService(
                 motivo=motivo,
             )
             setattr(obj, campo, nuevo)
-        db.commit()
-        db.refresh(obj)
-        return self._to_read(obj)
-
-    # ── checklist de Vo.Bo. ────────────────────────────────────────────────────────
-    def vobo_toggle(
-        self, orden_id: uuid.UUID, item_clave: str, completado: bool, usuario: CurrentUser
-    ) -> OrdenClienteVoBoItemRead:
-        self._get_or_404(orden_id)
-        if item_clave not in ITEMS_VOBO:
-            raise DomainError(
-                f"Ítem de checklist inválido: '{item_clave}'.",
-                detalles={"validos": list(ITEMS_VOBO)},
-            )
-        db = self._repo.db
-        item = db.scalar(
-            select(OrdenClienteVoBoItem).where(
-                OrdenClienteVoBoItem.orden_id == orden_id,
-                OrdenClienteVoBoItem.item_clave == item_clave,
-            )
-        )
-        if item is None:  # pragma: no cover — create() siempre siembra las 10 filas
-            raise NotFoundError("Ítem de checklist no encontrado.")
-        item.completado = completado
-        item.usuario_id = resolver_usuario_id(db, usuario.username) if completado else None
-        item.fecha_completado = datetime.now() if completado else None
-        db.commit()
-        db.refresh(item)
-        return OrdenClienteVoBoItemRead.model_validate(item)
-
-    def dar_vobo(self, orden_id: uuid.UUID, usuario: CurrentUser) -> OrdenClienteRead:
-        obj = self._get_or_404(orden_id)
-        if obj.estatus_orden != EstatusOrden.RECIBIDA.value:
-            raise StateTransitionError(
-                "Solo se puede dar Vo.Bo. a una orden en estatus 'recibida'.",
-                detalles={"estatus_orden": obj.estatus_orden},
-            )
-        items = self._repo.listar_vobo(orden_id)
-        faltantes = [i.item_clave for i in items if not i.completado]
-        if faltantes:
-            raise StateTransitionError(
-                "Faltan ítems del checklist de Vo.Bo.", detalles={"faltantes": faltantes}
-            )
-        obj.estatus_orden = EstatusOrden.CAPTURADA.value
-        db = self._repo.db
         db.commit()
         db.refresh(obj)
         return self._to_read(obj)
@@ -1192,16 +1039,6 @@ def obtener_orden_cliente(
     return svc.get(item_id)
 
 
-@router_clientes.get("/{item_id}/vobo", response_model=list[OrdenClienteVoBoItemRead])
-def listar_vobo_orden_cliente(
-    item_id: uuid.UUID,
-    usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
-    svc: OrdenClienteService = Depends(get_orden_cliente_service),
-) -> Sequence[OrdenClienteVoBoItemRead]:
-    """Checklist de Vo.Bo. (los 10 ítems fijos, ADR-033) de una OrdenCliente."""
-    return svc.vobo(item_id)
-
-
 @router_clientes.get(
     "/{item_id}/historial-comisiones", response_model=list[audit.LogCambioParametroRead]
 )
@@ -1221,8 +1058,8 @@ def crear_orden_cliente(
     usuario: CurrentUser = Depends(requiere_permiso("ordenes:crear")),
     svc: OrdenClienteService = Depends(get_orden_cliente_service),
 ) -> OrdenClienteRead:
-    """Alta de OrdenCliente (Ventas). Nace en `recibida` — o directo en `capturada` si
-    `dar_vobo=true` y el checklist ya viene completo (409 si no)."""
+    """Alta de OrdenCliente/"Orden de Servicio" (Ventas). Nace directo en `capturada`
+    (ADR-100: sin checklist de Vo.Bo.)."""
     return svc.create(payload, usuario)
 
 
@@ -1251,30 +1088,6 @@ def actualizar_comisiones_orden_cliente(
     docstring. 403 si el área no es Dirección/Admin; 400 si cambia algo sin
     `motivo_cambio`."""
     return svc.actualizar_comisiones(item_id, payload, usuario)
-
-
-@router_clientes.patch("/{item_id}/vobo/{item_clave}", response_model=OrdenClienteVoBoItemRead)
-def toggle_vobo_orden_cliente(
-    item_id: uuid.UUID,
-    item_clave: str,
-    payload: VoBoToggleIn,
-    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
-    svc: OrdenClienteService = Depends(get_orden_cliente_service),
-) -> OrdenClienteVoBoItemRead:
-    """Marca/desmarca UN ítem del checklist de Vo.Bo. (422 si `item_clave` no es una de
-    las 10 fijas — ver `ITEMS_VOBO`)."""
-    return svc.vobo_toggle(item_id, item_clave, payload.completado, usuario)
-
-
-@router_clientes.post("/{item_id}/dar-vobo", response_model=OrdenClienteRead)
-def dar_vobo_orden_cliente(
-    item_id: uuid.UUID,
-    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
-    svc: OrdenClienteService = Depends(get_orden_cliente_service),
-) -> OrdenClienteRead:
-    """Transición `recibida` → `capturada`. 409 si falta algún ítem del checklist o si
-    la orden ya no está en `recibida`."""
-    return svc.dar_vobo(item_id, usuario)
 
 
 @router_clientes.post("/{item_id}/cerrar", response_model=OrdenClienteRead)

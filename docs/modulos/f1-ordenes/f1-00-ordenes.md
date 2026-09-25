@@ -41,8 +41,13 @@ Calculados (servicio, `Decimal`): `anio_venta`/`mes_venta` (de `fecha_venta`),
   cantidad_spots_bonificables` (spots facturables), no sobre `total_spots` — ver ADR-067
   para la fórmula completa y su propagación gratuita a `FacturaCliente`/archivo plano.
 
-**Checklist de Vo.Bo.** — tabla hija `OrdenClienteVoBoItem` (ADR-033), NO JSON: 10 ítems
-fijos (`ITEMS_VOBO`), cada uno con `completado`/`usuario_id`/`fecha_completado`.
+**Checklist de Vo.Bo. (ELIMINADO — ver ADR-100):** existió una tabla hija
+`OrdenClienteVoBoItem` (ADR-033, NO JSON: 10 ítems fijos `ITEMS_VOBO`, cada uno con
+`completado`/`usuario_id`/`fecha_completado`) que gateaba la transición `recibida →
+capturada`. Petición del usuario (2026-09-22, rediseño "Orden de Servicio/Orden de
+Transmisión"): se elimina por completo — `OrdenClienteService.create()` guarda y pasa
+DIRECTO a `capturada`, sin checklist ni paso intermedio. `recibida` sigue en el enum
+(la spec la define) pero queda inalcanzable por el flujo normal.
 
 ### OrdenEstacion (27 campos spec + 6 aditivos)
 PK `orden_estacion_id`. FK a `OrdenCliente`, `Contrato`, `Anunciante`, `Vendedor`,
@@ -59,6 +64,156 @@ que a su vez arrastra `importe_oir`/`importe_emisora` y sus IVA/totales —
 lo acote contra los spots asignados: esa suma vive en `OrdenEstacionDia` (tabla hija), no
 es una columna propia de `orden_estacion` — la validación es del servicio.
 
+**`producto_tarifa` y `duracion_spot`** (ADR-102 + ADR-106, Fase 2 del rediseño "Asignar
+estaciones"): producto del catálogo Tarifa (`spot│mencion│control_remoto│patrocinio`) Y
+duración (`20s│30s│60s`), AMBOS elegidos POR ESTACIÓN — secuencia del formulario:
+Estación → Producto → Duración → Tarifa. NO confundir `producto_tarifa` con el campo
+`producto` de esta misma tabla (heredado de `OrdenCliente.producto`, "Campaña" en texto
+libre). Al crear/editar, el servicio busca la tarifa ACTIVA de `TarifaPlaza` para
+(estación + `Estacion.tipo_senal` + `duracion_spot` de ESTA OE + `producto_tarifa`) y,
+solo si `precio_spot` no coincide con su `tarifa_neta`, exige `motivo_cambio_tarifa` y
+audita en `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — sin
+candado de permiso (Ventas sigue capturando libre; ver ADR-102 para el porqué).
+**ADR-106 corrige el alcance original de ADR-102:** ahí se había decidido que
+`duracion_spot` se heredara SIN cambio de la OC; tras revisar el flujo en vivo, el
+usuario pidió que fuera independiente por estación, igual que `producto_tarifa` — la
+columna ya existía (mismo CHECK del catálogo), solo cambió de dónde sale el valor.
+**ADR-115 (fix, frontend):** en el formulario, si la combinación estación/producto/
+duración NO tiene tarifa en el catálogo, "Tarifa por spot" se VACÍA para que el usuario
+la capture a mano (antes se quedaba con el valor de la última combinación que sí tenía
+tarifa). Un precio ya tecleado a mano nunca se pisa.
+
+**"Material a Transmitir" — `OrdenEstacionAudio`** (ADR-103, Fase 3 del rediseño): tabla
+hija NUEVA, fuera de la spec BD v2 — uno o más audios por OE, subidos vía endpoints
+dedicados (`POST`/`GET`/`DELETE /ordenes/estaciones/{id}/audios`), NO por el
+`create()`/`update()` genérico (a diferencia de `reporte_programados_ref`, que es una
+sola referencia que se reemplaza). El primero subido (`orden=0`) es el DEFAULT que usan
+los días sin asignación propia; `OrdenEstacionDia.orden_estacion_audio_id` (nullable)
+guarda la excepción puntual de un día, asignada con
+`PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Lista blanca propia
+(`EXTENSIONES_AUDIO_ORDENES`: mp3/wav/ogg) y tope propio (`S3_MAX_AUDIO_BYTES`, 15 MB) —
+ninguno comparte constante con los adjuntos de documentos (ADR-042). En el frontend, la
+sección "Material a Transmitir" requiere el `orden_estacion_id` ya creado — vive en
+`OrdenEstacionDetailPanel.tsx` (el detalle, junto a los PDFs — ADR-106 corrigió esto: el
+usuario no la encontraba porque solo vivía en el formulario de edición, no en la vista de
+detalle donde se navega normalmente) y también en `OrdenEstacionForm.tsx` cuando `oe` ya
+existe (edición), donde además alimenta el selector de audio POR DÍA de
+`PeriodoTransmisionGrid.tsx`.
+
+**Flujo tras guardar el alta — pregunta "¿generar otra?"** (ADR-116, reemplaza el
+comportamiento original de ADR-103): al guardar una OE nueva, YA NO pasa directo a modo
+edición de esa misma OE (ese motivo dejó de aplicar desde ADR-109 — el material se sube
+DURANTE la captura, no hace falta la OE ya creada). Ahora se pregunta con un modal
+("¿Deseas generar otra Orden de Transmisión para esta misma Orden de Servicio?"): "Sí"
+deja el formulario en blanco para capturar otra estación de la MISMA OC (mismo mecanismo
+de remount vía `key` que usaba ADR-113 para la transición alta→edición, ahora reutilizado
+para "otra alta más"); "No" va a la lista con la recién creada arriba (orden por
+`created_at` descendente, ya existente). "Cancelar" (antes de guardar) regresa a "Órdenes
+de Servicio" (la OC elegida, si ya había una). Este flujo es EXCLUSIVO del alta — en
+edición, "Guardar" solo guarda y vuelve al detalle, sin preguntar nada.
+
+**ADR-113 (fix, sigue vigente):** cualquier transición de identidad del formulario que no
+remonte el componente (`<OrdenEstacionForm>` reusa la misma instancia de React) deja su
+estado local (`periodo`, `estacionId`, etc. — inicializado con `useState(prop ?? default)`,
+que solo corre una vez) con datos VIEJOS, aunque el prop `oe`/título sí se actualicen. La
+`key` de `OrdenEstacionListPage.tsx` cubre tanto la transición a edición (por id de OE)
+como, desde ADR-116, cada "generar otra" en el alta (por un contador que sube en cada
+"Sí").
+
+**"Cancelar transmisión" — `OrdenEstacionDia.cancelada`** (ADR-104, Fase 4 del
+rediseño): columna nueva, fuera de la spec BD v2. Cancela UN día puntual (no la OE
+completa) en cualquier momento después de guardada la orden, sin candado de `estatus` —
+`POST .../dias/{dia_id}/cancelar` (body `{motivo}`). El día NUNCA se borra ni se oculta:
+conserva su fila (auditoría) pero queda excluido de las sumas de `spots_asignados` (balance
+de spots de la OC) y del recálculo de importes de la OE. Reutiliza el mecanismo YA
+existente de `Verificacion`+`Incidencia` (el mismo de `avanzar_reales`): crea una
+`Verificacion` con `spots_verificados=0` y una `Incidencia` tipo `spot_no_emitido` —
+por eso un día que ya tiene `Verificacion` (cancelado antes, o ya verificado por el
+flujo normal 2.2→2.3) no se puede volver a cancelar (409), sin necesitar ninguna regla
+de `estatus` explícita. En el frontend, el botón vive en `PeriodoTransmisionGrid.tsx`
+junto al de quitar fila (solo con la OE ya creada), con el motivo capturado en un campo
+de texto en línea; una fila cancelada se muestra atenuada con la etiqueta "Cancelado".
+
+**`PeriodoTransmisionGrid.tsx`/`CalendarioPeriodoTransmision.tsx` — "Horario de
+transmisión" único + "Material a Transmitir" con default visible** (ADR-107 + ADR-108,
+correcciones sobre la Fase 4): "Hora inicio"/"Hora término" pasan de 2 columnas a UNA
+sola ("Horario de transmisión") Y de 2 valores a UNO solo (ADR-108: ya no es un rango —
+`hora_inicio`/`hora_termino`, columnas del modelo sin cambio de esquema, se capturan
+SIEMPRE iguales, tanto en el calendario como en la tabla — **ADR-112 (fix)**: el backend
+seguía exigiendo un rango real, `hora_fin > hora_inicio` estricto, tanto en el validador
+Pydantic como en el CHECK de la base; se relajó a `>=` porque el valor único de ADR-108
+implica igualdad, no un rango — sin este fix, TODA alta/edición real fallaba con 422).
+La columna de audio (ADR-103,
+renombrada "Material a Transmitir") aparece desde el ALTA (con solo pasar `audios`,
+aunque venga vacía) y muestra SIEMPRE el nombre del material que le toca a cada día — el
+propio si tiene override, si no el default (`audios[0]`, el primero subido) — incluidos
+los días recién generados por el calendario que todavía no tienen `orden_estacion_dia_id`
+real (antes mostraban un "—" sin explicación; ahora, si no hay ningún audio subido
+todavía, una nota debajo de la tabla explica que hay que guardar la orden primero).
+"Sustitución de Material" es un ícono (🔄) que revela el combo bajo demanda — solo
+disponible para un día con id real, ya que cambiar su default sigue siendo el endpoint
+dedicado `PUT .../dias/{id}/audio`.
+
+**Subida de "Material a Transmitir" DURANTE el alta, y obligatoria para el calendario**
+(ADR-109 + ADR-110, correcciones sobre la Fase 4): antes, subir un audio requería que la
+OE ya existiera (`orden_estacion_id` real). Ahora, al dar de alta, cada archivo elegido
+se sube de inmediato a S3 vía `POST /ordenes/material-staging` (sin ningún id de padre —
+mismo patrón que el PDF de la Orden de Servicio, `AdjuntoOrdenInput`/`subirAdjuntoOrden`,
+ADR-042/ADR-109) y el `{ref, nombre_archivo}` que devuelve viaja en
+`OrdenEstacionCreate.audios`; el servicio crea las filas reales de `OrdenEstacionAudio`
+en el mismo orden al crear la OE (el primero = default). El endpoint dedicado
+(`agregar_audio`) sigue siendo el único camino para agregar material DESPUÉS de que la
+OE ya existe; `OrdenEstacionUpdate` no gana este campo. Además (ADR-110), mientras no
+haya al menos un audio subido (en alta) — o siempre en edición, donde la regla no
+aplica retroactivamente — el calendario y la tabla de periodo permanecen deshabilitados
+(`disabled`), con una nota indicando que hay que subir el material primero; el guardado
+también valida esta condición.
+
+**"Sustitución de Material" también en el ALTA** (ADR-111): con 2+ audios subidos
+durante la captura, el botón 🔄 ya no requiere `orden_estacion_dia_id` real — con
+`permiteAsignacionLocal` (`PeriodoTransmisionGrid.tsx`, prendido solo cuando `!isEdit`)
+el cambio se guarda en la fila misma y viaja al crear como `audio_staging_ref` por día
+(`OrdenEstacionDiaCreate`), resuelto por el servicio contra los `audios` de la MISMA
+solicitud (las filas de `OrdenEstacionAudio` se crean primero, con `db.flush()` de por
+medio, para poder resolver el `ref` al id real antes de armar los días). En edición, la
+sustitución de un día YA guardado sigue siendo, sin cambio, el endpoint dedicado e
+inmediato (`onAsignarAudio`); un día nuevo sin guardar en edición NO tiene forma de
+llevarse un override de audio a "Guardar" todavía (limitación conocida, fuera de
+alcance de este ADR).
+
+**Envío de los PDFs por correo — `LogEnvioCorreoOrdenEstacion`** (ADR-105, Fase 5 del
+rediseño): tabla nueva, fuera de la spec BD v2 — bitácora de cada intento de envío
+(`POST .../pdf/{tipo}/enviar-correo`, `tipo` = servicio/programados/reales), exitoso o
+no. Reusa los 3 generadores de PDF YA existentes (`orden_estacion_pdf.py`) como adjunto;
+el mismo gateo por sub-estado de sus `GET` sigue aplicando (p.ej. "reales" antes de 2.3
+→ 400, sin generar bitácora). El correo se manda vía integración nueva
+`app/integrations/correo/` (mismo patrón anti-corrupción que `AlmacenamientoPort`,
+ADR-027): `CorreoSES` real o `CorreoLocal` (default de dev — SES en modo sandbox exige
+verificar cada destinatario, así que un envío real de extremo a extremo no es viable sin
+la cuenta AWS del cliente). **ADR-122:** `CorreoLocal` además guarda el mensaje armado
+(MIME completo, mismo `construir_mime()` que usa `CorreoSES`) como archivo `.eml` en
+`_storage_local/correos_simulados/` — se puede abrir con un cliente de correo de
+escritorio para revisar cómo quedó el mensaje (asunto, cuerpo, adjuntos reales), sin
+mandar nada a internet ni depender de credenciales de SES/AWS.
+
+**ADR-120 (petición del usuario):** en la pantalla, este envío individual quedó
+reemplazado por un diálogo "Enviar por correo"/"Imprimir" que aparece al generar
+CUALQUIERA de los 3 PDFs (`OrdenEstacionDetailPanel.tsx`, `FilaPdf`). "Imprimir" abre el
+PDF de siempre; "Enviar por correo" (`POST .../correo-orden-transmision`, sin body)
+manda SIEMPRE el mismo paquete fijo — PDF de Programados + todo el Material a
+Transmitir — a TODOS los `ContactoAfiliado` **activos** con correo cargado del afiliado
+dueño de la estación (ya no hay captura manual de destinatario). Reusa
+`LogEnvioCorreoOrdenEstacion` con un 4º valor de `tipo_pdf`, `"orden_transmision"`. El
+botón se deshabilita de antemano si el afiliado no tiene ningún contacto activo con
+correo (`contactoAfiliadoApi.listPorAfiliado`, catálogo `ContactoAfiliado` — no la
+Estación, que no tiene contactos propios). El endpoint individual por-tipo de arriba
+sigue existiendo en el backend (sin UI propia) por si se necesita un envío puntual a un
+solo destinatario.
+**ADR-118 (petición del usuario):** la tabla de días del PDF #2 (Horarios Programados)
+quitó "Pedidos"/"Asignados" y agregó "Material a Transmitir" (mismo criterio que
+`nombreMaterial()` del frontend — override del día o el primero subido) + un solo
+"Horario" (ya no Hora Inicio/Hora Término por separado, coherente con ADR-107/108).
+
 **Desviación aditiva clave (ADR-030):** la spec modela `fecha_transmision`/
 `hora_inicio`/`hora_fin`/`spots_solicitados`/`spots_asignados`/`spots_faltantes` como
 campos PLANOS (una fila = un día), pero la propia spec autoriza "agrupar por rango" —
@@ -67,7 +222,20 @@ por día), con 3 capas de captura (asignado → programado → verificado, ver d
 `orden_estacion.py`). `spots_faltantes` deja de persistirse: se calcula al leer.
 `testigos_url`/`testigos_ubicacion_alterna`/`notas_transmision`/`reporte_programados_ref`/
 `reporte_reales_ref` (tampoco en spec, mismo ADR) viven en `OrdenEstacion` (se capturan
-una vez por lote, no por día).
+una vez por lote, no por día). **ADR-119 (petición del usuario):** `testigos_url`/
+`testigos_ubicacion_alterna` ya NO se capturan desde "Capturar Reales" — la pantalla los
+reemplazó por "Evidencias de lo Transmitido" (audios, tabla nueva
+`orden_estacion_evidencia`, mismo patrón que "Material a Transmitir" pero sin `orden`/
+default/override por día — lista plana). Las 2 columnas siguen existiendo en la base
+(se preserva cualquier dato ya capturado); simplemente dejaron de leerse/escribirse.
+
+**ADR-123 (petición del usuario):** junto a "Evidencias de lo Transmitido", "Formato de
+Horarios Reales" (tabla nueva `orden_estacion_formato_real`, mismo patrón de lista plana)
+— pero acepta CUALQUIER formato (PDF, Excel, TXT, audio...), no solo audio. Único punto
+de subida del sistema con lista NEGRA (`EXTENSIONES_PELIGROSAS`, ejecutables/scripts) en
+vez de blanca, reforzado con una revisión de contenido (firma de ejecutable de Windows,
+"MZ") sin importar la extensión declarada — ver `leer_adjunto_libre()` en
+`app/integrations/almacenamiento/documentos.py`.
 
 `OrdenEstacion.estatus` es un ciclo de vida **propio e independiente** del de
 `OrdenCliente` (confirmado en la spec): cada OE cierra por su cuenta; `OrdenCliente`
@@ -111,6 +279,24 @@ Vocabulario **exacto de la spec** — el prototipo HTML aprobado usa un vocabula
 distinto (`orden_cliente_sin_vobo`, `asignada_afiliado`, etc.); el mapeo entre ambos vive
 en el adaptador del frontend (Tanda 4), no en el backend.
 
+**ADR-117 (petición del usuario, REVERTIDA el mismo día):** se intentó que `create()`
+naciera directo en `en_transmision` (saltando 2.1 "Asignada") — se revirtió por completo
+porque dejaba `update()` permanentemente inalcanzable (`FROZEN_STATES_OE` congela edición
+desde `en_transmision`). `create()` volvió a dejar la fila en `asignada`, sin cambios. Ver
+ADR-117 en `arquitectura.md` para el detalle completo (se conserva documentado por si se
+retoma).
+
+**ADR-121 (petición del usuario):** logra el mismo objetivo de fondo (saltarse "2.2
+Capturar Programados" como paso MANUAL) sin el problema de ADR-117: `create()` sigue
+dejando la fila en `asignada` (que YA es editable hoy), y `avanzar_reales()` ahora acepta
+avanzar directo desde `asignada` **o** desde `en_transmision` — "Capturar Reales" (2.3) ya
+no requiere haber pasado por `avanzar_programados()` primero. `reporte_programados_ref`
+(antes solo capturable en ese paso) se agregó a `OrdenEstacionCreate`/`Update`, así que se
+puede adjuntar/corregir desde el alta o mientras la OE siga editable. El botón "→
+Capturar programados (2.2)" y su pantalla (`ProgramadosForm.tsx`) se retiraron de la UI —
+el endpoint `POST .../programados` se conserva intacto en el backend (con sus pruebas)
+por si se necesita un ajuste puntual de `spots_programados` distinto al asignado.
+
 ## Roles / permisos
 
 RBAC del módulo `ordenes` (propuesta §9, columna "Órdenes" — grounded, no inventado):
@@ -142,6 +328,10 @@ propuesta no le da captura sobre Órdenes.
   spots_programados_efectivo`; `monto_ajuste = diferencia_spots * precio_spot` de la OE;
   se crea una `Verificacion` por CADA día de la OE (spec), pero solo se genera
   `Incidencia` en los días con diferencia.
+- **`OrdenEstacion.precio_spot` puede superar `OrdenCliente.precio_unitario` (ELIMINADO
+  el candado previo — ver ADR-101):** el margen OIR (`porcentaje_participacion_oir`/
+  `importe_oir`/`iva_oir`/`total_oir`) simplemente se vuelve negativo; `precio_spot >= 0`
+  sigue siendo el único piso.
 - Editar `fecha_inicio_campania`/`fecha_fin_campania` de una OC (`_pre_update`) es
   **direccional**: AMPLIAR el rango se permite siempre (todo día ya capturado en las OE
   hijas seguía cabiendo); ANGOSTARLO (inicio más tarde o fin más temprano que el

@@ -52,7 +52,7 @@ contratos.push(
   { id: "co1", anunciante_id: "an1", numero_contrato: "CT-2025-001", nombre_contrato: "Campaña Verano 2025", estado_contrato: "vigente" },
   { id: "co1b", anunciante_id: "an1", numero_contrato: "CT-2024-098", nombre_contrato: "Anual 2024 (cerrado)", estado_contrato: "finalizado" },
 );
-tarifas.push({ id: "ta1", estacion_id: "es1", tipo_senal: "fm", duracion_spot: "30s", tarifa_bruta: 9500, descuento_pct: 10 });
+tarifas.push({ id: "ta1", estacion_id: "es1", tipo_senal: "fm", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
 
 describe("totalesOC — 1.1", () => {
   it("subtotal = total_spots × precio_unitario", () => {
@@ -212,6 +212,18 @@ describe("Periodo de transmisión de una OI — 1.3", () => {
     const oe = makeOE({ periodo_transmision: [] });
     expect(oiTotalSpots(oe)).toBe(0);
     expect(oiImporte(oe)).toBe(0);
+  });
+
+  // ADR-104: un día cancelado ("Cancelar transmisión") libera su cupo — mismo criterio
+  // que el backend, que excluye `cancelada` de las sumas de `spots_asignados`.
+  it("oiTotalSpots excluye los días con cancelada=true", () => {
+    const oe = makeOE({
+      periodo_transmision: [
+        makeRow({ fecha: "2025-06-01", spots_diarios: 10 }),
+        makeRow({ fecha: "2025-06-02", spots_diarios: 15, cancelada: true }),
+      ],
+    });
+    expect(oiTotalSpots(oe)).toBe(10);
   });
 
   // ── Spots bonificables de la OI (ADR-068) ──────────────────────────────────

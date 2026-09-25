@@ -3,10 +3,10 @@
  * `initialState` ya resuelto.
  *
  * Nota de rendimiento (aceptada para desarrollo, Tanda 3 no tiene endpoints por lote):
- * por cada OrdenCliente se piden su checklist Vo.Bo. y su historial de comisiones; por
- * cada OrdenEstacion, sus días y verificaciones. Con los volúmenes de la siembra (10 OC,
- * 18 OE) son ~60 requests en paralelo — aceptable en desarrollo, a revisar si el volumen
- * real de datos crece mucho antes de llevarlo a producción.
+ * por cada OrdenCliente se pide su historial de comisiones; por cada OrdenEstacion, sus
+ * días y verificaciones. Con los volúmenes de la siembra (10 OC, 18 OE) son ~40 requests
+ * en paralelo — aceptable en desarrollo, a revisar si el volumen real de datos crece
+ * mucho antes de llevarlo a producción.
  */
 
 import type { OrdenesState } from "../state/OrdenesContext";
@@ -19,7 +19,6 @@ import {
   listarOrdenesClienteApi,
   listarOrdenesEstacionApi,
   listarVerificacionesApi,
-  listarVoboApi,
 } from "./ordenesApi";
 
 export async function cargarEstadoReal(): Promise<OrdenesState> {
@@ -31,12 +30,7 @@ export async function cargarEstadoReal(): Promise<OrdenesState> {
   ]);
 
   const [ordenesCliente, historialesPorOC] = await Promise.all([
-    Promise.all(
-      ordenesClienteDTO.map(async (oc) => {
-        const vobo = await listarVoboApi(oc.orden_id);
-        return ordenClienteFromApi(oc, vobo);
-      }),
-    ),
+    Promise.all(ordenesClienteDTO.map((oc) => ordenClienteFromApi(oc))),
     Promise.all(ordenesClienteDTO.map((oc) => listarHistorialComisionesApi(oc.orden_id))),
   ]);
 

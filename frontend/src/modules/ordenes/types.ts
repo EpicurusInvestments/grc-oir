@@ -25,12 +25,31 @@ export type EstadoOI = "asignada_afiliado" | "programados_conciliados" | "reales
 export type EstatusPagoAfiliado = "pendiente" | "en_revision" | "pagado";
 export type EstatusPagoAgencia = "pendiente" | "en_revision" | "pagado";
 
+/** Producto de TARIFA (spot/mención/control remoto/patrocinio, ADR-097 del catálogo
+ * Tarifa) — NO confundir con `OrdenCliente.producto`/`OrdenEstacion.producto` ("Campaña",
+ * texto libre heredado de la orden). Se elige por estación desde ADR-102. */
+export type ProductoTarifa = "spot" | "mencion" | "control_remoto" | "patrocinio";
+
+/** Duración del spot (catálogo Tarifa) — capturada POR ESTACIÓN (ADR-106), no heredada
+ * de `OrdenCliente.duracion_spot`. */
+export type DuracionSpot = "20s" | "30s" | "60s";
+
 /** Fila desagregada de programación/transmisión: un día con su horario y spots. */
 export interface PeriodoTransmisionRow {
   fecha: string;
   hora_inicio: string;
   hora_termino: string;
   spots_diarios: number;
+  /** Solo presente si la fila ya existe en el backend (edición) — lo necesita la
+   *  asignación de audio por día (ADR-103, `PUT .../dias/{id}/audio`), que es un
+   *  endpoint dedicado, no parte de este objeto. */
+  orden_estacion_dia_id?: string;
+  /** ADR-103: audio de "Material a Transmitir" que usa ESTE día en particular. `null`/
+   *  `undefined` = usa el audio DEFAULT (el primero subido, o el único que haya). */
+  orden_estacion_audio_id?: string | null;
+  /** ADR-104: `true` = este día ya se canceló ("Cancelar transmisión") — de solo
+   *  lectura en la grid, no se vuelve a editar. */
+  cancelada?: boolean;
 }
 
 export interface OrdenCliente {
@@ -65,8 +84,6 @@ export interface OrdenCliente {
   porcentaje_comision_agencia_snap: number | null;
   observaciones_predefinidas: string;
   observaciones_libres: string;
-  /** Checklist de Vo.Bo. (PO §2) — claves de `ODC_REVIEW_CHECKLIST`. */
-  revision_checklist: Record<string, boolean>;
   estatus_orden: EstadoOC;
   estatus_pago_afiliado: EstatusPagoAfiliado;
   estatus_pago_agencia: EstatusPagoAgencia;
@@ -82,6 +99,43 @@ export interface OrdenCliente {
   updated_at?: string | null;
 }
 
+/** Un audio de "Material a Transmitir" (ADR-103). `orden === 0` es el DEFAULT que usa
+ *  cualquier día sin override propio (ver `PeriodoTransmisionRow.orden_estacion_audio_id`). */
+export interface OrdenEstacionAudio {
+  id: string;
+  nombre_archivo: string;
+  orden: number;
+}
+
+/** Un audio de "Evidencias de lo Transmitido" (ADR-119, "Capturar Reales") — lista
+ *  PLANA, sin `orden` ni concepto de default (a diferencia de `OrdenEstacionAudio`). */
+export interface OrdenEstacionEvidencia {
+  id: string;
+  nombre_archivo: string;
+}
+
+/** ADR-123: "Formato de Horarios Reales" — junto a Evidencias en "Capturar Reales",
+ *  misma lista PLANA, pero acepta cualquier formato salvo ejecutables/scripts. */
+export interface OrdenEstacionFormatoReal {
+  id: string;
+  nombre_archivo: string;
+}
+
+/** ADR-105/ADR-120: un registro de la bitácora de envíos por correo de los PDFs de
+ *  OrdenEstacion — un registro por INTENTO (exitoso o no). `"orden_transmision"` es el
+ *  envío "bundle" (PDF Programados + Material a Transmitir, a todos los contactos
+ *  activos del afiliado) que dispara el diálogo "Enviar por correo"/"Imprimir" al
+ *  generar cualquiera de los 3 PDFs. */
+export interface LogEnvioCorreo {
+  id: string;
+  tipoPdf: "servicio" | "programados" | "reales" | "orden_transmision";
+  destinatarioEmail: string;
+  usuario: string;
+  exitoso: boolean;
+  mensajeError: string | null;
+  fechaEnvio: string;
+}
+
 export interface OrdenEstacion {
   id: string;
   folio_orden_interna: string;
@@ -89,6 +143,12 @@ export interface OrdenEstacion {
   orden_id: string;
   estacion_id: string;
   plaza_id: string;
+  /** Producto de TARIFA (ADR-102) — spot/mención/control remoto/patrocinio, elegido por
+   *  estación. NO confundir con `producto` de OrdenCliente ("Campaña", texto libre): esta
+   *  OE no tiene ese campo por separado, solo el heredado de la OC (ver selectors.ts). */
+  producto_tarifa?: ProductoTarifa | null;
+  /** ADR-106: capturada por estación (ya no heredada de `OrdenCliente.duracion_spot`). */
+  duracion_spot: DuracionSpot;
   /** Tarifa pactada con la estación (por spot). */
   precio_spot: number;
   /** Spots que se asignan y transmiten igual que cualquier otro (cuentan para el balance
@@ -103,8 +163,6 @@ export interface OrdenEstacion {
   horarios_programados?: PeriodoTransmisionRow[];
   /** Solo las filas que se modificaron respecto a lo programado (2.2 → 2.3). */
   horarios_reales?: PeriodoTransmisionRow[];
-  testigos_url?: string | null;
-  testigos_ubicacion_alterna?: string | null;
   notas_transmision?: string | null;
   /** Clave real del adjunto en el almacenamiento (ver `adapters/adjuntosApi.ts`). */
   reporte_programados_ref?: string | null;
@@ -199,5 +257,29 @@ export type OrdenClienteInput = Omit<
  * en Programados/Reales (Tanda 4). */
 export type OrdenEstacionInput = Pick<
   OrdenEstacion,
-  "estacion_id" | "plaza_id" | "precio_spot" | "cantidad_spots_bonificables" | "periodo_transmision" | "observaciones_estacion"
->;
+  | "estacion_id"
+  | "plaza_id"
+  | "producto_tarifa"
+  | "precio_spot"
+  | "cantidad_spots_bonificables"
+  | "periodo_transmision"
+  | "observaciones_estacion"
+> & {
+  /** ADR-106: requerido solo al CREAR (el backend lo exige en `OrdenEstacionCreate`,
+   *  opcional en `OrdenEstacionUpdate`) — mismo criterio que `producto_tarifa`, que por
+   *  la misma razón tampoco se marca requerido aquí (una OE existente sigue editable sin
+   *  forzar a volver a elegirlo). */
+  duracion_spot?: DuracionSpot;
+  /** ADR-102: transitorio (no persiste como campo propio) — requerido SOLO si
+   * `precio_spot` no coincide con la tarifa sugerida del catálogo. */
+  motivo_cambio_tarifa?: string;
+  /** ADR-109: material a transmitir YA subido a S3 durante la captura (antes de que
+   *  exista esta OE), vía `subirMaterialStagingApi` — solo lo manda `create()` (el
+   *  backend no lo acepta en `update()`, que sigue usando el endpoint dedicado de
+   *  siempre). El primero de la lista es el default. */
+  audios_staging?: { ref: string; nombre_archivo: string }[];
+  /** ADR-121: "Reporte del afiliado" — antes solo se capturaba en el paso manual 2.2
+   *  ("Capturar Programados", ya retirado); ahora se adjunta/corrige desde el alta o
+   *  edición de la OE, mientras siga en un estado editable (antes de 2.3 Reales). */
+  reporte_programados_ref?: string | null;
+};

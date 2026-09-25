@@ -113,6 +113,24 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     # Tamaño máximo de un PDF de contrato (bytes). Configurable por entorno; default 10 MB.
     s3_max_pdf_bytes: int = 10 * 1024 * 1024
+    # ADR-103: tope de un audio de "Material a Transmitir" (F1) — NO reusa
+    # `s3_max_pdf_bytes` (silenciosamente cambiaría el tope de los adjuntos de
+    # documentos). Configurable por entorno; default 15 MB (petición del usuario).
+    s3_max_audio_bytes: int = 15 * 1024 * 1024
+    # ADR-123: tope de "Formato de Horarios Reales" (F1) — acepta cualquier formato
+    # (menos ejecutables), tope propio para no acoplarlo a los de arriba. Default 20 MB.
+    s3_max_formato_real_bytes: int = 20 * 1024 * 1024
+
+    # ── Correo (envío de PDFs de OrdenEstacion — ADR-105, local | SES) ───────────
+    # CORREO_BACKEND elige el adaptador (ver integrations/correo): 'local' (no envía
+    # nada real, solo registra en el log; default para dev/pruebas — SES en sandbox
+    # exige verificar cada destinatario) o 'ses' (Amazon SES real).
+    correo_backend: str = "local"
+    # Remitente y región/credenciales de SES (requeridos si CORREO_BACKEND=ses).
+    # Reusa `aws_region`/`aws_access_key_id`/`aws_secret_access_key` de arriba: SES vive
+    # en la misma cuenta/región de AWS que S3.
+    ses_from_email: str = ""
+    ses_from_name: str = ""
 
     @property
     def is_development(self) -> bool:

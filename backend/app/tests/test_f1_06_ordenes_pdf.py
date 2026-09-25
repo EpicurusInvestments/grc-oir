@@ -6,6 +6,7 @@ transiciones (2.2/2.3) están gateadas por el estatus real de la OE."""
 
 from __future__ import annotations
 
+import io
 import uuid
 from collections.abc import Iterator
 from datetime import date, time, timedelta
@@ -32,7 +33,6 @@ from app.modules.ordenes.incidencia import (
     Incidencia,  # noqa: F401 — registra la tabla en Base.metadata
 )
 from app.modules.ordenes.orden_cliente import (
-    ITEMS_VOBO,
     OrdenCliente,
     OrdenClienteCreate,
     OrdenClienteRepository,
@@ -40,7 +40,10 @@ from app.modules.ordenes.orden_cliente import (
 )
 from app.modules.ordenes.orden_estacion import (
     OrdenEstacion,
+    OrdenEstacionAudio,
     OrdenEstacionCreate,
+    OrdenEstacionDia,
+    OrdenEstacionDiaAudioIn,
     OrdenEstacionDiaCreate,
     OrdenEstacionDiaProgramadoIn,
     OrdenEstacionDiaRealIn,
@@ -50,6 +53,7 @@ from app.modules.ordenes.orden_estacion import (
     OrdenEstacionService,
 )
 from app.modules.ordenes.orden_estacion_pdf import (
+    _nombre_material,
     generar_pdf_programados,
     generar_pdf_reales,
     generar_pdf_servicio,
@@ -217,18 +221,14 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
     return OrdenClienteCreate(**base)
 
 
-def _dar_vobo_completo(oc_svc: OrdenClienteService, orden_id: uuid.UUID) -> None:
-    for item in ITEMS_VOBO:
-        oc_svc.vobo_toggle(orden_id, item, True, VENTAS)
-    oc_svc.dar_vobo(orden_id, VENTAS)
-
-
 def _oe_payload(
     cat: dict[str, uuid.UUID], orden_id: uuid.UUID, **overrides: object
 ) -> OrdenEstacionCreate:
     base: dict[str, object] = dict(
         orden_id=orden_id,
         estacion_id=cat["estacion"],
+        producto_tarifa="spot",
+        duracion_spot="30s",
         precio_spot=Decimal("800.00"),
         observaciones_estacion="2 spots no transmitidos por corte",
         dias=[
@@ -258,7 +258,6 @@ def oe_asignada(
     cat: dict[str, uuid.UUID],
 ):
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     return oc, oe
 
@@ -271,11 +270,12 @@ def test_pdf_servicio_se_genera_desde_asignada(db: Session, oe_asignada) -> None
     assert len(pdf) > 500
 
 
-# ── PDF 2: Horarios programados — gateado a partir de 2.2 ────────────────────────
-def test_pdf_programados_rechaza_si_aun_no_se_captura(db: Session, oe_asignada) -> None:
+# ── PDF 2: Horarios programados — ADR-121: ya no gateado, disponible desde 'asignada'
+def test_pdf_programados_se_genera_desde_asignada(db: Session, oe_asignada) -> None:
     _, oe = oe_asignada
-    with pytest.raises(DomainError):
-        generar_pdf_programados(db, oe.orden_estacion_id)
+    pdf = generar_pdf_programados(db, oe.orden_estacion_id)
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 500
 
 
 def test_pdf_programados_se_genera_tras_avanzar(
@@ -299,12 +299,74 @@ def test_pdf_programados_se_genera_tras_avanzar(
     assert len(pdf) > 500
 
 
+def test_pdf_programados_se_genera_con_audios_y_override_por_dia(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada, tmp_path
+) -> None:
+    """ADR-118: la tabla del PDF #2 ahora depende de `ctx.audios` (antes no se cargaban)
+    — con overrides por día, no debe truene generar el PDF."""
+    from app.integrations.almacenamiento.adapter_local import AlmacenamientoLocal
+
+    class _ArchivoFalso:
+        def __init__(self, filename: str, contenido: bytes) -> None:
+            self.filename = filename
+            self.file = io.BytesIO(contenido)
+
+    _, oe = oe_asignada
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = b"ID3" + b"\x00" * 40
+    uno = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("uno.mp3", contenido), VENTAS, almacenamiento
+    )
+    dos = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("dos.mp3", contenido), VENTAS, almacenamiento
+    )
+    dia = oe_svc.dias(oe.orden_estacion_id)[0]
+    oe_svc.asignar_audio_dia(
+        oe.orden_estacion_id,
+        dia.orden_estacion_dia_id,
+        OrdenEstacionDiaAudioIn(orden_estacion_audio_id=dos.orden_estacion_audio_id),
+        VENTAS,
+    )
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+
+    pdf = generar_pdf_programados(db, oe.orden_estacion_id)
+    assert pdf.startswith(b"%PDF")
+    assert uno.orden_estacion_audio_id != dos.orden_estacion_audio_id  # sanity: no es el mismo
+
+
+# ── ADR-118: "Material a Transmitir" en la tabla del PDF de programados ──────────
+def test_nombre_material_sin_audios_devuelve_guion() -> None:
+    dia = OrdenEstacionDia(orden_estacion_audio_id=None)
+    assert _nombre_material(dia, []) == "—"
+
+
+def test_nombre_material_sin_override_usa_el_primero_subido() -> None:
+    uno = OrdenEstacionAudio(
+        orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="uno.mp3", orden=0
+    )
+    dos = OrdenEstacionAudio(
+        orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="dos.mp3", orden=1
+    )
+    dia = OrdenEstacionDia(orden_estacion_audio_id=None)
+    assert _nombre_material(dia, [uno, dos]) == "uno.mp3"
+
+
+def test_nombre_material_con_override_usa_el_del_dia() -> None:
+    uno = OrdenEstacionAudio(
+        orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="uno.mp3", orden=0
+    )
+    dos = OrdenEstacionAudio(
+        orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="dos.mp3", orden=1
+    )
+    dia = OrdenEstacionDia(orden_estacion_audio_id=dos.orden_estacion_audio_id)
+    assert _nombre_material(dia, [uno, dos]) == "dos.mp3"
+
+
 # ── PDF 3: Horarios reales — gateado a partir de 2.3 ─────────────────────────────
 def test_pdf_reales_rechaza_si_aun_no_se_captura(
     db: Session, oe_svc: OrdenEstacionService, oe_asignada
 ) -> None:
     _, oe = oe_asignada
-    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     with pytest.raises(DomainError):
         generar_pdf_reales(db, oe.orden_estacion_id)
 
@@ -345,7 +407,6 @@ def test_pdf_reales_no_truena_con_descripcion_larga(
         _oc_payload(cat, producto="ZAPATOS DE ALTA CALIDAD HECHOS A MANO EN LEÓN GUANAJUATO"),
         VENTAS,
     )
-    _dar_vobo_completo(oc_svc, oc.orden_id)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     oe_svc.avanzar_reales(

@@ -44,7 +44,7 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
             marginBottom: 14,
           }}
         >
-          Vista derivada de la orden interna{" "}
+          Vista derivada de la Orden de Transmisión{" "}
           <strong style={{ fontFamily: "var(--mono)" }}>{verificacion.folioOrdenInterna}</strong> — no existe como registro propio; se
           calcula a partir de lo programado (efectivo) y lo real capturados en la OI. Llegar a 2.3 ya implica que quedó reconciliada.
         </div>
@@ -128,7 +128,7 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
 
       <div className="df">
         <button type="button" className="btn btn-sm" onClick={onVerOE}>
-          Ver orden interna →
+          Ver Orden de Transmisión →
         </button>
       </div>
     </>

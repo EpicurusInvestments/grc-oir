@@ -47,6 +47,7 @@ from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import (
     EstatusOrdenEstacion,
     OrdenEstacion,
+    OrdenEstacionAudio,
     OrdenEstacionDia,
 )
 from app.modules.ordenes.verificacion import Verificacion
@@ -191,6 +192,7 @@ class _Contexto:
         agencia: Agencia | None,
         empresa: EmpresaFacturadora,
         dias: list[OrdenEstacionDia],
+        audios: list[OrdenEstacionAudio],
     ) -> None:
         self.oe = oe
         self.oc = oc
@@ -200,6 +202,7 @@ class _Contexto:
         self.agencia = agencia
         self.empresa = empresa
         self.dias = dias
+        self.audios = audios
 
 
 def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
@@ -223,7 +226,14 @@ def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
             .order_by(OrdenEstacionDia.fecha_transmision)
         )
     )
-    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias)
+    audios = list(
+        db.scalars(
+            select(OrdenEstacionAudio)
+            .where(OrdenEstacionAudio.orden_estacion_id == orden_estacion_id)
+            .order_by(OrdenEstacionAudio.orden)
+        )
+    )
+    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias, audios)
 
 
 def _rango_campania(oc: OrdenCliente) -> str:
@@ -357,17 +367,34 @@ _TABLA_SIN_MARCO = TableStyle(
 _FILA_REALES = ParagraphStyle("fila_reales", parent=_STYLES["Normal"], fontSize=9, leading=11)
 
 
-def _fila_dia_programado(dia: OrdenEstacionDia, programado: int) -> list:
+def _nombre_material(dia: OrdenEstacionDia, audios: list[OrdenEstacionAudio]) -> str:
+    """Mismo criterio que `nombreMaterial()` del frontend (`PeriodoTransmisionGrid.tsx`):
+    el override propio del día si tiene uno asignado, si no el default (`audios[0]`, el
+    primero subido). Sin ningún audio subido, no hay nada que mostrar."""
+    if not audios:
+        return "—"
+    if dia.orden_estacion_audio_id:
+        coincidencia = next(
+            (a for a in audios if a.orden_estacion_audio_id == dia.orden_estacion_audio_id), None
+        )
+        if coincidencia:
+            return coincidencia.nombre_archivo
+    return audios[0].nombre_archivo
+
+
+def _fila_dia_programado(dia: OrdenEstacionDia, nombre_material: str) -> list:
     fecha_txt = (
         f"{_dia_semana(dia.fecha_transmision).capitalize()} {dia.fecha_transmision.day} "
         f"{MESES_ES[dia.fecha_transmision.month - 1]}, {dia.fecha_transmision.year}"
     )
+    # ADR-118 (petición del usuario): "Horario" pasa a un solo valor (ya no rango
+    # Inicio/Término — coherente con ADR-108, que consolidó lo mismo en la captura web:
+    # `hora_inicio`/`hora_fin` se capturan siempre iguales desde entonces); "Pedidos"/
+    # "Asignados" se quitan y se agrega "Material a Transmitir".
     return [
         Paragraph(f"<b>{fecha_txt}</b>", _FILA_PROGRAMADO),
-        Paragraph(f"Hora Inicio: <i>{_hora_12h(dia.hora_inicio)}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Hora Término: <i>{_hora_12h(dia.hora_fin)}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Pedidos: <i>{dia.spots_asignados}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Asignados: <i>{programado}</i>", _FILA_PROGRAMADO),
+        Paragraph(f"Horario: <i>{_hora_12h(dia.hora_inicio)}</i>", _FILA_PROGRAMADO),
+        Paragraph(f"Material a Transmitir: <i>{nombre_material}</i>", _FILA_PROGRAMADO),
     ]
 
 
@@ -528,13 +555,11 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
 
 # ── PDF 2: Horarios programados (2.2) ────────────────────────────────────────────
 def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
+    # ADR-121: ya no se rechaza en 'asignada' — los horarios/spots "programados" se
+    # capturan desde el alta (fallback a `spots_asignados`, ver `avanzar_reales`), así
+    # que este PDF está listo desde que la OE existe.
     ctx = _cargar_contexto(db, orden_estacion_id)
     oe, oc, estacion, plaza = ctx.oe, ctx.oc, ctx.estacion, ctx.plaza
-    if oe.estatus == EstatusOrdenEstacion.ASIGNADA.value:
-        raise DomainError(
-            "Aún no se han capturado los horarios programados de esta orden interna.",
-            detalles={"estatus": oe.estatus},
-        )
 
     letra = _letra_sufijo(oe.folio_orden_estacion)
     total_programado = sum(
@@ -578,17 +603,13 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     ]
 
     filas = [
-        _fila_dia_programado(
-            dia,
-            dia.spots_programados if dia.spots_programados is not None else dia.spots_asignados,
-        )
-        for dia in ctx.dias
+        _fila_dia_programado(dia, _nombre_material(dia, ctx.audios)) for dia in ctx.dias
     ]
     elementos.append(
         Table(
             filas,
             style=_FILA_CON_LINEA,
-            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.7, 1.25, 1.25, 0.7, 0.75]),
+            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.4, 1.1, 2.5]),
         )
     )
 

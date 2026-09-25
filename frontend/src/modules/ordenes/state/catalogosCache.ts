@@ -9,6 +9,8 @@
  * nunca hay nada que mostrar antes de que lleguen los datos reales.
  */
 
+import type { ProductoTarifa } from "../types";
+
 export interface AgenciaRef {
   id: string;
   nombre_agencia: string;
@@ -98,6 +100,9 @@ export interface AfiliadoRef {
   id: string;
   nombre_afiliado: string;
   porcentaje_participacion_oir_default: number;
+  /** ADR-105: sugerido como destinatario por defecto al "Enviar por correo" un PDF de
+   *  OrdenEstacion — editable, `null` si el afiliado no tiene contacto capturado. */
+  contacto_email: string | null;
 }
 
 export type TipoSenal = "fm" | "am" | "tv";
@@ -120,8 +125,11 @@ export interface TarifaRef {
   estacion_id: string;
   tipo_senal: TipoSenal;
   duracion_spot: string;
+  producto: ProductoTarifa;
   tarifa_bruta: number;
   descuento_pct: number;
+  /** Calculado por el backend: `tarifa_bruta * (1 - descuento_pct / 100)`. */
+  tarifa_neta: number;
 }
 
 export const agencias: AgenciaRef[] = [];
@@ -174,8 +182,21 @@ export function findAfiliado(id: string): AfiliadoRef | undefined {
 export function findPlaza(id: string): PlazaRef | undefined {
   return plazas.find((p) => p.id === id);
 }
-export function tarifaReferencia(estacionId: string, tipoSenal: TipoSenal, duracionSpot: string): TarifaRef | undefined {
+/** `producto` es opcional por compatibilidad con el único consumidor previo a ADR-102
+ * (`OrdenEstacionDetailPanel.tsx`, que ya lo manda ahora vía `oe.producto_tarifa`) — sin
+ * él, la combinación puede ser ambigua si hay más de una tarifa para la misma
+ * estación+tipo_señal+duración mismo criterio "sin duplicado activo" que el backend. */
+export function tarifaReferencia(
+  estacionId: string,
+  tipoSenal: TipoSenal,
+  duracionSpot: string,
+  producto?: ProductoTarifa,
+): TarifaRef | undefined {
   return tarifas.find(
-    (t) => t.estacion_id === estacionId && t.tipo_senal === tipoSenal && t.duracion_spot === duracionSpot,
+    (t) =>
+      t.estacion_id === estacionId &&
+      t.tipo_senal === tipoSenal &&
+      t.duracion_spot === duracionSpot &&
+      (producto == null || t.producto === producto),
   );
 }

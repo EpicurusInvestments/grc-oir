@@ -78,7 +78,10 @@ export async function cargarCatalogosReales(): Promise<void> {
     fetchAllPages((p) => plazaApi.list(p)),
     fetchAllPages((p) => afiliadoApi.list(p)),
     fetchAllPages((p) => estacionApi.list(p)),
-    fetchAllPages((p) => tarifaApi.list(p)),
+    // Solo ACTIVAS (ADR-102): `tarifaReferencia()` sugiere `precio_spot` al asignar una
+    // estación — una tarifa dada de baja no debe seguir sugiriéndose, mismo criterio que
+    // `existe_duplicado_activo` del backend.
+    fetchAllPages((p) => tarifaApi.list(p), { activo: true }),
   ]);
 
   reemplazar(
@@ -172,6 +175,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       // La spec no tiene un % de participación OIR por AFILIADO (es por OrdenEstacion,
       // por venta); nadie lo lee desde AfiliadoRef — placeholder inerte.
       porcentaje_participacion_oir_default: 0,
+      contacto_email: a.contacto_email ?? null,
     })),
   );
 
@@ -195,8 +199,10 @@ export async function cargarCatalogosReales(): Promise<void> {
       estacion_id: t.estacion_id,
       tipo_senal: t.tipo_senal,
       duracion_spot: t.duracion_spot,
+      producto: t.producto,
       tarifa_bruta: Number(t.tarifa_bruta),
       descuento_pct: Number(t.descuento_pct),
+      tarifa_neta: Number(t.tarifa_neta),
     })),
   );
 }

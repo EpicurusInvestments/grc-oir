@@ -55,8 +55,9 @@ export function makeOC(overrides: Partial<OrdenCliente> = {}): OrdenCliente {
     porcentaje_comision_agencia_snap: null,
     observaciones_predefinidas: "",
     observaciones_libres: "",
-    revision_checklist: {},
-    estatus_orden: "orden_cliente_sin_vobo",
+    // ADR-100: sin checklist de Vo.Bo. — una orden recién guardada nace directo en
+    // capturada (v5: "orden_cliente_con_vobo"), nunca en "orden_cliente_sin_vobo".
+    estatus_orden: "orden_cliente_con_vobo",
     estatus_pago_afiliado: "pendiente",
     estatus_pago_agencia: "pendiente",
     created_by: "tester",
@@ -72,6 +73,7 @@ export function makeOE(overrides: Partial<OrdenEstacion> = {}): OrdenEstacion {
     orden_id: "oc-1",
     estacion_id: "est1",
     plaza_id: "pl1",
+    duracion_spot: "30s",
     precio_spot: 800,
     cantidad_spots_bonificables: 0,
     porcentaje_participacion_oir: 20,
@@ -111,7 +113,6 @@ export function makeOCInput(overrides: Partial<OrdenClienteInput> = {}): OrdenCl
     porcentaje_comision_agencia_snap: null,
     observaciones_predefinidas: "",
     observaciones_libres: "",
-    revision_checklist: {},
     ...overrides,
   };
 }

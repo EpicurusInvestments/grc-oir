@@ -86,6 +86,8 @@ def build_adjuntos_router(
     content_disposition: Literal["inline", "attachment"],
     quitar_prefijo_uuid_en_descarga: bool = False,
     extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES,
+    max_bytes: int | None = None,
+    prefix: str = "/adjuntos",
 ) -> APIRouter:
     """Construye un router `/adjuntos` completo (subir + descargar) para un módulo.
 
@@ -93,8 +95,15 @@ def build_adjuntos_router(
     y se infiera el enum de sus claves) para que la anotación `tipo: tipos = Query(...)`
     del endpoint de subida quede explícita y clara de leer aquí — ver el docstring del
     módulo sobre por qué esto exige evaluación inmediata de anotaciones.
+
+    `max_bytes` (default `None` → `settings.s3_max_pdf_bytes`, el comportamiento de
+    SIEMPRE) y `prefix` (default `"/adjuntos"`, el de siempre) son overrides opcionales
+    — ADR-109 los necesita para un router SEPARADO de material de audio (tope propio de
+    15 MB, y un prefijo de ruta propio para no chocar con el `/adjuntos` ya montado del
+    mismo módulo).
     """
-    router = APIRouter(prefix="/adjuntos", tags=[tag])
+    tope_bytes = max_bytes if max_bytes is not None else settings.s3_max_pdf_bytes
+    router = APIRouter(prefix=prefix, tags=[tag])
     prefijos_descargables = tuple(prefijos.values())
 
     # NO usar `from __future__ import annotations` en este módulo: `tipo: tipos` debe
@@ -115,7 +124,7 @@ def build_adjuntos_router(
         """
         contenido, nombre_sano, extension = leer_adjunto(
             archivo,
-            max_bytes=settings.s3_max_pdf_bytes,
+            max_bytes=tope_bytes,
             extensiones_permitidas=extensiones_permitidas,
         )
         nombre_clave = f"{uuid.uuid4().hex}_{nombre_sano}"

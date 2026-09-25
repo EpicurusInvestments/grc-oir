@@ -4,14 +4,26 @@
  * de spots — la vista previa de "esto se va a generar" ya se calcula aquí mismo.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SavingOverlay } from "@/shared/ui";
 
+import {
+  listarEvidenciasOrdenEstacionApi,
+  listarFormatosRealesOrdenEstacionApi,
+} from "../../adapters/escrituraApi";
+import { ordenEstacionEvidenciaFromApi, ordenEstacionFormatoRealFromApi } from "../../adapters/fromApi";
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { diaDeSemana, fmtMonto } from "../../format";
 import { programadoEfectivo } from "../../state/selectors";
-import type { OrdenEstacion, PeriodoTransmisionRow } from "../../types";
+import type {
+  OrdenEstacion,
+  OrdenEstacionEvidencia,
+  OrdenEstacionFormatoReal,
+  PeriodoTransmisionRow,
+} from "../../types";
+import { EvidenciasTransmitido } from "./EvidenciasTransmitido";
+import { FormatoHorariosReales } from "./FormatoHorariosReales";
 
 type Draft = PeriodoTransmisionRow & { editing: boolean };
 
@@ -25,7 +37,7 @@ interface RealesFormProps {
   submitError?: string | null;
   onAvanzar: (
     horariosReales: PeriodoTransmisionRow[],
-    extra: { testigosUrl: string | null; testigosUbicacionAlterna: string | null; notasTransmision: string | null; reporteRef: string | null },
+    extra: { notasTransmision: string | null; reporteRef: string | null },
   ) => void;
   onCancelar: () => void;
 }
@@ -38,10 +50,34 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
     });
     return inicial;
   });
-  const [testigosUrl, setTestigosUrl] = useState(oe.testigos_url ?? "");
-  const [testigosAlt, setTestigosAlt] = useState(oe.testigos_ubicacion_alterna ?? "");
   const [notas, setNotas] = useState(oe.notas_transmision ?? "");
   const [reporteRef, setReporteRef] = useState<string | null>(oe.reporte_reales_ref ?? null);
+
+  // ADR-119: "Evidencias de lo Transmitido" — requiere el `orden_estacion_id` real de
+  // esta OE (siempre lo hay: `RealesForm` solo se abre sobre una OE ya guardada).
+  const [evidencias, setEvidencias] = useState<OrdenEstacionEvidencia[]>([]);
+  useEffect(() => {
+    let cancelado = false;
+    listarEvidenciasOrdenEstacionApi(oe.id).then((dtos) => {
+      if (!cancelado) setEvidencias(dtos.map(ordenEstacionEvidenciaFromApi));
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [oe.id]);
+
+  // ADR-123: "Formato de Horarios Reales" — junto a Evidencias, mismo criterio (requiere
+  // el `orden_estacion_id` real de esta OE, siempre disponible aquí).
+  const [formatosReales, setFormatosReales] = useState<OrdenEstacionFormatoReal[]>([]);
+  useEffect(() => {
+    let cancelado = false;
+    listarFormatosRealesOrdenEstacionApi(oe.id).then((dtos) => {
+      if (!cancelado) setFormatosReales(dtos.map(ordenEstacionFormatoRealFromApi));
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [oe.id]);
 
   const abrirEdicion = (programado: PeriodoTransmisionRow) => {
     setOverrides((prev) => ({ ...prev, [programado.fecha]: { ...(prev[programado.fecha] ?? programado), editing: true } }));
@@ -97,8 +133,6 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
       .filter((o) => !o.editing)
       .map((o) => ({ fecha: o.fecha, hora_inicio: o.hora_inicio, hora_termino: o.hora_termino, spots_diarios: o.spots_diarios }));
     onAvanzar(horariosReales, {
-      testigosUrl: testigosUrl.trim() || null,
-      testigosUbicacionAlterna: testigosAlt.trim() || null,
       notasTransmision: notas.trim() || null,
       reporteRef,
     });
@@ -216,18 +250,22 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
             </tbody>
           </table>
 
-          <div className="sec">Testigos y notas</div>
-          <div className="r2">
-            <div>
-              <div className="fl">URL de testigos</div>
-              <input className="fi" type="url" placeholder="https://…" value={testigosUrl} onChange={(e) => setTestigosUrl(e.target.value)} />
-            </div>
-            <div>
-              <div className="fl">Ubicación alterna</div>
-              <input className="fi" value={testigosAlt} onChange={(e) => setTestigosAlt(e.target.value)} />
-            </div>
+          <div className="sec">Evidencias y notas</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <EvidenciasTransmitido
+              ordenEstacionId={oe.id}
+              evidencias={evidencias}
+              onEvidenciasChange={setEvidencias}
+            />
+            <FormatoHorariosReales
+              ordenEstacionId={oe.id}
+              formatos={formatosReales}
+              onFormatosChange={setFormatosReales}
+            />
           </div>
-          <div className="fl">Notas de transmisión</div>
+          <div className="fl" style={{ marginTop: 10 }}>
+            Notas de transmisión
+          </div>
           <textarea className="ftxt" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} />
 
           <div className="fl" style={{ marginTop: 10 }}>

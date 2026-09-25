@@ -45,7 +45,9 @@ export function totalesOC(oc: OrdenCliente): TotalesOC {
 }
 
 export function oiTotalSpots(oe: OrdenEstacion): number {
-  return oe.periodo_transmision.reduce((s, p) => s + (p.spots_diarios || 0), 0);
+  // ADR-104: un día cancelado libera su cupo — mismo criterio que el backend, que
+  // excluye `cancelada` de las sumas de `spots_asignados` (balance de la OC e importe).
+  return oe.periodo_transmision.reduce((s, p) => (p.cancelada ? s : s + (p.spots_diarios || 0)), 0);
 }
 
 /** = oiTotalSpots − cantidad_spots_bonificables (ADR-068). Los bonificables siguen

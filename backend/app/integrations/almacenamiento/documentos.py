@@ -11,7 +11,12 @@ servicio y el router usen una sola fuente de verdad:
   Contrato (ADR-027).
 - `leer_adjunto`: igual que `leer_pdf`, pero contra una LISTA BLANCA de extensiones
   (documentos + imágenes) para los adjuntos "simulados" de Órdenes (ver
-  `app/modules/ordenes/adjuntos.py`).
+  `app/modules/ordenes/adjuntos.py`). `EXTENSIONES_AUDIO_ORDENES` (ADR-103) es una
+  lista blanca APARTE, solo para el "Material a Transmitir" de OrdenEstacion.
+- `leer_adjunto_libre` (ADR-123): único caso con LISTA NEGRA — acepta cualquier formato
+  salvo ejecutables/scripts (`EXTENSIONES_PELIGROSAS`), y además rechaza cualquier
+  contenido con firma de ejecutable de Windows (`MZ`) sin importar la extensión
+  declarada. Usado por "Formato de Horarios Reales" de OrdenEstacion.
 - Errores de dominio del almacenamiento (`AlmacenamientoError`, `ArchivoNoPdfError`,
   `ArchivoNoPermitidoError`, `ArchivoDemasiadoGrandeError`).
 """
@@ -157,6 +162,16 @@ _MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
     # los PAC entregan ambas variantes. NO se acepta un "<" suelto, seria tan laxo
     # que dejaria pasar cualquier HTML o texto plano que empiece con ese caracter.
     "xml": (b"<?xml", BOM_UTF8 + b"<?xml"),
+    # ADR-103 ("Material a Transmitir"): mp3/wav/ogg — los 3 formatos de audio cuya
+    # firma cae en los primeros bytes del archivo (verificable con el mismo chequeo
+    # `startswith` de abajo). mp3 no siempre trae el tag ID3 (algunos encoders escriben
+    # el frame MPEG crudo desde el byte 0); se aceptan ambas variantes. m4a/aac quedan
+    # FUERA por ahora: su firma ("ftyp") no vive en el byte 0 sino en el 4, y no vale la
+    # pena generalizar el chequeo de firmas para un caso no pedido todavia — el tope de
+    # tamano y la lista blanca ya son "modificables en un futuro" (ver S3_MAX_AUDIO_BYTES).
+    "mp3": (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"),
+    "wav": (b"RIFF",),
+    "ogg": (b"OggS",),
 }
 
 # Listas blancas POR MODULO, explicitas: agregar una extension para un modulo no
@@ -167,6 +182,33 @@ EXTENSIONES_ADJUNTO_ORDENES = frozenset(
 )
 #: F2 acepta ademas el XML del CFDI devuelto por el timbrador.
 EXTENSIONES_ADJUNTO_FACTURACION = EXTENSIONES_ADJUNTO_ORDENES | {"xml"}
+#: ADR-103 — "Material a Transmitir" de OrdenEstacion (F1): SOLO audio, lista aparte
+#: (no se mezcla con `EXTENSIONES_ADJUNTO_ORDENES`, que es de documentos/imagenes).
+EXTENSIONES_AUDIO_ORDENES = frozenset({"mp3", "wav", "ogg"})
+
+# ── Adjuntos de "cualquier formato" (lista NEGRA — ADR-123) ─────────────────────────
+# Único caso del módulo con lista negra en vez de blanca: el pedido explícito era
+# "cualquier formato", no un conjunto cerrado de tipos de negocio. Se bloquea lo que se
+# reconoce como ejecutable/script (referencia: lista de adjuntos bloqueados de Gmail),
+# y ADEMÁS se revisa la firma MZ (cualquier ejecutable/DLL de Windows, el formato PE)
+# sin importar la extensión declarada — así un "virus.exe" renombrado a "cosa.pdf" NO
+# se cuela solo por traer otra extensión.
+EXTENSIONES_PELIGROSAS = frozenset(
+    {
+        "exe", "bat", "cmd", "com", "cpl", "msi", "msp", "mst",
+        "js", "jse", "vbs", "vbe", "vb", "ws", "wsf", "wsh", "wsc",
+        "ps1", "ps1xml", "psc1", "psd1", "psm1",
+        "scr", "pif", "lnk", "hta", "reg", "gadget",
+        "sh", "bash", "dll", "sys", "vxd", "jar",
+        "apk", "app", "deb", "rpm",
+        "msix", "msixbundle", "appx", "appxbundle",
+    }
+)
+# Firma DOS/PE: TODO ejecutable y DLL de Windows empieza con estos 2 bytes ("MZ", las
+# iniciales de Mark Zbikowski). No es una extensión — es contenido, así que atrapa un
+# ejecutable renombrado con cualquier otra extensión.
+_MAGIC_EJECUTABLE_WINDOWS = b"MZ"
+
 
 _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "pdf": "application/pdf",
@@ -178,6 +220,9 @@ _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "xls": "application/vnd.ms-excel",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xml": "application/xml",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "ogg": "audio/ogg",
 }
 
 
@@ -219,6 +264,53 @@ def leer_adjunto(
     if not any(contenido.startswith(firma) for firma in firmas):
         raise ArchivoNoPermitidoError(
             "El contenido del archivo no corresponde a la extensión declarada.",
+            detalles={"extension": extension},
+        )
+
+    nombre_sano = _CHARS_INVALIDOS.sub("-", raiz).strip("-. ")[:_MAX_NOMBRE] or "documento"
+    return contenido, f"{nombre_sano}.{extension}", extension
+
+
+def leer_adjunto_libre(
+    archivo: UploadFile,
+    *,
+    max_bytes: int,
+    extensiones_bloqueadas: frozenset[str] = EXTENSIONES_PELIGROSAS,
+) -> tuple[bytes, str, str]:
+    """Lee y valida un `UploadFile` de "cualquier formato" (ADR-123) — lista NEGRA en vez
+    de blanca: se acepta cualquier extensión salvo las de `extensiones_bloqueadas`
+    (ejecutables/scripts). Como no hay un tipo esperado, no hay firma que validar contra
+    la extensión — en su lugar se revisa que el contenido NO sea un ejecutable de Windows
+    (firma "MZ") sin importar qué extensión traiga declarada.
+
+    Devuelve `(contenido, nombre_sano_con_extension_original, extension)`.
+    """
+    nombre_original = (archivo.filename or "").strip()
+    base = re.split(r"[\\/]", nombre_original)[-1]
+    raiz, punto, ext = base.rpartition(".")
+    extension = ext.lower()
+    if not raiz or not punto:
+        raise ArchivoNoPermitidoError(
+            "El archivo necesita una extensión.", detalles={"archivo": archivo.filename}
+        )
+    if extension in extensiones_bloqueadas:
+        raise ArchivoNoPermitidoError(
+            f"Extensión no permitida (formato ejecutable/script): .{extension}",
+            detalles={"archivo": archivo.filename, "extension": extension},
+        )
+
+    contenido = archivo.file.read(max_bytes + 1)
+    if len(contenido) > max_bytes:
+        raise ArchivoDemasiadoGrandeError(
+            f"El archivo supera el tamaño máximo permitido ({max_bytes} bytes).",
+            detalles={"max_bytes": max_bytes},
+        )
+    if not contenido:
+        raise ArchivoNoPermitidoError("El archivo está vacío.")
+    if contenido.startswith(_MAGIC_EJECUTABLE_WINDOWS):
+        raise ArchivoNoPermitidoError(
+            "El contenido del archivo corresponde a un ejecutable de Windows — no "
+            "permitido sin importar la extensión declarada.",
             detalles={"extension": extension},
         )
 

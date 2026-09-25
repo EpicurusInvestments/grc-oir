@@ -65,7 +65,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
           <div className="cat-title">Verificaciones</div>
           <div className="cat-sub">
             Vista derivada: no es una entidad capturable — cada fila compara lo programado (efectivo) contra lo realmente transmitido de
-            una orden interna que llegó a 2.3. Llegar a 2.3 ya implica que quedó reconciliada.
+            una Orden de Transmisión que llegó a 2.3. Llegar a 2.3 ya implica que quedó reconciliada.
           </div>
         </div>
       </div>
@@ -149,7 +149,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
               onVerOE={() => onVerOE(selected.ordenEstacionId)}
             />
           ) : (
-            <DetailEmpty message="Selecciona una orden interna reconciliada para ver el detalle día a día." />
+            <DetailEmpty message="Selecciona una Orden de Transmisión reconciliada para ver el detalle día a día." />
           )
         }
       />

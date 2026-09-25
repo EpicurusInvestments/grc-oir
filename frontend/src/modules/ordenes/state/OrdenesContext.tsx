@@ -17,14 +17,12 @@ import {
   actualizarComisionesApi,
   actualizarOrdenClienteApi,
   actualizarOrdenEstacionApi,
-  avanzarProgramadosApi,
   avanzarRealesApi,
+  cancelarDiaOrdenEstacionApi,
   cerrarOrdenClienteApi,
   crearOrdenClienteApi,
   crearOrdenEstacionApi,
-  darVoboApi,
   listarIncidenciasDeOEApi,
-  toggleVoboApi,
 } from "../adapters/escrituraApi";
 import { incidenciaFromApi } from "../adapters/fromApi";
 import { listarHistorialComisionesApi } from "../adapters/ordenesApi";
@@ -36,11 +34,9 @@ import {
   ordenClienteUpdateToApi,
   ordenEstacionCreateToApi,
   ordenEstacionUpdateToApi,
-  programadosToApi,
   realesToApi,
 } from "../adapters/toApi";
 import type {
-  EstadoOC,
   Incidencia,
   OrdenCliente,
   OrdenClienteInput,
@@ -62,8 +58,6 @@ export interface OrdenesState {
 /** Input de `avanzarAReales`: qué capturó el usuario en el paso D. */
 export interface AvanzarARealesInput {
   horariosReales: PeriodoTransmisionRow[];
-  testigosUrl: string | null;
-  testigosUbicacionAlterna: string | null;
   notasTransmision: string | null;
   reporteRef?: string | null;
 }
@@ -131,15 +125,15 @@ function reducer(state: OrdenesState, action: Action): OrdenesState {
 
 interface OrdenesContextValue {
   state: OrdenesState;
-  /** Crea una OrdenCliente nueva. `conVobo` decide si nace en 1.1 o directo en 1.2
-   * (checklist ya completo al momento de guardar). */
-  crearOC: (input: OrdenClienteInput, conVobo: boolean) => Promise<OrdenCliente>;
+  /** Crea una OrdenCliente nueva. ADR-100: sin checklist de Vo.Bo. — nace directo en
+   * `capturada`. */
+  crearOC: (input: OrdenClienteInput) => Promise<OrdenCliente>;
   /** Actualiza una OrdenCliente existente. `auditoria.motivo` solo se manda si de verdad
    * cambió algún % de comisión (el formulario decide eso) — el backend valida quién puede
    * tocarlos (canal dedicado de comisiones, Dirección/Admin) y registra el motivo. */
   actualizarOC: (
     id: string,
-    patch: Partial<OrdenCliente> & { estatus_orden?: EstadoOC },
+    patch: Partial<OrdenCliente>,
     opts?: { auditoria?: { motivo: string } },
   ) => Promise<void>;
   /** Crea una OrdenEstacion nueva colgada de `ocId`. */
@@ -148,12 +142,16 @@ interface OrdenesContextValue {
    *  mientras la OE siga en 'borrador'/'asignada' (antes de transmitir); si ya avanzó,
    *  rechaza con un error que el formulario muestra tal cual. */
   actualizarOE: (oeId: string, input: OrdenEstacionInput) => Promise<OrdenEstacion>;
-  /** 2.1 → 2.2: persiste solo los días modificados respecto a lo asignado. */
-  avanzarAProgramados: (oeId: string, horariosProgramados: PeriodoTransmisionRow[], reporteRef?: string | null) => Promise<void>;
-  /** 2.2 → 2.3: persiste los días modificados respecto a lo programado efectivo; el backend
+  /** ADR-121: 2.1 → 2.3 directo (2.2 "Capturar Programados" ya no es un paso manual —
+   * se salta; el fallback de `spots_programados` a `spots_asignados` cubre la
+   * comparación). Persiste los días modificados respecto a lo verificado; el backend
    * genera las incidencias correspondientes. Devuelve las incidencias generadas (para que la
    * pantalla las pueda mostrar de inmediato). */
   avanzarAReales: (oeId: string, input: AvanzarARealesInput) => Promise<Incidencia[]>;
+  /** ADR-104: cancela UN día puntual de la OE, en cualquier momento. El backend genera la
+   * Incidencia y recalcula los importes de la OE; también libera el cupo de spots en el
+   * balance de la OC (por eso también se refresca), igual criterio que `avanzarAReales`. */
+  cancelarDia: (oeId: string, diaId: string, motivo: string) => Promise<void>;
   /** Estado 2 → 3. */
   cerrarOC: (ocId: string, input: CerrarOCInput) => Promise<void>;
 }
@@ -174,8 +172,8 @@ export function OrdenesProvider({
   const value = useMemo<OrdenesContextValue>(
     () => ({
       state,
-      crearOC: async (input, conVobo) => {
-        const dto = await crearOrdenClienteApi(ordenClienteCreateToApi(input, conVobo));
+      crearOC: async (input) => {
+        const dto = await crearOrdenClienteApi(ordenClienteCreateToApi(input));
         const oc = await refrescarOrdenCliente(dto.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
         return oc;
@@ -188,29 +186,15 @@ export function OrdenesProvider({
         const actual = state.ordenesCliente.find((o) => o.id === id);
         const congelada = actual ? FROZEN_STATES.includes(actual.estatus_orden) : false;
 
-        // 1. Checklist: solo los ítems que de verdad cambiaron (canal propio, un PATCH por
-        // ítem — no hay "PUT masivo" de checklist en el backend real).
-        if (patch.revision_checklist) {
-          const anteriorChecklist = actual?.revision_checklist ?? {};
-          for (const [item, completado] of Object.entries(patch.revision_checklist)) {
-            if (anteriorChecklist[item] !== completado) {
-              await toggleVoboApi(id, item, completado);
-            }
-          }
-        }
-        // 2. Campos normales (PUT) — nunca incluye comisión ni checklist (ver toApi.ts).
-        // Se omite por completo si la OC está congelada.
+        // 1. Campos normales (PUT) — nunca incluye comisión (ver toApi.ts). Se omite por
+        // completo si la OC está congelada.
         if (!congelada) {
           const bodyPut = ordenClienteUpdateToApi(patch);
           if (Object.keys(bodyPut).length > 0) {
             await actualizarOrdenClienteApi(id, bodyPut);
           }
         }
-        // 3. Dar Vo.Bo., si el patch lo pide (mismo atajo que usa el formulario).
-        if (patch.estatus_orden === "orden_cliente_con_vobo") {
-          await darVoboApi(id);
-        }
-        // 4. Comisiones — canal dedicado (Dirección/Admin), solo si el llamador trae
+        // 2. Comisiones — canal dedicado (Dirección/Admin), solo si el llamador trae
         // auditoría (el formulario solo la manda cuando de verdad cambió un %).
         const cambioComision = Boolean(opts?.auditoria);
         if (cambioComision && opts?.auditoria) {
@@ -244,11 +228,6 @@ export function OrdenesProvider({
         dispatch({ type: "REEMPLAZAR_OE", oe });
         return oe;
       },
-      avanzarAProgramados: async (oeId, horariosProgramados, reporteRef) => {
-        await avanzarProgramadosApi(oeId, programadosToApi(horariosProgramados, reporteRef));
-        const oe = await refrescarOrdenEstacion(oeId);
-        dispatch({ type: "REEMPLAZAR_OE", oe });
-      },
       avanzarAReales: async (oeId, input) => {
         await avanzarRealesApi(oeId, realesToApi(input));
         const [oe, incidenciasDto] = await Promise.all([
@@ -261,6 +240,17 @@ export function OrdenesProvider({
         const oc = await refrescarOrdenCliente(oe.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
         return incidenciasNuevas;
+      },
+      cancelarDia: async (oeId, diaId, motivo) => {
+        await cancelarDiaOrdenEstacionApi(oeId, diaId, motivo);
+        const [oe, incidenciasDto] = await Promise.all([
+          refrescarOrdenEstacion(oeId),
+          listarIncidenciasDeOEApi(oeId),
+        ]);
+        dispatch({ type: "REEMPLAZAR_OE", oe });
+        dispatch({ type: "AGREGAR_INCIDENCIAS", incidencias: incidenciasDto.map(incidenciaFromApi) });
+        const oc = await refrescarOrdenCliente(oe.orden_id);
+        dispatch({ type: "REEMPLAZAR_OC", oc });
       },
       cerrarOC: async (ocId, input) => {
         await cerrarOrdenClienteApi(ocId, cerrarToApi(input));

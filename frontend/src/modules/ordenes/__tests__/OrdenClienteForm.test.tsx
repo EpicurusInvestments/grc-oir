@@ -8,7 +8,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { ODC_REVIEW_CHECKLIST } from "../constants";
 import { OrdenClienteForm } from "../ordenCliente/components/OrdenClienteForm";
 import { agencias, anunciantes, contratos, marcas, vendedores } from "../state/catalogosCache";
 import { fieldByLabelText } from "./domHelpers";
@@ -226,30 +225,6 @@ describe("Snapshots de comisión — 1.8", () => {
   });
 });
 
-describe("Checklist de Vo.Bo. — transición 1.1 → 1.2 (1.5)", () => {
-  it("con 9 de 10 ítems marcados, 'Dar Vo.Bo.' permanece deshabilitado", () => {
-    renderForm();
-    for (const item of ODC_REVIEW_CHECKLIST.slice(0, 9)) {
-      fireEvent.click(screen.getByRole("checkbox", { name: item.label }));
-    }
-    expect(screen.getByRole("button", { name: /Dar Vo\.Bo\./ })).toBeDisabled();
-  });
-
-  it("con los 10 ítems marcados, 'Dar Vo.Bo.' se habilita", () => {
-    renderForm();
-    for (const item of ODC_REVIEW_CHECKLIST) {
-      fireEvent.click(screen.getByRole("checkbox", { name: item.label }));
-    }
-    expect(screen.getByRole("button", { name: /Dar Vo\.Bo\./ })).toBeEnabled();
-  });
-
-  it("al editar una OC que ya tiene Vo.Bo., el checklist ni el botón se muestran", () => {
-    renderForm({ isEdit: true, estatusActual: "orden_interna" });
-    expect(screen.queryByText("Checklist de revisión (PO §2)")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Dar Vo\.Bo\./ })).toBeNull();
-  });
-});
-
 describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
   it("fix: congelada deshabilita también los 3 campos de % de comisión (antes seguían editables)", () => {
     const { container } = renderForm({ isEdit: true, estatusActual: "orden_cerrada" });
@@ -270,14 +245,14 @@ describe("Aviso de tarifa cuando la OC ya tiene OE creadas", () => {
   it("con OE ya creadas, avisa que las existentes quedan con la tarifa anterior", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 2 });
     expect(
-      screen.getByText(/Esta OC ya tiene 2 órdenes internas creadas con la tarifa anterior/),
+      screen.getByText(/Esta orden ya tiene 2 Órdenes de Transmisión creadas con la tarifa anterior/),
     ).toBeInTheDocument();
   });
 
   it("con una sola OE, usa singular en vez de '1 órdenes'", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 1 });
     expect(
-      screen.getByText(/Esta OC ya tiene 1 orden interna creada con la tarifa anterior/),
+      screen.getByText(/Esta orden ya tiene 1 Orden de Transmisión creada con la tarifa anterior/),
     ).toBeInTheDocument();
   });
 
@@ -329,7 +304,7 @@ describe("Spots bonificables (ADR-067)", () => {
     const { container, onGuardar } = renderForm();
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Total de spots"), { target: { value: "10" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "11" } });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("No puede exceder el total de spots.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
@@ -343,7 +318,7 @@ describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
       target: { value: ayer },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("La fecha de inicio no puede ser una fecha pasada.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
@@ -386,7 +361,7 @@ describe("Validación: fecha de venta no puede ser pasada", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
       target: { value: ayer },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("La fecha de venta no puede ser una fecha pasada.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
