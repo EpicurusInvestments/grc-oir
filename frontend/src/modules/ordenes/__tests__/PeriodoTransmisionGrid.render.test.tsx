@@ -44,6 +44,47 @@ describe("Horario de transmisión — columna única (ADR-107)", () => {
   });
 });
 
+describe("'+ Agregar día' — no choca con el unique constraint (ADR-134)", () => {
+  it("corrige un bug real: si la fecha calculada topa con el fin de campaña, corre el horario en vez de repetirlo", () => {
+    const onChange = vi.fn();
+    render(
+      <PeriodoTransmisionGrid
+        rows={[makeRow({ fecha: "2025-06-30", hora_inicio: "07:09", hora_termino: "07:09" })]}
+        onChange={onChange}
+        rangoCampania={RANGO}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar día" }));
+
+    const filas = onChange.mock.calls[0][0];
+    expect(filas).toHaveLength(2);
+    const nueva = filas[1];
+    // "+1 día" tope con `rangoCampania.fin` (2025-06-30, ya el último día) — se queda en
+    // la MISMA fecha que la fila existente, así que el horario debe correrse.
+    expect(nueva.fecha).toBe("2025-06-30");
+    expect(nueva.hora_inicio).toBe("07:10");
+    expect(nueva.hora_termino).toBe("07:10");
+  });
+
+  it("sin choque de horario, agrega la fila con el mismo horario de la última (comportamiento normal)", () => {
+    const onChange = vi.fn();
+    render(
+      <PeriodoTransmisionGrid
+        rows={[makeRow({ fecha: "2025-06-10", hora_inicio: "08:00", hora_termino: "08:00" })]}
+        onChange={onChange}
+        rangoCampania={RANGO}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Agregar día" }));
+
+    const nueva = onChange.mock.calls[0][0][1];
+    expect(nueva.fecha).toBe("2025-06-11");
+    expect(nueva.hora_inicio).toBe("08:00");
+  });
+});
+
 describe("Material a Transmitir — default visible y sustitución (ADR-107/ADR-108)", () => {
   it("sin pasar audios en absoluto (undefined), la columna no aparece", () => {
     render(<PeriodoTransmisionGrid rows={[makeRow()]} onChange={vi.fn()} rangoCampania={RANGO} />);
@@ -61,7 +102,7 @@ describe("Material a Transmitir — default visible y sustitución (ADR-107/ADR-
   it("un día SIN orden_estacion_dia_id (recién generado, sin guardar) muestra el default, sin botón de sustitución", () => {
     render(
       <PeriodoTransmisionGrid
-        rows={[makeRow()]}
+        rows={[makeRow({ orden_estacion_dia_id: undefined })]}
         onChange={vi.fn()}
         rangoCampania={RANGO}
         audios={AUDIOS}
@@ -92,6 +133,24 @@ describe("Material a Transmitir — default visible y sustitución (ADR-107/ADR-
     fireEvent.change(combo, { target: { value: "au-2" } });
 
     expect(onAsignarAudio).toHaveBeenCalledWith("dia-1", "au-2");
+  });
+
+  it("ADR-128 (corrige un bug real): con UN solo audio subido, el combo no repite 'Default' y el mismo archivo", () => {
+    const unSoloAudio: OrdenEstacionAudio[] = [{ id: "au-1", nombre_archivo: "unico.mp3", orden: 0 }];
+    render(
+      <PeriodoTransmisionGrid
+        rows={[makeRow({ orden_estacion_dia_id: "dia-1" })]}
+        onChange={vi.fn()}
+        rangoCampania={RANGO}
+        audios={unSoloAudio}
+        onAsignarAudio={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sustitución de Material" }));
+    const combo = screen.getByRole("combobox");
+    const opciones = within(combo).getAllByRole("option");
+    expect(opciones).toHaveLength(1);
+    expect(opciones[0]).toHaveTextContent("Default (unico.mp3)");
   });
 
   it("un día con override propio muestra el nombre de SU audio, no el default", () => {

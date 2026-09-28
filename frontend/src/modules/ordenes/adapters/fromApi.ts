@@ -114,6 +114,10 @@ export function ordenEstacionFromApi(
 
   // Solo los días con un valor CONFIRMADO que difiere del asignado (v5 solo guarda
   // overrides, no la serie completa — ver `programadoEfectivo` en selectors.ts).
+  // ADR-127: cada override lleva su propio `orden_estacion_dia_id` — antes se matcheaba
+  // por `fecha` solamente, lo que confundía las filas cuando una OE tiene 2+ spots el
+  // mismo día (el modelo ya lo permite: `uq_orden_estacion_dia_oe_fecha_hora` incluye
+  // `hora_inicio`, no solo la fecha).
   const horarios_programados: PeriodoTransmisionRow[] = diasOrdenados
     .filter((d) => d.spots_programados != null && d.spots_programados !== d.spots_asignados)
     .map((d) => ({
@@ -121,6 +125,7 @@ export function ordenEstacionFromApi(
       hora_inicio: soloHoraMinuto(d.hora_inicio),
       hora_termino: soloHoraMinuto(d.hora_fin),
       spots_diarios: d.spots_programados as number,
+      orden_estacion_dia_id: d.orden_estacion_dia_id,
     }));
 
   const verificacionPorDia = new Map(verificaciones.map((v) => [v.orden_estacion_dia_id, v]));
@@ -135,6 +140,7 @@ export function ordenEstacionFromApi(
         hora_inicio: soloHoraMinuto(d.hora_inicio),
         hora_termino: soloHoraMinuto(d.hora_fin),
         spots_diarios: verificacion.spots_verificados,
+        orden_estacion_dia_id: d.orden_estacion_dia_id,
       });
     }
   }

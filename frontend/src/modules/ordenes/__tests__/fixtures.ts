@@ -22,6 +22,11 @@ export function makeRow(overrides: Partial<PeriodoTransmisionRow> = {}): Periodo
     hora_inicio: "07:00",
     hora_termino: "08:00",
     spots_diarios: 10,
+    // ADR-127: los selectors matchean overrides (`horarios_programados`/`horarios_reales`)
+    // contra `periodo_transmision` por este id, no por fecha — una fila y su override
+    // deben compartir el mismo id explícitamente (ver `selectors.test.ts`) para que el
+    // match funcione en las pruebas, igual que en datos reales (`fromApi.ts`).
+    orden_estacion_dia_id: nextId("dia"),
     ...overrides,
   };
 }

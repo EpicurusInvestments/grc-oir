@@ -651,6 +651,14 @@ class OrdenEstacionDiaCreate(BaseModel):
     # sentido en el alta (los audios ni siquiera tienen `orden_estacion_audio_id` real
     # todavía); `None` = usa el default.
     audio_staging_ref: str | None = Field(default=None, max_length=500)
+    # ADR-133 (petición del usuario): referencia a un audio YA REAL de esta misma OE
+    # (`OrdenEstacionAudio.orden_estacion_audio_id`) — a diferencia de `audio_staging_ref`
+    # (solo tiene sentido en el alta, cuando los audios ni siquiera existen todavía), este
+    # campo es para `update()`: al reemplazar `dias` completos (editar antes de
+    # transmitir), cada fila puede traer su propia sustitución de material, incluidas las
+    # filas NUEVAS agregadas con "+ Agregar día" en la propia edición. `None` = usa el
+    # default (`audios[0]`).
+    orden_estacion_audio_id: uuid.UUID | None = Field(default=None)
 
     @model_validator(mode="after")
     def _valida_horas(self) -> OrdenEstacionDiaCreate:
@@ -742,7 +750,13 @@ class OrdenEstacionDiaCancelarIn(BaseModel):
 
 
 class OrdenEstacionDiaProgramadoIn(BaseModel):
-    fecha_transmision: date
+    # ADR-127 (corrige un bug real): antes identificaba el día por `fecha_transmision` —
+    # se rompía en cuanto una OE tenía 2+ `OrdenEstacionDia` en la MISMA fecha (varios
+    # horarios/spots el mismo día, algo que el modelo ya permitía —
+    # `uq_orden_estacion_dia_oe_fecha_hora` incluye `hora_inicio`, no solo la fecha—): el
+    # dict de overrides por fecha pisaba unas filas con otras. El id del día es la única
+    # llave que identifica una fila sin ambigüedad.
+    orden_estacion_dia_id: uuid.UUID
     spots_programados: int = Field(ge=0)
 
 
@@ -756,7 +770,9 @@ class OrdenEstacionProgramadosIn(BaseModel):
 
 
 class OrdenEstacionDiaRealIn(BaseModel):
-    fecha_transmision: date
+    # ADR-127: ver el comentario de `OrdenEstacionDiaProgramadoIn` — mismo fix, mismo
+    # motivo (varios spots/horarios por fecha).
+    orden_estacion_dia_id: uuid.UUID
     spots_verificados: int = Field(ge=0)
 
 
@@ -1547,13 +1563,24 @@ class OrdenEstacionService(
         # puede borrar/recrear (violaría la FK). El reemplazo completo de `dias` de abajo
         # los deja INTACTOS: se filtran tanto de lo que se borra como de lo que llega en
         # el payload (el frontend puede seguir mandándolos de vuelta sin que se dupliquen).
-        fechas_canceladas = {
-            d.fecha_transmision
+        # ADR-130 (corrige un bug real): la llave era solo `fecha_transmision` — con 2+
+        # spots de la MISMA fecha (ADR-127, distintos `hora_inicio`), cancelar UNO solo
+        # filtraba TODOS los de esa fecha del payload entrante, y el DELETE de abajo (que
+        # sí borra por fila, `cancelada == False`) se los llevaba sin que el INSERT los
+        # recreara — "cancelar un spot" borraba de facto los demás spots del mismo día.
+        # `(fecha, hora_inicio)` es la llave real de cada fila (mismo criterio que
+        # `uq_orden_estacion_dia_oe_fecha_hora`).
+        horarios_cancelados = {
+            (d.fecha_transmision, d.hora_inicio)
             for d in self._repo.listar_dias(obj.orden_estacion_id)
             if d.cancelada
         }
         if dias_nuevos is not None:
-            dias_nuevos = [d for d in dias_nuevos if d.fecha_transmision not in fechas_canceladas]
+            dias_nuevos = [
+                d
+                for d in dias_nuevos
+                if (d.fecha_transmision, d.hora_inicio) not in horarios_cancelados
+            ]
             for dia in dias_nuevos:
                 if not (oc.fecha_inicio_campania <= dia.fecha_transmision <= oc.fecha_fin_campania):
                     raise DomainError(
@@ -1563,6 +1590,10 @@ class OrdenEstacionService(
                             "campania": [str(oc.fecha_inicio_campania), str(oc.fecha_fin_campania)],
                         },
                     )
+                # ADR-133: valida que el audio referenciado sea de ESTA OE antes de tocar
+                # la base — mismo candado que `asignar_audio_dia` (404 si no).
+                if dia.orden_estacion_audio_id is not None:
+                    self._get_audio_or_404(db, obj.orden_estacion_id, dia.orden_estacion_audio_id)
             nuevos = sum(d.spots_asignados for d in dias_nuevos)
         else:
             nuevos = (
@@ -1699,6 +1730,7 @@ class OrdenEstacionService(
                             else dia.spots_asignados
                         ),
                         spots_asignados=dia.spots_asignados,
+                        orden_estacion_audio_id=dia.orden_estacion_audio_id,
                     )
                 )
 
@@ -1717,10 +1749,10 @@ class OrdenEstacionService(
                 detalles={"estatus": obj.estatus},
             )
         db = self._repo.db
-        overrides = {d.fecha_transmision: d.spots_programados for d in input_.dias}
+        overrides = {d.orden_estacion_dia_id: d.spots_programados for d in input_.dias}
         dias = self._repo.listar_dias(orden_estacion_id)
         for dia in dias:
-            dia.spots_programados = overrides.get(dia.fecha_transmision, dia.spots_asignados)
+            dia.spots_programados = overrides.get(dia.orden_estacion_dia_id, dia.spots_asignados)
         obj.reporte_programados_ref = input_.reporte_programados_ref
         obj.estatus = EstatusOrdenEstacion.EN_TRANSMISION.value
         db.commit()
@@ -1753,7 +1785,7 @@ class OrdenEstacionService(
                 detalles={"estatus": obj.estatus},
             )
         db = self._repo.db
-        overrides = {d.fecha_transmision: d.spots_verificados for d in input_.dias}
+        overrides = {d.orden_estacion_dia_id: d.spots_verificados for d in input_.dias}
         dias = self._repo.listar_dias(orden_estacion_id)
         usuario_id = resolver_usuario_id(db, usuario.username)
         hoy = date.today()
@@ -1766,14 +1798,14 @@ class OrdenEstacionService(
             programado_efectivo = (
                 dia.spots_programados if dia.spots_programados is not None else dia.spots_asignados
             )
-            verificado = overrides.get(dia.fecha_transmision, programado_efectivo)
+            verificado = overrides.get(dia.orden_estacion_dia_id, programado_efectivo)
             verificacion = Verificacion(
                 verificacion_id=uuid4(),
                 orden_estacion_dia_id=dia.orden_estacion_dia_id,
                 spots_verificados=verificado,
                 fecha_verificacion=hoy,
                 notas_verificacion=(
-                    input_.notas_transmision if dia.fecha_transmision in overrides else None
+                    input_.notas_transmision if dia.orden_estacion_dia_id in overrides else None
                 ),
                 reconciliada=True,
                 created_by=usuario_id,

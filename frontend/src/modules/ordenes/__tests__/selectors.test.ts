@@ -357,10 +357,11 @@ describe("Verificaciones derivadas — 1.9", () => {
   });
 
   it("compara programado (efectivo) contra real día a día y marca reconciliada=true", () => {
+    const filaDia1 = makeRow({ fecha: "2025-06-01", spots_diarios: 10 });
     const oe = makeOE({
       estatus: "reales_conciliados",
-      periodo_transmision: [makeRow({ fecha: "2025-06-01", spots_diarios: 10 }), makeRow({ fecha: "2025-06-02", spots_diarios: 10 })],
-      horarios_reales: [makeRow({ fecha: "2025-06-01", spots_diarios: 8 })],
+      periodo_transmision: [filaDia1, makeRow({ fecha: "2025-06-02", spots_diarios: 10 })],
+      horarios_reales: [{ ...filaDia1, spots_diarios: 8 }],
     });
     const verificacion = verificacionDerivada(oe);
     expect(verificacion.reconciliada).toBe(true);

@@ -8,6 +8,7 @@ from __future__ import annotations
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 
 from app.integrations.correo.port import Adjunto
 
@@ -25,6 +26,12 @@ def construir_mime(
     mensaje["Subject"] = asunto
     mensaje["From"] = remitente
     mensaje["To"] = ", ".join(destinatarios)
+    # RFC 5322 las pide en cualquier correo bien formado — sin ellas, algunos clientes
+    # (Outlook Web confirmado) no logran adjuntar/incrustar el mensaje original al
+    # reenviarlo desde un ".eml" suelto (no es parte de un buzón real) y fallan al
+    # guardarlo/enviarlo.
+    mensaje["Date"] = formatdate(localtime=True)
+    mensaje["Message-ID"] = make_msgid()
     mensaje.attach(MIMEText(cuerpo_texto, "plain", "utf-8"))
     for nombre_archivo, contenido, content_type in adjuntos or []:
         subtipo = content_type.split("/", 1)[-1] if "/" in content_type else "octet-stream"

@@ -1091,6 +1091,11 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
 ) -> None:
     oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    primer_dia_id = next(
+        d.orden_estacion_dia_id
+        for d in oe_svc.dias(oe.orden_estacion_id)
+        if d.fecha_transmision == date.today() + timedelta(days=32)
+    )
 
     # 2.1 -> 2.2: confirma un día distinto (el primer día, hoy+32 -> 8, en vez de 10).
     programada = oe_svc.avanzar_programados(
@@ -1098,7 +1103,7 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
         OrdenEstacionProgramadosIn(
             dias=[
                 OrdenEstacionDiaProgramadoIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_programados=8
+                    orden_estacion_dia_id=primer_dia_id, spots_programados=8
                 )
             ],
             reporte_programados_ref="reporte_prog.pdf",
@@ -1114,7 +1119,7 @@ def test_flujo_programados_reales_genera_incidencia_y_cascada(
         OrdenEstacionRealesIn(
             dias=[
                 OrdenEstacionDiaRealIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=6
+                    orden_estacion_dia_id=primer_dia_id, spots_verificados=6
                 )
             ],
             notas_transmision="Corte de programación.",
@@ -1152,13 +1157,18 @@ def test_avanzar_reales_directo_desde_asignada_salta_2_2(
     oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
     assert oe.estatus == EstatusOrdenEstacion.ASIGNADA
+    primer_dia_id = next(
+        d.orden_estacion_dia_id
+        for d in oe_svc.dias(oe.orden_estacion_id)
+        if d.fecha_transmision == date.today() + timedelta(days=32)
+    )
 
     cerrada = oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
             dias=[
                 OrdenEstacionDiaRealIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=6
+                    orden_estacion_dia_id=primer_dia_id, spots_verificados=6
                 )
             ],
             notas_transmision="Corte de programación.",
@@ -1177,6 +1187,71 @@ def test_avanzar_reales_directo_desde_asignada_salta_2_2(
     # spots_programados): faltante calculado contra el ASIGNADO, no contra un
     # "programado" que en este flujo nunca se llegó a capturar.
     assert inc.diferencia_spots == -4  # 6 verificados vs 10 asignados
+
+
+def test_avanzar_reales_con_2_spots_misma_fecha_no_se_pisan(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-127 (corrige un bug real): antes el match de overrides era por
+    `fecha_transmision` — con 2 `OrdenEstacionDia` de la MISMA fecha (2 horarios/spots
+    distintos, algo que el modelo ya permitía: `uq_orden_estacion_dia_oe_fecha_hora`
+    incluye `hora_inicio`), el dict `{fecha: valor}` solo dejaba vivo el último override
+    y aplicaba ESE valor a AMBAS filas. Ahora el match es por `orden_estacion_dia_id`:
+    cada fila debe recibir su propio verificado, sin pisarse."""
+    fecha = date.today() + timedelta(days=32)
+    oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=fecha,
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(7, 0),
+                    spots_asignados=1,
+                ),
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=fecha,
+                    hora_inicio=time(7, 1),
+                    hora_fin=time(7, 1),
+                    spots_asignados=1,
+                ),
+            ],
+        ),
+        VENTAS,
+    )
+    dias = oe_svc.dias(oe.orden_estacion_id)
+    dia_a, dia_b = dias[0], dias[1]
+
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    orden_estacion_dia_id=dia_a.orden_estacion_dia_id, spots_verificados=1
+                ),
+                OrdenEstacionDiaRealIn(
+                    orden_estacion_dia_id=dia_b.orden_estacion_dia_id, spots_verificados=0
+                ),
+            ],
+        ),
+        VENTAS,
+    )
+
+    verificaciones = {
+        v.orden_estacion_dia_id: v.spots_verificados
+        for v in db.scalars(select(Verificacion)).all()
+    }
+    assert verificaciones[dia_a.orden_estacion_dia_id] == 1
+    assert verificaciones[dia_b.orden_estacion_dia_id] == 0
+
+    incidencias = db.scalars(select(Incidencia)).all()
+    assert len(incidencias) == 1  # solo dia_b difiere (0 vs 1 asignado)
+    assert incidencias[0].diferencia_spots == -1
 
 
 def test_crear_oe_guarda_reporte_del_afiliado(

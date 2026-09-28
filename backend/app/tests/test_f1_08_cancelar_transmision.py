@@ -465,6 +465,86 @@ def test_update_con_dias_preserva_el_dia_cancelado(
     assert actualizada.importe_estacion == Decimal("4000.00")  # 5 * 800
 
 
+def test_update_con_2_spots_misma_fecha_cancelar_uno_no_borra_los_demas(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-130 (corrige un bug real): la OE tiene 2 spots de la MISMA fecha (distinto
+    horario, ADR-127). Al cancelar uno y luego guardar la edición (el frontend reenvía
+    TODOS los días que ve, incluido el cancelado — mismo flujo de
+    `test_update_con_dias_preserva_el_dia_cancelado`), el spot NO cancelado de esa misma
+    fecha debe sobrevivir. Antes del fix, `update()` filtraba por `fecha_transmision`
+    sola: cancelar un spot borraba TODOS los de esa fecha del payload entrante, y el
+    DELETE (que sí borra por fila) se los llevaba sin que el INSERT los recreara."""
+    fecha = date.today() + timedelta(days=32)
+    oc = oc_svc.create(_oc_payload(cat, total_spots=20), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=fecha,
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(7, 0),
+                    spots_asignados=1,
+                ),
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=fecha,
+                    hora_inicio=time(7, 1),
+                    hora_fin=time(7, 1),
+                    spots_asignados=1,
+                ),
+            ],
+        ),
+        VENTAS,
+    )
+    dias = oe_svc.dias(oe.orden_estacion_id)
+    dia_a, dia_b = dias[0], dias[1]  # dia_a: 07:00 (se cancela) — dia_b: 07:01 (sobrevive)
+
+    oe_svc.cancelar_dia(
+        oe.orden_estacion_id,
+        dia_a.orden_estacion_dia_id,
+        OrdenEstacionDiaCancelarIn(motivo="x"),
+        VENTAS,
+    )
+
+    # El frontend reenvía TODOS los días que ve en pantalla (incluido el cancelado, con
+    # su horario/spots tal cual) — igual que el test de arriba.
+    actualizada = oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=dia_a.fecha_transmision,
+                    hora_inicio=dia_a.hora_inicio,
+                    hora_fin=dia_a.hora_fin,
+                    spots_asignados=dia_a.spots_asignados,
+                ),
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=dia_b.fecha_transmision,
+                    hora_inicio=dia_b.hora_inicio,
+                    hora_fin=dia_b.hora_fin,
+                    spots_asignados=dia_b.spots_asignados,
+                ),
+            ]
+        ),
+        VENTAS,
+    )
+
+    dias_finales = oe_svc.dias(actualizada.orden_estacion_id)
+    assert len(dias_finales) == 2  # el cancelado (intacto) + el spot sobreviviente
+    cancelado_final = next(
+        d for d in dias_finales if d.orden_estacion_dia_id == dia_a.orden_estacion_dia_id
+    )
+    assert cancelado_final.cancelada is True
+    sobreviviente = next(d for d in dias_finales if d.hora_inicio == time(7, 1))
+    assert sobreviviente.cancelada is False
+    assert sobreviviente.spots_asignados == 1
+
+
 def test_avanzar_reales_no_truena_con_un_dia_ya_cancelado(
     db: Session,
     oc_svc: OrdenClienteService,

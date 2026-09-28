@@ -503,41 +503,18 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
     )
 
-    contenido_marco: list = [
-        tabla_campos,
-        Spacer(1, 12),
-        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
-        Spacer(1, 6),
-        tabla_dias,
-    ]
-
-    horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
-    if len(horarios) == 1:
-        ini, fin = next(iter(horarios))
-        contenido_marco.append(Spacer(1, 8))
-        contenido_marco.append(
-            Paragraph(
-                f"<b>Horario de transmisión:</b> {ini.strftime('%H:%M')} A {fin.strftime('%H:%M')}",
-                _VALOR,
-            )
-        )
-
-    contenido_marco.append(Spacer(1, 6))
-    contenido_marco.append(
-        Paragraph(
-            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
-            _VALOR,
-        )
-    )
-    contenido_marco.append(Spacer(1, 10))
-    contenido_marco.append(
-        Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
-    )
-    contenido_marco.append(Spacer(1, 20))
-    contenido_marco.append(Paragraph(ctx.empresa.direccion_empresa or "—", _PIE_IZQUIERDA))
-
+    # ADR-131 (corrige un bug real): `tabla_dias` YA NO va anidada dentro de la celda de
+    # `marco` — con ADR-127 (varios spots por día) esta tabla puede crecer a muchas más
+    # filas que antes (un renglón por spot, no por día), y una tabla anidada dentro de la
+    # celda de OTRA tabla NO puede partirse entre páginas en reportlab: si el contenido de
+    # esa celda no cabe completo en lo que queda de una página, truena con
+    # `LayoutError` ("too large ... in frame") en vez de continuar en la siguiente. El
+    # marco (borde) ahora envuelve SOLO el encabezado (`tabla_estacion_plaza` +
+    # `tabla_campos`, tamaño fijo, nunca crece con el número de días) — `tabla_dias` y el
+    # resto del contenido van como flowables de nivel superior, igual que ya hacían
+    # `generar_pdf_programados`/`generar_pdf_reales`, que sí paginan sin problema.
     marco = Table(
-        [[tabla_estacion_plaza], [contenido_marco]],
+        [[tabla_estacion_plaza], [[tabla_campos]]],
         colWidths=[_ANCHO_DISPONIBLE],
         style=_MARCO,
     )
@@ -548,7 +525,36 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         ),
         Spacer(1, 10),
         marco,
+        Spacer(1, 12),
+        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
+        Spacer(1, 6),
+        tabla_dias,
     ]
+
+    horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
+    if len(horarios) == 1:
+        ini, fin = next(iter(horarios))
+        elementos.append(Spacer(1, 8))
+        elementos.append(
+            Paragraph(
+                f"<b>Horario de transmisión:</b> {ini.strftime('%H:%M')} A {fin.strftime('%H:%M')}",
+                _VALOR,
+            )
+        )
+
+    elementos.append(Spacer(1, 6))
+    elementos.append(
+        Paragraph(
+            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
+            _VALOR,
+        )
+    )
+    elementos.append(Spacer(1, 10))
+    elementos.append(
+        Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
+    )
+    elementos.append(Spacer(1, 20))
+    elementos.append(Paragraph(ctx.empresa.direccion_empresa or "—", _PIE_IZQUIERDA))
 
     return _build(elementos)
 

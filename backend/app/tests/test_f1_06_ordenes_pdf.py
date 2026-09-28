@@ -270,6 +270,36 @@ def test_pdf_servicio_se_genera_desde_asignada(db: Session, oe_asignada) -> None
     assert len(pdf) > 500
 
 
+def test_pdf_servicio_no_truena_con_muchos_dias(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-131 (corrige un bug real): con ADR-127 (varios spots por fecha) una OE puede
+    tener MUCHAS más filas de `OrdenEstacionDia` que antes (un spot = una fila, no un
+    día = una fila). `tabla_dias` anidada dentro de la celda del "marco" (borde) no podía
+    partirse entre páginas — reportlab tronaba con `LayoutError` en cuanto la tabla de
+    días no cabía completa en lo que quedaba de una página."""
+    oc = oc_svc.create(_oc_payload(cat, total_spots=200), VENTAS)
+    fecha_base = date.today() + timedelta(days=32)
+    dias = [
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha_base + timedelta(days=i // 20),
+            hora_inicio=time(7, i % 20),
+            hora_fin=time(7, i % 20),
+            spots_asignados=1,
+        )
+        for i in range(80)
+    ]
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, dias=dias), VENTAS)
+
+    pdf = generar_pdf_servicio(db, oe.orden_estacion_id)
+
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 500
+
+
 # ── PDF 2: Horarios programados — ADR-121: ya no gateado, disponible desde 'asignada'
 def test_pdf_programados_se_genera_desde_asignada(db: Session, oe_asignada) -> None:
     _, oe = oe_asignada
@@ -282,12 +312,13 @@ def test_pdf_programados_se_genera_tras_avanzar(
     db: Session, oe_svc: OrdenEstacionService, oe_asignada
 ) -> None:
     _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
     oe_svc.avanzar_programados(
         oe.orden_estacion_id,
         OrdenEstacionProgramadosIn(
             dias=[
                 OrdenEstacionDiaProgramadoIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_programados=5
+                    orden_estacion_dia_id=dia_id, spots_programados=5
                 )
             ],
             reporte_programados_ref="ordenes/prog/x_reporte.pdf",
@@ -375,13 +406,14 @@ def test_pdf_reales_se_genera_tras_cerrar(
     db: Session, oe_svc: OrdenEstacionService, oe_asignada
 ) -> None:
     _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
     oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
             dias=[
                 OrdenEstacionDiaRealIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=4
+                    orden_estacion_dia_id=dia_id, spots_verificados=4
                 )
             ],
             reporte_reales_ref="ordenes/reales/x_reporte.pdf",
@@ -408,13 +440,14 @@ def test_pdf_reales_no_truena_con_descripcion_larga(
         VENTAS,
     )
     oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
     oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
     oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
             dias=[
                 OrdenEstacionDiaRealIn(
-                    fecha_transmision=date.today() + timedelta(days=32), spots_verificados=4
+                    orden_estacion_dia_id=dia_id, spots_verificados=4
                 )
             ],
         ),

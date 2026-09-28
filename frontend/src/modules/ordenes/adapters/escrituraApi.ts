@@ -288,17 +288,43 @@ export async function enviarCorreoPdfOrdenEstacionApi(
   return data;
 }
 
-/** ADR-120: envía el paquete fijo de la Orden de Transmisión (PDF de Programados +
- * Material a Transmitir) a los contactos activos con correo del afiliado — sin body,
- * destinatarios resueltos por el backend. Lanza si no hay contactos o si el envío
- * falla (bitácora igual queda registrada). */
+/** ADR-120/ADR-126: envía el PDF `tipo` (servicio/programados/reales) + Material a
+ * Transmitir (si tiene) a los contactos activos con correo del afiliado — sin body,
+ * destinatarios resueltos por el backend. Lanza si no hay contactos, si la OE no ha
+ * llegado al sub-estado que ese PDF requiere, o si el envío falla (bitácora igual
+ * queda registrada). */
 export async function enviarCorreoOrdenTransmisionApi(
   ordenEstacionId: string,
+  tipo: TipoPdfOrdenEstacion,
 ): Promise<LogEnvioCorreoApiDTO> {
   const { data } = await apiClient.post<LogEnvioCorreoApiDTO>(
-    `/ordenes/estaciones/${ordenEstacionId}/correo-orden-transmision`,
+    `/ordenes/estaciones/${ordenEstacionId}/pdf/${tipo}/correo-orden-transmision`,
   );
   return data;
+}
+
+/** ADR-124/ADR-126: arma el paquete del PDF `tipo` (+ Material a Transmitir, a los
+ * contactos activos del afiliado) pero lo descarga como `.eml` — el usuario lo abre con
+ * su cliente de correo de escritorio (Outlook, etc.), que lo recibe como un borrador
+ * editable con todo ya adjunto, y lo manda él mismo desde su propia cuenta. */
+export async function descargarEmlOrdenTransmisionApi(
+  ordenEstacionId: string,
+  tipo: TipoPdfOrdenEstacion,
+  nombreArchivo: string,
+): Promise<void> {
+  const { data } = await apiClient.post<Blob>(
+    `/ordenes/estaciones/${ordenEstacionId}/pdf/${tipo}/correo-orden-transmision/eml`,
+    undefined,
+    { responseType: "blob" },
+  );
+  const url = URL.createObjectURL(data);
+  const enlace = document.createElement("a");
+  enlace.href = url;
+  enlace.download = nombreArchivo;
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export async function listarEnviosCorreoOrdenEstacionApi(

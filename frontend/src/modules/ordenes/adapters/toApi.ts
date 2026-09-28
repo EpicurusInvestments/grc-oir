@@ -133,11 +133,15 @@ export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
     precio_spot: input.precio_spot,
     cantidad_spots_bonificables: input.cantidad_spots_bonificables,
     observaciones_estacion: input.observaciones_estacion || null,
+    // ADR-133: propaga la sustitución de material de cada fila (incluidas las
+    // agregadas en esta misma edición, sin `orden_estacion_dia_id` real todavía) — antes
+    // se perdía en cada "Guardar" porque `update()` reemplaza TODOS los días.
     dias: input.periodo_transmision.map((row) => ({
       fecha_transmision: row.fecha,
       hora_inicio: row.hora_inicio,
       hora_fin: row.hora_termino,
       spots_asignados: row.spots_diarios,
+      orden_estacion_audio_id: row.orden_estacion_audio_id || null,
     })),
     motivo_cambio_tarifa: input.motivo_cambio_tarifa || null,
     // ADR-121: corregible mientras la OE siga editable (antes de 2.3 Reales).
@@ -148,7 +152,12 @@ export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
 // ── OrdenEstacion: 2.1 → 2.3 (ADR-121: 2.2 ya no es un paso manual — se salta) ──
 export function realesToApi(input: AvanzarARealesInput) {
   return {
-    dias: input.horariosReales.map((row) => ({ fecha_transmision: row.fecha, spots_verificados: row.spots_diarios })),
+    // ADR-127: el match es por `orden_estacion_dia_id`, no por fecha — ver el comentario
+    // en `RealesForm.tsx` (2+ spots pueden compartir fecha).
+    dias: input.horariosReales.map((row) => ({
+      orden_estacion_dia_id: row.orden_estacion_dia_id,
+      spots_verificados: row.spots_diarios,
+    })),
     notas_transmision: input.notasTransmision,
     reporte_reales_ref: input.reporteRef ?? null,
   };

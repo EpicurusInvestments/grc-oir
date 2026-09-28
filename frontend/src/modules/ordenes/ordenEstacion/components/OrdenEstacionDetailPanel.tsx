@@ -10,6 +10,7 @@ import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/t
 import { ApiRequestError } from "@/shared/lib/apiClient";
 
 import {
+  descargarEmlOrdenTransmisionApi,
   enviarCorreoOrdenTransmisionApi,
   listarAudiosOrdenEstacionApi,
   listarEnviosCorreoOrdenEstacionApi,
@@ -65,9 +66,9 @@ export function OrdenEstacionDetailPanel({
 
   const incidenciasDeLaOE = incidencias.filter((i) => i.orden_interna_id === oe.id);
 
-  // ADR-105/ADR-120: historial de envíos por correo — se recarga al cambiar de OE. El
-  // envío "bundle" (`orden_transmision`) ya no es por-PDF, así que el último envío
-  // exitoso se muestra UNA vez para toda la OE, sin importar qué botón lo disparó.
+  // ADR-105/ADR-120/ADR-126: historial de envíos por correo — se recarga al cambiar de
+  // OE. Desde ADR-126 cada botón manda su propio PDF, así que el último envío exitoso
+  // se muestra por-tipo dentro de cada `FilaPdf` (mismo `tipoPdf` que ese botón).
   const [envios, setEnvios] = useState<LogEnvioCorreo[]>([]);
   useEffect(() => {
     let cancelado = false;
@@ -80,7 +81,6 @@ export function OrdenEstacionDetailPanel({
       cancelado = true;
     };
   }, [oe.id]);
-  const ultimoEnvio = envios.find((e) => e.tipoPdf === "orden_transmision" && e.exitoso);
 
   // ADR-120: "Enviar por correo" se deshabilita si el afiliado no tiene ningún contacto
   // ACTIVO con correo cargado (`ContactoAfiliado`) — se avisa antes de intentar, no se
@@ -295,12 +295,28 @@ export function OrdenEstacionDetailPanel({
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginRight: "auto" }}>
+        {/* ADR-135 (petición del usuario): esta sección (los 3 PDF + su historial de
+            envío) ya NO puede crecer libremente — antes, entre más PDFs con "Enviado
+            a..." acumulaban, más le quitaba espacio al `.db` de arriba (flex:1), que se
+            veía apachurrado. Con un `maxHeight` + scroll propio, `.df` queda con una
+            altura acotada y `.db` recupera todo su espacio. */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            marginRight: "auto",
+            maxHeight: 190,
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+        >
           <FilaPdf
             oe={oe}
             tipo="servicio"
             etiqueta="PDF #1 · Orden de servicio"
             puedeEnviarCorreo={puedeEnviarCorreo}
+            envios={envios}
             onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
           {/* ADR-121: ya no gateado por sub-estado — los horarios "programados" se
@@ -310,6 +326,7 @@ export function OrdenEstacionDetailPanel({
             tipo="programados"
             etiqueta="PDF #2 · Programados"
             puedeEnviarCorreo={puedeEnviarCorreo}
+            envios={envios}
             onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
           {oe.estatus === "reales_conciliados" && (
@@ -318,14 +335,9 @@ export function OrdenEstacionDetailPanel({
               tipo="reales"
               etiqueta="PDF #3 · Reales"
               puedeEnviarCorreo={puedeEnviarCorreo}
+              envios={envios}
               onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
             />
-          )}
-          {ultimoEnvio && (
-            <div className="fv muted" style={{ fontSize: 11 }}>
-              Orden de Transmisión enviada a {ultimoEnvio.destinatarioEmail} el{" "}
-              {fmtFechaHora(ultimoEnvio.fechaEnvio)}
-            </div>
           )}
         </div>
         {/* ADR-121: "Capturar Programados" (2.2) ya no es un paso manual — se salta
@@ -357,17 +369,33 @@ function FilaPdf({
   tipo,
   etiqueta,
   puedeEnviarCorreo,
+  envios,
   onEnviado,
 }: {
   oe: OrdenEstacion;
   tipo: TipoPdfOrdenEstacion;
   etiqueta: string;
   puedeEnviarCorreo: boolean;
+  envios: LogEnvioCorreo[];
   onEnviado: (log: LogEnvioCorreo) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [abriendoCorreo, setAbriendoCorreo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ADR-126: el bundle ahora manda el PDF de ESTE botón, así que el último envío
+  // exitoso se filtra por el mismo `tipoPdf` (ya no por el valor fijo "orden_transmision").
+  const ultimoEnvio = envios.find((e) => e.tipoPdf === tipo && e.exitoso);
+  // ADR-135 (petición del usuario): "Enviado a..." ya no queda fijo para siempre — se
+  // muestra como confirmación y se oculta solo a los 10s (reaparece si se manda otro
+  // correo, por el `useEffect` reiniciando el timer cada vez que cambia `ultimoEnvio`).
+  const [mostrarUltimoEnvio, setMostrarUltimoEnvio] = useState(true);
+  useEffect(() => {
+    if (!ultimoEnvio) return;
+    setMostrarUltimoEnvio(true);
+    const t = setTimeout(() => setMostrarUltimoEnvio(false), 10_000);
+    return () => clearTimeout(t);
+  }, [ultimoEnvio?.id]);
 
   const imprimir = () => {
     setError(null);
@@ -380,13 +408,33 @@ function FilaPdf({
     setEnviando(true);
     setError(null);
     try {
-      const dto = await enviarCorreoOrdenTransmisionApi(oe.id);
+      const dto = await enviarCorreoOrdenTransmisionApi(oe.id, tipo);
       onEnviado(logEnvioCorreoFromApi(dto));
       setAbierto(false);
     } catch (e) {
       setError(e instanceof ApiRequestError ? e.message : "No se pudo enviar el correo.");
     } finally {
       setEnviando(false);
+    }
+  };
+
+  // ADR-124/ADR-126: descarga el ".eml" con el PDF de ESTE botón (+ Material a
+  // Transmitir, si tiene, a los contactos activos del afiliado) — el usuario lo abre
+  // con doble clic en su cliente de correo de escritorio (Outlook, etc.), que lo recibe
+  // como un borrador editable con todo ya adjunto, y lo manda él mismo.
+  const abrirCorreo = async () => {
+    setAbriendoCorreo(true);
+    setError(null);
+    try {
+      await descargarEmlOrdenTransmisionApi(
+        oe.id,
+        tipo,
+        `orden_transmision_${tipo}_${oe.folio_orden_interna}.eml`,
+      );
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : "No se pudo generar el correo.");
+    } finally {
+      setAbriendoCorreo(false);
     }
   };
 
@@ -421,6 +469,20 @@ function FilaPdf({
             <button type="button" className="btn btn-sm" disabled={enviando} onClick={imprimir}>
               🖨️ Imprimir
             </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={enviando || abriendoCorreo || !puedeEnviarCorreo}
+              title={
+                puedeEnviarCorreo
+                  ? "Usa Reenviar para enviar el correo"
+                  : "El afiliado no tiene contactos activos con correo cargado."
+              }
+              aria-label="Abrir correo"
+              onClick={abrirCorreo}
+            >
+              {abriendoCorreo ? "Abriendo…" : "📧 Abrir correo"}
+            </button>
             <button type="button" className="btn btn-sm" disabled={enviando} onClick={() => setAbierto(false)}>
               Cancelar
             </button>
@@ -428,6 +490,11 @@ function FilaPdf({
         )}
       </div>
       {error && <div className="fe">{error}</div>}
+      {ultimoEnvio && mostrarUltimoEnvio && (
+        <div className="fv muted" style={{ fontSize: 11 }}>
+          Enviado a {ultimoEnvio.destinatarioEmail} el {fmtFechaHora(ultimoEnvio.fechaEnvio)}
+        </div>
+      )}
     </div>
   );
 }

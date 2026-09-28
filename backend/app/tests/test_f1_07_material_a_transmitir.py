@@ -57,6 +57,7 @@ from app.modules.ordenes.orden_estacion import (
     OrdenEstacionDiaCreate,
     OrdenEstacionRepository,
     OrdenEstacionService,
+    OrdenEstacionUpdate,
 )
 from app.modules.ordenes.router import router as ordenes_router
 from app.modules.usuarios.models import Usuario
@@ -582,6 +583,162 @@ def test_asignar_audio_dia_de_otra_oe_404(
             oe2.orden_estacion_id,
             dia_de_oe2.orden_estacion_dia_id,
             OrdenEstacionDiaAudioIn(orden_estacion_audio_id=audio_de_oe1.orden_estacion_audio_id),
+            VENTAS,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ADR-133: `update()` — la sustitución de material sobrevive al "Guardar" completo
+# ══════════════════════════════════════════════════════════════════════════════════
+def test_update_con_dias_preserva_sustitucion_de_material_existente(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+    tmp_path,
+) -> None:
+    """Antes del fix: `update()` reemplaza TODOS los días (borra + recrea) y el schema
+    de entrada no llevaba `orden_estacion_audio_id` — cualquier "Guardar" del formulario
+    de edición borraba en silencio las sustituciones ya hechas vía el endpoint dedicado
+    (`asignar_audio_dia`), sin que el usuario lo pidiera."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    audio_default = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("uno.mp3", MP3_BYTES), VENTAS, almacenamiento
+    )
+    audio_alterno = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("dos.mp3", MP3_BYTES), VENTAS, almacenamiento
+    )
+    dia = oe_svc.dias(oe.orden_estacion_id)[0]
+    oe_svc.asignar_audio_dia(
+        oe.orden_estacion_id,
+        dia.orden_estacion_dia_id,
+        OrdenEstacionDiaAudioIn(orden_estacion_audio_id=audio_alterno.orden_estacion_audio_id),
+        VENTAS,
+    )
+
+    # El frontend reenvía TODOS los días que ve en pantalla, con la sustitución que ya
+    # tenían — "Guardar" no debe perderla.
+    todos_los_dias = oe_svc.dias(oe.orden_estacion_id)
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=d.fecha_transmision,
+                    hora_inicio=d.hora_inicio,
+                    hora_fin=d.hora_fin,
+                    spots_asignados=d.spots_asignados,
+                    orden_estacion_audio_id=d.orden_estacion_audio_id,
+                )
+                for d in todos_los_dias
+            ]
+        ),
+        VENTAS,
+    )
+
+    dias_finales = oe_svc.dias(oe.orden_estacion_id)
+    assert len(dias_finales) == len(todos_los_dias)
+    con_override = next(d for d in dias_finales if d.orden_estacion_audio_id is not None)
+    assert con_override.orden_estacion_audio_id == audio_alterno.orden_estacion_audio_id
+    assert audio_default.orden_estacion_audio_id != audio_alterno.orden_estacion_audio_id  # sanity
+
+
+def test_update_agrega_dia_nuevo_con_sustitucion_de_material(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+    tmp_path,
+) -> None:
+    """El caso que reportó el usuario: agregar un día NUEVO ("+ Agregar día") en la
+    edición, con un material distinto al default, elegido ANTES de que ese día tenga un
+    `orden_estacion_dia_id` real — debe quedar guardado al confirmar la edición."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("uno.mp3", MP3_BYTES), VENTAS, almacenamiento
+    )
+    audio_alterno = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("dos.mp3", MP3_BYTES), VENTAS, almacenamiento
+    )
+    dias_existentes = oe_svc.dias(oe.orden_estacion_id)
+    dia_nuevo = OrdenEstacionDiaCreate(
+        fecha_transmision=date.today() + timedelta(days=40),
+        hora_inicio=time(7, 0),
+        hora_fin=time(7, 0),
+        spots_asignados=3,
+        orden_estacion_audio_id=audio_alterno.orden_estacion_audio_id,
+    )
+
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=d.fecha_transmision,
+                    hora_inicio=d.hora_inicio,
+                    hora_fin=d.hora_fin,
+                    spots_asignados=d.spots_asignados,
+                )
+                for d in dias_existentes
+            ]
+            + [dia_nuevo],
+        ),
+        VENTAS,
+    )
+
+    dias_finales = oe_svc.dias(oe.orden_estacion_id)
+    dia_creado = next(d for d in dias_finales if d.fecha_transmision == dia_nuevo.fecha_transmision)
+    assert dia_creado.orden_estacion_audio_id == audio_alterno.orden_estacion_audio_id
+
+
+def test_update_con_orden_estacion_audio_id_de_otra_oe_404(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+    tmp_path,
+) -> None:
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe1 = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    oe2 = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            dias=[
+                OrdenEstacionDiaCreate(
+                    fecha_transmision=date.today() + timedelta(days=33),
+                    hora_inicio=time(7, 0),
+                    hora_fin=time(9, 0),
+                    spots_asignados=10,
+                )
+            ],
+        ),
+        VENTAS,
+    )
+    audio_de_oe1 = oe_svc.agregar_audio(
+        oe1.orden_estacion_id, _ArchivoFalso("uno.mp3", MP3_BYTES), VENTAS, almacenamiento
+    )
+    dia_de_oe2 = oe_svc.dias(oe2.orden_estacion_id)[0]
+
+    with pytest.raises(NotFoundError):
+        oe_svc.update(
+            oe2.orden_estacion_id,
+            OrdenEstacionUpdate(
+                dias=[
+                    OrdenEstacionDiaCreate(
+                        fecha_transmision=dia_de_oe2.fecha_transmision,
+                        hora_inicio=dia_de_oe2.hora_inicio,
+                        hora_fin=dia_de_oe2.hora_fin,
+                        spots_asignados=dia_de_oe2.spots_asignados,
+                        orden_estacion_audio_id=audio_de_oe1.orden_estacion_audio_id,
+                    )
+                ]
+            ),
             VENTAS,
         )
 

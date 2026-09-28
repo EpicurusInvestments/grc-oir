@@ -4,8 +4,8 @@
  * Componente puramente presentacional: no necesita ningún Provider.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { previsualizarPdfOrdenEstacion } from "../adapters/pdfsApi";
 import { OrdenEstacionDetailPanel } from "../ordenEstacion/components/OrdenEstacionDetailPanel";
@@ -14,6 +14,23 @@ import { makeOC, makeOE, makeRow } from "./fixtures";
 
 vi.mock("../adapters/pdfsApi", () => ({
   previsualizarPdfOrdenEstacion: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../adapters/escrituraApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/escrituraApi")>()),
+  listarEnviosCorreoOrdenEstacionApi: vi.fn().mockResolvedValue([
+    {
+      log_envio_correo_id: "log-1",
+      orden_estacion_id: "oe-envio",
+      tipo_pdf: "servicio",
+      destinatario_email: "contacto@afiliado.com",
+      usuario: "dev.admin",
+      exitoso: true,
+      mensaje_error: null,
+      fecha_envio: "2026-09-27T14:48:00",
+    },
+  ]),
+  listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
 }));
 
 // `state/catalogosCache.ts` nace vacío; el componente resuelve `estacion`/`tarifaReferencia`
@@ -144,5 +161,31 @@ describe("PDFs de la orden interna — botones de descarga por etapa", () => {
     fireEvent.click(screen.getByText("🖨️ Imprimir"));
     expect(previsualizarPdfOrdenEstacion).toHaveBeenCalledWith(oe.id, "reales", oe.folio_orden_interna);
     await waitFor(() => expect(screen.queryByText("🖨️ Imprimir")).toBeNull());
+  });
+});
+
+describe("'Enviado a...' es una confirmación transitoria (ADR-135)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("se muestra al cargar el historial y se oculta sola a los 10s", async () => {
+    const oe = makeOE({ estatus: "reales_conciliados" });
+    vi.useFakeTimers();
+    renderPanel(oe, makeOC());
+
+    // Deja resolver el `listarEnviosCorreoOrdenEstacionApi` mockeado (microtask).
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Enviado a contacto@afiliado\.com/)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(screen.queryByText(/Enviado a contacto@afiliado\.com/)).toBeNull();
   });
 });

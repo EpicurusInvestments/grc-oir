@@ -2,6 +2,19 @@
  * comparando contra lo PROGRAMADO EFECTIVO (el override de `horarios_programados` si lo
  * hay, si no lo asignado). Al avanzar se genera una incidencia por cada día con diferencia
  * de spots — la vista previa de "esto se va a generar" ya se calcula aquí mismo.
+ *
+ * ADR-108 (mismo criterio que `PeriodoTransmisionGrid.tsx`, petición del usuario):
+ * "Hora inicio"/"Hora término" dejan de ser 2 columnas Y 2 valores separados — una sola
+ * columna "Horario de transmisión" con UN solo `<input type="time">`; `hora_inicio`/
+ * `hora_termino` (columnas del modelo, sin cambio de esquema) se capturan siempre con el
+ * MISMO valor.
+ *
+ * ADR-127 (corrige un bug real): el diccionario de overrides se indexa por
+ * `orden_estacion_dia_id`, NO por `fecha` — una OE puede tener 2+ filas de
+ * `periodo_transmision` con la MISMA fecha (varios spots/horarios el mismo día, ya
+ * permitido por el modelo); indexar por fecha hacía que editar/quitar una fila afectara
+ * a TODAS las que compartían fecha. `RealesForm` solo se abre sobre una OE ya guardada,
+ * así que todo `row` siempre trae su `orden_estacion_dia_id` real.
  */
 
 import { useEffect, useState } from "react";
@@ -46,7 +59,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
   const [overrides, setOverrides] = useState<Record<string, Draft>>(() => {
     const inicial: Record<string, Draft> = {};
     (oe.horarios_reales ?? []).forEach((row) => {
-      inicial[row.fecha] = { ...row, editing: false };
+      inicial[row.orden_estacion_dia_id!] = { ...row, editing: false };
     });
     return inicial;
   });
@@ -80,29 +93,31 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
   }, [oe.id]);
 
   const abrirEdicion = (programado: PeriodoTransmisionRow) => {
-    setOverrides((prev) => ({ ...prev, [programado.fecha]: { ...(prev[programado.fecha] ?? programado), editing: true } }));
+    const diaId = programado.orden_estacion_dia_id!;
+    setOverrides((prev) => ({ ...prev, [diaId]: { ...(prev[diaId] ?? programado), editing: true } }));
   };
   const cerrarEdicion = (programado: PeriodoTransmisionRow) => {
+    const diaId = programado.orden_estacion_dia_id!;
     setOverrides((prev) => {
-      const draft = prev[programado.fecha];
+      const draft = prev[diaId];
       if (!draft) return prev;
       if (!distinto(draft, programado)) {
         const copia = { ...prev };
-        delete copia[programado.fecha];
+        delete copia[diaId];
         return copia;
       }
-      return { ...prev, [programado.fecha]: { ...draft, editing: false } };
+      return { ...prev, [diaId]: { ...draft, editing: false } };
     });
   };
-  const quitarOverride = (fecha: string) => {
+  const quitarOverride = (diaId: string) => {
     setOverrides((prev) => {
       const copia = { ...prev };
-      delete copia[fecha];
+      delete copia[diaId];
       return copia;
     });
   };
-  const actualizarDraft = (fecha: string, patch: Partial<PeriodoTransmisionRow>) => {
-    setOverrides((prev) => ({ ...prev, [fecha]: { ...prev[fecha], ...patch } }));
+  const actualizarDraft = (diaId: string, patch: Partial<PeriodoTransmisionRow>) => {
+    setOverrides((prev) => ({ ...prev, [diaId]: { ...prev[diaId], ...patch } }));
   };
 
   const algunaEnEdicion = Object.values(overrides).some((o) => o.editing);
@@ -115,7 +130,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
   let montoNeto = 0;
   oe.periodo_transmision.forEach((row) => {
     const programado = programadoEfectivo(oe, row);
-    const ov = overrides[row.fecha];
+    const ov = overrides[row.orden_estacion_dia_id!];
     totalProgramado += programado.spots_diarios;
     const real = ov && !ov.editing ? ov : programado;
     totalReal += real.spots_diarios;
@@ -131,7 +146,13 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
   const avanzar = () => {
     const horariosReales: PeriodoTransmisionRow[] = Object.values(overrides)
       .filter((o) => !o.editing)
-      .map((o) => ({ fecha: o.fecha, hora_inicio: o.hora_inicio, hora_termino: o.hora_termino, spots_diarios: o.spots_diarios }));
+      .map((o) => ({
+        fecha: o.fecha,
+        hora_inicio: o.hora_inicio,
+        hora_termino: o.hora_termino,
+        spots_diarios: o.spots_diarios,
+        orden_estacion_dia_id: o.orden_estacion_dia_id,
+      }));
     onAvanzar(horariosReales, {
       notasTransmision: notas.trim() || null,
       reporteRef,
@@ -157,8 +178,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
               <tr>
                 <th>Día</th>
                 <th>Fecha</th>
-                <th>Hora inicio</th>
-                <th>Hora término</th>
+                <th>Horario de transmisión</th>
                 <th className="td-center">Spots</th>
                 <th className="td-center">Resultado</th>
                 <th style={{ width: 140 }} />
@@ -166,14 +186,15 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
             </thead>
             <tbody>
               {oe.periodo_transmision.map((row) => {
+                const diaId = row.orden_estacion_dia_id!;
                 const programado = programadoEfectivo(oe, row);
-                const ov = overrides[row.fecha];
+                const ov = overrides[diaId];
                 const modificado = ov && !ov.editing && distinto(programado, ov);
                 const fila = ov ?? programado;
                 const diff = modificado ? fila.spots_diarios - programado.spots_diarios : 0;
 
                 return (
-                  <tr key={row.fecha} style={modificado ? { background: "var(--amber-bg)" } : undefined}>
+                  <tr key={diaId} style={modificado ? { background: "var(--amber-bg)" } : undefined}>
                     <td className="td-2" style={{ fontSize: 11 }}>
                       {diaDeSemana(row.fecha)}
                     </td>
@@ -186,16 +207,12 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
                             className="fi"
                             style={{ marginBottom: 0 }}
                             value={fila.hora_inicio}
-                            onChange={(e) => actualizarDraft(row.fecha, { hora_inicio: e.target.value })}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="time"
-                            className="fi"
-                            style={{ marginBottom: 0 }}
-                            value={fila.hora_termino}
-                            onChange={(e) => actualizarDraft(row.fecha, { hora_termino: e.target.value })}
+                            onChange={(e) =>
+                              actualizarDraft(diaId, {
+                                hora_inicio: e.target.value,
+                                hora_termino: e.target.value,
+                              })
+                            }
                           />
                         </td>
                         <td className="td-center">
@@ -204,7 +221,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
                             className="fi"
                             style={{ marginBottom: 0, textAlign: "center", fontFamily: "var(--mono)" }}
                             value={fila.spots_diarios}
-                            onChange={(e) => actualizarDraft(row.fecha, { spots_diarios: Number.parseInt(e.target.value, 10) || 0 })}
+                            onChange={(e) => actualizarDraft(diaId, { spots_diarios: Number.parseInt(e.target.value, 10) || 0 })}
                           />
                         </td>
                         <td className="td-center">—</td>
@@ -217,7 +234,6 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
                     ) : (
                       <>
                         <td className="td-mono">{fila.hora_inicio}</td>
-                        <td className="td-mono">{fila.hora_termino}</td>
                         <td className="td-center td-mono">{fila.spots_diarios}</td>
                         <td className="td-center">
                           {!modificado ? (
@@ -236,7 +252,7 @@ export function RealesForm({ oe, submitting, submitError, onAvanzar, onCancelar 
                               Editar
                             </button>
                             {modificado && (
-                              <button type="button" className="btn btn-xs btn-danger" onClick={() => quitarOverride(row.fecha)}>
+                              <button type="button" className="btn btn-xs btn-danger" onClick={() => quitarOverride(diaId)}>
                                 ✕
                               </button>
                             )}

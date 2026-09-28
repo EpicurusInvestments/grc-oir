@@ -1,11 +1,13 @@
-"""Pruebas F1-11 · Envío por correo "bundle" de la Orden de Transmisión (ADR-120).
+"""Pruebas F1-11 · Envío por correo "bundle" de la Orden de Transmisión (ADR-120/ADR-126).
 
 Cubre: envío exitoso a TODOS los contactos activos con correo del afiliado (ignora
-inactivos y los que no tienen correo cargado), adjunta el PDF de Programados + todo el
-Material a Transmitir, 400 si el afiliado no tiene ningún contacto activo con correo,
-falla del adaptador de correo (bitácora igual queda registrada, `exitoso=False`), 404 de
-OE inexistente, y el flujo HTTP completo con el backend `local` de correo/almacenamiento
-inyectado por dependencia (mismo patrón que `test_f1_09_envio_correo_pdf.py`).
+inactivos y los que no tienen correo cargado), adjunta el PDF que corresponde al `tipo`
+pedido (servicio/programados/reales — ADR-126: cada botón manda SU PROPIO PDF, ya no
+siempre el de Programados) + todo el Material a Transmitir, 400 si el afiliado no tiene
+ningún contacto activo con correo, falla del adaptador de correo (bitácora igual queda
+registrada, `exitoso=False`), 404 de OE inexistente, y el flujo HTTP completo con el
+backend `local` de correo/almacenamiento inyectado por dependencia (mismo patrón que
+`test_f1_09_envio_correo_pdf.py`).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from app.modules.ordenes.envio_correo_pdf import (
     LogEnvioCorreoOrdenEstacion,
     TipoPdfOrdenEstacion,
     enviar_correo_orden_transmision,
+    generar_eml_orden_transmision,
 )
 from app.modules.ordenes.incidencia import Incidencia  # noqa: F401 — registra la tabla
 from app.modules.ordenes.orden_cliente import (
@@ -315,10 +318,12 @@ def test_manda_solo_a_contactos_activos_con_correo_e_ignora_los_demas(
     _agregar_contacto(db, _afiliado_de(db, oe), nombre="Activo Uno", email="uno@x.com")
     correo = FakeCorreoExitoso()
 
-    log = enviar_correo_orden_transmision(db, oe.orden_estacion_id, VENTAS, correo, almacenamiento)
+    log = enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, correo, almacenamiento
+    )
 
     assert log.exitoso is True
-    assert log.tipo_pdf == TipoPdfOrdenEstacion.ORDEN_TRANSMISION
+    assert log.tipo_pdf == TipoPdfOrdenEstacion.PROGRAMADOS
     assert "uno@x.com" in log.destinatario_email
     assert len(correo.enviados) == 1
     assert correo.enviados[0]["asunto"] == "Orden de Transmisión"
@@ -342,7 +347,9 @@ def test_ignora_contactos_inactivos_o_sin_correo(
     _agregar_contacto(db, afiliado_id, nombre="Sin correo", email=None)
     correo = FakeCorreoExitoso()
 
-    log = enviar_correo_orden_transmision(db, oe.orden_estacion_id, VENTAS, correo, almacenamiento)
+    log = enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, correo, almacenamiento
+    )
 
     assert log.destinatario_email == "si@x.com"
 
@@ -356,7 +363,14 @@ def test_sin_contactos_activos_con_correo_400(
     correo = FakeCorreoExitoso()
 
     with pytest.raises(DomainError):
-        enviar_correo_orden_transmision(db, oe.orden_estacion_id, VENTAS, correo, almacenamiento)
+        enviar_correo_orden_transmision(
+            db,
+            oe.orden_estacion_id,
+            TipoPdfOrdenEstacion.PROGRAMADOS,
+            VENTAS,
+            correo,
+            almacenamiento,
+        )
 
     assert correo.enviados == []
     assert db.scalars(select(LogEnvioCorreoOrdenEstacion)).all() == []
@@ -388,7 +402,9 @@ def test_adjunta_pdf_programados_y_todos_los_audios(
     db.commit()
 
     correo = FakeCorreoExitoso()
-    enviar_correo_orden_transmision(db, oe.orden_estacion_id, VENTAS, correo, almacenamiento)
+    enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, correo, almacenamiento
+    )
 
     adjuntos = correo.enviados[0]["adjuntos"]
     nombres_adjuntos = [nombre for nombre, _contenido, _tipo in adjuntos]
@@ -398,6 +414,32 @@ def test_adjunta_pdf_programados_y_todos_los_audios(
     assert len(nombres_adjuntos) == 3
 
 
+def test_cada_tipo_adjunta_su_propio_pdf(db: Session, oe_en_transmision, almacenamiento) -> None:
+    """ADR-126 (corrección del bug reportado por el usuario): antes SIEMPRE se adjuntaba
+    el PDF de Programados sin importar qué botón disparó el diálogo — ahora cada `tipo`
+    adjunta su propio PDF."""
+    _, oe = oe_en_transmision
+    afiliado_id = _afiliado_de(db, oe)
+    _agregar_contacto(db, afiliado_id, nombre="Activo", email="uno@x.com")
+    correo = FakeCorreoExitoso()
+
+    enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.SERVICIO, VENTAS, correo, almacenamiento
+    )
+    enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, correo, almacenamiento
+    )
+
+    nombres_servicio = [n for n, _c, _t in correo.enviados[0]["adjuntos"]]
+    nombres_programados = [n for n, _c, _t in correo.enviados[1]["adjuntos"]]
+    assert "orden_de_servicio.pdf" in nombres_servicio
+    assert "horarios_programados.pdf" not in nombres_servicio
+    assert "horarios_programados.pdf" in nombres_programados
+
+    registros = db.scalars(select(LogEnvioCorreoOrdenEstacion)).all()
+    assert {r.tipo_pdf for r in registros} == {"servicio", "programados"}
+
+
 def test_falla_registra_bitacora_y_relanza(db: Session, oe_en_transmision, almacenamiento) -> None:
     _, oe = oe_en_transmision
     afiliado_id = _afiliado_de(db, oe)
@@ -405,19 +447,95 @@ def test_falla_registra_bitacora_y_relanza(db: Session, oe_en_transmision, almac
     correo = FakeCorreoFalla()
 
     with pytest.raises(CorreoError):
-        enviar_correo_orden_transmision(db, oe.orden_estacion_id, VENTAS, correo, almacenamiento)
+        enviar_correo_orden_transmision(
+            db,
+            oe.orden_estacion_id,
+            TipoPdfOrdenEstacion.PROGRAMADOS,
+            VENTAS,
+            correo,
+            almacenamiento,
+        )
 
     registros = db.scalars(select(LogEnvioCorreoOrdenEstacion)).all()
     assert len(registros) == 1
     assert registros[0].exitoso is False
-    assert registros[0].tipo_pdf == "orden_transmision"
+    assert registros[0].tipo_pdf == "programados"
 
 
 def test_oe_inexistente_404(db: Session, almacenamiento) -> None:
     with pytest.raises(NotFoundError):
         enviar_correo_orden_transmision(
-            db, uuid.uuid4(), VENTAS, FakeCorreoExitoso(), almacenamiento
+            db,
+            uuid.uuid4(),
+            TipoPdfOrdenEstacion.PROGRAMADOS,
+            VENTAS,
+            FakeCorreoExitoso(),
+            almacenamiento,
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# Servicio: generar_eml_orden_transmision (ADR-124 — abrir en el cliente de correo)
+# ══════════════════════════════════════════════════════════════════════════════════
+def test_generar_eml_arma_un_correo_valido_con_destinatarios_y_adjuntos(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    import email as email_stdlib
+
+    _, oe = oe_en_transmision
+    afiliado_id = _afiliado_de(db, oe)
+    _agregar_contacto(db, afiliado_id, nombre="Activo Uno", email="uno@x.com")
+    _agregar_contacto(db, afiliado_id, nombre="Activo Dos", email="dos@x.com")
+
+    contenido, nombre_archivo = generar_eml_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, almacenamiento
+    )
+
+    assert nombre_archivo == f"orden_transmision_programados_{oe.folio_orden_estacion}.eml"
+    mensaje = email_stdlib.message_from_bytes(contenido)
+    assert mensaje["To"] == "uno@x.com, dos@x.com"
+    nombres_adjuntos = [parte.get_filename() for parte in mensaje.walk() if parte.get_filename()]
+    assert "horarios_programados.pdf" in nombres_adjuntos
+
+    # ADR-125 probó anteponer los destinatarios en el cuerpo; se quitó a petición del
+    # usuario — el cuerpo del .eml queda igual que el del envío automático.
+    cuerpo_texto = next(
+        parte.get_payload(decode=True).decode("utf-8")
+        for parte in mensaje.walk()
+        if parte.get_content_type() == "text/plain"
+    )
+    assert "Destinatarios sugeridos" not in cuerpo_texto
+    assert "Horarios programados" in cuerpo_texto
+
+
+def test_generar_eml_registra_bitacora_exitosa(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    _, oe = oe_en_transmision
+    _agregar_contacto(db, _afiliado_de(db, oe), nombre="Activo", email="uno@x.com")
+
+    generar_eml_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, almacenamiento
+    )
+
+    registros = db.scalars(select(LogEnvioCorreoOrdenEstacion)).all()
+    assert len(registros) == 1
+    assert registros[0].exitoso is True
+    assert registros[0].tipo_pdf == "programados"
+    assert registros[0].destinatario_email == "uno@x.com"
+
+
+def test_generar_eml_sin_contactos_activos_400(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    _, oe = oe_en_transmision
+
+    with pytest.raises(DomainError):
+        generar_eml_orden_transmision(
+            db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, almacenamiento
+        )
+
+    assert db.scalars(select(LogEnvioCorreoOrdenEstacion)).all() == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -457,13 +575,13 @@ def test_http_enviar_correo_orden_transmision(
     _agregar_contacto(db, cat["afiliado"], nombre="Activo", email="uno@x.com")
 
     r = client.post(
-        f"/api/v1/ordenes/estaciones/{oe.orden_estacion_id}/correo-orden-transmision",
+        f"/api/v1/ordenes/estaciones/{oe.orden_estacion_id}/pdf/programados/correo-orden-transmision",
         headers=_hdr("ventas"),
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["exitoso"] is True
-    assert body["tipo_pdf"] == "orden_transmision"
+    assert body["tipo_pdf"] == "programados"
     assert body["destinatario_email"] == "uno@x.com"
 
 
@@ -477,7 +595,34 @@ def test_http_sin_contactos_activos_400(
     )
 
     r = client.post(
-        f"/api/v1/ordenes/estaciones/{oe.orden_estacion_id}/correo-orden-transmision",
+        f"/api/v1/ordenes/estaciones/{oe.orden_estacion_id}/pdf/programados/correo-orden-transmision",
         headers=_hdr("ventas"),
     )
     assert r.status_code == 400, r.text
+
+
+def test_http_descargar_eml_orden_transmision(
+    client: TestClient,
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat,
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    oe = oe_svc.avanzar_programados(
+        oe.orden_estacion_id, OrdenEstacionProgramadosIn(dias=[]), VENTAS
+    )
+    _agregar_contacto(db, cat["afiliado"], nombre="Activo", email="uno@x.com")
+
+    r = client.post(
+        f"/api/v1/ordenes/estaciones/{oe.orden_estacion_id}/pdf/programados/correo-orden-transmision/eml",
+        headers=_hdr("ventas"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "message/rfc822"
+    assert (
+        r.headers["content-disposition"]
+        == f'attachment; filename="orden_transmision_programados_{oe.folio_orden_estacion}.eml"'
+    )
+    assert b"horarios_programados.pdf" in r.content

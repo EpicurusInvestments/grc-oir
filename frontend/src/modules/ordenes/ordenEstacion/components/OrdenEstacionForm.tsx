@@ -556,7 +556,11 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 onAsignarAudio={isEdit && oe ? onAsignarAudio : undefined}
                 onCancelarDia={isEdit && oe ? onCancelarDia : undefined}
                 disabled={!hayMaterial}
-                permiteAsignacionLocal={!isEdit}
+                // ADR-133 (petición del usuario): antes solo se permitía en el ALTA — al
+                // editar, una fila agregada con "+ Agregar día" (sin `orden_estacion_dia_id`
+                // real todavía) no ofrecía "Sustitución de Material". La selección local
+                // ahora sí sobrevive al guardar (ver `ordenEstacionUpdateToApi`).
+                permiteAsignacionLocal
               />
               {errorCancelarDia && <div className="fe">{errorCancelarDia}</div>}
             </>

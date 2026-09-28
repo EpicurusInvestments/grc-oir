@@ -4116,6 +4116,15 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   Suite `vitest` completa sin regresiones nuevas frente al baseline. Servidor de
   frontend reiniciado en limpio y verificado sirviendo sin errores.
 
+  **Adenda (2026-09-27, petición del usuario):** la pantalla de "Capturar reales"
+  (`RealesForm.tsx`) se había quedado con las 2 columnas "Hora inicio"/"Hora término"
+  (nunca se tocó en ADR-108, solo `CalendarioPeriodoTransmision.tsx` y
+  `PeriodoTransmisionGrid.tsx`). Se unificó con el mismo criterio: una sola columna
+  "Horario de transmisión", un solo `<input type="time">` que llena `hora_inicio` y
+  `hora_termino` con el mismo valor. Sin cambios de esquema ni de backend. Verificado:
+  `tsc --noEmit` limpio, `RealesForm.test.tsx` en verde (3/3, no referenciaba las
+  columnas viejas por nombre).
+
 ### ADR-109 — "Material a Transmitir" subible DURANTE la captura (antes de guardar la OE)
 
 - **Estado:** aceptada · **Fecha:** 2026-09-23 (F1, quinta revisión en vivo del usuario
@@ -4904,3 +4913,393 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `RealesForm.test.tsx` con prueba nueva (sube un `.xlsx` y aparece en su propia lista).
   Suite `vitest` completa: mismo baseline preexistente de 12 fallas (auth, no
   relacionado) — cero regresiones nuevas.
+
+### ADR-124 — Ícono "Abrir correo": descarga un `.eml` para enviarlo desde el cliente de escritorio del usuario (Outlook)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-26 (F1, petición directa del usuario).
+- **Contexto:** el usuario probó el `.eml` que ya generaba ADR-122 (guardado en
+  `_storage_local/correos_simulados/`) abriéndolo manualmente con Outlook, y confirmó que
+  Outlook lo recibe como un borrador NUEVO editable (con "RV:" en el asunto — Outlook
+  trata un `.eml` ajeno como reenvío, con el mensaje original citado abajo), con "Para"/
+  adjuntos ya resueltos y el campo "De" tomado de la cuenta propia del usuario en
+  Outlook, no del `.eml`. Pidió exponer esto en la pantalla: un ícono de sobre junto a
+  "Imprimir", tooltip "Abrir correo", que descargue ese `.eml` directo (sin tener que ir a
+  buscarlo a la carpeta) para abrirlo con doble clic. Se confirmó con el usuario que el
+  botón verde "Enviar por correo" (envío automático SES/local, ADR-120) se queda tal cual
+  — este ícono es una vía ADICIONAL, no lo reemplaza.
+- **Decisión:**
+  1. `envio_correo_pdf.py`: se extrajo `_armar_paquete_orden_transmision()` (resuelve
+     destinatarios + genera PDF Programados + junta Material a Transmitir + arma
+     asunto/cuerpo) de adentro de `enviar_correo_orden_transmision()` — ahora compartida
+     por esa función y la nueva `generar_eml_orden_transmision()`, que arma el mismo
+     paquete con `construir_mime()` (ADR-122) pero NO llama a `correo.enviar()` — regresa
+     los bytes del `.eml` crudo. Se registra en la MISMA bitácora
+     (`LogEnvioCorreoOrdenEstacion`, `tipo_pdf="orden_transmision"`) siempre con
+     `exitoso=True` (armar el archivo no puede "fallar" como sí puede fallar SES); 400
+     si el afiliado no tiene ningún contacto activo con correo (mismo criterio que el
+     envío automático — no se prepara un correo "sin destinatarios").
+  2. Endpoint nuevo `POST /ordenes/estaciones/{id}/correo-orden-transmision/eml` — regresa
+     el archivo con `Content-Type: message/rfc822` y
+     `Content-Disposition: attachment; filename="orden_transmision_<folio>.eml"`.
+  3. Frontend: en `FilaPdf` (`OrdenEstacionDetailPanel.tsx`), botón nuevo 📧 junto a
+     "🖨️ Imprimir" (tooltip "Abrir correo", deshabilitado con el mismo criterio que
+     "Enviar por correo" si el afiliado no tiene contactos activos) — descarga el
+     `.eml` (`descargarEmlOrdenTransmisionApi`, mismo patrón `blob` + `<a download>` que
+     el resto de las descargas del módulo). El doble clic para abrirlo con Outlook (o el
+     cliente de correo que el usuario tenga configurado por default) ocurre en el
+     sistema operativo del usuario, fuera del control de la aplicación.
+- **Consecuencia:** ninguna negativa — es aditivo, no cambia `enviar_correo_orden_transmision`
+  ni el botón verde existente. Que Outlook muestre "RV:" y cite el mensaje original (en
+  vez de abrir un correo "limpio") es comportamiento propio de Outlook al abrir un
+  `.eml` ajeno, no algo que este sistema controle o pueda cambiar.
+- **Verificado:** `ruff check` limpio. Backend: 4 pruebas nuevas (`.eml` válido con
+  destinatarios/adjuntos correctos, registra bitácora `exitoso=True`, 400 sin contactos
+  activos, HTTP descarga con `Content-Type`/`Content-Disposition` correctos). Suite
+  completa del backend en verde (incluye las pruebas ya existentes de
+  `enviar_correo_orden_transmision`, sin cambios de comportamiento tras el refactor).
+  Frontend: `tsc --noEmit`/`eslint` limpios; `OrdenEstacionDetailPanel.test.tsx` (10/10) y
+  el módulo `ordenes` completo (182/182) sin regresiones.
+
+### ADR-125 — Fixes de compatibilidad del `.eml` de ADR-124 (CRLF; destinatarios en el cuerpo, revertido)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, hallazgos del usuario probando
+  ADR-124 con Outlook de escritorio real).
+- **Contexto:** al probar el ícono 📧 de ADR-124 con Outlook de escritorio (no solo Web),
+  aparecieron 2 problemas reales que no se habían visto probando solo con Outlook Web:
+  1. Al abrir el `.eml`, Outlook mostraba "(Sin asunto)" y "Es posible que este mensaje
+     se haya movido o eliminado" — Outlook no lograba parsearlo en absoluto.
+  2. Una vez resuelto lo anterior, "Reenviar" SÍ conserva los adjuntos pero (como
+     cualquier cliente de correo, por diseño) nunca precarga "Para" — mientras que
+     "Responder a todos" SÍ precarga "Para" pero NO conserva los adjuntos, y Outlook
+     además falla ("No se pudieron adjuntar los siguientes archivos...") al intentar
+     adjuntar el mensaje original como si fuera un archivo aparte.
+- **Decisión:**
+  1. **Causa del problema 1:** `Message.as_bytes()` sin política usa separador de línea
+     `"\n"` (LF) — inválido contra RFC 5322, que exige `"\r\n"` (CRLF). Outlook de
+     escritorio es estricto con esto (Outlook Web resultó más tolerante, por eso no se
+     vio ahí). Fix: `generar_eml_orden_transmision()` ahora serializa con
+     `mensaje.as_bytes(policy=email.policy.SMTP)` — la política diseñada para generar
+     mensajes válidos para transmisión real, con CRLF.
+  2. **Mitigación del problema 2 (probada y luego revertida a petición del usuario):**
+     el problema en sí NO tiene solución completa — es un trade-off real de Outlook
+     (Reenviar vs. Responder a todos, ninguno da destinatarios + adjuntos a la vez sobre
+     un `.eml` que no viene de un buzón real). Se probó anteponer al cuerpo del `.eml`
+     una línea "Destinatarios sugeridos (cópialos a "Para" después de Reenviar):
+     correo1; correo2" para copiar/pegar — el usuario pidió QUITARLA (queda igual que el
+     cuerpo del envío automático). La vía recomendada sigue siendo **"Reenviar"**
+     (conserva adjuntos), no "Responder a todos" — documentada solo en el tooltip.
+  3. Tooltip del ícono 📧 actualizado de "Abrir correo" a **"Usa Reenviar para enviar el
+     correo"** (petición del usuario) — instrucción visible en vez de solo el nombre de
+     la acción. Este SÍ se conserva (a diferencia del punto 2).
+- **Consecuencia:** ninguna negativa. El botón verde "Enviar por correo" (SES/local,
+  ADR-120) no se ve afectado por nada de esto — sigue mandando directo, sin pasar por
+  Outlook ni por este trade-off.
+- **Verificado:** `ruff check` limpio. Backend: prueba de `generar_eml_orden_transmision`
+  actualizada (confirma que el cuerpo YA NO trae la línea de destinatarios, tras el
+  revert); verificado a mano con bytes crudos (`xxd`) que el archivo generado usa
+  `\r\n`, y que Outlook de escritorio real ya abre el mensaje original correctamente
+  (asunto, destinatarios, adjuntos) tras el fix de CRLF. Suite completa del backend en
+  verde. Frontend: `tsc --noEmit`/`eslint` limpios.
+
+### ADR-126 — Cada botón de PDF manda SU PROPIO PDF (corrige el "paquete fijo" de ADR-120)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario
+  probando los 3 botones de PDF de la Orden de Transmisión).
+- **Contexto:** ADR-120 diseñó el envío "bundle" (botón verde "Enviar por correo" y el
+  ícono 📧 "Abrir correo" de ADR-124) como un paquete FIJO: sin importar cuál de los 3
+  PDFs (#1 Servicio, #2 Programados, #3 Reales) disparó el diálogo, SIEMPRE adjuntaba
+  el PDF de Programados. El usuario probó los 3 botones y detectó el bug: "Estas
+  adjuntando en todos el mismo pdf de servicio [sic] y eso esta mal" — cada botón debe
+  mandar el PDF que le corresponde (+ Material a Transmitir, si la OE tiene), igual que
+  ya hacía el envío individual con destinatario manual (`enviar_pdf_orden_estacion_por_correo`,
+  ADR-105).
+- **Decisión:**
+  1. `_armar_paquete_orden_transmision()` recibe ahora `tipo: TipoPdfOrdenEstacion` y usa
+     el mismo diccionario `_GENERADORES` (servicio/programados/reales → generador,
+     nombre de archivo, etiqueta) que ya usaba el envío individual — mismo gateo por
+     sub-estado (p.ej. "reales" antes de 2.3 → 400).
+  2. `enviar_correo_orden_transmision()` y `generar_eml_orden_transmision()` propagan
+     `tipo`; los endpoints cambian de `POST /{item_id}/correo-orden-transmision(/eml)` a
+     `POST /{item_id}/pdf/{tipo}/correo-orden-transmision(/eml)` (mismo patrón que
+     `/pdf/{tipo}/enviar-correo`).
+  3. `LogEnvioCorreoOrdenEstacion.tipo_pdf` ahora guarda el tipo REAL enviado
+     (`servicio`/`programados`/`reales`) en vez del valor fijo `orden_transmision` —
+     el valor `orden_transmision` del CHECK/enum se conserva solo para poder leer
+     bitácora histórica generada bajo el diseño original de ADR-120, ya no se escribe.
+  4. Frontend: `FilaPdf` (antes mostraba UNA línea "Orden de Transmisión enviada..." a
+     nivel de OE) ahora filtra el historial por su propio `tipo` y muestra su propia
+     línea "Enviado a … el …" — vuelve al patrón por-fila de ADR-105/antes de ADR-120,
+     porque ahora cada fila sí manda algo distinto de las otras.
+  5. El nombre del `.eml` descargado incluye el tipo
+     (`orden_transmision_<tipo>_<folio>.eml`) para no pisar descargas de los 3 botones
+     en la carpeta de Descargas del usuario.
+- **Consecuencia:** ninguna negativa. Cambio de URL de los 2 endpoints del bundle
+  (`/pdf/{tipo}/correo-orden-transmision[/eml]`) — sin consumidores externos más allá
+  del propio frontend de este repo, ya actualizado en el mismo cambio.
+- **Verificado:** backend — nueva prueba `test_cada_tipo_adjunta_su_propio_pdf` (servicio
+  vs. programados adjuntan PDFs distintos) + pruebas existentes actualizadas a la nueva
+  firma/URLs; suite completa del backend en verde (`pytest app/tests`). Frontend:
+  `tsc --noEmit` limpio; suite de `vitest` del módulo `ordenes` en verde (182/182).
+
+### ADR-127 — Un registro por spot en `periodo_transmision` (corrige overrides que se pisaban entre spots del mismo día)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, petición del usuario tras ver que el
+  generador por calendario solo permitía UN horario por fecha).
+- **Contexto:** el usuario pidió que "Spots por día" en el generador por calendario ya no
+  agregue una sola fila con `spots_diarios = N`, sino que genere **un registro por
+  spot** (N filas para esa fecha, cada una con su propio horario editable, y que se
+  puedan quitar/agregar sueltos) — así el usuario puede darle una hora distinta a cada
+  spot del día, no un solo horario para todos.
+  El modelo YA permitía esto sin migración: `uq_orden_estacion_dia_oe_fecha_hora` es
+  `(orden_estacion_id, fecha_transmision, hora_inicio)`, no solo `(orden_estacion_id,
+  fecha_transmision)` — el comentario original de la tabla ya decía "el prototipo de
+  frontend sí permite legítimamente dos franjas horarias distintas el mismo día". El
+  bug real, agazapado desde antes de esta sesión y solo visible ahora que existen 2+
+  filas con la misma fecha: dos capas de "solo las EXCEPCIONES" (Programados→Reales)
+  matcheaban por **fecha**, no por fila —backend (`avanzar_programados`/
+  `avanzar_reales`: `overrides = {fecha: valor}`) y frontend (`selectors.ts`,
+  `RealesForm.tsx`) — con 2 spots de la misma fecha, el segundo override pisaba al
+  primero y ambas filas terminaban con el MISMO valor.
+- **Decisión:**
+  1. **Backend:** `OrdenEstacionDiaProgramadoIn`/`OrdenEstacionDiaRealIn` cambian su
+     llave de `fecha_transmision` a `orden_estacion_dia_id`; `avanzar_programados`/
+     `avanzar_reales` arman y consultan el dict de overrides por ese id. Sin migración
+     (la tabla ya tenía la columna y el constraint correctos).
+  2. **Frontend — lectura:** `fromApi.ts` agrega `orden_estacion_dia_id` a cada fila de
+     `horarios_programados`/`horarios_reales` (ya se calculaba correctamente por id
+     internamente, solo faltaba propagarlo al objeto de salida). `selectors.ts`
+     (`programadoEfectivo`, `totalRealDeOE`, `diaVerificacion`) matchean por ese id.
+  3. **Frontend — escritura:** el diccionario de ediciones de `RealesForm.tsx` se
+     re-indexa por `orden_estacion_dia_id` (garantizado real: solo se abre sobre una OE
+     ya guardada); `toApi.ts` (`realesToApi`) manda `orden_estacion_dia_id` en vez de
+     `fecha_transmision`.
+  4. **Generador por calendario:** "Spots por día" = N ya no genera 1 fila con
+     `spots_diarios = N` — genera N filas con `spots_diarios = 1`. Para no chocar con
+     `uq_orden_estacion_dia_oe_fecha_hora` desde el primer guardado, cada fila nace con
+     un horario distinto (+1 minuto por fila, a partir del capturado); el usuario
+     reacomoda cada una a su hora real después en la tabla (`PeriodoTransmisionGrid.tsx`,
+     que ya soportaba fechas duplicadas sin cambio — nunca validó unicidad por fecha).
+  5. Quitar/agregar spots sueltos de una fecha ya funcionaba (sin cambio): la grid no
+     bloquea filas con fecha repetida y el botón "+ Agregar día" acepta cualquier fecha.
+- **Consecuencia:** ninguna negativa. Sin cambios de esquema/migración. El valor
+  `orden_transmision`-style de compatibilidad no aplica aquí (es un fix de matching, no
+  de un enum).
+- **Verificado:** backend — nueva prueba
+  `test_avanzar_reales_con_2_spots_misma_fecha_no_se_pisan` (2 `OrdenEstacionDia` de la
+  misma fecha, cada una con su propio verificado, sin pisarse) + pruebas existentes de
+  Programados/Reales migradas a `orden_estacion_dia_id`; suite completa en verde
+  (`pytest app/tests`). Frontend — nueva prueba en `CalendarioPeriodoTransmision.test.tsx`
+  (3 spots → 3 filas, `spots_diarios=1` c/u, horarios `07:00/07:01/07:02`); fixture
+  `makeRow()` ahora genera un `orden_estacion_dia_id` único por default (ajustada 1
+  prueba que dependía de su ausencia); `tsc --noEmit` limpio; suite `vitest` del módulo
+  `ordenes` en verde (183/183).
+
+### ADR-128 — "Sustitución de Material": ya no repite el default en la lista
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario con
+  captura de pantalla).
+- **Contexto:** con un solo audio subido, el combo de "Sustitución de Material"
+  (`PeriodoTransmisionGrid.tsx`) mostraba la opción "Default (X.mp3)" **y además** una
+  segunda opción "X.mp3" idéntica — el mismo archivo listado dos veces. Causa: la opción
+  "Default" ya muestra `audios[0].nombre_archivo` entre paréntesis, pero el `<select>`
+  después mapeaba TODO `audios` (incluyendo `audios[0]` de nuevo) como opciones sueltas.
+- **Decisión:** el mapeo de opciones usa `audios.slice(1)` — `audios[0]` (el default)
+  solo aparece una vez, en la opción "Default (…)"; el resto de los audios (si hay más
+  de uno) aparece como antes.
+- **Consecuencia:** ninguna negativa. Con 2+ audios el combo se ve exactamente igual que
+  antes (solo se quita el duplicado del primero).
+- **Verificado:** nueva prueba
+  `"ADR-128 (corrige un bug real): con UN solo audio subido, el combo no repite..."` en
+  `PeriodoTransmisionGrid.render.test.tsx` (con 1 audio, el combo tiene exactamente 1
+  `<option>`); `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde
+  (184/184).
+
+### ADR-129 — Ícono de "Sustitución de Material": de emoji (🔄) a PrimeIcons (`pi-sync`)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, petición del usuario con captura de
+  pantalla del ícono).
+- **Contexto:** el botón de "Sustitución de Material" usaba el emoji 🔄 — el usuario
+  pidió cambiarlo y ofreció bajar un ícono de internet y pasármelo como archivo. El
+  proyecto ya trae **PrimeIcons** como dependencia (viene con PrimeReact, importado
+  globalmente en `main.tsx`) y TODO el resto de la app ya lo usa (`<i className="pi
+  pi-plus" />`, etc.) — este botón era el único de `PeriodoTransmisionGrid.tsx` con un
+  emoji en vez de un ícono del set del sistema.
+- **Decisión:** en vez de un archivo descargado, se usa `<i className="pi pi-sync" />`
+  (catálogo completo navegable en primereact.org/icons). Cambia también su estilo de
+  `ICON_BTN_STYLE_EMOJI` (fontSize 14, pensado para compensar que un emoji A COLOR se
+  dibuja más grande) a `ICON_BTN_STYLE_X` (fontSize 20) — un ícono de PrimeIcons es un
+  glifo monocromo como la ✕, no un emoji a color, así que le aplica el mismo tamaño que
+  ya usaba "Quitar día". Los otros 2 íconos de la fila (✕ Quitar, 🚫 Cancelar) NO se
+  tocaron — fuera del alcance de esta petición.
+- **Consecuencia:** ninguna negativa. Cero archivos nuevos, cero dependencias nuevas.
+- **Verificado:** `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde
+  (184/184, ninguna prueba dependía del glifo 🔄 en sí — ya usaban
+  `getByRole("button", { name: "Sustitución de Material" })`, por `aria-label`).
+
+### ADR-130 — Cancelar UN spot ya no borra a los demás spots de la misma fecha
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario: "ya no
+  están apareciendo elimino todas cuando cancele").
+- **Contexto:** con ADR-127 (varios spots por fecha), el usuario canceló UN spot puntual
+  ("Cancelar transmisión") de una fecha con 4 spots y, al guardar la edición de la OE,
+  los otros 3 spots de esa misma fecha desaparecieron. Causa: `OrdenEstacionService.update()`
+  preserva los días cancelados (no se pueden borrar/recrear, tienen una `Verificacion`
+  enganchada) filtrando `dias_nuevos` (el payload que el frontend reenvía completo al
+  guardar) contra un set `fechas_canceladas` — pero ese set solo guardaba la **fecha**,
+  no la fila exacta. Con 2+ spots de la misma fecha, cancelar UNO metía esa fecha al set
+  y el filtro descartaba TODAS las entradas de esa fecha del payload — incluidos los
+  spots activos, que la línea de abajo (`DELETE ... WHERE cancelada = False`, correcta,
+  por fila) sí había borrado. Resultado: se borraban y nunca se recreaban.
+- **Decisión:** la llave pasa de `fecha_transmision` sola a la tupla `(fecha_transmision,
+  hora_inicio)` — la misma llave real de cada fila (`uq_orden_estacion_dia_oe_fecha_hora`).
+  Cancelar un spot puntual ya solo excluye ESA fila del filtro; los demás spots de la
+  misma fecha se reinsertan normal en el `for dia in dias_nuevos` de abajo.
+- **Consecuencia:** ninguna negativa. Sin cambios de esquema/migración — mismo patrón de
+  fix que ADR-127 (matching por fila real, no por fecha), en un punto distinto del código
+  que ese ADR no había tocado.
+- **Verificado:** nueva prueba
+  `test_update_con_2_spots_misma_fecha_cancelar_uno_no_borra_los_demas` (2 spots de la
+  misma fecha, cancela uno, guarda reenviando ambos — el spot vivo sobrevive con sus
+  spots intactos); suite completa del backend en verde (`pytest app/tests`).
+
+### ADR-131 — PDF "Orden de servicio" ya no truena con muchos días (tabla de días fuera del marco)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario: el PDF
+  #1 dejó de generarse — "Network Error" en el botón "Enviar por correo").
+- **Contexto:** con ADR-127 (un registro por spot), una OE puede terminar con muchas más
+  filas de `OrdenEstacionDia` que antes (antes: 1 fila por día; ahora: 1 fila por spot).
+  `generar_pdf_servicio()` metía la tabla de días (`tabla_dias`) DENTRO de la celda de
+  otra tabla (`marco`, el recuadro con borde) junto con el resto del contenido. reportlab
+  NO puede partir entre páginas el contenido de la celda de una tabla — si no cabe
+  completo en lo que queda de una página, truena con `LayoutError` ("too large ... in
+  frame") en vez de continuar en la siguiente. Antes de ADR-127 esto nunca se disparaba
+  porque `tabla_dias` nunca creció lo suficiente.
+- **Decisión:** `tabla_dias` (+ el resto del contenido: horario, observaciones, leyenda de
+  facturación, pie) sale de la celda de `marco` y se agrega como flowables de nivel
+  superior — mismo patrón que ya usan `generar_pdf_programados`/`generar_pdf_reales`
+  (que nunca tuvieron este bug porque sus tablas de días SIEMPRE vivieron a nivel
+  superior). El recuadro con borde (`marco`) ahora envuelve SOLO el encabezado
+  (`tabla_estacion_plaza` + `tabla_campos`) — tamaño fijo, nunca crece con el número de
+  días. Consecuencia visual: en una orden con muchos días, la tabla de días y el pie ya
+  no aparecen dentro del recuadro — antes tampoco había forma de que se vieran bien
+  (el PDF ni se generaba).
+- **Consecuencia:** ninguna negativa de fondo — cambio de layout, no de datos. Reportes
+  con pocos días (el caso típico) se ven prácticamente igual.
+- **Verificado:** nueva prueba `test_pdf_servicio_no_truena_con_muchos_dias` (80 filas de
+  días — el escenario real que rompía antes del fix); suite completa del backend en
+  verde (`pytest app/tests`); confirmado a mano contra la OE real del reporte del usuario
+  (antes 500/`LayoutError`, después 200 con PDF válido).
+
+### ADR-132 — Calendario de generación: solo navega entre el mes de inicio y el mes de fin de la campaña
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, petición del usuario).
+- **Contexto:** `CalendarioPeriodoTransmision.tsx` ya deshabilitaba los DÍAS fuera del
+  rango de campaña, pero los MESES seguían siendo navegables sin límite (con las
+  flechas ‹ › se podía hojear los 12 meses del año, aunque casi todos los días
+  aparecieran deshabilitados). El usuario pidió que solo se pueda navegar entre el mes
+  de inicio y el mes de fin de la campaña (p.ej. campaña del 20/sep al 15/oct → solo
+  septiembre y octubre navegables).
+- **Decisión:** `DayPicker` (react-day-picker v10) ya trae justo esto:
+  `startMonth`/`endMonth` limitan la navegación, `defaultMonth` fija el mes inicial —
+  se fijan los 3 a partir de `rangoCampania.inicio`/`.fin`. Si la campaña cae dentro de
+  un solo mes, `startMonth === endMonth` y las flechas quedan sin efecto (no hay a
+  dónde navegar).
+- **Consecuencia:** ninguna negativa. Cambio de props de una librería ya instalada, sin
+  tocar la lógica de generación.
+- **Verificado:** 2 pruebas nuevas en `CalendarioPeriodoTransmision.test.tsx` (arranca en
+  el mes de inicio, no en "hoy"; no deja navegar antes del inicio ni después del fin);
+  `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (186/186).
+
+### ADR-133 — "Sustitución de Material" también al agregar días en la EDICIÓN (y deja de perderse al guardar)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario: al usar
+  "+ Agregar día" en la edición de una OE, la fila nueva no ofrecía "Sustitución de
+  Material").
+- **Contexto:** ADR-111 había habilitado la sustitución de material para filas SIN
+  `orden_estacion_dia_id` real (recién generadas, antes de guardar) **solo en el ALTA**
+  (`permiteAsignacionLocal={!isEdit}`) — en la EDICIÓN, una fila agregada con
+  "+ Agregar día" no tiene id todavía, así que el botón no aparecía. Al investigar se
+  encontró un bug más profundo y más grave, no reportado por el usuario pero real: el
+  esquema de entrada de `update()` (`OrdenEstacionDiaCreate`, el mismo que usa `dias` al
+  editar) nunca llevaba `orden_estacion_audio_id`, y `update()` reemplaza TODOS los días
+  no cancelados (borra + recrea) en cada "Guardar" — es decir, **cualquier** sustitución
+  de material ya hecha vía el endpoint dedicado (`PUT .../dias/{id}/audio`) se perdía en
+  silencio la siguiente vez que alguien guardaba la orden completa, sin importar si esa
+  fila era nueva o ya existía.
+- **Decisión:**
+  1. `OrdenEstacionDiaCreate` gana `orden_estacion_audio_id: uuid.UUID | None` — distinto
+     de `audio_staging_ref` (ese es solo para el ALTA, cuando los audios ni siquiera
+     tienen id real todavía); este es para `update()`, referenciando un
+     `OrdenEstacionAudio` YA real de esta misma OE. `create()` lo ignora (sigue
+     resolviendo el audio por `audio_staging_ref` únicamente) — sin riesgo de choque.
+  2. `update()` valida (`_get_audio_or_404`, mismo candado que `asignar_audio_dia`, 404
+     si el audio es de otra OE) y persiste `orden_estacion_audio_id` en cada fila
+     recreada — tanto las que ya existían como las nuevas agregadas en la misma edición.
+  3. Frontend: `ordenEstacionUpdateToApi` ahora manda `orden_estacion_audio_id` de cada
+     fila; `permiteAsignacionLocal` en `OrdenEstacionGrid` (vía `OrdenEstacionForm.tsx`)
+     deja de depender de `isEdit` — siempre `true` (no afecta filas con id real, que ya
+     mostraban el botón de todos modos vía `onAsignarAudio`).
+- **Consecuencia:** ninguna negativa. Sin migración — la columna `orden_estacion_audio_id`
+  de `OrdenEstacionDia` ya existía.
+- **Verificado:** 3 pruebas nuevas en `test_f1_07_material_a_transmitir.py`
+  (`test_update_con_dias_preserva_sustitucion_de_material_existente`,
+  `test_update_agrega_dia_nuevo_con_sustitucion_de_material`,
+  `test_update_con_orden_estacion_audio_id_de_otra_oe_404`); suite completa del backend
+  en verde (`pytest app/tests`); `tsc --noEmit` limpio; suite `vitest` del módulo
+  `ordenes` en verde (186/186).
+
+### ADR-134 — "+ Agregar día" ya no puede chocar con el unique constraint de (fecha, hora_inicio)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, bug reportado por el usuario: guardar
+  tronaba con "Network Error" al agregar una fila con "+ Agregar día").
+- **Contexto:** `agregarFila()` (`PeriodoTransmisionGrid.tsx`) calcula la fecha de la
+  nueva fila como "+1 día" de la última fila, con tope en `rangoCampania.fin` — si la
+  última fila ya estaba en el ÚLTIMO día de la campaña, el tope deja la fecha IGUAL a la
+  de la última fila. El horario de la nueva fila copia el de la última fila SIN
+  cambios. Con ADR-127 (2+ spots pueden compartir fecha, algo ya común), esta
+  combinación produce una fila con la MISMA `(fecha, hora_inicio)` que otra ya
+  existente — el guardado tronaba con `IntegrityError: UNIQUE constraint failed` en
+  `uq_orden_estacion_dia_oe_fecha_hora` (500 del lado del backend, "Network Error" en
+  el navegador).
+- **Decisión:** antes de agregar la fila, si la fecha calculada ya tiene una fila con el
+  mismo horario, se corre el horario +1 minuto (repitiendo hasta encontrar uno libre
+  para esa fecha) — mismo criterio ya usado por el generador de calendario
+  (`CalendarioPeriodoTransmision.tsx`, ADR-127). Sin colisión, el comportamiento es
+  idéntico al de siempre (mismo horario que la última fila).
+- **Consecuencia:** ninguna negativa. El intento fallido no dejó datos corruptos (la
+  transacción de `update()` se revierte completa ante el `IntegrityError`, comportamiento
+  normal de una transacción SQL).
+- **Verificado:** 2 pruebas nuevas en `PeriodoTransmisionGrid.render.test.tsx`
+  (reproduce el choque exacto del reporte del usuario — tope de fin de campaña — y
+  confirma que corre el horario; caso normal sin choque, sin cambios de comportamiento);
+  `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (188/188).
+
+### ADR-135 — "Enviado a..." es una confirmación transitoria (10s), y el historial de PDFs ya no aplasta el resto del panel
+
+- **Estado:** aceptada · **Fecha:** 2026-09-27 (F1, petición del usuario).
+- **Contexto:** dos molestias en `OrdenEstacionDetailPanel.tsx`: (1) el mensaje "Enviado
+  a X el Y" de cada `FilaPdf` quedaba fijo para siempre (viene del historial persistido,
+  `envios`), sin ninguna forma de quitarlo de la vista; (2) el panel de detalle es un
+  flex column de 3 franjas — `.dh` (encabezado, fijo), `.db` (cuerpo con scroll propio,
+  `flex:1`) y `.df` (fila de acciones al fondo, `flex-shrink:0`, clase COMPARTIDA por
+  ~50 pantallas del sistema). Como `.df` nunca se encoge, entre más PDFs con su
+  "Enviado a..." se acumulaban, más alto crecía `.df` — y como `.db` es `flex:1`, le
+  quitaba espacio a `.db` (la sección remarcada por el usuario en rojo: OC heredada,
+  estación/plaza, periodo, económico...), que terminaba apachurrada en una cajita con
+  scroll diminuto.
+- **Decisión:**
+  1. `FilaPdf` guarda `mostrarUltimoEnvio` (estado local, no toca `envios`) — un
+     `useEffect` lo pone en `true` y arranca un `setTimeout` de 10s que lo pone en
+     `false`, reiniciado cada vez que cambia `ultimoEnvio.id` (un envío nuevo lo vuelve a
+     mostrar). El historial (`envios`) sigue intacto — es solo la VISTA la que se oculta.
+  2. En vez de tocar la clase compartida `.df` (usada por ~50 pantallas como fila de
+     botones al fondo, NUNCA debe encogerse ahí), se le pone `maxHeight`/`overflowY:
+     "auto"` al contenedor INTERNO de los 3 `FilaPdf` (dentro de `.df`, sin afectar los
+     botones "Capturar reales"/"Ver verificación" que quedan fuera del scroll) — esto
+     acota la altura NATURAL de `.df`, y `.db` recupera todo el espacio que le
+     corresponde como `flex:1`.
+- **Consecuencia:** ninguna negativa. Cambio 100% de UI, sin tocar la clase compartida
+  `.df` ni ningún dato persistido.
+- **Verificado:** nueva prueba con fake timers en `OrdenEstacionDetailPanel.test.tsx`
+  ("Enviado a..." aparece al cargar el historial, desaparece exactamente a los 10s);
+  `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (189/189).

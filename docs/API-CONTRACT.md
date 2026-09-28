@@ -770,15 +770,19 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
 `en_transmision`.
 - **`POST /ordenes/estaciones/{id}/programados`** (`ordenes:editar`) — 2.1→2.2. Body:
   `dias` (**solo excepciones** — los días no listados quedan `spots_programados =
-  spots_asignados`), `reporte_programados_ref`. 409 si la OE no está en `asignada`.
-  **ADR-121:** paso ya NO obligatorio ni con pantalla propia — la pantalla ahora ofrece
-  saltar directo de 2.1 a "Capturar Reales" (ver siguiente endpoint); este sigue
-  funcionando por compatibilidad, para un ajuste puntual de `spots_programados` distinto
-  al asignado.
+  spots_asignados`; cada excepción identifica su fila por `orden_estacion_dia_id`, **no**
+  por `fecha_transmision` — ver ADR-127: una OE puede tener 2+ días con la misma fecha,
+  varios spots/horarios el mismo día), `reporte_programados_ref`. 409 si la OE no está en
+  `asignada`. **ADR-121:** paso ya NO obligatorio ni con pantalla propia — la pantalla
+  ahora ofrece saltar directo de 2.1 a "Capturar Reales" (ver siguiente endpoint); este
+  sigue funcionando por compatibilidad, para un ajuste puntual de `spots_programados`
+  distinto al asignado.
 - **`POST /ordenes/estaciones/{id}/reales`** (`ordenes:editar`) — 2.2→2.3 (o **2.1→2.3
   directo, ADR-121**: acepta la OE en `asignada` o en `en_transmision`). Body: `dias`
   (solo excepciones respecto al programado EFECTIVO — `spots_programados` si se pasó por
-  `/programados`, si no `spots_asignados`), `notas_transmision`, `reporte_reales_ref`.
+  `/programados`, si no `spots_asignados`; cada excepción identifica su fila por
+  `orden_estacion_dia_id`, **no** por `fecha_transmision`, mismo criterio de ADR-127 que
+  arriba), `notas_transmision`, `reporte_reales_ref`.
   **ADR-119:** ya NO acepta `testigos_url`/
   `testigos_ubicacion_alterna` — la pantalla de captura los reemplazó por "Evidencias de
   lo Transmitido" (endpoints dedicados, arriba); esas 2 columnas siguen existiendo en
@@ -841,17 +845,33 @@ fijo. El encabezado incluye los logos de OIR y Grupo Radio Centro, leídos de
   de esta OE (los 3 tipos de PDF + el "bundle" de abajo mezclados), del más reciente al
   más antiguo.
 
-**Envío "bundle" de la Orden de Transmisión (ADR-120):** la pantalla ofrece este envío en
-vez del de arriba — al generar cualquiera de los 3 PDFs, propone "Enviar por correo"
-(este endpoint) o "Imprimir" (el `GET` de vista previa de arriba, sin cambios).
-- **`POST /ordenes/estaciones/{id}/correo-orden-transmision`** (`ordenes:editar`) — sin
-  body. Resuelve los destinatarios automáticamente: TODOS los `ContactoAfiliado`
-  **activos** con `email_contacto` cargado del Afiliado dueño de la Estación (**400**,
-  `error_dominio`, si no hay ninguno — nunca se intenta un envío sin destinatarios).
-  Asunto fijo `"Orden de Transmisión"`; adjunta el PDF de Programados + TODO el Material
-  a Transmitir de la OE. Responde `LogEnvioCorreoRead` igual que el envío individual,
-  con `tipo_pdf: "orden_transmision"` y `destinatario_email` como lista separada por
-  coma. **502** si el envío falla (bitácora igual queda registrada).
+**Envío "bundle" de la Orden de Transmisión (ADR-120, corregido por ADR-126):** la
+pantalla ofrece este envío en vez del de arriba — al generar cualquiera de los 3 PDFs,
+propone "Enviar por correo" (este endpoint) o "Imprimir" (el `GET` de vista previa de
+arriba, sin cambios). ADR-126 corrigió el diseño original de ADR-120 (que SIEMPRE
+adjuntaba el PDF de Programados sin importar qué botón disparó el diálogo): ahora cada
+uno de los 3 botones manda **su propio** PDF.
+- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision`**
+  (`ordenes:editar`) — `tipo` = `servicio` │ `programados` │ `reales`. Sin body. Resuelve
+  los destinatarios automáticamente: TODOS los `ContactoAfiliado` **activos** con
+  `email_contacto` cargado del Afiliado dueño de la Estación (**400**, `error_dominio`,
+  si no hay ninguno — nunca se intenta un envío sin destinatarios). **400** también si la
+  OE no ha llegado al sub-estado que ese PDF requiere (mismo gateo que la descarga
+  individual, p.ej. "reales" antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta
+  el PDF de `tipo` + TODO el Material a Transmitir de la OE (si tiene). Responde
+  `LogEnvioCorreoRead` igual que el envío individual, con `tipo_pdf` = el `tipo`
+  enviado y `destinatario_email` como lista separada por coma. **502** si el envío falla
+  (bitácora igual queda registrada).
+- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision/eml`**
+  (`ordenes:editar`, **ADR-124/ADR-126**) — mismo paquete/destinatarios/gateo que el
+  endpoint de arriba para ese `tipo`, pero en vez de mandarlo por SES/local regresa el
+  archivo `.eml` crudo (`Content-Type: message/rfc822`, `Content-Disposition:
+  attachment; filename="orden_transmision_<tipo>_<folio>.eml"`) para que el usuario lo
+  abra con su propio cliente de correo de escritorio (Outlook, etc.) y lo mande él mismo
+  desde su cuenta — útil mientras SES no esté en producción. Se registra en la misma
+  bitácora, siempre `exitoso=true` (armar el archivo no falla como sí puede fallar SES).
+  El botón verde "Enviar por correo" sigue existiendo sin cambios; este es un ícono
+  ADICIONAL (📧, junto a "Imprimir"), no lo reemplaza.
 
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo

@@ -154,6 +154,22 @@ todavía, una nota debajo de la tabla explica que hay que guardar la orden prime
 disponible para un día con id real, ya que cambiar su default sigue siendo el endpoint
 dedicado `PUT .../dias/{id}/audio`.
 
+**`CalendarioPeriodoTransmision.tsx` — "Spots por día" genera un registro POR SPOT**
+(ADR-127, petición del usuario): antes "Spots por día" = N agregaba, por cada fecha
+elegida, UNA fila con `spots_diarios = N`. Ahora genera N filas (una por spot), cada una
+con `spots_diarios = 1` y su propio "Horario de transmisión" editable — para que el
+usuario le mueva la hora a cada spot del día, o quite/agregue spots sueltos de esa
+fecha (ya funcionaba: `PeriodoTransmisionGrid.tsx` nunca validó unicidad de fecha).
+El modelo ya soportaba 2+ filas con la misma fecha (`uq_orden_estacion_dia_oe_fecha_hora`
+es `(orden_estacion_id, fecha, hora_inicio)`, no solo fecha) — para no chocar con ese
+constraint desde el primer guardado, cada fila generada nace con un horario distinto
+(+1 minuto por fila a partir del capturado); el usuario reacomoda cada una después.
+Esto expuso un bug preexistente: Programados/Reales matcheaban sus "excepciones" por
+`fecha_transmision`, no por fila — con 2 spots de la misma fecha el segundo override
+pisaba al primero. Corregido en el mismo cambio: `avanzar_programados`/`avanzar_reales`
+(backend) y `selectors.ts`/`RealesForm.tsx` (frontend) ahora matchean por
+`orden_estacion_dia_id`.
+
 **Subida de "Material a Transmitir" DURANTE el alta, y obligatoria para el calendario**
 (ADR-109 + ADR-110, correcciones sobre la Fase 4): antes, subir un audio requería que la
 OE ya existiera (`orden_estacion_id` real). Ahora, al dar de alta, cada archivo elegido
@@ -199,16 +215,48 @@ mandar nada a internet ni depender de credenciales de SES/AWS.
 **ADR-120 (petición del usuario):** en la pantalla, este envío individual quedó
 reemplazado por un diálogo "Enviar por correo"/"Imprimir" que aparece al generar
 CUALQUIERA de los 3 PDFs (`OrdenEstacionDetailPanel.tsx`, `FilaPdf`). "Imprimir" abre el
-PDF de siempre; "Enviar por correo" (`POST .../correo-orden-transmision`, sin body)
-manda SIEMPRE el mismo paquete fijo — PDF de Programados + todo el Material a
-Transmitir — a TODOS los `ContactoAfiliado` **activos** con correo cargado del afiliado
+PDF de siempre; "Enviar por correo" (`POST .../pdf/{tipo}/correo-orden-transmision`, sin
+body) manda a TODOS los `ContactoAfiliado` **activos** con correo cargado del afiliado
 dueño de la estación (ya no hay captura manual de destinatario). Reusa
-`LogEnvioCorreoOrdenEstacion` con un 4º valor de `tipo_pdf`, `"orden_transmision"`. El
+`LogEnvioCorreoOrdenEstacion` (mismos valores de `tipo_pdf` que el envío individual). El
 botón se deshabilita de antemano si el afiliado no tiene ningún contacto activo con
 correo (`contactoAfiliadoApi.listPorAfiliado`, catálogo `ContactoAfiliado` — no la
 Estación, que no tiene contactos propios). El endpoint individual por-tipo de arriba
 sigue existiendo en el backend (sin UI propia) por si se necesita un envío puntual a un
 solo destinatario.
+
+**ADR-126 (corrección de un bug reportado por el usuario):** el diseño original de
+ADR-120 mandaba SIEMPRE el mismo "paquete fijo" — el PDF de Programados — sin importar
+cuál de los 3 botones (#1 Servicio, #2 Programados, #3 Reales) disparó el diálogo. El
+usuario probó los 3 y detectó que todos adjuntaban el PDF equivocado. Ahora cada botón
+manda **su propio** PDF (+ Material a Transmitir, si la OE tiene): `tipo` viaja en la URL
+(`/pdf/{tipo}/correo-orden-transmision[/eml]`) y en `LogEnvioCorreoOrdenEstacion.tipo_pdf`
+(ya no se escribe el valor genérico `"orden_transmision"`, que se conserva solo para leer
+bitácora histórica). En el frontend, cada `FilaPdf` vuelve a mostrar su propia línea de
+"último envío" filtrando el historial por su propio `tipo` (antes de ADR-120 ya era así;
+ADR-120 lo había colapsado en una sola línea a nivel de OE, que ya no tenía sentido con
+un paquete fijo único — con el bug corregido, tampoco lo tiene con un paquete genérico).
+
+**ADR-124 (petición del usuario):** junto a "Enviar por correo"/"Imprimir", un tercer
+ícono 📧 ("Abrir correo") — descarga el mismo `.eml` de ADR-122 (mismos
+destinatarios, PDF de `tipo` desde ADR-126) vía `POST .../pdf/{tipo}/correo-orden-transmision/eml`,
+para que el usuario lo abra con doble clic en su cliente de correo de escritorio
+(Outlook confirmado: lo recibe como un borrador NUEVO editable — Outlook trata un
+`.eml` ajeno como reenvío, con "RV:" en el asunto y el mensaje original citado abajo —
+con "Para"/adjuntos ya resueltos y "De" tomado de la cuenta propia del usuario en
+Outlook, no del archivo) y lo mande él mismo desde su cuenta — útil mientras SES no esté
+en producción. No reemplaza el botón verde de envío automático; son dos caminos
+independientes que el usuario elige.
+
+**ADR-125:** al probar con Outlook de escritorio real, el `.eml` se serializa con CRLF
+(`email.policy.SMTP`; Outlook de escritorio es estricto con esto, a diferencia de
+Outlook Web, que lo toleraba sin problema). Se probó además anteponer los destinatarios
+como texto en el cuerpo (para copiar/pegar en "Para" tras "Reenviar" — "Responder a
+todos" sí precarga "Para" pero pierde los adjuntos, es un trade-off real de Outlook, no
+un bug de este sistema), pero se quitó a petición del usuario; el cuerpo queda igual
+que el del envío automático. El tooltip del ícono sí se conserva: **"Usa Reenviar para
+enviar el correo"**.
+
 **ADR-118 (petición del usuario):** la tabla de días del PDF #2 (Horarios Programados)
 quitó "Pedidos"/"Asignados" y agregó "Material a Transmitir" (mismo criterio que
 `nombreMaterial()` del frontend — override del día o el primero subido) + un solo

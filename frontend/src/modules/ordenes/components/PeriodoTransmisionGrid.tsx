@@ -37,7 +37,8 @@ import type { OrdenEstacionAudio, PeriodoTransmisionRow } from "../types";
 
 // Tamaño fijo (no solo mínimo) + centrado por flex: así los 3 íconos de acción
 // (Sustitución de Material, Quitar día, Cancelar transmisión) miden EXACTO lo mismo por
-// fuera, sin importar que sus glifos (🔄 ✕ 🚫) tengan anchos naturales distintos.
+// fuera, sin importar que sus glifos (✕ 🚫, o el ícono de PrimeIcons de ADR-129) tengan
+// anchos naturales distintos.
 const ICON_BTN_STYLE: CSSProperties = {
   width: 44,
   height: 44,
@@ -46,11 +47,24 @@ const ICON_BTN_STYLE: CSSProperties = {
   justifyContent: "center",
   padding: 0,
 };
-// Los emojis a color (🔄 🚫) se dibujan más grandes que un glifo de texto (✕) al MISMO
+// Los emojis a color (🚫) se dibujan más grandes que un glifo de texto (✕) al MISMO
 // font-size (petición del usuario: que se vean del mismo tamaño que la X) — se
-// compensa con un font-size menor solo para los emoji, no para la X.
+// compensa con un font-size menor solo para los emoji, no para la X. ADR-129: el ícono
+// de "Sustitución de Material" pasó de emoji (🔄) a PrimeIcons (`pi-sync`, consistente
+// con el resto de la app) — mismo tamaño que la X (ambos son glifos monocromo, no emoji
+// a color), así que usa `ICON_BTN_STYLE_X`, no este.
 const ICON_BTN_STYLE_EMOJI: CSSProperties = { ...ICON_BTN_STYLE, fontSize: 14 };
 const ICON_BTN_STYLE_X: CSSProperties = { ...ICON_BTN_STYLE, fontSize: 20 };
+
+/** ADR-134: mismo helper que `CalendarioPeriodoTransmision.tsx` — separa por minutos un
+ * horario para no chocar con `uq_orden_estacion_dia_oe_fecha_hora` (fecha + hora_inicio). */
+function sumarMinutos(hora: string, minutos: number): string {
+  const [h, m] = hora.split(":").map(Number);
+  const total = (((h * 60 + m + minutos) % 1440) + 1440) % 1440;
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
 
 export function problemasDeFila(row: PeriodoTransmisionRow, rango: { inicio: string; fin: string }): string[] {
   const problemas: string[] = [];
@@ -145,7 +159,19 @@ export function PeriodoTransmisionGrid({
       siguienteFecha = d.toISOString().slice(0, 10);
       if (rangoCampania.fin && siguienteFecha > rangoCampania.fin) siguienteFecha = rangoCampania.fin;
     }
-    const horario = ultima?.hora_inicio ?? "07:00";
+    // ADR-134 (corrige un bug real): si la fecha calculada ya tiene una fila con el
+    // mismo horario — p.ej. la última fila ya estaba en el último día de la campaña, así
+    // que "+1 día" se topó con el fin y se quedó en la MISMA fecha — guardar tronaba con
+    // el unique constraint `(fecha, hora_inicio)` (ADR-127 lo hace mucho más común: ya es
+    // normal tener 2+ filas la misma fecha). Se corre el horario +1 minuto hasta
+    // encontrar uno libre para esa fecha, mismo criterio que el generador por calendario.
+    let horario = ultima?.hora_inicio ?? "07:00";
+    const horariosOcupados = new Set(
+      rows.filter((r) => r.fecha === siguienteFecha).map((r) => r.hora_inicio),
+    );
+    while (horariosOcupados.has(horario)) {
+      horario = sumarMinutos(horario, 1);
+    }
     onChange([
       ...rows,
       {
@@ -246,7 +272,8 @@ export function PeriodoTransmisionGrid({
                         <option value="">
                           Default{audios && audios.length > 0 ? ` (${audios[0].nombre_archivo})` : ""}
                         </option>
-                        {audios?.map((a) => (
+                        {/* audios[0] YA aparece arriba como "Default" — no repetirlo. */}
+                        {audios?.slice(1).map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.nombre_archivo}
                           </option>
@@ -261,12 +288,12 @@ export function PeriodoTransmisionGrid({
                             <button
                               type="button"
                               className="btn"
-                              style={{ ...ICON_BTN_STYLE_EMOJI, marginLeft: "auto" }}
+                              style={{ ...ICON_BTN_STYLE_X, marginLeft: "auto", color: "var(--blue-text)" }}
                               title="Sustitución de Material"
                               aria-label="Sustitución de Material"
                               onClick={() => setSustituyendoIdx(idx)}
                             >
-                              🔄
+                              <i className="pi pi-sync" aria-hidden="true" />
                             </button>
                           )}
                       </div>
@@ -313,9 +340,10 @@ export function PeriodoTransmisionGrid({
                       {!disabled && (
                         <button
                           type="button"
-                          className="btn btn-danger"
-                          style={ICON_BTN_STYLE_X}
+                          className="btn"
+                          style={{ ...ICON_BTN_STYLE_X, color: "var(--red-text)" }}
                           onClick={() => quitarFila(idx)}
+                          title="Quitar día"
                           aria-label="Quitar día"
                         >
                           ✕
@@ -337,7 +365,7 @@ export function PeriodoTransmisionGrid({
                         </button>
                       )}
                       {problemas.length > 0 && (
-                        <span style={{ fontSize: 11, color: "var(--red-text)" }} title={problemas.join(" ")}>
+                        <span style={{ ...ICON_BTN_STYLE_X, color: "var(--red-text)" }} title={problemas.join(" ")}>
                           ⚠
                         </span>
                       )}
