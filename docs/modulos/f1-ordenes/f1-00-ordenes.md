@@ -266,6 +266,15 @@ un bug de este sistema), pero se quitó a petición del usuario; el cuerpo queda
 que el del envío automático. El tooltip del ícono sí se conserva: **"Usa Reenviar para
 enviar el correo"**.
 
+**ADR-144 (petición del usuario, corrige ADR-124/125):** el `.eml` ahora SÍ abre directo
+como mensaje nuevo editable — `construir_mime()` agrega el encabezado `X-Unsent: 1`
+(soportado por Outlook y otros clientes de escritorio) cuando se llama con
+`como_borrador=True`, algo que ADR-124 no sabía que existía al concluir que el modo
+lectura era "un límite fijo". Solo `generar_eml_orden_transmision()` lo activa; los
+adaptadores de envío real (SES/SMTP/Local) nunca lo hacen, para no marcar como "no
+enviado" un mensaje que sí se mandó/guardó. Tooltip actualizado a **"Abre un borrador
+nuevo listo para enviar"**.
+
 **ADR-118 (petición del usuario):** la tabla de días del PDF #2 (Horarios Programados)
 quitó "Pedidos"/"Asignados" y agregó "Material a Transmitir" (mismo criterio que
 `nombreMaterial()` del frontend — override del día o el primero subido) + un solo

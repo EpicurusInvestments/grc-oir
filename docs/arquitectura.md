@@ -5513,3 +5513,39 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Verificado:** `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde
   (193/193, sin regresiones — 2 comentarios de prueba que mencionaban el campo por
   nombre se actualizaron para no describir algo que ya no existe en el DOM).
+
+### ADR-144 — El `.eml` de "Abrir correo" SÍ puede abrir como borrador nuevo: `X-Unsent`
+
+- **Estado:** aceptada · **Fecha:** 2026-09-29 (F1, petición directa del usuario: "que en
+  lugar de ser el formato de correo recibido, sea el formato de un mensaje nuevo o un
+  draft listo para enviar").
+- **Contexto:** ADR-124 había concluido, tras probar el `.eml` con Outlook real, que
+  abrirlo SIEMPRE en modo lectura (como un correo recibido) era "un límite fijo de cómo
+  Windows/Outlook asocian el tipo de archivo `.eml`, no algo que el contenido del archivo
+  pueda cambiar" — de ahí que ADR-125 documentó "usa Reenviar" como la única vía. Esa
+  conclusión se hizo sin conocer `X-Unsent`: un encabezado no estándar (originado en
+  Apple Mail, adoptado también por Outlook de escritorio) que, si está presente en el
+  `.eml`, hace que el cliente lo abra DIRECTO en una ventana de mensaje nuevo editable
+  (con botón "Enviar"), no en modo lectura.
+- **Decisión:** `construir_mime()` (`app/integrations/correo/mime.py`) gana el parámetro
+  `como_borrador: bool = False` — si es `True`, agrega `mensaje["X-Unsent"] = "1"`.
+  `generar_eml_orden_transmision()` (el ÚNICO llamador que arma el `.eml` para que el
+  usuario lo abra manualmente) pasa `como_borrador=True`. Los 3 adaptadores de envío real
+  (`CorreoSes`, `CorreoSmtp`, `CorreoLocal` — este último guarda un `.eml` en disco solo
+  para REVISAR el mensaje armado, ADR-122, no para que el usuario lo abra y lo mande)
+  siguen llamando `construir_mime()` sin el parámetro (default `False`): un mensaje que
+  de verdad se manda o ya se guardó como enviado no debe llevar "no enviado". Frontend:
+  tooltip del ícono 📧 actualizado de "Usa Reenviar para enviar el correo" (ADR-125) a
+  "Abre un borrador nuevo listo para enviar".
+- **Consecuencia:** ninguna negativa — aditivo, no cambia el envío automático (SES/SMTP/
+  Local) ni el `.eml` de revisión de `CorreoLocal`. Reemplaza la limitación documentada
+  en ADR-124/125 (ya no aplica: el flujo "Reenviar" sigue funcionando si el usuario lo
+  prefiere, pero ya no es necesario). Pendiente de que el usuario confirme con Outlook de
+  escritorio real (igual que ADR-124/125, que solo se validaron así) — `X-Unsent` es un
+  encabezado ampliamente soportado pero no parte del RFC 5322 en sí.
+- **Verificado:** `ruff check`/`mypy` limpios. Backend: prueba existente de
+  `generar_eml_orden_transmision` ampliada (`mensaje["X-Unsent"] == "1"`) + 2 pruebas
+  nuevas de `construir_mime` (sin `como_borrador` no lo trae; con `como_borrador=True` sí
+  lo trae). Suite completa de `test_integraciones_correo.py`/`test_f1_11_correo_orden_transmision.py`
+  en verde. Frontend: `tsc --noEmit`/`eslint` limpios (mismo warning preexistente de
+  `useEffect`, no relacionado).

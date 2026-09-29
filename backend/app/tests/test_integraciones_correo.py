@@ -45,6 +45,28 @@ def test_construir_mime_varios_destinatarios_va_en_to_separado_por_coma() -> Non
     assert mensaje["To"] == "uno@x.com, dos@x.com"
 
 
+def test_construir_mime_sin_como_borrador_no_trae_x_unsent() -> None:
+    """Los adaptadores de envío real (SES/SMTP/Local) NUNCA piden `como_borrador` — un
+    mensaje que sí se manda/guarda de verdad no debe llevar `X-Unsent` (ADR-144)."""
+    mensaje = construir_mime(
+        remitente="de@x.com", destinatario="para@x.com", asunto="Asunto", cuerpo_texto="Cuerpo"
+    )
+    assert mensaje["X-Unsent"] is None
+
+
+def test_construir_mime_como_borrador_agrega_x_unsent() -> None:
+    """ADR-144: `como_borrador=True` (solo usado por `generar_eml_orden_transmision`)
+    agrega `X-Unsent: 1`, para que Outlook abra el `.eml` como mensaje nuevo editable."""
+    mensaje = construir_mime(
+        remitente="de@x.com",
+        destinatario="para@x.com",
+        asunto="Asunto",
+        cuerpo_texto="Cuerpo",
+        como_borrador=True,
+    )
+    assert mensaje["X-Unsent"] == "1"
+
+
 def test_correo_local_guarda_eml_real(tmp_path: Path) -> None:
     correo = CorreoLocal(tmp_path)
     correo.enviar(

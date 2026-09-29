@@ -449,10 +449,11 @@ function FilaPdf({
     }
   };
 
-  // ADR-124/ADR-126: descarga el ".eml" con el PDF de ESTE botón (+ Material a
+  // ADR-124/ADR-126/ADR-144: descarga el ".eml" con el PDF de ESTE botón (+ Material a
   // Transmitir, si tiene, a los contactos activos del afiliado) — el usuario lo abre
-  // con doble clic en su cliente de correo de escritorio (Outlook, etc.), que lo recibe
-  // como un borrador editable con todo ya adjunto, y lo manda él mismo.
+  // con doble clic en su cliente de correo de escritorio (Outlook, etc.), que gracias al
+  // encabezado X-Unsent lo abre directo como mensaje nuevo editable (con "Enviar"), no
+  // en modo lectura, y lo manda él mismo.
   const abrirCorreo = async () => {
     setAbriendoCorreo(true);
     setError(null);
@@ -500,7 +501,7 @@ function FilaPdf({
               type="button"
               className="btn btn-sm"
               disabled={enviando || abriendoCorreo || !puedeEnviarCorreo}
-              title={puedeEnviarCorreo ? "Usa Reenviar para enviar el correo" : sinContactosMensaje}
+              title={puedeEnviarCorreo ? "Abre un borrador nuevo listo para enviar" : sinContactosMensaje}
               aria-label="Abrir correo"
               onClick={abrirCorreo}
             >

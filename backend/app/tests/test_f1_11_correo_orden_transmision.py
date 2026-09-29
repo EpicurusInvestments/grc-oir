@@ -576,6 +576,9 @@ def test_generar_eml_arma_un_correo_valido_con_destinatarios_y_adjuntos(
     # = "dev.admin", sembrado con email="dev.admin@x.com" en el fixture `cat`), nunca de
     # un valor fijo en el código.
     assert mensaje["From"] == "dev.admin@x.com"
+    # ADR-144: X-Unsent hace que Outlook (y otros clientes de escritorio) abran el .eml
+    # como mensaje NUEVO editable en vez de en modo lectura (como un correo recibido).
+    assert mensaje["X-Unsent"] == "1"
     nombres_adjuntos = [parte.get_filename() for parte in mensaje.walk() if parte.get_filename()]
     assert "horarios_programados.pdf" in nombres_adjuntos
 

@@ -354,13 +354,14 @@ def generar_eml_orden_transmision(
     usuario: CurrentUser,
     almacenamiento: AlmacenamientoPort,
 ) -> tuple[bytes, str]:
-    """ADR-124/ADR-126 (petición del usuario): arma el MISMO paquete que
+    """ADR-124/ADR-126/ADR-144 (petición del usuario): arma el MISMO paquete que
     `enviar_correo_orden_transmision` para el PDF `tipo` (mismos
     destinatarios/asunto/adjuntos), pero en vez de mandarlo por SES/local, devuelve el
-    archivo `.eml` crudo para que el propio usuario lo abra con su cliente de correo de
-    escritorio (Outlook, etc.) — ahí lo recibe como un borrador editable, con
-    "Para"/asunto/adjuntos ya resueltos, y lo manda él mismo desde su propia cuenta (útil
-    mientras SES no esté en producción, ADR-105/122).
+    archivo `.eml` crudo (con `X-Unsent`, ver `construir_mime`) para que el propio
+    usuario lo abra con su cliente de correo de escritorio (Outlook, etc.) — ahí lo abre
+    DIRECTO como un mensaje nuevo editable, con "Para"/asunto/adjuntos ya resueltos, y lo
+    manda él mismo desde su propia cuenta (útil mientras SES no esté en producción,
+    ADR-105/122).
 
     Se registra en la MISMA bitácora que el envío automático (mismo criterio: se preparó
     el paquete para estos destinatarios), aunque el envío real lo haga el cliente de
@@ -389,6 +390,7 @@ def generar_eml_orden_transmision(
         asunto=asunto,
         cuerpo_texto=cuerpo,
         adjuntos=adjuntos,
+        como_borrador=True,
     )
 
     log = LogEnvioCorreoOrdenEstacion(
@@ -469,13 +471,13 @@ def descargar_eml_orden_transmision_endpoint(
     db: Session = Depends(get_db),
     almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
 ) -> Response:
-    """ADR-124/ADR-126/ADR-140: arma el paquete del PDF `tipo` (+ Material a Transmitir,
-    destinatarios = contactos activos del anunciante o del afiliado, según `tipo`) y
-    regresa el archivo `.eml` crudo para que el usuario lo abra con su cliente de correo
-    de escritorio (Outlook, etc.) — ahí lo recibe como un mensaje que puede reenviar
-    editable, con todo ya adjunto, y lo manda él mismo. 400 si la OE no ha llegado al
-    sub-estado que ese PDF requiere, o si no hay ningún contacto activo con correo
-    cargado del lado que corresponda."""
+    """ADR-124/ADR-126/ADR-140/ADR-144: arma el paquete del PDF `tipo` (+ Material a
+    Transmitir, destinatarios = contactos activos del anunciante o del afiliado, según
+    `tipo`) y regresa el archivo `.eml` crudo (con `X-Unsent`) para que el usuario lo
+    abra con su cliente de correo de escritorio (Outlook, etc.) — ahí lo abre DIRECTO
+    como un mensaje nuevo editable, con todo ya adjunto, y lo manda él mismo. 400 si la
+    OE no ha llegado al sub-estado que ese PDF requiere, o si no hay ningún contacto
+    activo con correo cargado del lado que corresponda."""
     contenido, nombre_archivo = generar_eml_orden_transmision(
         db, item_id, tipo, usuario, almacenamiento
     )

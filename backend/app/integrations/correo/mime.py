@@ -20,7 +20,17 @@ def construir_mime(
     asunto: str,
     cuerpo_texto: str,
     adjuntos: list[Adjunto] | None = None,
+    como_borrador: bool = False,
 ) -> MIMEMultipart:
+    """`como_borrador=True` (ADR-144, solo usado por `generar_eml_orden_transmision`):
+    agrega `X-Unsent: 1` — encabezado no estándar pero respetado por Outlook (y otros
+    clientes de escritorio) para decidir CÓMO abrir un `.eml` suelto: con él presente,
+    lo abre en una ventana de mensaje NUEVO editable (con "Enviar"), no en modo lectura
+    como un correo recibido. Contradice lo que ADR-124 había concluido ("límite fijo,
+    el contenido del archivo no lo puede cambiar") — esa conclusión se hizo sin conocer
+    este encabezado. Nunca se activa en los adaptadores de envío real (SES/SMTP/Local):
+    ahí el mensaje si se manda/guarda de verdad, así que "no enviado" sería incorrecto.
+    """
     destinatarios = [destinatario] if isinstance(destinatario, str) else destinatario
     mensaje = MIMEMultipart()
     mensaje["Subject"] = asunto
@@ -32,6 +42,8 @@ def construir_mime(
     # guardarlo/enviarlo.
     mensaje["Date"] = formatdate(localtime=True)
     mensaje["Message-ID"] = make_msgid()
+    if como_borrador:
+        mensaje["X-Unsent"] = "1"
     mensaje.attach(MIMEText(cuerpo_texto, "plain", "utf-8"))
     for nombre_archivo, contenido, content_type in adjuntos or []:
         subtipo = content_type.split("/", 1)[-1] if "/" in content_type else "octet-stream"

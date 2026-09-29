@@ -867,15 +867,17 @@ uno de los 3 botones manda **su propio** PDF.
   enviado y `destinatario_email` como lista separada por coma. **502** si el envío falla
   (bitácora igual queda registrada).
 - **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision/eml`**
-  (`ordenes:editar`, **ADR-124/ADR-126**) — mismo paquete/destinatarios/gateo que el
-  endpoint de arriba para ese `tipo`, pero en vez de mandarlo por SES/local regresa el
+  (`ordenes:editar`, **ADR-124/ADR-126/ADR-144**) — mismo paquete/destinatarios/gateo que
+  el endpoint de arriba para ese `tipo`, pero en vez de mandarlo por SES/local regresa el
   archivo `.eml` crudo (`Content-Type: message/rfc822`, `Content-Disposition:
-  attachment; filename="orden_transmision_<tipo>_<folio>.eml"`) para que el usuario lo
-  abra con su propio cliente de correo de escritorio (Outlook, etc.) y lo mande él mismo
-  desde su cuenta — útil mientras SES no esté en producción. Se registra en la misma
-  bitácora, siempre `exitoso=true` (armar el archivo no falla como sí puede fallar SES).
-  El botón verde "Enviar por correo" sigue existiendo sin cambios; este es un ícono
-  ADICIONAL (📧, junto a "Imprimir"), no lo reemplaza.
+  attachment; filename="orden_transmision_<tipo>_<folio>.eml"`, con el encabezado
+  `X-Unsent: 1` — ADR-144) para que el usuario lo abra con doble clic en su propio
+  cliente de correo de escritorio (Outlook, etc.), directo como mensaje NUEVO editable
+  (no en modo lectura), y lo mande él mismo desde su cuenta — útil mientras SES no esté
+  en producción. Se registra en la misma bitácora, siempre `exitoso=true` (armar el
+  archivo no falla como sí puede fallar SES). El botón verde "Enviar por correo" sigue
+  existiendo sin cambios; este es un ícono ADICIONAL (📧, junto a "Imprimir"), no lo
+  reemplaza.
 
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo
