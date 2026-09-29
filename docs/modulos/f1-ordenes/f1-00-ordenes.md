@@ -204,26 +204,35 @@ no. Reusa los 3 generadores de PDF YA existentes (`orden_estacion_pdf.py`) como 
 el mismo gateo por sub-estado de sus `GET` sigue aplicando (p.ej. "reales" antes de 2.3
 → 400, sin generar bitácora). El correo se manda vía integración nueva
 `app/integrations/correo/` (mismo patrón anti-corrupción que `AlmacenamientoPort`,
-ADR-027): `CorreoSES` real o `CorreoLocal` (default de dev — SES en modo sandbox exige
-verificar cada destinatario, así que un envío real de extremo a extremo no es viable sin
-la cuenta AWS del cliente). **ADR-122:** `CorreoLocal` además guarda el mensaje armado
-(MIME completo, mismo `construir_mime()` que usa `CorreoSES`) como archivo `.eml` en
-`_storage_local/correos_simulados/` — se puede abrir con un cliente de correo de
-escritorio para revisar cómo quedó el mensaje (asunto, cuerpo, adjuntos reales), sin
-mandar nada a internet ni depender de credenciales de SES/AWS.
+ADR-027) — 3 adaptadores por `CORREO_BACKEND`: `CorreoLocal` (default de dev — no envía
+nada real), `CorreoSES` (API de AWS vía boto3, access key/secret de IAM) y **ADR-138**
+`CorreoSmtp` (SMTP real vía STARTTLS, credenciales SMTP dedicadas — p.ej. el endpoint
+SMTP de SES, DISTINTAS del access key/secret que usa `CorreoSES`). **ADR-122:**
+`CorreoLocal` además guarda el mensaje armado (MIME completo, mismo `construir_mime()`
+que usan los otros 2) como archivo `.eml` en `_storage_local/correos_simulados/` — se
+puede abrir con un cliente de correo de escritorio para revisar cómo quedó el mensaje
+(asunto, cuerpo, adjuntos reales), sin mandar nada a internet ni depender de
+credenciales de SES/AWS.
 
 **ADR-120 (petición del usuario):** en la pantalla, este envío individual quedó
 reemplazado por un diálogo "Enviar por correo"/"Imprimir" que aparece al generar
 CUALQUIERA de los 3 PDFs (`OrdenEstacionDetailPanel.tsx`, `FilaPdf`). "Imprimir" abre el
 PDF de siempre; "Enviar por correo" (`POST .../pdf/{tipo}/correo-orden-transmision`, sin
-body) manda a TODOS los `ContactoAfiliado` **activos** con correo cargado del afiliado
-dueño de la estación (ya no hay captura manual de destinatario). Reusa
+body) manda automáticamente sin captura manual de destinatario. Reusa
 `LogEnvioCorreoOrdenEstacion` (mismos valores de `tipo_pdf` que el envío individual). El
-botón se deshabilita de antemano si el afiliado no tiene ningún contacto activo con
-correo (`contactoAfiliadoApi.listPorAfiliado`, catálogo `ContactoAfiliado` — no la
-Estación, que no tiene contactos propios). El endpoint individual por-tipo de arriba
-sigue existiendo en el backend (sin UI propia) por si se necesita un envío puntual a un
-solo destinatario.
+endpoint individual por-tipo de arriba sigue existiendo en el backend (sin UI propia)
+por si se necesita un envío puntual a un solo destinatario.
+
+**ADR-140 (petición del usuario):** el destinatario depende del `tipo` — antes los 3
+mandaban siempre a los contactos del afiliado, pero "Orden de servicio" y "Reales" son
+documentos que le interesan al ANUNCIANTE (quien contrató la pauta), no al afiliado.
+Ahora: `servicio`/`reales` → TODOS los `ContactoAnunciante` **activos** con correo
+cargado del Anunciante de la orden; `programados` → TODOS los `ContactoAfiliado`
+**activos** con correo cargado del Afiliado dueño de la estación (sin cambio, es el
+documento operativo entre OIR y la emisora). El botón de cada PDF se deshabilita de
+antemano según el catálogo que le corresponda (`contactoAnuncianteApi.listPorAnunciante`
+para servicio/reales, `contactoAfiliadoApi.listPorAfiliado` para programados) — un tipo
+habilitado no habilita al otro.
 
 **ADR-126 (corrección de un bug reportado por el usuario):** el diseño original de
 ADR-120 mandaba SIEMPRE el mismo "paquete fijo" — el PDF de Programados — sin importar
@@ -339,11 +348,20 @@ Capturar Programados" como paso MANUAL) sin el problema de ADR-117: `create()` s
 dejando la fila en `asignada` (que YA es editable hoy), y `avanzar_reales()` ahora acepta
 avanzar directo desde `asignada` **o** desde `en_transmision` — "Capturar Reales" (2.3) ya
 no requiere haber pasado por `avanzar_programados()` primero. `reporte_programados_ref`
-(antes solo capturable en ese paso) se agregó a `OrdenEstacionCreate`/`Update`, así que se
-puede adjuntar/corregir desde el alta o mientras la OE siga editable. El botón "→
-Capturar programados (2.2)" y su pantalla (`ProgramadosForm.tsx`) se retiraron de la UI —
-el endpoint `POST .../programados` se conserva intacto en el backend (con sus pruebas)
-por si se necesita un ajuste puntual de `spots_programados` distinto al asignado.
+(antes solo capturable en ese paso) se agregó a `OrdenEstacionCreate`/`Update` en el
+backend, que lo sigue aceptando sin cambios. El botón "→ Capturar programados (2.2)" y su
+pantalla (`ProgramadosForm.tsx`) se retiraron de la UI — el endpoint `POST .../programados`
+se conserva intacto en el backend (con sus pruebas) por si se necesita un ajuste puntual
+de `spots_programados` distinto al asignado.
+
+**ADR-143 (petición del usuario, "ya no se ocupará"):** la sección "Reporte del afiliado"
+del alta/edición (`OrdenEstacionForm.tsx`) se quitó de la pantalla — el frontend ya no la
+muestra ni la manda al guardar (`toApi.ts` dejó de incluir `reporte_programados_ref` en
+`create()`/`update()`, para no mandar `null` en cada "Guardar" y borrar en silencio un
+reporte ya adjuntado de antes). El backend NO cambió: columna, schema y endpoint siguen
+intactos, por si algún día se vuelve a necesitar o se quiere mostrar de solo lectura. Ojo:
+existe una sección DISTINTA con el mismo nombre "Reporte del afiliado" en "Capturar
+reales" (`RealesForm.tsx`, campo `reporte_reales_ref`) — esa NO se tocó.
 
 ## Roles / permisos
 

@@ -90,6 +90,25 @@ function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}
   return { ...utils, onGuardar, onCancelar };
 }
 
+describe("ADR-141: 'Facturación directa'/'Afiliado factura' es un radio group mutuamente excluyente", () => {
+  it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", () => {
+    renderForm();
+
+    const directa = screen.getByLabelText(/Facturación directa al cliente/) as HTMLInputElement;
+    const afiliado = screen.getByLabelText(/Afiliado factura directo al cliente/) as HTMLInputElement;
+    expect(directa.checked).toBe(true);
+    expect(afiliado.checked).toBe(false);
+
+    fireEvent.click(afiliado);
+    expect(afiliado.checked).toBe(true);
+    expect(directa.checked).toBe(false);
+
+    fireEvent.click(directa);
+    expect(directa.checked).toBe(true);
+    expect(afiliado.checked).toBe(false);
+  });
+});
+
 describe("Cascada anunciante → contrato / marca (1.7)", () => {
   it("elegir un anunciante filtra sus contratos vigentes y sus marcas", () => {
     const { container } = renderForm();
@@ -182,6 +201,17 @@ describe("Snapshots de comisión — 1.8", () => {
     fireEvent.change(vendedorSelect, { target: { value: "ve2" } }); // Roberto López, default 4
 
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").value).toBe("8");
+  });
+
+  it("ADR-142 (corrige un bug real): volver a 'Sin vendedor secundario' limpia el % de comisión", () => {
+    const { container } = renderForm();
+    const vendedorSecundarioSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
+    fireEvent.change(vendedorSecundarioSelect, { target: { value: "ve1" } }); // auto-llena 5
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("5");
+
+    fireEvent.change(vendedorSecundarioSelect, { target: { value: "" } }); // Sin vendedor secundario
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("");
   });
 
   it("el badge dice 'del catálogo' cuando coincide con el default, y 'sobrescrito' cuando se modifica a mano", () => {

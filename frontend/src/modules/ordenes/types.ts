@@ -141,6 +141,10 @@ export interface OrdenEstacion {
   folio_orden_interna: string;
   /** FK a OrdenCliente. */
   orden_id: string;
+  /** Derivado: heredado de `OrdenCliente.anunciante_id` al crear la OE (ADR-140: define
+   *  a quién van los correos de "Orden de servicio"/"Reales" — al ANUNCIANTE, no al
+   *  afiliado de la estación). */
+  anunciante_id: string;
   estacion_id: string;
   plaza_id: string;
   /** Producto de TARIFA (ADR-102) — spot/mención/control remoto/patrocinio, elegido por
@@ -278,8 +282,4 @@ export type OrdenEstacionInput = Pick<
    *  backend no lo acepta en `update()`, que sigue usando el endpoint dedicado de
    *  siempre). El primero de la lista es el default. */
   audios_staging?: { ref: string; nombre_archivo: string }[];
-  /** ADR-121: "Reporte del afiliado" — antes solo se capturaba en el paso manual 2.2
-   *  ("Capturar Programados", ya retirado); ahora se adjunta/corrige desde el alta o
-   *  edición de la OE, mientras siga en un estado editable (antes de 2.3 Reales). */
-  reporte_programados_ref?: string | null;
 };

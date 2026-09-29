@@ -57,6 +57,22 @@ function renderPage(oeIdPreseleccionada?: string) {
   return { ...utils, tabla };
 }
 
+describe("ADR-139 (corrige un bug real): cambiar de OE seleccionada resetea el panel de detalle", () => {
+  it("un diálogo de PDF abierto en la OE anterior no sigue abierto al seleccionar otra OE", async () => {
+    const { tabla } = renderPage();
+
+    fireEvent.click(within(tabla).getByText("OE-2026-0054A"));
+    fireEvent.click(await screen.findByText(/PDF #1 · Orden de servicio/));
+    expect(screen.getByText("🖨️ Imprimir")).toBeInTheDocument();
+
+    fireEvent.click(within(tabla).getByText("OE-2026-0054B"));
+    // Sin `key={oe.id}` en <OrdenEstacionDetailPanel>, React reutiliza la misma
+    // instancia (y su estado local `abierto`) — el diálogo de la OE anterior seguiría
+    // visible aquí, aunque nunca se le dio clic para esta OE.
+    expect(screen.queryByText("🖨️ Imprimir")).toBeNull();
+  });
+});
+
 describe("Fix: OI preseleccionada filtra la tabla (no solo resalta la fila)", () => {
   it("sin preselección, se ven todas las OI", () => {
     const { tabla } = renderPage();
@@ -125,8 +141,7 @@ async function capturarOEMinima(container: HTMLElement) {
   fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
   fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
 
-  // Selector por `accept` (no por posición): "Reporte del afiliado" también es un
-  // input[type="file"] en el mismo formulario — ".mp3" en `accept` solo lo trae este.
+  // Selector por `accept` (no por posición) — ".mp3" en `accept` solo lo trae este input.
   const inputAudio = container.querySelector(
     'input[type="file"][accept*=".mp3"]',
   ) as HTMLInputElement;

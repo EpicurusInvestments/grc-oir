@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 
 import { contactoAfiliadoApi } from "@/modules/catalogos/afiliado/api";
+import { contactoAnuncianteApi } from "@/modules/catalogos/anunciante/api";
 import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 
@@ -20,7 +21,7 @@ import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { IVA_RATE } from "../../constants";
 import { diaDeSemana, fmtMonto, fmtPct, oGuion } from "../../format";
-import { findAfiliado, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
+import { findAfiliado, findAnunciante, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
 import { oiImporte, oiTotalSpots } from "../../state/selectors";
 import type { Incidencia, LogEnvioCorreo, OrdenCliente, OrdenEstacion, OrdenEstacionAudio } from "../../types";
 import { MaterialATransmitir } from "./MaterialATransmitir";
@@ -46,6 +47,7 @@ export function OrdenEstacionDetailPanel({
 }: OrdenEstacionDetailPanelProps) {
   const estacion = findEstacion(oe.estacion_id);
   const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
+  const anunciante = findAnunciante(oe.anunciante_id);
   const plaza = findPlaza(oe.plaza_id);
 
   const totalSpots = oiTotalSpots(oe);
@@ -82,30 +84,53 @@ export function OrdenEstacionDetailPanel({
     };
   }, [oe.id]);
 
-  // ADR-120: "Enviar por correo" se deshabilita si el afiliado no tiene ningún contacto
-  // ACTIVO con correo cargado (`ContactoAfiliado`) — se avisa antes de intentar, no se
-  // deja fallar el envío.
-  const [puedeEnviarCorreo, setPuedeEnviarCorreo] = useState(false);
+  // ADR-120/ADR-140: "Enviar por correo" se deshabilita si el lado que corresponde a
+  // ese tipo de PDF no tiene ningún contacto ACTIVO con correo cargado — se avisa antes
+  // de intentar, no se deja fallar el envío. Servicio/Reales dependen del ANUNCIANTE
+  // (`ContactoAnunciante`); Programados depende del AFILIADO (`ContactoAfiliado`).
+  const [puedeEnviarAfiliado, setPuedeEnviarAfiliado] = useState(false);
   useEffect(() => {
     let cancelado = false;
     if (!afiliado) {
-      setPuedeEnviarCorreo(false);
+      setPuedeEnviarAfiliado(false);
       return;
     }
     contactoAfiliadoApi
       .listPorAfiliado(afiliado.id, { activo: true, size: 100 })
       .then((page) => {
         if (!cancelado) {
-          setPuedeEnviarCorreo(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+          setPuedeEnviarAfiliado(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
         }
       })
       .catch(() => {
-        if (!cancelado) setPuedeEnviarCorreo(false);
+        if (!cancelado) setPuedeEnviarAfiliado(false);
       });
     return () => {
       cancelado = true;
     };
   }, [afiliado]);
+
+  const [puedeEnviarAnunciante, setPuedeEnviarAnunciante] = useState(false);
+  useEffect(() => {
+    let cancelado = false;
+    if (!anunciante) {
+      setPuedeEnviarAnunciante(false);
+      return;
+    }
+    contactoAnuncianteApi
+      .listPorAnunciante(anunciante.id, { activo: true, size: 100 })
+      .then((page) => {
+        if (!cancelado) {
+          setPuedeEnviarAnunciante(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setPuedeEnviarAnunciante(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [anunciante]);
 
   // ADR-103 (corrección): "Material a Transmitir" vive aquí, en el detalle — igual que
   // los PDFs — para que se pueda subir/descargar/quitar audio sin tener que entrar a
@@ -315,7 +340,7 @@ export function OrdenEstacionDetailPanel({
             oe={oe}
             tipo="servicio"
             etiqueta="PDF #1 · Orden de servicio"
-            puedeEnviarCorreo={puedeEnviarCorreo}
+            puedeEnviarCorreo={puedeEnviarAnunciante}
             envios={envios}
             onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
@@ -325,7 +350,7 @@ export function OrdenEstacionDetailPanel({
             oe={oe}
             tipo="programados"
             etiqueta="PDF #2 · Programados"
-            puedeEnviarCorreo={puedeEnviarCorreo}
+            puedeEnviarCorreo={puedeEnviarAfiliado}
             envios={envios}
             onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
@@ -334,7 +359,7 @@ export function OrdenEstacionDetailPanel({
               oe={oe}
               tipo="reales"
               etiqueta="PDF #3 · Reales"
-              puedeEnviarCorreo={puedeEnviarCorreo}
+              puedeEnviarCorreo={puedeEnviarAnunciante}
               envios={envios}
               onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
             />
@@ -386,6 +411,12 @@ function FilaPdf({
   // ADR-126: el bundle ahora manda el PDF de ESTE botón, así que el último envío
   // exitoso se filtra por el mismo `tipoPdf` (ya no por el valor fijo "orden_transmision").
   const ultimoEnvio = envios.find((e) => e.tipoPdf === tipo && e.exitoso);
+  // ADR-140: el mensaje de "sin contactos" depende de a quién le toca este tipo de PDF
+  // (Servicio/Reales → anunciante; Programados → afiliado).
+  const sinContactosMensaje =
+    tipo === "programados"
+      ? "El afiliado no tiene contactos activos con correo cargado."
+      : "El anunciante no tiene contactos activos con correo cargado.";
   // ADR-135 (petición del usuario): "Enviado a..." ya no queda fijo para siempre — se
   // muestra como confirmación y se oculta solo a los 10s (reaparece si se manda otro
   // correo, por el `useEffect` reiniciando el timer cada vez que cambia `ultimoEnvio`).
@@ -457,11 +488,7 @@ function FilaPdf({
               type="button"
               className="btn btn-sm btn-teal"
               disabled={enviando || !puedeEnviarCorreo}
-              title={
-                puedeEnviarCorreo
-                  ? undefined
-                  : "El afiliado no tiene contactos activos con correo cargado."
-              }
+              title={puedeEnviarCorreo ? undefined : sinContactosMensaje}
               onClick={enviarCorreo}
             >
               {enviando ? "Enviando…" : "✉️ Enviar por correo"}
@@ -473,11 +500,7 @@ function FilaPdf({
               type="button"
               className="btn btn-sm"
               disabled={enviando || abriendoCorreo || !puedeEnviarCorreo}
-              title={
-                puedeEnviarCorreo
-                  ? "Usa Reenviar para enviar el correo"
-                  : "El afiliado no tiene contactos activos con correo cargado."
-              }
+              title={puedeEnviarCorreo ? "Usa Reenviar para enviar el correo" : sinContactosMensaje}
               aria-label="Abrir correo"
               onClick={abrirCorreo}
             >

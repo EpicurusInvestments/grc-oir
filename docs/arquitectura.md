@@ -4918,11 +4918,16 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 
 - **Estado:** aceptada · **Fecha:** 2026-09-26 (F1, petición directa del usuario).
 - **Contexto:** el usuario probó el `.eml` que ya generaba ADR-122 (guardado en
-  `_storage_local/correos_simulados/`) abriéndolo manualmente con Outlook, y confirmó que
-  Outlook lo recibe como un borrador NUEVO editable (con "RV:" en el asunto — Outlook
-  trata un `.eml` ajeno como reenvío, con el mensaje original citado abajo), con "Para"/
-  adjuntos ya resueltos y el campo "De" tomado de la cuenta propia del usuario en
-  Outlook, no del `.eml`. Pidió exponer esto en la pantalla: un ícono de sobre junto a
+  `_storage_local/correos_simulados/`) abriéndolo manualmente con Outlook. Al hacer
+  doble clic, Outlook lo abre en modo LECTURA (como cualquier correo recibido) — nunca
+  directo en modo borrador; es un límite fijo de cómo Windows/Outlook asocian el tipo de
+  archivo `.eml`, no algo que el contenido del archivo pueda cambiar. Desde esa vista de
+  lectura, "Reenviar" SÍ abre un borrador NUEVO editable (con "RV:" en el asunto y el
+  mensaje original citado abajo), con "Para"/adjuntos ya resueltos y el campo "De"
+  tomado de la cuenta propia del usuario en Outlook, no del `.eml` — un paso extra
+  inevitable (aclarado de nuevo en 2026-09-28: el usuario volvió a preguntar por qué no
+  abría directo en modo borrador; la respuesta sigue siendo la misma). Pidió exponer
+  esto en la pantalla: un ícono de sobre junto a
   "Imprimir", tooltip "Abrir correo", que descargue ese `.eml` directo (sin tener que ir a
   buscarlo a la carpeta) para abrirlo con doble clic. Se confirmó con el usuario que el
   botón verde "Enviar por correo" (envío automático SES/local, ADR-120) se queda tal cual
@@ -5303,3 +5308,208 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Verificado:** nueva prueba con fake timers en `OrdenEstacionDetailPanel.test.tsx`
   ("Enviado a..." aparece al cargar el historial, desaparece exactamente a los 10s);
   `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (189/189).
+
+### ADR-136 — Combo "Estación" de la Orden de Transmisión: "Estación-Siglas-Frecuencia"
+
+- **Estado:** aceptada · **Fecha:** 2026-09-28 (F1, petición del usuario).
+- **Contexto:** el `<select>` de "Estación" en "Datos de la Orden de Transmisión"
+  (`OrdenEstacionForm.tsx`) mostraba `"{nombre_estacion} ({frecuencia})"` — sin las
+  siglas, que el catálogo de Estaciones sí captura (columna "SIGLAS" de esa pantalla).
+- **Decisión:** el combo ahora muestra `"{nombre_estacion}-{siglas}-{frecuencia}"`
+  (`"—"` si la estación no tiene siglas capturadas). `EstacionRef` (la proyección
+  ligera que usa el módulo `ordenes`, en `state/catalogosCache.ts`) gana el campo
+  `siglas?: string | null` — opcional, mismo criterio que `activo?` (no obligar a los
+  fixtures de prueba a declararlo); `catalogosApi.ts` lo mapea desde el catálogo real
+  de Estaciones.
+- **Consecuencia:** ninguna negativa. Sin cambios de esquema — el campo ya existía en
+  el catálogo de Estaciones, solo faltaba propagarlo a esta proyección.
+- **Verificado:** prueba existente actualizada al nuevo formato
+  (`OrdenEstacionForm.test.tsx`); `tsc --noEmit` limpio; suite `vitest` del módulo
+  `ordenes` en verde (189/189).
+
+### ADR-137 — El remitente del `.eml` sale del Usuario en sesión, no de un valor fijo en el código
+
+- **Estado:** aceptada · **Fecha:** 2026-09-28 (F1, corrección pedida por el equipo en
+  revisión de código sobre ADR-124/125).
+- **Contexto:** `generar_eml_orden_transmision()` usaba una constante
+  `_REMITENTE_EML_ORDEN_TRANSMISION = "uacosta@epicurus.com.mx"` como remitente del
+  `.eml` — un placeholder pedido explícitamente por el usuario durante las pruebas de
+  esta sesión (ya documentado en el código como `[[POR LLENAR]]`, pendiente de que el
+  equipo confirmara el remitente definitivo). En revisión, el equipo pidió que se
+  quitara: el remitente debe salir del **usuario con la sesión abierta**, no de un
+  valor fijo para todos.
+- **Decisión:** nuevo helper `resolver_usuario_email(db, username)` en
+  `app/modules/usuarios/lookup.py` (mismo criterio que `resolver_usuario_id`, ya usado
+  en el resto del módulo — 404 claro si el usuario no está sembrado, nunca se
+  auto-crea). `generar_eml_orden_transmision()` lo llama con `usuario.username` (el
+  usuario autenticado que pide el `.eml`) y arma el MIME con ese correo real.
+- **Consecuencia:** ninguna negativa. En la práctica, Outlook/el cliente de escritorio
+  siempre sustituye el "De" del borrador nuevo por la cuenta propia configurada en esa
+  máquina, sin importar lo que traiga el archivo (confirmado ADR-124) — este cambio
+  hace correcto el `.eml` crudo en sí, no cambia qué ve el destinatario final como
+  remitente cuando lo abre Outlook.
+- **Verificado:** prueba existente ampliada (`mensaje["From"] == "dev.admin@x.com"`,
+  el email sembrado del usuario de la sesión) + nueva prueba
+  `test_generar_eml_usuario_sin_registrar_404`; suite completa del backend en verde
+  (`pytest app/tests`).
+
+### ADR-138 — Tercer adaptador de correo: `CorreoSmtp` (SMTP real vía STARTTLS)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-28 (F1, el equipo pasó credenciales SMTP de
+  SES para probar el botón "Enviar por correo").
+- **Contexto:** el equipo compartió credenciales para probar el envío real — pero son
+  credenciales **SMTP** de SES (`mail.smtp.user`/`mail.smtp.password`, host
+  `email-smtp.us-west-2.amazonaws.com`, puerto 587, STARTTLS), no un access key/secret
+  de IAM. `CorreoSES` (el adaptador ya implementado) habla la API de AWS vía `boto3` —
+  un mecanismo de autenticación DISTINTO, incompatible con credenciales SMTP (aunque el
+  usuario SMTP tenga formato `AKIA…`, es un valor derivado específico para SMTP, generado
+  aparte en la consola de AWS). No se podían usar las credenciales tal cual con el
+  adaptador existente.
+- **Decisión:** tercer adaptador del mismo puerto (`CorreoPort`), `CorreoSmtp`
+  (`app/integrations/correo/adapter_smtp.py`) — `smtplib.SMTP` + `starttls()` +
+  `login()`/`sendmail()`/`quit()`, una conexión nueva por envío (transacción corta, no
+  persistente). `CORREO_BACKEND=smtp` lo selecciona en `get_correo()`; requiere
+  `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM_EMAIL` (falla con error de
+  configuración claro si faltan, mismo criterio que `ses`). `SMTP_FROM_NAME` opcional.
+  `.env` local (nunca versionado) configurado con `CORREO_BACKEND=smtp` y las
+  credenciales reales para la prueba; `.env.example` documenta las 6 variables con
+  placeholders `[[POR LLENAR]]`.
+- **Nota de seguridad:** las credenciales llegaron pegadas en texto plano en una
+  conversación — nunca se escribieron en ningún archivo versionado (solo en `.env`
+  local, ya en `.gitignore`). Se avisó al usuario que, por buena práctica, convendría
+  rotarlas después de las pruebas si es una cuenta compartida/productiva.
+- **Consecuencia:** ninguna negativa. Tercera opción de un mismo puerto ya existente —
+  sin cambios de arquitectura. `smtplib` es de la librería estándar, sin dependencia
+  nueva.
+- **Verificado:** 4 pruebas nuevas en `test_integraciones_correo.py` (`CorreoSmtp` hace
+  login/STARTTLS/sendmail con el remitente y adjuntos correctos; un fallo de
+  conexión/login se traduce a `CorreoError`; construcción sin host/credenciales falla
+  claro) — todas con un cliente SMTP falso inyectado (`cliente_factory`), sin red ni
+  credenciales reales. Suite completa del backend en verde (`pytest app/tests`).
+
+### ADR-139 — El panel de detalle de OrdenEstacion se resetea al cambiar de selección en la lista
+
+- **Estado:** aceptada · **Fecha:** 2026-09-28 (F1, bug reportado por el usuario al
+  probar el envío real por SMTP: el error de una orden se veía también en las demás).
+- **Contexto:** `<OrdenEstacionDetailPanel>` se renderizaba en `OrdenEstacionListPage.tsx`
+  sin `key` — al seleccionar una OE distinta en la tabla, React reconciliaba la MISMA
+  instancia del componente (mismo tipo, misma posición en el árbol) en vez de montar una
+  nueva, y solo actualizaba las props (`oe`, `oc`, etc.). El estado LOCAL de UI de sus
+  hijos — como el `error` de "Enviar por correo" en `FilaPdf`, que nunca se resetea por
+  ningún `useEffect` — sobrevivía de la OE anterior: el usuario veía "No se pudo enviar
+  el correo" en órdenes que nunca había tocado.
+- **Decisión:** `key={selected.id}` en `<OrdenEstacionDetailPanel>` — fuerza a React a
+  desmontar/montar limpio todo el panel (y cada `FilaPdf` adentro) cada vez que cambia
+  la OE seleccionada. Mismo patrón de React para "resetear estado local al cambiar de
+  entidad en una vista lista+detalle" — no se tocó `OrdenClienteDetailPanel.tsx` (mismo
+  hueco potencial, pero fuera del alcance de lo reportado).
+- **Consecuencia:** ninguna negativa. Cambio de una línea; los `useEffect` que ya
+  refrescaban por `[oe.id]` (audios, envíos, contactos) siguen funcionando igual, ahora
+  simplemente arrancan de cero en vez de re-ejecutarse sobre una instancia reciclada.
+- **Verificado:** nueva prueba en `OrdenEstacionListPage.test.tsx` (abre el diálogo de
+  PDF de una OE, selecciona otra, confirma que el diálogo YA NO aparece — sin el fix,
+  seguía visible); `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde
+  (190/190).
+
+### ADR-140 — Destinatarios del correo por tipo de PDF: Servicio/Reales → anunciante; Programados → afiliado
+
+- **Estado:** aceptada · **Fecha:** 2026-09-29 (F1, petición del usuario).
+- **Contexto:** los 3 botones de correo (PDF #1 Servicio, #2 Programados, #3 Reales)
+  mandaban SIEMPRE a los `ContactoAfiliado` activos del afiliado dueño de la estación —
+  sin importar el tipo. El usuario pidió separar por tipo: "Orden de servicio" y
+  "Reales" son documentos que le interesan al ANUNCIANTE (quien contrató la pauta);
+  "Programados" es un documento operativo entre OIR y la EMISORA/afiliado (quien
+  transmite). El catálogo de Anunciantes ya tiene una tabla de contactos espejo de
+  `ContactoAfiliado` (`ContactoAnunciante`, mismos campos — `email_contacto`, `activo`,
+  CRUD completo), simplemente no se usaba en este flujo.
+- **Decisión:**
+  1. Backend: `_armar_paquete_orden_transmision()` bifurca por `tipo` —
+     `PROGRAMADOS` sigue resolviendo `ContactoAfiliado` por `estacion.afiliado_id`
+     (sin cambio); `SERVICIO`/`REALES` ahora resuelven `ContactoAnunciante` por
+     `OrdenEstacion.anunciante_id` (ya existía como columna denormalizada, heredada de
+     `OrdenCliente` al crear la OE — no hizo falta ningún join extra). Mensaje de error
+     400 diferenciado ("El afiliado..."/"El anunciante...").
+  2. Frontend: `puedeEnviarCorreo` (un solo booleano para los 3 botones) se separa en
+     `puedeEnviarAfiliado`/`puedeEnviarAnunciante`, cada uno resuelto contra su propio
+     catálogo (`contactoAfiliadoApi`/`contactoAnuncianteApi`) — cada `FilaPdf` recibe el
+     que le corresponde según su `tipo`. `OrdenEstacion.anunciante_id` se agrega al tipo
+     y a `fromApi.ts` (ya lo devolvía el backend, solo faltaba propagarlo al frontend —
+     mismo patrón que `estacion_id`/`plaza_id`, ya denormalizados ahí).
+- **Consecuencia:** ninguna negativa. Sin migración (la tabla y la columna ya existían).
+- **Verificado:** backend — 4 pruebas nuevas (`test_servicio_y_reales_van_a_contactos_del_anunciante`
+  parametrizada ×2, `test_programados_va_a_contactos_del_afiliado_no_del_anunciante`,
+  `test_servicio_sin_contactos_del_anunciante_400`) + prueba existente ajustada; suite
+  completa del backend en verde. Frontend — nueva prueba en
+  `OrdenEstacionDetailPanel.test.tsx` (anunciante con contacto activo + afiliado sin
+  ninguno → PDF #1 habilitado, PDF #2 deshabilitado con su propio mensaje); `tsc
+  --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (191/191).
+
+### ADR-141 — "Facturación directa"/"Afiliado factura" pasa de 2 checkboxes a un radio group
+
+- **Estado:** aceptada · **Fecha:** 2026-09-29 (F1, petición del usuario).
+- **Contexto:** `OrdenClienteForm.tsx` (sección "Facturación", alta de Orden de Servicio)
+  mostraba `facturacion_directa_cliente`/`afiliado_factura_directo_al_cliente` como 2
+  checkboxes INDEPENDIENTES — permitía los 4 estados (ninguno, uno, el otro, los dos),
+  pero solo tiene sentido de negocio exactamente UNO a la vez.
+- **Decisión:** un solo radio group (2 `<input type="radio" name="tipo_facturacion">`)
+  — marcar uno pone el otro en `false` vía `setValue` (no hay `register` de RHF para
+  radios excluyentes sobre 2 campos booleanos separados, así que se controla a mano con
+  `checked`/`onChange`). Los 2 campos SIGUEN siendo columnas booleanas independientes
+  del modelo (spec BD v2, sin cambio de esquema) — el radio es 100% de captura/UI.
+  Default en el ALTA (sin `defaultValues`): "Facturación directa al cliente" = `true`;
+  editar una orden existente conserva su valor real tal cual (incluido un `false`
+  explícito heredado de antes de este cambio).
+- **Consecuencia:** ninguna negativa. Sin migración, sin nueva validación de backend
+  (el radio ya garantiza el invariante "exactamente uno" desde la UI).
+- **Verificado:** nueva prueba en `OrdenClienteForm.test.tsx` (arranca con "Facturación
+  directa" marcada por default; elegir la otra la desmarca y viceversa); `tsc --noEmit`
+  limpio; suite `vitest` del módulo `ordenes` en verde (192/192).
+
+### ADR-142 — Volver a "Sin vendedor secundario" ya limpia su % de comisión
+
+- **Estado:** aceptada · **Fecha:** 2026-09-29 (F1, bug reportado por el usuario).
+- **Contexto:** `onVendedorChange()` (`OrdenClienteForm.tsx`) solo auto-llenaba el % de
+  comisión con el default del catálogo cuando SÍ encontraba un vendedor
+  (`if (vendedor) setValue(pctCampo, ...)`) — al elegir "Sin vendedor secundario"
+  (`id=""`), `findVendedor("")` no encuentra nada, ese `if` nunca corre, y el % que
+  hubiera quedado (del catálogo o capturado a mano) del vendedor elegido por error se
+  queda pegado — sin vendedor, ya no debería haber ningún % aplicándose.
+- **Decisión:** cuando `findVendedor(id)` no encuentra nada (id vacío o inválido),
+  `setValue(pctCampo, "")` — mismo criterio que ya usaba `onAgenciaChange` para "Sin
+  agencia". Cuando SÍ hay vendedor, el comportamiento no cambia (respeta un % ya
+  capturado a mano, solo auto-llena si estaba vacío).
+- **Consecuencia:** ninguna negativa. Aplica igual a vendedor principal y secundario
+  (aunque en la práctica el principal es obligatorio y no suele volver a "").
+- **Verificado:** nueva prueba en `OrdenClienteForm.test.tsx` (elegir un vendedor
+  secundario auto-llena su %; volver a "Sin vendedor secundario" lo deja vacío); `tsc
+  --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde (193/193).
+
+### ADR-143 — "Reporte del afiliado" retirado del alta/edición de la Orden de Transmisión
+
+- **Estado:** aceptada · **Fecha:** 2026-09-29 (F1, petición del usuario: "ya no se
+  ocupará").
+- **Contexto:** `OrdenEstacionForm.tsx` (alta/edición 2.1) tenía una sección "Reporte del
+  afiliado" (campo `reporte_programados_ref`, ADR-121) — el usuario pidió quitarla.
+  Ojo: existe una SEGUNDA sección con el MISMO nombre en "Capturar reales" (2.3,
+  `RealesForm.tsx`, campo `reporte_reales_ref`) — **distinta**, y el usuario confirmó
+  que el quite es SOLO de la de alta/edición; la de Reales sigue igual.
+- **Decisión:** se quitó la sección de la pantalla (estado local, tarjeta del formulario,
+  el `import` de `AdjuntoOrdenInput` que ya no se usa ahí) y se dejó de mandar el campo
+  al guardar (`toApi.ts`, tanto alta como edición) — `OrdenEstacionInput.reporte_programados_ref`
+  se quitó del tipo (ya no lo llena nadie). **Deliberadamente NO se tocó el backend**: ni
+  la columna (`OrdenEstacion.reporte_programados_ref`), ni el schema, ni el endpoint —
+  solo se quitó de la UI y de lo que el frontend manda. Motivo: es un cambio reversible
+  y sin pérdida de datos; borrar la columna requeriría una migración y perdería
+  cualquier archivo ya adjuntado en órdenes existentes, que el usuario no pidió. Antes
+  del cambio, `toApi.ts` mandaba `reporte_programados_ref: input.reporte_programados_ref
+  ?? null` INCONDICIONALMENTE en cada "Guardar" — si simplemente se hubiera dejado de
+  setear el estado sin tocar `toApi.ts`, cada edición habría mandado `null` y borrado en
+  silencio cualquier reporte ya adjuntado de antes; por eso también se quitó la línea de
+  `toApi.ts`, no solo el campo del formulario.
+- **Consecuencia:** ninguna negativa. El dato ya adjuntado en órdenes existentes
+  (`OrdenEstacion.reporte_programados_ref` vía `fromApi.ts`) sigue disponible por API si
+  algún día se necesita mostrarlo de solo lectura — simplemente ya no se puede
+  cargar/editar desde esta pantalla.
+- **Verificado:** `tsc --noEmit` limpio; suite `vitest` del módulo `ordenes` en verde
+  (193/193, sin regresiones — 2 comentarios de prueba que mencionaban el campo por
+  nombre se actualizaron para no describir algo que ya no existe en el DOM).

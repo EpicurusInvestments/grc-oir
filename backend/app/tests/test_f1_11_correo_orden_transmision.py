@@ -34,7 +34,7 @@ from app.integrations.correo.errors import CorreoError
 from app.integrations.correo.port import Adjunto
 from app.modules.catalogos.afiliado import Afiliado, ContactoAfiliado
 from app.modules.catalogos.agencia import Agencia
-from app.modules.catalogos.anunciante import Anunciante, Marca
+from app.modules.catalogos.anunciante import Anunciante, ContactoAnunciante, Marca
 from app.modules.catalogos.categoria import Categoria
 from app.modules.catalogos.contrato import Contrato
 from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
@@ -60,6 +60,7 @@ from app.modules.ordenes.orden_estacion import (
     OrdenEstacionCreate,
     OrdenEstacionDiaCreate,
     OrdenEstacionProgramadosIn,
+    OrdenEstacionRealesIn,
     OrdenEstacionRepository,
     OrdenEstacionService,
 )
@@ -308,6 +309,21 @@ def _agregar_contacto(
     db.commit()
 
 
+def _agregar_contacto_anunciante(
+    db: Session, anunciante_id: uuid.UUID, *, nombre: str, email: str | None, activo: bool = True
+) -> None:
+    db.add(
+        ContactoAnunciante(
+            contacto_anunciante_id=uuid.uuid4(),
+            anunciante_id=anunciante_id,
+            nombre_contacto=nombre,
+            email_contacto=email,
+            activo=activo,
+        )
+    )
+    db.commit()
+
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # Servicio: enviar_correo_orden_transmision
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -418,9 +434,9 @@ def test_cada_tipo_adjunta_su_propio_pdf(db: Session, oe_en_transmision, almacen
     """ADR-126 (corrección del bug reportado por el usuario): antes SIEMPRE se adjuntaba
     el PDF de Programados sin importar qué botón disparó el diálogo — ahora cada `tipo`
     adjunta su propio PDF."""
-    _, oe = oe_en_transmision
-    afiliado_id = _afiliado_de(db, oe)
-    _agregar_contacto(db, afiliado_id, nombre="Activo", email="uno@x.com")
+    oc, oe = oe_en_transmision
+    _agregar_contacto(db, _afiliado_de(db, oe), nombre="Activo", email="uno@x.com")
+    _agregar_contacto_anunciante(db, oc.anunciante_id, nombre="Activo", email="anunciante@x.com")
     correo = FakeCorreoExitoso()
 
     enviar_correo_orden_transmision(
@@ -438,6 +454,68 @@ def test_cada_tipo_adjunta_su_propio_pdf(db: Session, oe_en_transmision, almacen
 
     registros = db.scalars(select(LogEnvioCorreoOrdenEstacion)).all()
     assert {r.tipo_pdf for r in registros} == {"servicio", "programados"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ADR-140: Servicio/Reales → contactos del ANUNCIANTE; Programados → del AFILIADO
+# ══════════════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("tipo", [TipoPdfOrdenEstacion.SERVICIO, TipoPdfOrdenEstacion.REALES])
+def test_servicio_y_reales_van_a_contactos_del_anunciante(
+    db: Session,
+    oe_en_transmision,
+    oe_svc: OrdenEstacionService,
+    almacenamiento,
+    tipo: TipoPdfOrdenEstacion,
+) -> None:
+    oc, oe = oe_en_transmision
+    if tipo == TipoPdfOrdenEstacion.REALES:
+        oe_svc.avanzar_reales(oe.orden_estacion_id, OrdenEstacionRealesIn(dias=[]), VENTAS)
+    _agregar_contacto_anunciante(db, oc.anunciante_id, nombre="Activo", email="anunciante@x.com")
+    # Un contacto del AFILIADO no debe recibir nada para estos 2 tipos.
+    _agregar_contacto(db, _afiliado_de(db, oe), nombre="Afiliado", email="afiliado@x.com")
+    correo = FakeCorreoExitoso()
+
+    log = enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, tipo, VENTAS, correo, almacenamiento
+    )
+
+    assert log.destinatario_email == "anunciante@x.com"
+
+
+def test_programados_va_a_contactos_del_afiliado_no_del_anunciante(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    oc, oe = oe_en_transmision
+    _agregar_contacto(db, _afiliado_de(db, oe), nombre="Afiliado", email="afiliado@x.com")
+    # Un contacto del ANUNCIANTE no debe recibir nada para "programados".
+    _agregar_contacto_anunciante(
+        db, oc.anunciante_id, nombre="Anunciante", email="anunciante@x.com"
+    )
+    correo = FakeCorreoExitoso()
+
+    log = enviar_correo_orden_transmision(
+        db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, VENTAS, correo, almacenamiento
+    )
+
+    assert log.destinatario_email == "afiliado@x.com"
+
+
+def test_servicio_sin_contactos_del_anunciante_400(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    _, oe = oe_en_transmision
+    # Solo hay contacto del afiliado — no debe usarse como fallback para "servicio".
+    _agregar_contacto(db, _afiliado_de(db, oe), nombre="Afiliado", email="afiliado@x.com")
+
+    with pytest.raises(DomainError):
+        enviar_correo_orden_transmision(
+            db,
+            oe.orden_estacion_id,
+            TipoPdfOrdenEstacion.SERVICIO,
+            VENTAS,
+            FakeCorreoExitoso(),
+            almacenamiento,
+        )
 
 
 def test_falla_registra_bitacora_y_relanza(db: Session, oe_en_transmision, almacenamiento) -> None:
@@ -494,6 +572,10 @@ def test_generar_eml_arma_un_correo_valido_con_destinatarios_y_adjuntos(
     assert nombre_archivo == f"orden_transmision_programados_{oe.folio_orden_estacion}.eml"
     mensaje = email_stdlib.message_from_bytes(contenido)
     assert mensaje["To"] == "uno@x.com, dos@x.com"
+    # ADR-137: el remitente sale del Usuario con la sesión abierta (`VENTAS.username`
+    # = "dev.admin", sembrado con email="dev.admin@x.com" en el fixture `cat`), nunca de
+    # un valor fijo en el código.
+    assert mensaje["From"] == "dev.admin@x.com"
     nombres_adjuntos = [parte.get_filename() for parte in mensaje.walk() if parte.get_filename()]
     assert "horarios_programados.pdf" in nombres_adjuntos
 
@@ -536,6 +618,23 @@ def test_generar_eml_sin_contactos_activos_400(
         )
 
     assert db.scalars(select(LogEnvioCorreoOrdenEstacion)).all() == []
+
+
+def test_generar_eml_usuario_sin_registrar_404(
+    db: Session, oe_en_transmision, almacenamiento
+) -> None:
+    """ADR-137: el remitente se resuelve contra `Usuario.nombre_usuario` — si el
+    usuario en sesión no está sembrado (error de configuración, no de negocio), 404
+    claro en vez de mandar un `.eml` con remitente vacío/inventado."""
+    _, oe = oe_en_transmision
+    afiliado_id = _afiliado_de(db, oe)
+    _agregar_contacto(db, afiliado_id, nombre="Activo", email="uno@x.com")
+    fantasma = CurrentUser(username="no.existe", area=Area.VENTAS, ip="127.0.0.1")
+
+    with pytest.raises(NotFoundError):
+        generar_eml_orden_transmision(
+            db, oe.orden_estacion_id, TipoPdfOrdenEstacion.PROGRAMADOS, fantasma, almacenamiento
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════════

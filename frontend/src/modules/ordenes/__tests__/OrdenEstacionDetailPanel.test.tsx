@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { previsualizarPdfOrdenEstacion } from "../adapters/pdfsApi";
 import { OrdenEstacionDetailPanel } from "../ordenEstacion/components/OrdenEstacionDetailPanel";
-import { estaciones, tarifas } from "../state/catalogosCache";
+import { afiliados, anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import { makeOC, makeOE, makeRow } from "./fixtures";
 
 vi.mock("../adapters/pdfsApi", () => ({
@@ -33,11 +33,33 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => ({
   listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
 }));
 
+// ADR-140: Servicio/Reales dependen de `ContactoAnunciante`, Programados de
+// `ContactoAfiliado` — mockeados por separado para poder probarlos de forma
+// independiente (un tipo habilitado no debe habilitar el otro).
+const listPorAfiliadoMock = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+vi.mock("@/modules/catalogos/afiliado/api", () => ({
+  contactoAfiliadoApi: { listPorAfiliado: (...args: unknown[]) => listPorAfiliadoMock(...args) },
+}));
+const listPorAnuncianteMock = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+vi.mock("@/modules/catalogos/anunciante/api", () => ({
+  contactoAnuncianteApi: { listPorAnunciante: (...args: unknown[]) => listPorAnuncianteMock(...args) },
+}));
+
 // `state/catalogosCache.ts` nace vacío; el componente resuelve `estacion`/`tarifaReferencia`
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
 // necesitan: es6 = XHRC-FM (fm), ta1 = es6/fm/30s → tarifa_bruta 9500, descuento 10%.
 estaciones.push({ id: "es6", afiliado_id: "af3", plaza_id: "pl1", nombre_estacion: "XHRC-FM", frecuencia: "100.9 FM", tipo_senal: "fm" });
 tarifas.push({ id: "ta1", estacion_id: "es6", tipo_senal: "fm", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+afiliados.push({ id: "af3", nombre_afiliado: "Afiliado Tres", porcentaje_participacion_oir_default: 20, contacto_email: null });
+anunciantes.push({
+  id: "an1",
+  agencia_id: null,
+  nombre_comercial: "Anunciante Uno",
+  nombre_fiscal: "Anunciante Uno SA de CV",
+  rfc_anunciante: "ANU900101AB1",
+  dias_credito_default: 30,
+  categoria_id: "cat1",
+});
 
 // Nota: SIN valor por defecto para `oc` a propósito — un parámetro con default no puede
 // distinguir "no lo pasé" de "pasé undefined a propósito" (ambos casos activan el default),
@@ -187,5 +209,47 @@ describe("'Enviado a...' es una confirmación transitoria (ADR-135)", () => {
     });
 
     expect(screen.queryByText(/Enviado a contacto@afiliado\.com/)).toBeNull();
+  });
+});
+
+describe("ADR-140: Servicio/Reales dependen del anunciante; Programados del afiliado", () => {
+  it("un tipo habilitado no habilita al otro — cada uno consulta su propio catálogo de contactos", async () => {
+    // Anunciante CON contacto activo; afiliado SIN ninguno.
+    listPorAnuncianteMock.mockResolvedValueOnce({
+      items: [
+        {
+          contacto_anunciante_id: "ca-1",
+          anunciante_id: "an1",
+          nombre_contacto: "Contacto",
+          email_contacto: "anunciante@x.com",
+          activo: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 100,
+      pages: 1,
+    });
+    listPorAfiliadoMock.mockResolvedValueOnce({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+
+    const oe = makeOE({ estatus: "reales_conciliados", estacion_id: "es6" });
+    renderPanel(oe, makeOC());
+
+    await waitFor(() => expect(listPorAnuncianteMock).toHaveBeenCalledWith("an1", { activo: true, size: 100 }));
+    await waitFor(() => expect(listPorAfiliadoMock).toHaveBeenCalledWith("af3", { activo: true, size: 100 }));
+
+    // PDF #1 (Servicio) → depende del anunciante, que SÍ tiene contacto activo.
+    fireEvent.click(screen.getByText(/PDF #1 · Orden de servicio/));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Enviar por correo/ })).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByText("Cancelar"));
+
+    // PDF #2 (Programados) → depende del afiliado, que NO tiene ninguno.
+    fireEvent.click(screen.getByText(/PDF #2 · Programados/));
+    expect(screen.getByRole("button", { name: /Enviar por correo/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Enviar por correo/ }).getAttribute("title"),
+    ).toBe("El afiliado no tiene contactos activos con correo cargado.");
   });
 });

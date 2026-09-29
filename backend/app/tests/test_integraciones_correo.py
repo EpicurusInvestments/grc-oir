@@ -1,8 +1,9 @@
 """Pruebas de la capa de integración de correo (`app/integrations/correo/`).
 
-Cubre: `construir_mime` (destinatario único y lista, adjuntos), y ADR-122 —
+Cubre: `construir_mime` (destinatario único y lista, adjuntos), ADR-122 —
 `CorreoLocal` guarda un `.eml` real (parseable, con asunto/cuerpo/adjuntos correctos) en
-vez de solo loguear, para poder revisar el mensaje armado sin depender de SES/AWS.
+vez de solo loguear, para poder revisar el mensaje armado sin depender de SES/AWS — y
+ADR-138 — `CorreoSmtp` (STARTTLS real, credenciales SMTP dedicadas).
 """
 
 from __future__ import annotations
@@ -11,7 +12,11 @@ import email
 from email.header import decode_header
 from pathlib import Path
 
+import pytest
+
 from app.integrations.correo.adapter_local import CorreoLocal
+from app.integrations.correo.adapter_smtp import CorreoSmtp
+from app.integrations.correo.errors import CorreoError
 from app.integrations.correo.mime import construir_mime
 
 
@@ -76,3 +81,87 @@ def test_correo_local_no_falla_sin_destinatarios_para_el_nombre_de_archivo(tmp_p
 
     archivos = list((tmp_path / "correos_simulados").glob("*.eml"))
     assert len(archivos) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ADR-138: CorreoSmtp — STARTTLS real, credenciales SMTP dedicadas
+# ══════════════════════════════════════════════════════════════════════════════════
+class _ClienteSmtpFalso:
+    """Cliente SMTP en memoria — sin red ni credenciales reales."""
+
+    def __init__(self) -> None:
+        self.logins: list[tuple[str, str]] = []
+        self.enviados: list[tuple[str, list[str], str]] = []
+        self.cerrado = False
+
+    def login(self, user: str, password: str) -> None:
+        self.logins.append((user, password))
+
+    def sendmail(self, from_addr: str, to_addrs: list[str], msg: str) -> None:
+        self.enviados.append((from_addr, to_addrs, msg))
+
+    def quit(self) -> None:
+        self.cerrado = True
+
+
+class _ClienteSmtpQueFalla:
+    def login(self, user: str, password: str) -> None:
+        raise OSError("Connection refused")
+
+    def quit(self) -> None:
+        pass
+
+
+def test_correo_smtp_hace_login_y_sendmail_con_starttls() -> None:
+    cliente = _ClienteSmtpFalso()
+    hosts_llamados: list[tuple[str, int]] = []
+
+    def fabrica(host: str, port: int) -> _ClienteSmtpFalso:
+        hosts_llamados.append((host, port))
+        return cliente
+
+    correo = CorreoSmtp(
+        host="email-smtp.us-west-2.amazonaws.com",
+        port=587,
+        user="AKIAEXAMPLE",
+        password="password-smtp-falso",
+        from_email="notificaciones@grc-oir.com",
+        from_name="Sistema GRC-OIR",
+        cliente_factory=fabrica,
+    )
+
+    correo.enviar(
+        destinatario=["uno@x.com", "dos@x.com"],
+        asunto="Orden de Transmision",
+        cuerpo_texto="Se adjunta el material.",
+        adjuntos=[("orden.pdf", b"%PDF-falso", "application/pdf")],
+    )
+
+    assert hosts_llamados == [("email-smtp.us-west-2.amazonaws.com", 587)]
+    assert cliente.logins == [("AKIAEXAMPLE", "password-smtp-falso")]
+    assert cliente.cerrado is True
+    from_addr, to_addrs, msg_crudo = cliente.enviados[0]
+    assert from_addr == "notificaciones@grc-oir.com"
+    assert to_addrs == ["uno@x.com", "dos@x.com"]
+    mensaje = email.message_from_string(msg_crudo)
+    assert mensaje["From"] == "Sistema GRC-OIR <notificaciones@grc-oir.com>"
+    assert mensaje["Subject"] == "Orden de Transmision"
+
+
+def test_correo_smtp_falla_de_conexion_se_traduce_a_correo_error() -> None:
+    correo = CorreoSmtp(
+        host="smtp.ejemplo.com",
+        port=587,
+        user="usuario",
+        password="password",
+        from_email="de@x.com",
+        cliente_factory=lambda host, port: _ClienteSmtpQueFalla(),
+    )
+
+    with pytest.raises(CorreoError):
+        correo.enviar(destinatario="para@x.com", asunto="Asunto", cuerpo_texto="Cuerpo")
+
+
+def test_correo_smtp_mal_configurado_falla_al_construir() -> None:
+    with pytest.raises(CorreoError):
+        CorreoSmtp(host="", port=587, user="u", password="p", from_email="de@x.com")

@@ -20,7 +20,6 @@ import {
   subirMaterialStagingApi,
 } from "../../adapters/escrituraApi";
 import { ordenEstacionAudioFromApi } from "../../adapters/fromApi";
-import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { CalendarioPeriodoTransmision } from "../../components/CalendarioPeriodoTransmision";
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
@@ -81,12 +80,6 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const [motivoCambioTarifa, setMotivoCambioTarifa] = useState("");
   const [spotsBonificables, setSpotsBonificables] = useState(oe ? String(oe.cantidad_spots_bonificables) : "0");
   const [observaciones, setObservaciones] = useState(oe?.observaciones_estacion ?? "");
-  // ADR-121: "Reporte del afiliado" — antes solo se capturaba en el paso manual 2.2
-  // ("Capturar Programados", ya retirado); mismo campo, ahora disponible desde el alta o
-  // edición (subida real vía el endpoint genérico de adjuntos, sin id de OE previo).
-  const [reporteProgramadosRef, setReporteProgramadosRef] = useState<string | null>(
-    oe?.reporte_programados_ref ?? null,
-  );
   const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(oe?.periodo_transmision ?? []);
   // ADR-103: "Material a Transmitir" solo existe en edición (subir un audio necesita un
   // orden_estacion_id real) — se recarga cada vez que cambia la OE en edición.
@@ -316,7 +309,6 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
       // ADR-109: ya subidos a S3 (staging) — el backend crea las filas reales al crear
       // la OE, en este mismo orden.
       audios_staging: !isEdit && audiosStaging.length > 0 ? audiosStaging : undefined,
-      reporte_programados_ref: reporteProgramadosRef,
     };
     await onGuardar(oc.id, input);
   };
@@ -363,9 +355,11 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                   title={isEdit ? "La estación no se puede cambiar al editar — crea una OE nueva si es otra estación." : undefined}
                 >
                   <option value="">Selecciona…</option>
+                  {/* ADR-136 (petición del usuario): "Estación-Siglas-Frecuencia" — antes
+                      solo mostraba "Estación (Frecuencia)". */}
                   {estaciones.filter(esActivo).map((e) => (
                     <option key={e.id} value={e.id}>
-                      {e.nombre_estacion} ({e.frecuencia})
+                      {e.nombre_estacion}-{e.siglas || "—"}-{e.frecuencia}
                     </option>
                   ))}
                 </select>
@@ -480,15 +474,6 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                   Observaciones de la estación
                 </div>
                 <textarea className="ftxt" rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
-              </div>
-
-              <div className="form-card">
-                <div className="form-card-title">Reporte del afiliado</div>
-                <AdjuntoOrdenInput
-                  tipo="reporte_programados"
-                  value={reporteProgramadosRef}
-                  onChange={setReporteProgramadosRef}
-                />
               </div>
 
               {isEdit && oe ? (

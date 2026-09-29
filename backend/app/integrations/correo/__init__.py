@@ -1,12 +1,18 @@
-"""Selección del adaptador de correo por configuración (ADR-105).
+"""Selección del adaptador de correo por configuración (ADR-105/ADR-138).
 
-`get_correo()` es el ÚNICO punto donde se decide local vs SES, según `CORREO_BACKEND`
-(`local` por defecto) — mismo criterio que `get_almacenamiento()` (ADR-027).
+`get_correo()` es el ÚNICO punto donde se decide local vs SES vs SMTP, según
+`CORREO_BACKEND` (`local` por defecto) — mismo criterio que `get_almacenamiento()`
+(ADR-027).
 
 - `local` → `CorreoLocal` (no envía nada real; solo registra en el log — default para
             dev/pruebas, ya que SES en sandbox exige verificar cada destinatario).
 - `ses`   → `CorreoSES` (requiere `SES_FROM_EMAIL` y `AWS_REGION`; si faltan, falla con
-            un error de configuración CLARO — no cae en silencio al local).
+            un error de configuración CLARO — no cae en silencio al local). Habla la API
+            de AWS vía boto3 (access key/secret de IAM).
+- `smtp`  → `CorreoSmtp` (ADR-138; requiere `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` y
+            `SMTP_FROM_EMAIL`). Habla SMTP real (STARTTLS) — sirve para el endpoint SMTP
+            de SES (credenciales SMTP dedicadas, DISTINTAS del access key/secret de
+            `ses`) o cualquier otro servidor SMTP.
 """
 
 from __future__ import annotations
@@ -44,8 +50,37 @@ def get_correo() -> CorreoPort:
             secret_access_key=settings.aws_secret_access_key or None,
         )
 
+    if backend == "smtp":
+        faltan_datos_smtp = not (
+            settings.smtp_host
+            and settings.smtp_user
+            and settings.smtp_password
+            and settings.smtp_from_email
+        )
+        if faltan_datos_smtp:
+            raise CorreoError(
+                "CORREO_BACKEND=smtp requiere SMTP_HOST, SMTP_USER, SMTP_PASSWORD y "
+                "SMTP_FROM_EMAIL configurados.",
+                detalles={
+                    "smtp_host": bool(settings.smtp_host),
+                    "smtp_user": bool(settings.smtp_user),
+                    "smtp_password": bool(settings.smtp_password),
+                    "smtp_from_email": bool(settings.smtp_from_email),
+                },
+            )
+        from app.integrations.correo.adapter_smtp import CorreoSmtp
+
+        return CorreoSmtp(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            user=settings.smtp_user,
+            password=settings.smtp_password,
+            from_email=settings.smtp_from_email,
+            from_name=settings.smtp_from_name or None,
+        )
+
     raise CorreoError(
-        f"CORREO_BACKEND desconocido: '{settings.correo_backend}' (use 'local' o 'ses')."
+        f"CORREO_BACKEND desconocido: '{settings.correo_backend}' (use 'local', 'ses' o 'smtp')."
     )
 
 

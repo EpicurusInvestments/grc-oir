@@ -32,3 +32,20 @@ def resolver_usuario_id(db: Session, username: str) -> uuid.UUID:
             detalles={"username": username},
         )
     return usuario_id
+
+
+def resolver_usuario_email(db: Session, username: str) -> str:
+    """`Usuario.email` cuyo `nombre_usuario == username`, o 404 claro.
+
+    ADR-137 (corrección de revisión del equipo): el remitente de cualquier correo/`.eml`
+    que arma el sistema sale del usuario con la sesión abierta, nunca de un valor fijo
+    capturado en el código — mismo criterio que `resolver_usuario_id`.
+    """
+    email = db.scalar(select(Usuario.email).where(Usuario.nombre_usuario == username))
+    if email is None:
+        raise NotFoundError(
+            f"No existe un Usuario con nombre_usuario='{username}' — revisa el header "
+            "X-Dev-User o siembra ese usuario (ver backend/scripts/seed_dev.py).",
+            detalles={"username": username},
+        )
+    return email

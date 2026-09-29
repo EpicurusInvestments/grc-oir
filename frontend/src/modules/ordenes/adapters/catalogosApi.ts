@@ -186,6 +186,7 @@ export async function cargarCatalogosReales(): Promise<void> {
       afiliado_id: e.afiliado_id,
       plaza_id: e.plaza_id,
       nombre_estacion: e.nombre_estacion,
+      siglas: e.siglas ?? null,
       frecuencia: e.frecuencia ?? "",
       tipo_senal: e.tipo_senal,
       activo: e.activo,

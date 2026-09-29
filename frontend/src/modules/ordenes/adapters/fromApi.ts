@@ -149,6 +149,7 @@ export function ordenEstacionFromApi(
     id: dto.orden_estacion_id,
     folio_orden_interna: dto.folio_orden_estacion,
     orden_id: dto.orden_id,
+    anunciante_id: dto.anunciante_id,
     estacion_id: dto.estacion_id,
     plaza_id: dto.plaza_id,
     producto_tarifa: dto.producto_tarifa as OrdenEstacion["producto_tarifa"],

@@ -16,9 +16,10 @@ la pantalla ofrece "Enviar por correo" (este flujo) o "Imprimir" (abrir el PDF, 
 antes). ADR-126 corrigió el diseño original de ADR-120 (que mandaba SIEMPRE el PDF de
 Programados sin importar qué botón disparó el diálogo): ahora cada uno de los 3 botones
 manda SU PROPIO PDF (servicio/programados/reales) + TODO el Material a Transmitir (si
-la OE tiene), automáticamente a los `ContactoAfiliado` activos con correo cargado del
-Afiliado dueño de la Estación — no hay captura manual de destinatario. Reusa la MISMA
-bitácora que el envío individual (`tipo_pdf` = el tipo real enviado).
+la OE tiene) — no hay captura manual de destinatario. ADR-140: el destinatario depende
+del `tipo` — Servicio/Reales van a los `ContactoAnunciante` activos del ANUNCIANTE;
+Programados va a los `ContactoAfiliado` activos del AFILIADO dueño de la Estación.
+Reusa la MISMA bitácora que el envío individual (`tipo_pdf` = el tipo real enviado).
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from app.integrations.correo import CorreoError, get_correo
 from app.integrations.correo.mime import construir_mime
 from app.integrations.correo.port import Adjunto, CorreoPort
 from app.modules.catalogos.afiliado import ContactoAfiliado
+from app.modules.catalogos.anunciante import ContactoAnunciante
 from app.modules.catalogos.estacion import Estacion
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionAudio
 from app.modules.ordenes.orden_estacion_pdf import (
@@ -53,6 +55,7 @@ from app.modules.ordenes.orden_estacion_pdf import (
     generar_pdf_reales,
     generar_pdf_servicio,
 )
+from app.modules.usuarios.lookup import resolver_usuario_email
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +114,10 @@ class LogEnvioCorreoOrdenEstacion(Base):
         ),
     )
     tipo_pdf: Mapped[str] = mapped_column(Unicode(20))
-    # ADR-120: el envío "bundle" puede ir a VARIOS contactos activos del afiliado — se
-    # guarda como lista separada por coma (no se necesita una tabla hija para esto,
-    # nunca se filtra por un destinatario individual, solo se muestra en el historial).
+    # ADR-120/ADR-140: el envío "bundle" puede ir a VARIOS contactos activos (del
+    # anunciante o del afiliado, según `tipo_pdf`) — se guarda como lista separada por
+    # coma (no se necesita una tabla hija para esto, nunca se filtra por un destinatario
+    # individual, solo se muestra en el historial).
     destinatario_email: Mapped[str] = mapped_column(Unicode(2000))
     usuario: Mapped[str] = mapped_column(Unicode(150))
     exitoso: Mapped[bool] = mapped_column()
@@ -212,8 +216,12 @@ def _armar_paquete_orden_transmision(
 ) -> tuple[OrdenEstacion, list[str], str, str, list[Adjunto]]:
     """Resuelve destinatarios + arma el paquete de la Orden de Transmisión — el PDF que
     corresponde a `tipo` (servicio/programados/reales) + TODO el Material a Transmitir,
-    si la OE tiene — a los `ContactoAfiliado` activos con correo cargado del Afiliado
-    dueño de la Estación de esta OE.
+    si la OE tiene.
+
+    ADR-140 (petición del usuario): el destinatario depende del `tipo`, no es siempre el
+    mismo — Servicio y Reales van a los `ContactoAnunciante` activos con correo cargado
+    del ANUNCIANTE (quien contrató la pauta); Programados va a los `ContactoAfiliado`
+    activos con correo cargado del AFILIADO dueño de la Estación (quien transmite).
 
     ADR-126 (corrección del usuario): ADR-120 mandaba SIEMPRE el PDF de Programados sin
     importar qué de los 3 botones disparó el diálogo — eso estaba mal; cada botón debe
@@ -232,24 +240,37 @@ def _armar_paquete_orden_transmision(
         )
     if tipo not in _GENERADORES:
         raise DomainError(f"Tipo de PDF no soportado: {tipo}.")
-    estacion = db.get(Estacion, oe.estacion_id)
-    if estacion is None:
-        raise NotFoundError(
-            "Estación no encontrada para esta OrdenEstacion.",
-            detalles={"estacion_id": str(oe.estacion_id)},
-        )
 
-    contactos = db.scalars(
-        select(ContactoAfiliado).where(
-            ContactoAfiliado.afiliado_id == estacion.afiliado_id,
-            ContactoAfiliado.activo.is_(True),
-        )
-    ).all()
-    destinatarios = [c.email_contacto for c in contactos if c.email_contacto]
-    if not destinatarios:
-        raise DomainError(
-            "El afiliado de esta estación no tiene contactos activos con correo cargado."
-        )
+    if tipo == TipoPdfOrdenEstacion.PROGRAMADOS:
+        estacion = db.get(Estacion, oe.estacion_id)
+        if estacion is None:
+            raise NotFoundError(
+                "Estación no encontrada para esta OrdenEstacion.",
+                detalles={"estacion_id": str(oe.estacion_id)},
+            )
+        contactos_afiliado = db.scalars(
+            select(ContactoAfiliado).where(
+                ContactoAfiliado.afiliado_id == estacion.afiliado_id,
+                ContactoAfiliado.activo.is_(True),
+            )
+        ).all()
+        destinatarios = [c.email_contacto for c in contactos_afiliado if c.email_contacto]
+        if not destinatarios:
+            raise DomainError(
+                "El afiliado de esta estación no tiene contactos activos con correo cargado."
+            )
+    else:
+        contactos_anunciante = db.scalars(
+            select(ContactoAnunciante).where(
+                ContactoAnunciante.anunciante_id == oe.anunciante_id,
+                ContactoAnunciante.activo.is_(True),
+            )
+        ).all()
+        destinatarios = [c.email_contacto for c in contactos_anunciante if c.email_contacto]
+        if not destinatarios:
+            raise DomainError(
+                "El anunciante de esta orden no tiene contactos activos con correo cargado."
+            )
 
     generar, nombre_archivo, etiqueta = _GENERADORES[tipo]
     pdf = generar(db, orden_estacion_id)
@@ -326,15 +347,6 @@ def enviar_correo_orden_transmision(
     return LogEnvioCorreoRead.model_validate(log)
 
 
-# Remitente que queda dentro del ".eml" (citado en el cuerpo cuando el cliente de correo
-# lo abre como reenvío/borrador nuevo) — NO es el remitente real: Outlook/el cliente de
-# escritorio siempre usa la cuenta propia del usuario como "De" del borrador nuevo, sin
-# importar lo que traiga el archivo (confirmado ADR-124); nunca se usa para enviar nada
-# desde aquí. Correo real de la empresa (petición del usuario) para las pruebas —
-# `[[POR LLENAR]]`: reemplazar por el remitente definitivo cuando el equipo lo confirme.
-_REMITENTE_EML_ORDEN_TRANSMISION = "uacosta@epicurus.com.mx"
-
-
 def generar_eml_orden_transmision(
     db: Session,
     orden_estacion_id: uuid.UUID,
@@ -358,12 +370,21 @@ def generar_eml_orden_transmision(
     ADR-125 probó anteponer los destinatarios como texto en el cuerpo (para copiar/pegar
     en "Para" tras "Reenviar" — ver esa entrada para el porqué) — se quitó a petición del
     usuario; el cuerpo queda igual que el del envío automático.
+
+    ADR-137 (corrección de revisión del equipo): el remitente sale del `Usuario` con la
+    sesión abierta (`resolver_usuario_email`), nunca de un valor fijo en el código —
+    aunque en la práctica Outlook/el cliente de escritorio siempre sustituye el "De" del
+    borrador nuevo por la cuenta propia configurada en esa máquina sin importar lo que
+    traiga el archivo (confirmado ADR-124), así que este campo es sobre todo para que el
+    `.eml` crudo quede correcto, no cambia a quién ve el destinatario final como
+    remitente.
     """
     oe, destinatarios, asunto, cuerpo, adjuntos = _armar_paquete_orden_transmision(
         db, orden_estacion_id, tipo, almacenamiento
     )
+    remitente = resolver_usuario_email(db, usuario.username)
     mensaje = construir_mime(
-        remitente=_REMITENTE_EML_ORDEN_TRANSMISION,
+        remitente=remitente,
         destinatario=destinatarios,
         asunto=asunto,
         cuerpo_texto=cuerpo,
@@ -430,12 +451,13 @@ def enviar_correo_orden_transmision_endpoint(
     correo: CorreoPort = Depends(get_correo),
     almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
 ) -> LogEnvioCorreoRead:
-    """ADR-120/ADR-126: envía el PDF `tipo` (servicio/programados/reales) + todo el
-    Material a Transmitir a los contactos activos (con correo) del afiliado de la
-    estación — sin body, sin destinatario capturado a mano. 400 si la OE no ha llegado
-    al sub-estado que ese PDF requiere, o si el afiliado no tiene ningún contacto activo
-    con correo cargado; 502 si el correo no se pudo enviar (queda igual registrado en
-    la bitácora)."""
+    """ADR-120/ADR-126/ADR-140: envía el PDF `tipo` (servicio/programados/reales) + todo
+    el Material a Transmitir a los contactos activos (con correo) del ANUNCIANTE
+    (servicio/reales) o del AFILIADO de la estación (programados) — sin body, sin
+    destinatario capturado a mano. 400 si la OE no ha llegado al sub-estado que ese PDF
+    requiere, o si no hay ningún contacto activo con correo cargado del lado que
+    corresponda; 502 si el correo no se pudo enviar (queda igual registrado en la
+    bitácora)."""
     return enviar_correo_orden_transmision(db, item_id, tipo, usuario, correo, almacenamiento)
 
 
@@ -447,12 +469,13 @@ def descargar_eml_orden_transmision_endpoint(
     db: Session = Depends(get_db),
     almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
 ) -> Response:
-    """ADR-124/ADR-126: arma el paquete del PDF `tipo` (+ Material a Transmitir,
-    destinatarios = contactos activos del afiliado) y regresa el archivo `.eml` crudo
-    para que el usuario lo abra con su cliente de correo de escritorio (Outlook, etc.) —
-    ahí lo recibe como un borrador editable, con todo ya adjunto, y lo manda él mismo.
-    400 si la OE no ha llegado al sub-estado que ese PDF requiere, o si el afiliado no
-    tiene ningún contacto activo con correo cargado."""
+    """ADR-124/ADR-126/ADR-140: arma el paquete del PDF `tipo` (+ Material a Transmitir,
+    destinatarios = contactos activos del anunciante o del afiliado, según `tipo`) y
+    regresa el archivo `.eml` crudo para que el usuario lo abra con su cliente de correo
+    de escritorio (Outlook, etc.) — ahí lo recibe como un mensaje que puede reenviar
+    editable, con todo ya adjunto, y lo manda él mismo. 400 si la OE no ha llegado al
+    sub-estado que ese PDF requiere, o si no hay ningún contacto activo con correo
+    cargado del lado que corresponda."""
     contenido, nombre_archivo = generar_eml_orden_transmision(
         db, item_id, tipo, usuario, almacenamiento
     )

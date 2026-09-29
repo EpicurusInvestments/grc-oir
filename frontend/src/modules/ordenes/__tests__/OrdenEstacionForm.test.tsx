@@ -58,9 +58,8 @@ function renderForm(
 // ADR-110: "Material a Transmitir" es obligatorio para CREAR — antes de poder usar
 // "+ Agregar día" hace falta al menos un audio subido (staging). Sube uno de una vez si
 // hace falta (no-op si ya hay alguno, p.ej. una prueba que ya lo subió ella misma antes).
-// Selector por `accept` (no por posición): "Reporte del afiliado" también es un
-// input[type="file"] en el mismo formulario, y el orden de las secciones en el DOM
-// puede cambiar (petición del usuario) — ".mp3" en `accept` solo lo trae este input.
+// Selector por `accept` (no por posición): el orden de las secciones en el DOM puede
+// cambiar (petición del usuario) — ".mp3" en `accept` solo lo trae este input.
 function inputDeMaterial(container: HTMLElement): HTMLInputElement {
   return container.querySelector('input[type="file"][accept*=".mp3"]') as HTMLInputElement;
 }
@@ -492,7 +491,9 @@ describe("Fix: estaciones inactivas no aparecen en el select", () => {
   it("la estación activa aparece en el select, la dada de baja no", async () => {
     const { container } = renderForm({ oc: { total_spots: 120 } });
     const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
-    expect(within(select).getByText("XEW-AM (900 AM)")).toBeInTheDocument();
+    // ADR-136: el combo muestra "Estación-Siglas-Frecuencia" — sin siglas capturadas
+    // en el fixture, cae al guion.
+    expect(within(select).getByText("XEW-AM-—-900 AM")).toBeInTheDocument();
     expect(within(select).queryByText(/XEW-FM \(baja\)/)).toBeNull();
   });
 });

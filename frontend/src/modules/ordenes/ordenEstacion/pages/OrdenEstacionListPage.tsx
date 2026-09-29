@@ -298,7 +298,14 @@ export function OrdenEstacionListPage({
         }
         detail={
           selected ? (
+            // ADR-139 (corrige un bug real): sin `key`, React reutiliza la MISMA
+            // instancia del panel (y de cada `FilaPdf` adentro) al cambiar de OE
+            // seleccionada — el estado local de UI (p.ej. el error de "Enviar por
+            // correo") sobrevivía de la OE anterior y se veía en la nueva, aunque nunca
+            // se le hubiera dado clic a nada. `key={selected.id}` fuerza un remount
+            // limpio cada vez que cambia la selección.
             <OrdenEstacionDetailPanel
+              key={selected.id}
               oe={selected}
               oc={state.ordenesCliente.find((o) => o.id === selected.orden_id)}
               incidencias={state.incidencias}

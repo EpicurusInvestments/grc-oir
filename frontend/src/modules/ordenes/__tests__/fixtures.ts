@@ -76,6 +76,7 @@ export function makeOE(overrides: Partial<OrdenEstacion> = {}): OrdenEstacion {
     id: nextId("oe"),
     folio_orden_interna: "OE-2025-0001A",
     orden_id: "oc-1",
+    anunciante_id: "an1",
     estacion_id: "est1",
     plaza_id: "pl1",
     duracion_spot: "30s",

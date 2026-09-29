@@ -117,8 +117,6 @@ export function ordenEstacionCreateToApi(ocId: string, input: OrdenEstacionInput
     motivo_cambio_tarifa: input.motivo_cambio_tarifa || null,
     // ADR-109: material a transmitir ya subido a S3 durante la captura (solo en alta).
     audios: (input.audios_staging ?? []).map((a) => ({ ref: a.ref, nombre_archivo: a.nombre_archivo })),
-    // ADR-121: "Reporte del afiliado" — ya se puede adjuntar desde el alta.
-    reporte_programados_ref: input.reporte_programados_ref ?? null,
   };
 }
 
@@ -144,8 +142,6 @@ export function ordenEstacionUpdateToApi(input: OrdenEstacionInput) {
       orden_estacion_audio_id: row.orden_estacion_audio_id || null,
     })),
     motivo_cambio_tarifa: input.motivo_cambio_tarifa || null,
-    // ADR-121: corregible mientras la OE siga editable (antes de 2.3 Reales).
-    reporte_programados_ref: input.reporte_programados_ref ?? null,
   };
 }
 

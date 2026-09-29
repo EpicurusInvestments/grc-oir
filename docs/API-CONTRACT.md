@@ -749,9 +749,10 @@ hereda de `OrdenCliente.duracion_spot` — corrige el alcance original de ADR-10
 `precio_spot`, `observaciones_estacion`, `dias` (mín. 1: `fecha_transmision`,
 `hora_inicio`, `hora_fin`, `spots_asignados`, `spots_solicitados` opcional),
 `motivo_cambio_tarifa` (opcional, transitorio), `reporte_programados_ref` (opcional —
-**ADR-121:** ya se puede adjuntar desde el alta, mismo campo que antes solo vivía en
-`POST .../programados`; también aceptado en `PUT /ordenes/estaciones/{id}` mientras la
-OE siga editable). Calcula
+**ADR-121:** el backend lo acepta en `create`/`update`, mismo campo que antes solo vivía en
+`POST .../programados`. **ADR-143:** el frontend de alta/edición (`OrdenEstacionForm.tsx`)
+ya no muestra esta sección ni la manda al guardar — "ya no se ocupará" — pero el campo,
+schema y endpoint del backend siguen intactos sin cambios). Calcula
 `porcentaje_participacion_oir = (precio_unitario_OC − precio_spot) / precio_unitario_OC
 × 100` (1 decimal) y los 7 importes/IVA/totales. **ADR-101:** `precio_spot` puede superar
 la tarifa cliente de la OC — el margen OIR (`porcentaje_participacion_oir`/`importe_oir`/
@@ -853,11 +854,14 @@ adjuntaba el PDF de Programados sin importar qué botón disparó el diálogo): 
 uno de los 3 botones manda **su propio** PDF.
 - **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision`**
   (`ordenes:editar`) — `tipo` = `servicio` │ `programados` │ `reales`. Sin body. Resuelve
-  los destinatarios automáticamente: TODOS los `ContactoAfiliado` **activos** con
-  `email_contacto` cargado del Afiliado dueño de la Estación (**400**, `error_dominio`,
-  si no hay ninguno — nunca se intenta un envío sin destinatarios). **400** también si la
-  OE no ha llegado al sub-estado que ese PDF requiere (mismo gateo que la descarga
-  individual, p.ej. "reales" antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta
+  los destinatarios automáticamente según `tipo` (**ADR-140**): `servicio`/`reales` →
+  TODOS los `ContactoAnunciante` **activos** con `email_contacto` cargado del Anunciante
+  de la orden (quien contrató la pauta); `programados` → TODOS los `ContactoAfiliado`
+  **activos** con `email_contacto` cargado del Afiliado dueño de la Estación (quien
+  transmite). **400**, `error_dominio`, si no hay ninguno del lado que corresponda —
+  nunca se intenta un envío sin destinatarios. **400** también si la OE no ha llegado al
+  sub-estado que ese PDF requiere (mismo gateo que la descarga individual, p.ej.
+  "reales" antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta
   el PDF de `tipo` + TODO el Material a Transmitir de la OE (si tiene). Responde
   `LogEnvioCorreoRead` igual que el envío individual, con `tipo_pdf` = el `tipo`
   enviado y `destinatario_email` como lista separada por coma. **502** si el envío falla

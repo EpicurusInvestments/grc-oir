@@ -112,6 +112,10 @@ export interface EstacionRef {
   afiliado_id: string;
   plaza_id: string;
   nombre_estacion: string;
+  /** ADR-136 (petición del usuario): el combo de Estación de la Orden de Transmisión
+   * muestra "Estación-Siglas-Frecuencia". Opcional por el mismo motivo que `activo`
+   * (no obligar a los fixtures de prueba a declararla) — sin ella se muestra "—". */
+  siglas?: string | null;
   frecuencia: string;
   tipo_senal: TipoSenal;
   /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se

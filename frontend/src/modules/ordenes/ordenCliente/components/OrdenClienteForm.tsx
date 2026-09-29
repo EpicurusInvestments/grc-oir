@@ -187,7 +187,10 @@ export function OrdenClienteForm({
       producto: defaultValues?.producto ?? "",
       categoria_id: defaultValues?.categoria_id ?? "",
       direccion_facturacion: defaultValues?.direccion_facturacion ?? "",
-      facturacion_directa_cliente: defaultValues?.facturacion_directa_cliente ?? false,
+      // ADR-141 (petición del usuario): default del radio group en el ALTA (sin
+      // defaultValues) es "Facturación directa al cliente" — editar una orden existente
+      // conserva su valor real tal cual, incluido un `false` explícito.
+      facturacion_directa_cliente: defaultValues?.facturacion_directa_cliente ?? true,
       afiliado_factura_directo_al_cliente: defaultValues?.afiliado_factura_directo_al_cliente ?? false,
       fecha_inicio_campania: defaultValues?.fecha_inicio_campania ?? "",
       fecha_fin_campania: defaultValues?.fecha_fin_campania ?? "",
@@ -234,9 +237,14 @@ export function OrdenClienteForm({
   const onVendedorChange = (campo: "vendedor_principal_id" | "vendedor_secundario_id", id: string) => {
     setValue(campo, id);
     const pctCampo = campo === "vendedor_principal_id" ? "porcentaje_comision_vendedor_principal_snap" : "porcentaje_comision_vendedor_secundario_snap";
-    if (!watch(pctCampo)) {
-      const vendedor = findVendedor(id);
-      if (vendedor) setValue(pctCampo, String(vendedor.porcentaje_comision_default));
+    const vendedor = findVendedor(id);
+    if (vendedor) {
+      if (!watch(pctCampo)) setValue(pctCampo, String(vendedor.porcentaje_comision_default));
+    } else {
+      // ADR-142 (corrige un bug real): volver a "Sin vendedor secundario" dejaba pegado
+      // el % de comisión del vendedor elegido antes por error — sin vendedor no hay
+      // comisión que aplique (mismo criterio que "Sin agencia" en `onAgenciaChange`).
+      setValue(pctCampo, "");
     }
   };
 
@@ -655,16 +663,41 @@ export function OrdenClienteForm({
               <span className="derivado-hint">editable si esta venta usa otra</span>
             </div>
             <textarea className="ftxt" rows={2} disabled={congelado} {...register("direccion_facturacion")} />
+            {/* ADR-141 (petición del usuario): antes eran 2 checkboxes independientes —
+                permitían los 4 estados (ninguno/uno/otro/los dos), pero solo UNO tiene
+                sentido de negocio a la vez. Un solo radio group garantiza exactamente
+                uno seleccionado siempre; siguen siendo 2 columnas booleanas del modelo
+                (spec BD v2, sin cambio de esquema) — el radio solo pone la contraria en
+                `false` al elegir una. Default (alta nueva): "Facturación directa al
+                cliente". */}
             <div className="r2" style={{ marginTop: 6 }}>
               <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
-                <input type="checkbox" disabled={congelado} {...register("facturacion_directa_cliente")} />
+                <input
+                  type="radio"
+                  name="tipo_facturacion"
+                  disabled={congelado}
+                  checked={watch("facturacion_directa_cliente")}
+                  onChange={() => {
+                    setValue("facturacion_directa_cliente", true);
+                    setValue("afiliado_factura_directo_al_cliente", false);
+                  }}
+                />
                 <div>
                   <div className="check-box-title">Facturación directa al cliente</div>
                   <div className="check-box-desc">Se factura al anunciante sin pasar por la agencia.</div>
                 </div>
               </label>
               <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
-                <input type="checkbox" disabled={congelado} {...register("afiliado_factura_directo_al_cliente")} />
+                <input
+                  type="radio"
+                  name="tipo_facturacion"
+                  disabled={congelado}
+                  checked={watch("afiliado_factura_directo_al_cliente")}
+                  onChange={() => {
+                    setValue("afiliado_factura_directo_al_cliente", true);
+                    setValue("facturacion_directa_cliente", false);
+                  }}
+                />
                 <div>
                   <div className="check-box-title">Afiliado factura directo al cliente</div>
                   <div className="check-box-desc">El afiliado emite su factura al cliente final, no a OIR.</div>
