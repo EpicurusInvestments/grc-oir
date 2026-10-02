@@ -154,7 +154,14 @@ export function realesToApi(input: AvanzarARealesInput) {
       orden_estacion_dia_id: row.orden_estacion_dia_id,
       spots_verificados: row.spots_diarios,
     })),
+    // ADR-149: días propuestos por el layout que no existían — el backend los crea
+    // (spots_solicitados = spots_asignados = spots_verificados = spots) solo aquí, al
+    // avanzar, nunca antes.
+    dias_nuevos: input.diasNuevos.map((d) => ({
+      fecha_transmision: d.fecha,
+      hora_inicio: d.hora,
+      spots: d.spots,
+    })),
     notas_transmision: input.notasTransmision,
-    reporte_reales_ref: input.reporteRef ?? null,
   };
 }

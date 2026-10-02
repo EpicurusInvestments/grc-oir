@@ -149,6 +149,56 @@ export interface OrdenEstacionFormatoRealApiDTO {
   created_at: string;
 }
 
+/** ADR-146: "Carga de Órdenes Reales Desde Layout" — igual forma que
+ * `OrdenEstacionFormatoRealApiDTO`, solo csv/xlsx/xls/txt. */
+export interface OrdenEstacionLayoutRealApiDTO {
+  orden_estacion_layout_real_id: string;
+  orden_estacion_id: string;
+  nombre_archivo: string;
+  created_at: string;
+}
+
+/** ADR-147/ADR-149: una fecha+hora del CSV de layout que sí hizo match con un día real
+ * de la OE — `spots` ya viene sumado si 2+ filas compartían la misma fecha+hora. */
+export interface LayoutRealAplicadoApiDTO {
+  orden_estacion_dia_id: string;
+  fecha_transmision: string;
+  hora_inicio: string;
+  spots: number;
+}
+
+/** ADR-149: una fecha+hora del CSV que NO existe en la OE — se ofrece como día nuevo a
+ * crear si el usuario avanza a 2.3; `spots` ya viene sumado. Nada se crea todavía. */
+export interface LayoutRealNuevoApiDTO {
+  fecha_transmision: string;
+  hora_inicio: string;
+  spots: number;
+}
+
+/** ADR-147: una fila del CSV de layout que se ignoró (no tumba el resto del archivo). */
+export interface LayoutRealErrorApiDTO {
+  fila: number;
+  motivo: string;
+}
+
+/** ADR-147/ADR-149: respuesta de `POST .../layout-reales` — el archivo siempre se
+ * guarda; `aplicados`/`nuevos`/`errores` solo se llenan cuando el archivo es `.csv`. */
+export interface OrdenEstacionLayoutRealSubidoApiDTO {
+  archivo: OrdenEstacionLayoutRealApiDTO;
+  aplicados: LayoutRealAplicadoApiDTO[];
+  nuevos: LayoutRealNuevoApiDTO[];
+  errores: LayoutRealErrorApiDTO[];
+}
+
+/** ADR-146: "Formato de Horarios Reales Enviado al Cliente" — igual forma que
+ * `OrdenEstacionFormatoRealApiDTO`, lista negra + audio excluido. */
+export interface OrdenEstacionFormatoRealClienteApiDTO {
+  orden_estacion_formato_real_cliente_id: string;
+  orden_estacion_id: string;
+  nombre_archivo: string;
+  created_at: string;
+}
+
 export interface VerificacionApiDTO {
   verificacion_id: string;
   orden_estacion_dia_id: string;

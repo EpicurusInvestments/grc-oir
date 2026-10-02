@@ -6,17 +6,25 @@
 
 import type {
   Incidencia,
+  LayoutRealAplicado,
+  LayoutRealError,
+  LayoutRealNuevo,
   LogEnvioCorreo,
   OrdenCliente,
   OrdenEstacion,
   OrdenEstacionAudio,
   OrdenEstacionEvidencia,
   OrdenEstacionFormatoReal,
+  OrdenEstacionFormatoRealCliente,
+  OrdenEstacionLayoutReal,
   PeriodoTransmisionRow,
 } from "../types";
 import { estatusOCDesdeApi, estatusOEDesdeApi, tipoIncidenciaDesdeApi } from "./vocabulario";
 import type {
   IncidenciaApiDTO,
+  LayoutRealAplicadoApiDTO,
+  LayoutRealErrorApiDTO,
+  LayoutRealNuevoApiDTO,
   LogEnvioCorreoApiDTO,
   OrdenClienteApiDTO,
   OrdenEstacionApiDTO,
@@ -24,6 +32,8 @@ import type {
   OrdenEstacionDiaApiDTO,
   OrdenEstacionEvidenciaApiDTO,
   OrdenEstacionFormatoRealApiDTO,
+  OrdenEstacionFormatoRealClienteApiDTO,
+  OrdenEstacionLayoutRealApiDTO,
   VerificacionApiDTO,
 } from "./ordenesApiDTO";
 
@@ -192,6 +202,46 @@ export function ordenEstacionFormatoRealFromApi(
 ): OrdenEstacionFormatoReal {
   return {
     id: dto.orden_estacion_formato_real_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function ordenEstacionLayoutRealFromApi(
+  dto: OrdenEstacionLayoutRealApiDTO,
+): OrdenEstacionLayoutReal {
+  return {
+    id: dto.orden_estacion_layout_real_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function layoutRealAplicadoFromApi(dto: LayoutRealAplicadoApiDTO): LayoutRealAplicado {
+  return {
+    ordenEstacionDiaId: dto.orden_estacion_dia_id,
+    spots: dto.spots,
+  };
+}
+
+export function layoutRealErrorFromApi(dto: LayoutRealErrorApiDTO): LayoutRealError {
+  return {
+    fila: dto.fila,
+    motivo: dto.motivo,
+  };
+}
+
+export function layoutRealNuevoFromApi(dto: LayoutRealNuevoApiDTO): LayoutRealNuevo {
+  return {
+    fecha: dto.fecha_transmision,
+    hora: soloHoraMinuto(dto.hora_inicio),
+    spots: dto.spots,
+  };
+}
+
+export function ordenEstacionFormatoRealClienteFromApi(
+  dto: OrdenEstacionFormatoRealClienteApiDTO,
+): OrdenEstacionFormatoRealCliente {
+  return {
+    id: dto.orden_estacion_formato_real_cliente_id,
     nombre_archivo: dto.nombre_archivo,
   };
 }

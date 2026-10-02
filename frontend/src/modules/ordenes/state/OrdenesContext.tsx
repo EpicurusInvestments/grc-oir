@@ -38,6 +38,7 @@ import {
 } from "../adapters/toApi";
 import type {
   Incidencia,
+  LayoutRealNuevo,
   OrdenCliente,
   OrdenClienteInput,
   OrdenEstacion,
@@ -59,7 +60,9 @@ export interface OrdenesState {
 export interface AvanzarARealesInput {
   horariosReales: PeriodoTransmisionRow[];
   notasTransmision: string | null;
-  reporteRef?: string | null;
+  // ADR-149: días propuestos por "Carga de Órdenes Reales Desde Layout" que no
+  // existían en esta OE — se crean al avanzar (nunca antes).
+  diasNuevos: LayoutRealNuevo[];
 }
 
 /** Input de `cerrarOC`: documentos + comisiones efectivas (ya con el auto-fill de defaults

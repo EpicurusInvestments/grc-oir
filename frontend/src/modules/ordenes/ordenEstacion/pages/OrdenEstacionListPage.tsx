@@ -171,6 +171,7 @@ export function OrdenEstacionListPage({
     return (
       <RealesForm
         oe={selected}
+        oc={state.ordenesCliente.find((o) => o.id === selected.orden_id)}
         submitError={submitError}
         submitting={submitting}
         onAvanzar={async (horariosReales: PeriodoTransmisionRow[], extra) => {

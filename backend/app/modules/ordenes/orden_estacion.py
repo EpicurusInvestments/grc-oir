@@ -78,6 +78,9 @@ documentos (ADR-042) para no afectarlos.
 
 from __future__ import annotations
 
+import csv
+import io
+import unicodedata
 import uuid
 from collections.abc import Sequence
 from datetime import date, datetime, time
@@ -108,6 +111,8 @@ from app.core.security import CurrentUser, requiere_permiso
 from app.integrations.almacenamiento import get_almacenamiento
 from app.integrations.almacenamiento.documentos import (
     EXTENSIONES_AUDIO_ORDENES,
+    EXTENSIONES_LAYOUT_REALES,
+    EXTENSIONES_PELIGROSAS_O_AUDIO,
     content_type_de_extension,
     leer_adjunto,
     leer_adjunto_libre,
@@ -426,6 +431,57 @@ class OrdenEstacionFormatoReal(Base):
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
 
 
+class OrdenEstacionLayoutReal(Base):
+    """"Carga de Órdenes Reales Desde Layout" (ADR-146/ADR-147/ADR-154, petición del
+    usuario): archivos de layout que alimentan la tabla de reales. Misma lista PLANA que
+    `OrdenEstacionFormatoReal`, pero lista BLANCA de extensiones (`EXTENSIONES_LAYOUT_REALES`:
+    SOLO csv, ADR-154) en vez de negra — es una carga con un formato esperado, no
+    "cualquier archivo"."""
+
+    __tablename__ = "orden_estacion_layout_real"
+
+    orden_estacion_layout_real_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid4
+    )
+    orden_estacion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "orden_estacion.orden_estacion_id",
+            name="fk_orden_estacion_layout_real_orden_estacion",
+            ondelete="NO ACTION",
+        ),
+        index=True,
+    )
+    ref: Mapped[str] = mapped_column(Unicode(500))
+    nombre_archivo: Mapped[str] = mapped_column(Unicode(150))
+    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
+
+
+class OrdenEstacionFormatoRealCliente(Base):
+    """"Formato de Horarios Reales Enviado al Cliente" (ADR-146, petición del usuario):
+    junto a "Carga de Órdenes Reales Desde Layout" en "Capturar Reales". Misma lista
+    PLANA que `OrdenEstacionFormatoReal`, lista NEGRA igual de amplia (cualquier formato
+    salvo ejecutables/scripts) PERO además excluye audio
+    (`EXTENSIONES_PELIGROSAS_O_AUDIO`) — a diferencia de "Formato de Horarios Reales",
+    que sí admite audio."""
+
+    __tablename__ = "orden_estacion_formato_real_cliente"
+
+    orden_estacion_formato_real_cliente_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid4
+    )
+    orden_estacion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "orden_estacion.orden_estacion_id",
+            name="fk_orden_estacion_formato_real_cliente_orden_estacion",
+            ondelete="NO ACTION",
+        ),
+        index=True,
+    )
+    ref: Mapped[str] = mapped_column(Unicode(500))
+    nombre_archivo: Mapped[str] = mapped_column(Unicode(150))
+    created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
+
+
 # ── Periodo de transmisión por día (ADR-030) ─────────────────────────────────────
 class OrdenEstacionDia(Base):
     __tablename__ = "orden_estacion_dia"
@@ -620,6 +676,71 @@ class OrdenEstacionFormatoRealRead(BaseModel):
     created_at: datetime
 
 
+class OrdenEstacionLayoutRealRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_estacion_layout_real_id: uuid.UUID
+    orden_estacion_id: uuid.UUID
+    nombre_archivo: str
+    created_at: datetime
+
+
+class LayoutRealAplicadoRead(BaseModel):
+    """ADR-147/ADR-149: una fecha+hora del CSV que sí hizo match con un día real de esta
+    OE — el frontend usa esto para reemplazar el override de "reales" de ese día.
+    `spots` ya viene SUMADO si 2+ filas del archivo compartían la misma fecha+hora
+    (petición del usuario)."""
+
+    orden_estacion_dia_id: uuid.UUID
+    fecha_transmision: date
+    hora_inicio: time
+    spots: int
+
+
+class LayoutRealNuevoRead(BaseModel):
+    """ADR-149 (petición del usuario): una fecha+hora del CSV que NO existe entre los
+    días de esta OE — se ofrece como día NUEVO a crear si el usuario avanza a 2.3 (ver
+    `OrdenEstacionDiaNuevoIn`). `spots` ya viene sumado si 2+ filas proponían la misma
+    fecha+hora nueva. Nada se crea todavía: esto es solo la propuesta."""
+
+    fecha_transmision: date
+    hora_inicio: time
+    spots: int
+
+
+class LayoutRealErrorRead(BaseModel):
+    """ADR-147: una fila del CSV que NO se pudo aplicar (estación distinta, valor
+    inválido, o una fecha+hora nueva cuya suma de spots da 0 — no se puede crear un día
+    nuevo sin spots) — se ignora esa fila sola, no todo el archivo."""
+
+    fila: int
+    motivo: str
+
+
+class OrdenEstacionLayoutRealSubidoRead(BaseModel):
+    """ADR-147/ADR-149: respuesta de `POST .../layout-reales` — el archivo se guarda
+    SIEMPRE (igual que antes); si es `.csv` además se parsea: `aplicados` son fecha+hora
+    que coinciden con un día YA existente (reemplazan su override de reales),
+    `nuevos` son fecha+hora que NO existen (se ofrecen para crear como día nuevo al
+    avanzar a 2.3), `errores` son las filas que no se pudieron usar, sin tumbar el
+    resto. Para xlsx/xls/txt, los 3 quedan vacíos — no hay parseo definido para esos
+    formatos todavía."""
+
+    archivo: OrdenEstacionLayoutRealRead
+    aplicados: list[LayoutRealAplicadoRead]
+    nuevos: list[LayoutRealNuevoRead]
+    errores: list[LayoutRealErrorRead]
+
+
+class OrdenEstacionFormatoRealClienteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    orden_estacion_formato_real_cliente_id: uuid.UUID
+    orden_estacion_id: uuid.UUID
+    nombre_archivo: str
+    created_at: datetime
+
+
 class OrdenEstacionListParams(ListParams):
     """`ListParams` + filtros propios. Hereda `activo`, pero NUNCA se expone como query
     param: `OrdenEstacion` no tiene baja lógica, usa `estatus` (ciclo propio). Se hereda
@@ -776,6 +897,20 @@ class OrdenEstacionDiaRealIn(BaseModel):
     spots_verificados: int = Field(ge=0)
 
 
+class OrdenEstacionDiaNuevoIn(BaseModel):
+    """ADR-149 (petición del usuario): un día que NO existía en esta OE antes de avanzar
+    a 2.3 — lo trae "Carga de Órdenes Reales Desde Layout" cuando una fila del CSV no
+    hace match con ningún día ya asignado (mismo criterio que crear una OE nueva: una
+    hora distinta, aunque sea por 1 minuto, es un día nuevo). Nace con
+    `spots_solicitados = spots_asignados = spots_verificados = spots` (no hay otro dato
+    del que tomarlos) — por eso no genera ninguna `Incidencia` al crearse (verificado
+    == programado, sin diferencia)."""
+
+    fecha_transmision: date
+    hora_inicio: time
+    spots: int = Field(gt=0)
+
+
 class OrdenEstacionRealesIn(BaseModel):
     """Solo las EXCEPCIONES respecto al programado EFECTIVO — mismo formato disperso que
     ya manda `RealesForm`. TODOS los días reciben una fila `Verificacion` (spec: una por
@@ -790,6 +925,10 @@ class OrdenEstacionRealesIn(BaseModel):
     desde este flujo."""
 
     dias: list[OrdenEstacionDiaRealIn] = Field(default_factory=list)
+    # ADR-149: días propuestos por "Carga de Órdenes Reales Desde Layout" que no existían
+    # antes — se crean aquí mismo, al avanzar (nunca antes: nada se persiste solo por
+    # subir el layout).
+    dias_nuevos: list[OrdenEstacionDiaNuevoIn] = Field(default_factory=list)
     notas_transmision: str | None = Field(default=None, max_length=2000)
     reporte_reales_ref: str | None = Field(default=None, max_length=500)
 
@@ -848,6 +987,185 @@ class OrdenEstacionRepository(BaseRepository[OrdenEstacion]):
             .order_by(OrdenEstacionFormatoReal.created_at)
         )
         return self.db.scalars(stmt).all()
+
+    def listar_layout_reales(
+        self, orden_estacion_id: uuid.UUID
+    ) -> Sequence[OrdenEstacionLayoutReal]:
+        stmt = (
+            select(OrdenEstacionLayoutReal)
+            .where(OrdenEstacionLayoutReal.orden_estacion_id == orden_estacion_id)
+            .order_by(OrdenEstacionLayoutReal.created_at)
+        )
+        return self.db.scalars(stmt).all()
+
+    def listar_formatos_reales_cliente(
+        self, orden_estacion_id: uuid.UUID
+    ) -> Sequence[OrdenEstacionFormatoRealCliente]:
+        stmt = (
+            select(OrdenEstacionFormatoRealCliente)
+            .where(OrdenEstacionFormatoRealCliente.orden_estacion_id == orden_estacion_id)
+            .order_by(OrdenEstacionFormatoRealCliente.created_at)
+        )
+        return self.db.scalars(stmt).all()
+
+
+def _normalizar_texto_layout(valor: str) -> str:
+    """Normaliza para comparar sin distinguir mayúsculas/minúsculas, acentos ni espacios
+    extra — ADR-147: el usuario puede escribir el nombre de la estación con variaciones
+    menores (p.ej. "Radio Disney" vs "radio disney") y no debe rechazarse por eso."""
+    sin_acentos = unicodedata.normalize("NFKD", valor).encode("ascii", "ignore").decode("ascii")
+    return " ".join(sin_acentos.strip().lower().split())
+
+
+def _parsear_layout_reales_csv(
+    contenido: bytes,
+    dias: Sequence[OrdenEstacionDia],
+    nombre_estacion: str,
+) -> tuple[list[LayoutRealAplicadoRead], list[LayoutRealNuevoRead], list[LayoutRealErrorRead]]:
+    """ADR-147/ADR-149 (petición del usuario): parsea un layout CSV de "Carga de Órdenes
+    Reales Desde Layout" — columnas `Estacion, Fecha, Hora, Spots` (Spots opcional,
+    default 1).
+
+    Cada fila se valida por separado:
+    - `Estacion` debe coincidir (normalizado) con la estación de esta OE — control para
+      que el usuario no cargue por error el layout de otra estación.
+    - `Fecha`/`Hora` deben venir bien formateadas; `Spots` opcional (vacío = 1), entero
+      ≥ 0 si se captura.
+
+    Las filas que SÍ pasan esa validación se agrupan por fecha+hora exactas (únicas por
+    OE, `uq_orden_estacion_dia_oe_fecha_hora` — una hora distinta, aunque sea por 1
+    minuto, es otro grupo) y sus `Spots` se SUMAN dentro de cada grupo (petición del
+    usuario: 2+ filas con la misma fecha+hora no "pisan" la anterior, se acumulan). Cada
+    grupo resultante:
+    - Si la fecha+hora coincide con un día YA existente de esta OE → `aplicados`
+      (reemplaza el override de reales de ese día con la suma).
+    - Si NO coincide con ningún día existente → `nuevos`, con la suma como propuesta de
+      día nuevo a crear al avanzar a 2.3 (mismo criterio que asignar una OE: una hora
+      distinta es un día distinto) — salvo que la suma dé 0, caso en el que no se puede
+      crear un día nuevo sin spots y se reporta como error en su lugar.
+
+    Una fila inválida (estación distinta, valor no parseable) se IGNORA y se reporta en
+    `errores` — nunca tumba el resto del archivo. Devuelve `([], [], [error único])` si
+    el archivo no se puede leer como CSV o le faltan encabezados — ahí sí no hay nada
+    que procesar.
+    """
+    try:
+        texto = contenido.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return [], [], [
+            LayoutRealErrorRead(fila=0, motivo="El archivo no es un CSV de texto válido (UTF-8).")
+        ]
+
+    lector = csv.DictReader(io.StringIO(texto))
+    if not lector.fieldnames:
+        return [], [], [LayoutRealErrorRead(fila=0, motivo="El archivo está vacío.")]
+
+    columnas = {_normalizar_texto_layout(c): c for c in lector.fieldnames if c}
+    faltantes = {"estacion", "fecha", "hora"} - set(columnas)
+    if faltantes:
+        return [], [], [
+            LayoutRealErrorRead(
+                fila=0,
+                motivo=(
+                    "Encabezados esperados: Estacion, Fecha, Hora, Spots (opcional). "
+                    f"Falta(n): {', '.join(sorted(faltantes))}."
+                ),
+            )
+        ]
+
+    nombre_estacion_norm = _normalizar_texto_layout(nombre_estacion)
+    dias_por_clave = {(d.fecha_transmision, d.hora_inicio): d for d in dias}
+
+    # (fecha, hora) -> suma de spots de todas las filas válidas de ese grupo, más la
+    # primera fila que aportó (para poder señalar algo útil si termina en error).
+    grupos: dict[tuple[date, time], int] = {}
+    primera_fila_de: dict[tuple[date, time], int] = {}
+    errores: list[LayoutRealErrorRead] = []
+
+    for i, fila in enumerate(lector, start=2):  # fila 1 = encabezado
+        estacion_valor = (fila.get(columnas["estacion"]) or "").strip()
+        fecha_valor = (fila.get(columnas["fecha"]) or "").strip()
+        hora_valor = (fila.get(columnas["hora"]) or "").strip()
+        spots_valor = (fila.get(columnas.get("spots", "")) or "").strip()
+
+        if _normalizar_texto_layout(estacion_valor) != nombre_estacion_norm:
+            errores.append(
+                LayoutRealErrorRead(
+                    fila=i,
+                    motivo=(
+                        f"La estación '{estacion_valor}' no coincide con la de esta "
+                        f"orden ('{nombre_estacion}')."
+                    ),
+                )
+            )
+            continue
+
+        try:
+            fecha = date.fromisoformat(fecha_valor)
+        except ValueError:
+            errores.append(
+                LayoutRealErrorRead(
+                    fila=i, motivo=f"Fecha inválida: '{fecha_valor}' (usa AAAA-MM-DD)."
+                )
+            )
+            continue
+
+        try:
+            hora = time.fromisoformat(hora_valor)
+        except ValueError:
+            errores.append(
+                LayoutRealErrorRead(fila=i, motivo=f"Hora inválida: '{hora_valor}' (usa HH:MM).")
+            )
+            continue
+
+        if spots_valor == "":
+            spots = 1
+        else:
+            try:
+                spots = int(spots_valor)
+                if spots < 0:
+                    raise ValueError
+            except ValueError:
+                errores.append(
+                    LayoutRealErrorRead(
+                        fila=i, motivo=f"Spots inválido: '{spots_valor}' (usa un entero ≥ 0)."
+                    )
+                )
+                continue
+
+        clave = (fecha, hora)
+        grupos[clave] = grupos.get(clave, 0) + spots
+        primera_fila_de.setdefault(clave, i)
+
+    aplicados: list[LayoutRealAplicadoRead] = []
+    nuevos: list[LayoutRealNuevoRead] = []
+    for (fecha, hora), spots_total in grupos.items():
+        dia = dias_por_clave.get((fecha, hora))
+        if dia is not None:
+            aplicados.append(
+                LayoutRealAplicadoRead(
+                    orden_estacion_dia_id=dia.orden_estacion_dia_id,
+                    fecha_transmision=dia.fecha_transmision,
+                    hora_inicio=dia.hora_inicio,
+                    spots=spots_total,
+                )
+            )
+        elif spots_total > 0:
+            nuevos.append(
+                LayoutRealNuevoRead(fecha_transmision=fecha, hora_inicio=hora, spots=spots_total)
+            )
+        else:
+            errores.append(
+                LayoutRealErrorRead(
+                    fila=primera_fila_de[(fecha, hora)],
+                    motivo=(
+                        f"{fecha} {hora.strftime('%H:%M')} no existe en esta orden y no se "
+                        "puede crear como día nuevo con 0 spots."
+                    ),
+                )
+            )
+
+    return aplicados, nuevos, errores
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -1140,6 +1458,171 @@ class OrdenEstacionService(
         db = self._repo.db
         self._get_or_404(orden_estacion_id)
         obj = self._get_formato_real_or_404(db, orden_estacion_id, formato_real_id)
+        db.delete(obj)
+        db.commit()
+
+    # ── ADR-146: Carga de Órdenes Reales Desde Layout (lista blanca, "Capturar Reales") ──
+    def layout_reales(
+        self, orden_estacion_id: uuid.UUID
+    ) -> Sequence[OrdenEstacionLayoutRealRead]:
+        self._get_or_404(orden_estacion_id)
+        return [
+            OrdenEstacionLayoutRealRead.model_validate(f)
+            for f in self._repo.listar_layout_reales(orden_estacion_id)
+        ]
+
+    def agregar_layout_real(
+        self,
+        orden_estacion_id: uuid.UUID,
+        archivo: UploadFile,
+        usuario: CurrentUser,
+        almacenamiento: AlmacenamientoPort,
+    ) -> OrdenEstacionLayoutRealSubidoRead:
+        db = self._repo.db
+        oe = self._get_or_404(orden_estacion_id)
+
+        contenido, nombre_sano, extension = leer_adjunto(
+            archivo,
+            max_bytes=settings.s3_max_layout_reales_bytes,
+            extensiones_permitidas=EXTENSIONES_LAYOUT_REALES,
+        )
+        clave = almacenamiento.subir(
+            prefijo=f"orden_estacion/layout_reales/{orden_estacion_id}/",
+            nombre_archivo=f"{uuid4().hex}_{nombre_sano}",
+            contenido=contenido,
+            content_type=content_type_de_extension(extension),
+        )
+        obj = OrdenEstacionLayoutReal(
+            orden_estacion_layout_real_id=uuid4(),
+            orden_estacion_id=orden_estacion_id,
+            ref=clave,
+            nombre_archivo=nombre_sano,
+        )
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+
+        # ADR-147: solo el csv tiene un formato de layout definido para parsear —
+        # xlsx/xls/txt se siguen guardando (arriba) pero sin intentar aplicar nada.
+        aplicados: list[LayoutRealAplicadoRead] = []
+        nuevos: list[LayoutRealNuevoRead] = []
+        errores: list[LayoutRealErrorRead] = []
+        if extension == "csv":
+            estacion = db.get(Estacion, oe.estacion_id)
+            dias = self._repo.listar_dias(orden_estacion_id)
+            aplicados, nuevos, errores = _parsear_layout_reales_csv(
+                contenido, dias, estacion.nombre_estacion if estacion else ""
+            )
+
+        return OrdenEstacionLayoutRealSubidoRead(
+            archivo=OrdenEstacionLayoutRealRead.model_validate(obj),
+            aplicados=aplicados,
+            nuevos=nuevos,
+            errores=errores,
+        )
+
+    def _get_layout_real_or_404(
+        self, db: Session, orden_estacion_id: uuid.UUID, layout_real_id: uuid.UUID
+    ) -> OrdenEstacionLayoutReal:
+        obj = db.get(OrdenEstacionLayoutReal, layout_real_id)
+        if obj is None or obj.orden_estacion_id != orden_estacion_id:
+            raise NotFoundError(
+                "Layout de reales no encontrado para esta orden estación.",
+                detalles={"orden_estacion_layout_real_id": str(layout_real_id)},
+            )
+        return obj
+
+    def obtener_layout_real(
+        self, orden_estacion_id: uuid.UUID, layout_real_id: uuid.UUID
+    ) -> OrdenEstacionLayoutReal:
+        """Fila cruda (no el schema `Read`): el router la usa para descargar de S3 con
+        su `ref`/`nombre_archivo` reales."""
+        self._get_or_404(orden_estacion_id)
+        return self._get_layout_real_or_404(self._repo.db, orden_estacion_id, layout_real_id)
+
+    def eliminar_layout_real(
+        self, orden_estacion_id: uuid.UUID, layout_real_id: uuid.UUID, usuario: CurrentUser
+    ) -> None:
+        """El objeto en S3 NO se borra (mismo trade-off aceptado que el resto de los
+        adjuntos de Órdenes, ADR-042). Lista plana: borrar una fila no afecta a las demás."""
+        db = self._repo.db
+        self._get_or_404(orden_estacion_id)
+        obj = self._get_layout_real_or_404(db, orden_estacion_id, layout_real_id)
+        db.delete(obj)
+        db.commit()
+
+    # ── ADR-146: Formato de Horarios Reales Enviado al Cliente (lista negra + audio) ──
+    def formatos_reales_cliente(
+        self, orden_estacion_id: uuid.UUID
+    ) -> Sequence[OrdenEstacionFormatoRealClienteRead]:
+        self._get_or_404(orden_estacion_id)
+        return [
+            OrdenEstacionFormatoRealClienteRead.model_validate(f)
+            for f in self._repo.listar_formatos_reales_cliente(orden_estacion_id)
+        ]
+
+    def agregar_formato_real_cliente(
+        self,
+        orden_estacion_id: uuid.UUID,
+        archivo: UploadFile,
+        usuario: CurrentUser,
+        almacenamiento: AlmacenamientoPort,
+    ) -> OrdenEstacionFormatoRealClienteRead:
+        db = self._repo.db
+        self._get_or_404(orden_estacion_id)
+
+        contenido, nombre_sano, extension = leer_adjunto_libre(
+            archivo,
+            max_bytes=settings.s3_max_formato_real_cliente_bytes,
+            extensiones_bloqueadas=EXTENSIONES_PELIGROSAS_O_AUDIO,
+        )
+        clave = almacenamiento.subir(
+            prefijo=f"orden_estacion/formatos_reales_cliente/{orden_estacion_id}/",
+            nombre_archivo=f"{uuid4().hex}_{nombre_sano}",
+            contenido=contenido,
+            content_type=content_type_de_extension(extension),
+        )
+        obj = OrdenEstacionFormatoRealCliente(
+            orden_estacion_formato_real_cliente_id=uuid4(),
+            orden_estacion_id=orden_estacion_id,
+            ref=clave,
+            nombre_archivo=nombre_sano,
+        )
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+        return OrdenEstacionFormatoRealClienteRead.model_validate(obj)
+
+    def _get_formato_real_cliente_or_404(
+        self, db: Session, orden_estacion_id: uuid.UUID, formato_real_cliente_id: uuid.UUID
+    ) -> OrdenEstacionFormatoRealCliente:
+        obj = db.get(OrdenEstacionFormatoRealCliente, formato_real_cliente_id)
+        if obj is None or obj.orden_estacion_id != orden_estacion_id:
+            raise NotFoundError(
+                "Formato de horarios reales para el cliente no encontrado para esta "
+                "orden estación.",
+                detalles={"orden_estacion_formato_real_cliente_id": str(formato_real_cliente_id)},
+            )
+        return obj
+
+    def obtener_formato_real_cliente(
+        self, orden_estacion_id: uuid.UUID, formato_real_cliente_id: uuid.UUID
+    ) -> OrdenEstacionFormatoRealCliente:
+        """Fila cruda (no el schema `Read`): el router la usa para descargar de S3 con
+        su `ref`/`nombre_archivo` reales."""
+        self._get_or_404(orden_estacion_id)
+        return self._get_formato_real_cliente_or_404(
+            self._repo.db, orden_estacion_id, formato_real_cliente_id
+        )
+
+    def eliminar_formato_real_cliente(
+        self, orden_estacion_id: uuid.UUID, formato_real_cliente_id: uuid.UUID, usuario: CurrentUser
+    ) -> None:
+        """El objeto en S3 NO se borra (mismo trade-off aceptado que el resto de los
+        adjuntos de Órdenes, ADR-042). Lista plana: borrar una fila no afecta a las demás."""
+        db = self._repo.db
+        self._get_or_404(orden_estacion_id)
+        obj = self._get_formato_real_cliente_or_404(db, orden_estacion_id, formato_real_cliente_id)
         db.delete(obj)
         db.commit()
 
@@ -1786,9 +2269,93 @@ class OrdenEstacionService(
             )
         db = self._repo.db
         overrides = {d.orden_estacion_dia_id: d.spots_verificados for d in input_.dias}
-        dias = self._repo.listar_dias(orden_estacion_id)
+        dias = list(self._repo.listar_dias(orden_estacion_id))
         usuario_id = resolver_usuario_id(db, usuario.username)
         hoy = date.today()
+
+        # ADR-149: crea primero los días NUEVOS del layout (si los hay) — ANTES del
+        # bucle de abajo, para que ESE MISMO bucle (que genera Verificacion/Incidencia)
+        # los trate exactamente igual que cualquier día ya asignado. Se agrega su propio
+        # `spots` a `overrides` para que `verificado == programado_efectivo` (ambos
+        # valen `spots`) y no se dispare ninguna Incidencia por un día recién creado.
+        if input_.dias_nuevos:
+            oc_para_dias_nuevos = db.get(OrdenCliente, obj.orden_id)
+            if oc_para_dias_nuevos is None:
+                raise NotFoundError(
+                    "OrdenCliente no encontrada.", detalles={"orden_id": str(obj.orden_id)}
+                )
+            for dia_nuevo in input_.dias_nuevos:
+                if not (
+                    oc_para_dias_nuevos.fecha_inicio_campania
+                    <= dia_nuevo.fecha_transmision
+                    <= oc_para_dias_nuevos.fecha_fin_campania
+                ):
+                    raise DomainError(
+                        "Hay días nuevos del layout fuera del rango de campaña de la orden.",
+                        detalles={
+                            "fecha": str(dia_nuevo.fecha_transmision),
+                            "campania": [
+                                str(oc_para_dias_nuevos.fecha_inicio_campania),
+                                str(oc_para_dias_nuevos.fecha_fin_campania),
+                            ],
+                        },
+                    )
+                ya_existe = db.scalar(
+                    select(OrdenEstacionDia).where(
+                        OrdenEstacionDia.orden_estacion_id == orden_estacion_id,
+                        OrdenEstacionDia.fecha_transmision == dia_nuevo.fecha_transmision,
+                        OrdenEstacionDia.hora_inicio == dia_nuevo.hora_inicio,
+                    )
+                )
+                if ya_existe is not None:
+                    raise DomainError(
+                        "Ya existe un día con esa fecha y hora en esta orden — no se "
+                        "puede crear como nuevo.",
+                        detalles={
+                            "fecha": str(dia_nuevo.fecha_transmision),
+                            "hora": str(dia_nuevo.hora_inicio),
+                        },
+                    )
+
+            hermanas_ids = db.scalars(
+                select(OrdenEstacion.orden_estacion_id).where(
+                    OrdenEstacion.orden_id == obj.orden_id
+                )
+            ).all()
+            asignados_previos = (
+                db.scalar(
+                    select(func.coalesce(func.sum(OrdenEstacionDia.spots_asignados), 0)).where(
+                        OrdenEstacionDia.orden_estacion_id.in_(hermanas_ids),
+                        OrdenEstacionDia.cancelada == False,  # noqa: E712
+                    )
+                )
+                or 0
+            )
+            spots_dias_nuevos = sum(d.spots for d in input_.dias_nuevos)
+            if asignados_previos + spots_dias_nuevos > oc_para_dias_nuevos.total_spots:
+                raise DomainError(
+                    "Los días nuevos del layout exceden el total de spots de la orden.",
+                    detalles={
+                        "total_oc": oc_para_dias_nuevos.total_spots,
+                        "ya_asignados": asignados_previos,
+                        "nuevos": spots_dias_nuevos,
+                    },
+                )
+
+            for dia_nuevo in input_.dias_nuevos:
+                creado = OrdenEstacionDia(
+                    orden_estacion_dia_id=uuid4(),
+                    orden_estacion_id=orden_estacion_id,
+                    fecha_transmision=dia_nuevo.fecha_transmision,
+                    hora_inicio=dia_nuevo.hora_inicio,
+                    hora_fin=dia_nuevo.hora_inicio,
+                    spots_solicitados=dia_nuevo.spots,
+                    spots_asignados=dia_nuevo.spots,
+                )
+                db.add(creado)
+                db.flush()
+                overrides[creado.orden_estacion_dia_id] = dia_nuevo.spots
+                dias.append(creado)
 
         for dia in dias:
             # ADR-104: un día cancelado ya tiene su propia Verificacion (creada al
@@ -2127,6 +2694,145 @@ def eliminar_formato_real_orden_estacion(
     svc.eliminar_formato_real(item_id, formato_real_id, usuario)
 
 
+@router_estaciones.get(
+    "/{item_id}/layout-reales", response_model=list[OrdenEstacionLayoutRealRead]
+)
+def listar_layout_reales_orden_estacion(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+) -> Sequence[OrdenEstacionLayoutRealRead]:
+    """"Carga de Órdenes Reales Desde Layout" de esta OE (ADR-146) — lista plana, solo
+    csv/xlsx/xls/txt."""
+    return svc.layout_reales(item_id)
+
+
+@router_estaciones.post(
+    "/{item_id}/layout-reales", response_model=OrdenEstacionLayoutRealSubidoRead, status_code=201
+)
+def agregar_layout_real_orden_estacion(
+    item_id: uuid.UUID,
+    archivo: UploadFile = File(...),
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+    almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
+) -> OrdenEstacionLayoutRealSubidoRead:
+    """Sube un archivo de layout (csv/xlsx/xls/txt, ≤ `S3_MAX_LAYOUT_REALES_BYTES`) y lo
+    agrega a la lista de esta OE — 404 si la OE no existe. ADR-147: si es `.csv`,
+    además lo parsea (columnas Estacion/Fecha/Hora/Spots) e intenta aplicar cada fila
+    contra los días reales de esta OE — `aplicados` trae los que hicieron match
+    (`orden_estacion_dia_id` + `spots`), `errores` las filas que se ignoraron (estación
+    distinta, fecha/hora sin match, valor inválido) sin tumbar el resto del archivo.
+    xlsx/xls/txt solo se guardan, sin parsear (`aplicados`/`errores` vacíos)."""
+    return svc.agregar_layout_real(item_id, archivo, usuario, almacenamiento)
+
+
+@router_estaciones.get("/{item_id}/layout-reales/{layout_real_id}/archivo")
+def descargar_layout_real_orden_estacion(
+    item_id: uuid.UUID,
+    layout_real_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+    almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
+) -> Response:
+    layout_real = svc.obtener_layout_real(item_id, layout_real_id)
+    contenido = almacenamiento.obtener(layout_real.ref)
+    extension = (
+        layout_real.nombre_archivo.rsplit(".", 1)[-1]
+        if "." in layout_real.nombre_archivo
+        else ""
+    )
+    return Response(
+        content=contenido,
+        media_type=content_type_de_extension(extension),
+        headers={
+            "Content-Disposition": f'attachment; filename="{layout_real.nombre_archivo}"'
+        },
+    )
+
+
+@router_estaciones.delete("/{item_id}/layout-reales/{layout_real_id}", status_code=204)
+def eliminar_layout_real_orden_estacion(
+    item_id: uuid.UUID,
+    layout_real_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+) -> None:
+    """Quita un archivo de la lista (el objeto en S3 no se borra, ver docstring del
+    servicio)."""
+    svc.eliminar_layout_real(item_id, layout_real_id, usuario)
+
+
+@router_estaciones.get(
+    "/{item_id}/formatos-reales-cliente",
+    response_model=list[OrdenEstacionFormatoRealClienteRead],
+)
+def listar_formatos_reales_cliente_orden_estacion(
+    item_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+) -> Sequence[OrdenEstacionFormatoRealClienteRead]:
+    """"Formato de Horarios Reales Enviado al Cliente" de esta OE (ADR-146) — lista
+    plana, cualquier formato salvo ejecutables/scripts/audio."""
+    return svc.formatos_reales_cliente(item_id)
+
+
+@router_estaciones.post(
+    "/{item_id}/formatos-reales-cliente",
+    response_model=OrdenEstacionFormatoRealClienteRead,
+    status_code=201,
+)
+def agregar_formato_real_cliente_orden_estacion(
+    item_id: uuid.UUID,
+    archivo: UploadFile = File(...),
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+    almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
+) -> OrdenEstacionFormatoRealClienteRead:
+    """Sube un archivo de "Formato de Horarios Reales Enviado al Cliente" (cualquier
+    formato salvo ejecutables/scripts/audio, ≤ `S3_MAX_FORMATO_REAL_CLIENTE_BYTES`) y lo
+    agrega a la lista de esta OE — 404 si la OE no existe."""
+    return svc.agregar_formato_real_cliente(item_id, archivo, usuario, almacenamiento)
+
+
+@router_estaciones.get("/{item_id}/formatos-reales-cliente/{formato_real_cliente_id}/archivo")
+def descargar_formato_real_cliente_orden_estacion(
+    item_id: uuid.UUID,
+    formato_real_cliente_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+    almacenamiento: AlmacenamientoPort = Depends(get_almacenamiento),
+) -> Response:
+    formato_real_cliente = svc.obtener_formato_real_cliente(item_id, formato_real_cliente_id)
+    contenido = almacenamiento.obtener(formato_real_cliente.ref)
+    extension = (
+        formato_real_cliente.nombre_archivo.rsplit(".", 1)[-1]
+        if "." in formato_real_cliente.nombre_archivo
+        else ""
+    )
+    return Response(
+        content=contenido,
+        media_type=content_type_de_extension(extension),
+        headers={
+            "Content-Disposition": f'attachment; filename="{formato_real_cliente.nombre_archivo}"'
+        },
+    )
+
+
+@router_estaciones.delete(
+    "/{item_id}/formatos-reales-cliente/{formato_real_cliente_id}", status_code=204
+)
+def eliminar_formato_real_cliente_orden_estacion(
+    item_id: uuid.UUID,
+    formato_real_cliente_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("ordenes:editar")),
+    svc: OrdenEstacionService = Depends(get_orden_estacion_service),
+) -> None:
+    """Quita un archivo de la lista (el objeto en S3 no se borra, ver docstring del
+    servicio)."""
+    svc.eliminar_formato_real_cliente(item_id, formato_real_cliente_id, usuario)
+
+
 @router_estaciones.post(
     "/{item_id}/dias/{dia_id}/cancelar", response_model=OrdenEstacionRead
 )
@@ -2198,5 +2904,12 @@ def avanzar_reales_orden_estacion(
     """2.2 → 2.3: registra lo realmente transmitido (solo excepciones). Genera una
     `Verificacion` por CADA día (spec) y una `Incidencia` automática por cada día con
     diferencia. 409 si la OE no está en 'en_transmision'. Si todas las OE de la OC
-    quedan 'cerrada', la OC pasa a 'en_verificacion'."""
+    quedan 'cerrada', la OC pasa a 'en_verificacion'.
+
+    ADR-149: `dias_nuevos` (opcional) crea días que NO existían antes — vienen de
+    "Carga de Órdenes Reales Desde Layout" cuando una fila del CSV no hace match con
+    ningún día ya asignado. Nacen con `spots_solicitados = spots_asignados =
+    spots_verificados`, así que nunca generan Incidencia por sí solos. 400
+    (`error_dominio`) si exceden el balance de spots de la orden, si la fecha cae fuera
+    de la campaña, o si ya existe un día con esa fecha+hora."""
     return svc.avanzar_reales(item_id, payload, usuario)

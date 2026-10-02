@@ -681,6 +681,58 @@ Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de Orden
   - **`DELETE /ordenes/estaciones/{id}/formatos-reales/{formato_real_id}`**
     (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
     a los demás.
+- **"Carga de Órdenes Reales Desde Layout" (ADR-146/ADR-147/ADR-148/ADR-149/ADR-150):** junto a
+  Evidencias/Formato de Horarios Reales en la misma pantalla — misma lista PLANA, pero
+  lista BLANCA de extensiones (csv — el formato principal — xlsx, xls, txt).
+  - **`GET /ordenes/estaciones/{id}/layout-reales`** — lista los archivos subidos.
+  - **`POST /ordenes/estaciones/{id}/layout-reales`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube csv/xlsx/xls/txt, ≤
+    `S3_MAX_LAYOUT_REALES_BYTES` (10 MB); **400** (`archivo_no_permitido`) si la
+    extensión no es una de esas 4. csv/txt no tienen firma de contenido verificable
+    (texto plano) — la lista blanca de extensión es la única defensa para esos 2.
+    Responde `{archivo, aplicados, nuevos, errores}`
+    (`OrdenEstacionLayoutRealSubidoRead`): el archivo se guarda siempre; si es `.csv`,
+    **ADR-147/ADR-149** lo parsea (columnas `Estacion, Fecha, Hora, Spots` — Spots
+    opcional, default 1), agrupa las filas VÁLIDAS por `fecha_transmision` +
+    `hora_inicio` exactas y SUMA sus `Spots` dentro de cada grupo (`Estacion` debe
+    coincidir normalizada con la de esta OE). Cada grupo resultante:
+    - Si la fecha+hora coincide con un día YA existente → `aplicados`
+      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots}` — `spots` ya
+      sumado).
+    - Si NO coincide con ningún día existente → `nuevos`
+      (`{fecha_transmision, hora_inicio, spots}` — propuesta de día NUEVO a crear al
+      avanzar a 2.3; nada se crea aquí). Si la suma da 0, no se puede crear un día
+      sin spots y se reporta en `errores` en su lugar.
+
+    `errores` trae `{fila, motivo}` por cada fila ignorada (estación distinta, valor
+    inválido) — NUNCA tumba el resto del archivo; un archivo ilegible o sin los
+    encabezados mínimos devuelve un único error con `fila=0`. xlsx/xls/txt:
+    `aplicados`/`nuevos`/`errores` vacíos (sin parseo definido todavía). El frontend
+    usa `aplicados`+`nuevos` para REEMPLAZAR COMPLETO lo cargado en "Capturar Reales"
+    — un día que no viene en el archivo vuelve a su valor programado; el usuario igual
+    debe presionar "Avanzar a 2.3" para persistir (incluidos los días nuevos).
+  - **`GET /ordenes/estaciones/{id}/layout-reales/{layout_real_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/layout-reales/{layout_real_id}`**
+    (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
+    a los demás. **ADR-148/ADR-150**: el frontend llama esto automáticamente, al
+    desmontar la pantalla de "Capturar Reales" sin haber avanzado, por cada layout
+    subido EN ESA SESIÓN (no uno de una sesión anterior ya avanzada) — sin importar
+    la vía de salida (botón "Cancelar" o cualquier otra).
+- **"Formato de Horarios Reales Enviado al Cliente" (ADR-146):** mismo patrón que
+  "Formato de Horarios Reales" — lista NEGRA igual de amplia, PERO además excluye audio
+  (mp3/wav/ogg y variantes comunes: m4a, aac, flac, wma, aiff, opus, mid, midi).
+  - **`GET /ordenes/estaciones/{id}/formatos-reales-cliente`** — lista los archivos
+    subidos.
+  - **`POST /ordenes/estaciones/{id}/formatos-reales-cliente`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube cualquier formato salvo
+    ejecutables/scripts/audio, ≤ `S3_MAX_FORMATO_REAL_CLIENTE_BYTES` (20 MB); **400**
+    (`archivo_no_permitido`) si no cumple.
+  - **`GET /ordenes/estaciones/{id}/formatos-reales-cliente/{formato_real_cliente_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/formatos-reales-cliente/{formato_real_cliente_id}`**
+    (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
+    a los demás.
 - **`POST /ordenes/estaciones/{id}/dias/{dia_id}/cancelar`** (`ordenes:editar`, ADR-104)
   — "Cancelar transmisión" de UN día puntual, en cualquier momento (sin candado de
   `estatus`). Body `{motivo: string}` (obligatorio, 1–500 caracteres). Marca el día como
@@ -783,7 +835,17 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
   (solo excepciones respecto al programado EFECTIVO — `spots_programados` si se pasó por
   `/programados`, si no `spots_asignados`; cada excepción identifica su fila por
   `orden_estacion_dia_id`, **no** por `fecha_transmision`, mismo criterio de ADR-127 que
-  arriba), `notas_transmision`, `reporte_reales_ref`.
+  arriba), `notas_transmision`, `reporte_reales_ref` (el backend lo sigue aceptando sin
+  cambios; **ADR-146**: el frontend de "Capturar Reales" ya no muestra esta sección
+  ("Reporte del afiliado") ni la manda al avanzar — mismo criterio que ADR-143 con
+  `reporte_programados_ref`), `dias_nuevos` (**ADR-149**, opcional —
+  `{fecha_transmision, hora_inicio, spots > 0}[]`): crea días que NO existían, propuestos
+  por "Carga de Órdenes Reales Desde Layout" cuando una fecha+hora del CSV no coincide
+  con ningún día ya asignado. Cada uno nace con `spots_solicitados = spots_asignados =
+  spots_verificados = spots` (nunca genera `Incidencia`: verificado == programado). 400
+  (`error_dominio`) si la fecha cae fuera de la campaña de la OC, si ya existe un día con
+  esa fecha+hora, o si excede el balance de spots de TODA la OC (`spots_asignados`
+  sumados de las OE hermanas + los nuevos > `oc.total_spots`).
   **ADR-119:** ya NO acepta `testigos_url`/
   `testigos_ubicacion_alterna` — la pantalla de captura los reemplazó por "Evidencias de
   lo Transmitido" (endpoints dedicados, arriba); esas 2 columnas siguen existiendo en

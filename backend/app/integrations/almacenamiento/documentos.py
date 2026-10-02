@@ -13,10 +13,11 @@ servicio y el router usen una sola fuente de verdad:
   (documentos + imágenes) para los adjuntos "simulados" de Órdenes (ver
   `app/modules/ordenes/adjuntos.py`). `EXTENSIONES_AUDIO_ORDENES` (ADR-103) es una
   lista blanca APARTE, solo para el "Material a Transmitir" de OrdenEstacion.
-- `leer_adjunto_libre` (ADR-123): único caso con LISTA NEGRA — acepta cualquier formato
-  salvo ejecutables/scripts (`EXTENSIONES_PELIGROSAS`), y además rechaza cualquier
-  contenido con firma de ejecutable de Windows (`MZ`) sin importar la extensión
-  declarada. Usado por "Formato de Horarios Reales" de OrdenEstacion.
+- `leer_adjunto_libre` (ADR-123): lista NEGRA — acepta cualquier formato salvo
+  ejecutables/scripts (`EXTENSIONES_PELIGROSAS`), y además rechaza cualquier contenido
+  con firma de ejecutable de Windows (`MZ`) sin importar la extensión declarada. Usado
+  por "Formato de Horarios Reales" de OrdenEstacion, y (ADR-146, lista negra ampliada
+  con audio) por "Formato de Horarios Reales Enviado al Cliente".
 - Errores de dominio del almacenamiento (`AlmacenamientoError`, `ArchivoNoPdfError`,
   `ArchivoNoPermitidoError`, `ArchivoDemasiadoGrandeError`).
 """
@@ -172,6 +173,12 @@ _MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
     "mp3": (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"),
     "wav": (b"RIFF",),
     "ogg": (b"OggS",),
+    # ADR-146 ("Carga de Órdenes Reales Desde Layout"): csv/txt son texto plano, sin una
+    # firma binaria universal como la de los formatos de arriba — tupla vacía en vez de
+    # omitir la clave: `leer_adjunto()` la trata explícitamente como "sin firma que
+    # validar" (cualquier contenido pasa), no como error por extensión desconocida.
+    "csv": (),
+    "txt": (),
 }
 
 # Listas blancas POR MODULO, explicitas: agregar una extension para un modulo no
@@ -185,6 +192,11 @@ EXTENSIONES_ADJUNTO_FACTURACION = EXTENSIONES_ADJUNTO_ORDENES | {"xml"}
 #: ADR-103 — "Material a Transmitir" de OrdenEstacion (F1): SOLO audio, lista aparte
 #: (no se mezcla con `EXTENSIONES_ADJUNTO_ORDENES`, que es de documentos/imagenes).
 EXTENSIONES_AUDIO_ORDENES = frozenset({"mp3", "wav", "ogg"})
+#: ADR-146/ADR-154 — "Carga de Órdenes Reales Desde Layout": inicialmente se aceptaban
+#: también xlsx/xls/txt, pero el parseo (ADR-147) solo entiende CSV — el usuario pidió
+#: restringir la carga a ese único formato en vez de dejar subir archivos que el sistema
+#: ni siquiera procesa. Lista blanca APARTE (no es un adjunto de documento/imagen).
+EXTENSIONES_LAYOUT_REALES = frozenset({"csv"})
 
 # ── Adjuntos de "cualquier formato" (lista NEGRA — ADR-123) ─────────────────────────
 # Único caso del módulo con lista negra en vez de blanca: el pedido explícito era
@@ -209,6 +221,14 @@ EXTENSIONES_PELIGROSAS = frozenset(
 # ejecutable renombrado con cualquier otra extensión.
 _MAGIC_EJECUTABLE_WINDOWS = b"MZ"
 
+# ADR-146 — "Formato de Horarios Reales Enviado al Cliente": mismo criterio de lista
+# NEGRA que `EXTENSIONES_PELIGROSAS`, pero además excluye audio (petición del usuario:
+# "a excepción de los ejecutables y todos los de tipo audio") — a diferencia de
+# "Formato de Horarios Reales" (`EXTENSIONES_PELIGROSAS` a secas), que sí permite audio.
+EXTENSIONES_PELIGROSAS_O_AUDIO = EXTENSIONES_PELIGROSAS | EXTENSIONES_AUDIO_ORDENES | frozenset(
+    {"m4a", "aac", "flac", "wma", "aiff", "opus", "mid", "midi"}
+)
+
 
 _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "pdf": "application/pdf",
@@ -223,6 +243,8 @@ _CONTENT_TYPE_POR_EXTENSION: dict[str, str] = {
     "mp3": "audio/mpeg",
     "wav": "audio/wav",
     "ogg": "audio/ogg",
+    "csv": "text/csv",
+    "txt": "text/plain",
 }
 
 
@@ -260,8 +282,10 @@ def leer_adjunto(
     if not contenido:
         raise ArchivoNoPermitidoError("El archivo está vacío.")
 
+    # Tupla vacía (csv/txt) = sin firma binaria conocida — se acepta cualquier contenido
+    # para esa extensión (no hay nada verificable); ver comentario en `_MAGIC_POR_EXTENSION`.
     firmas = _MAGIC_POR_EXTENSION[extension]
-    if not any(contenido.startswith(firma) for firma in firmas):
+    if firmas and not any(contenido.startswith(firma) for firma in firmas):
         raise ArchivoNoPermitidoError(
             "El contenido del archivo no corresponde a la extensión declarada.",
             detalles={"extension": extension},

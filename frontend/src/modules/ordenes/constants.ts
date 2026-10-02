@@ -48,6 +48,26 @@ export const EXTENSIONES_PELIGROSAS_FORMATO_REAL = [
  * solo UX; el backend revalida siempre. */
 export const FORMATO_REAL_MAX_BYTES = 20 * 1024 * 1024;
 
+/** ADR-146/ADR-154 — "Carga de Órdenes Reales Desde Layout": lista BLANCA, SOLO csv (el
+ * único formato que el parseo del layout, ADR-147, entiende) — debe coincidir con
+ * `EXTENSIONES_LAYOUT_REALES` del backend. */
+export const EXTENSIONES_LAYOUT_REALES = ["csv"] as const;
+export const LAYOUT_REAL_ACCEPT = EXTENSIONES_LAYOUT_REALES.map((ext) => `.${ext}`).join(",");
+/** Igual que `S3_MAX_LAYOUT_REALES_BYTES` del backend (10 MB) — validación en el front es
+ * solo UX; el backend revalida siempre. */
+export const LAYOUT_REAL_MAX_BYTES = 10 * 1024 * 1024;
+
+/** ADR-146 — "Formato de Horarios Reales Enviado al Cliente": mismo criterio de lista
+ * NEGRA que `EXTENSIONES_PELIGROSAS_FORMATO_REAL`, pero además excluye audio (petición
+ * del usuario) — debe coincidir con `EXTENSIONES_PELIGROSAS_O_AUDIO` del backend. */
+export const EXTENSIONES_PELIGROSAS_FORMATO_REAL_CLIENTE = [
+  ...EXTENSIONES_PELIGROSAS_FORMATO_REAL,
+  "mp3", "wav", "ogg", "m4a", "aac", "flac", "wma", "aiff", "opus", "mid", "midi",
+] as const;
+/** Igual que `S3_MAX_FORMATO_REAL_CLIENTE_BYTES` del backend (20 MB) — validación en el
+ * front es solo UX; el backend revalida siempre. */
+export const FORMATO_REAL_CLIENTE_MAX_BYTES = 20 * 1024 * 1024;
+
 export const OBS_PREDEFINIDAS = [
   "Sujeto a disponibilidad de horarios prime",
   "No combinable con otros descuentos",

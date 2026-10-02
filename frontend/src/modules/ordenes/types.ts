@@ -121,11 +121,49 @@ export interface OrdenEstacionFormatoReal {
   nombre_archivo: string;
 }
 
-/** ADR-105/ADR-120: un registro de la bitácora de envíos por correo de los PDFs de
- *  OrdenEstacion — un registro por INTENTO (exitoso o no). `"orden_transmision"` es el
- *  envío "bundle" (PDF Programados + Material a Transmitir, a todos los contactos
- *  activos del afiliado) que dispara el diálogo "Enviar por correo"/"Imprimir" al
- *  generar cualquiera de los 3 PDFs. */
+/** ADR-146: "Carga de Órdenes Reales Desde Layout" — misma lista PLANA que
+ *  `OrdenEstacionFormatoReal`, pero lista BLANCA (csv/xlsx/xls/txt) en vez de negra. */
+export interface OrdenEstacionLayoutReal {
+  id: string;
+  nombre_archivo: string;
+}
+
+/** ADR-147/ADR-149: una fecha+hora del layout CSV que sí hizo match con un día real de
+ *  la OE — trae el `spots` (ya sumado si 2+ filas compartían la misma fecha+hora) a
+ *  aplicar como override de ese día. */
+export interface LayoutRealAplicado {
+  ordenEstacionDiaId: string;
+  spots: number;
+}
+
+/** ADR-149: una fecha+hora del layout CSV que NO existe en la OE — se ofrece como día
+ *  NUEVO a crear si el usuario avanza a 2.3 (mismo criterio que asignar una hora
+ *  distinta al crear la OE). Nada se crea todavía: esto es solo la propuesta. */
+export interface LayoutRealNuevo {
+  fecha: string;
+  hora: string;
+  spots: number;
+}
+
+/** ADR-147: una fila del layout CSV que se ignoró (estación distinta, valor inválido,
+ *  o una fecha+hora nueva cuya suma de spots da 0) — se reporta, pero no tumba el
+ *  resto del archivo. */
+export interface LayoutRealError {
+  fila: number;
+  motivo: string;
+}
+
+/** ADR-146: "Formato de Horarios Reales Enviado al Cliente" — misma lista negra que
+ *  `OrdenEstacionFormatoReal`, pero excluye además los formatos de audio. */
+export interface OrdenEstacionFormatoRealCliente {
+  id: string;
+  nombre_archivo: string;
+}
+
+/** ADR-105/ADR-120/ADR-145: un registro de la bitácora de correos (`.eml`) generados
+ *  para los PDFs de OrdenEstacion — un registro por cada `.eml` armado (siempre
+ *  `exitoso=true`, ADR-145). `"orden_transmision"` es un valor legado de cuando existía
+ *  el envío "bundle" real por correo; ya no se escribe en registros nuevos. */
 export interface LogEnvioCorreo {
   id: string;
   tipoPdf: "servicio" | "programados" | "reales" | "orden_transmision";
