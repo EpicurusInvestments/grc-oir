@@ -275,10 +275,33 @@ adaptadores de envío real (SES/SMTP/Local) nunca lo hacen, para no marcar como 
 enviado" un mensaje que sí se mandó/guardó. Tooltip actualizado a **"Abre un borrador
 nuevo listo para enviar"**.
 
+**ADR-145 (petición del usuario) — se retira el envío real; "Abrir correo" queda como
+ÚNICO flujo de correo:** tras probar SES real (credenciales SMTP de ADR-138) y toparse
+con que la cuenta sigue en modo *sandbox* (remitente no verificado — trabajo de IT fuera
+de alcance), el usuario decidió no perseguir el envío directo y quedarse solo con "Abrir
+correo". Se retiraron por completo: el botón "✉️ Enviar por correo" y su handler en
+`FilaPdf`, los 2 endpoints de envío (`POST .../pdf/{tipo}/enviar-correo`,
+`POST .../pdf/{tipo}/correo-orden-transmision`), sus funciones de servicio, y TODO
+`app/integrations/correo/` salvo `mime.py` (que sigue usando el `.eml`) — es decir, los 3
+adaptadores (`CorreoLocal`, `CorreoSES`, `CorreoSmtp` de ADR-138) y la fábrica
+`get_correo()`/`CORREO_BACKEND` descritos en el párrafo de ADR-105 más arriba **ya no
+existen**; ese párrafo queda como registro histórico de por qué se construyeron, no
+como descripción del estado actual. "Abrir correo" (ADR-124/144) NO cambió en nada su
+comportamiento — sigue gateado por los mismos catálogos de contactos activos
+(ADR-140) y sigue escribiendo en la misma bitácora `LogEnvioCorreoOrdenEstacion` (ahora
+el único flujo que la alimenta, siempre `exitoso=true`).
+
 **ADR-118 (petición del usuario):** la tabla de días del PDF #2 (Horarios Programados)
 quitó "Pedidos"/"Asignados" y agregó "Material a Transmitir" (mismo criterio que
 `nombreMaterial()` del frontend — override del día o el primero subido) + un solo
 "Horario" (ya no Hora Inicio/Hora Término por separado, coherente con ADR-107/108).
+
+**ADR-156 (petición del usuario):** el PDF #1 (Orden de Servicio) y el PDF #3 (Horarios
+Reales) nunca se habían actualizado con ese mismo criterio — #1 seguía con 2 columnas
+"Inicio"/"Término" (mismo valor repetido) en su tabla de "Periodo de Transmisión"; #3
+mostraba su columna "HORA" como un rango `inicio - fin` (también el mismo valor
+repetido). Ambos pasan a un solo horario: #1 consolida en una columna "Horario de
+Transmisión", #3 deja "HORA" con un solo valor.
 
 **Desviación aditiva clave (ADR-030):** la spec modela `fecha_transmision`/
 `hora_inicio`/`hora_fin`/`spots_solicitados`/`spots_asignados`/`spots_faltantes` como
@@ -302,6 +325,89 @@ de subida del sistema con lista NEGRA (`EXTENSIONES_PELIGROSAS`, ejecutables/scr
 vez de blanca, reforzado con una revisión de contenido (firma de ejecutable de Windows,
 "MZ") sin importar la extensión declarada — ver `leer_adjunto_libre()` en
 `app/integrations/almacenamiento/documentos.py`.
+
+**ADR-146 (petición del usuario) — 2 componentes nuevos, "Reporte del afiliado" retirado
+de esta pantalla:** junto a Evidencias/Formato de Horarios Reales, una segunda fila con
+"Carga de Órdenes Reales Desde Layout" (tabla nueva `orden_estacion_layout_real`, lista
+BLANCA — inicialmente csv/xlsx/xls/txt, restringida a SOLO csv por ADR-155) y "Formato de Horarios
+Reales Enviado al Cliente" (tabla nueva `orden_estacion_formato_real_cliente`, misma
+lista negra que ADR-123 pero EXCLUYE además audio — a diferencia de "Formato de Horarios
+Reales", que sí lo admite). `csv`/`txt` no tienen firma binaria verificable (texto
+plano): `leer_adjunto()` ahora acepta una firma vacía como "sin validar contenido para
+esta extensión" en vez de fallar. Se retiró "Reporte del afiliado" de "Capturar Reales"
+(`RealesForm.tsx`) — mismo criterio que ADR-143: se dejó de mostrar/enviar desde el
+frontend (incluida la línea de `toApi.ts` que lo mandaba incondicionalmente en cada
+"Avanzar a 2.3"), pero `OrdenEstacion.reporte_reales_ref` y su endpoint genérico de
+adjuntos quedan intactos en el backend.
+
+**ADR-147 (petición del usuario) — el CSV de "Carga de Órdenes Reales Desde Layout" ya
+se parsea y reemplaza la tabla:** columnas `Estacion, Fecha, Hora, Spots` (Spots
+opcional, default 1). `Estacion` es un control (compara normalizado contra la estación
+de esta OE, sin crear datos de otra). Subir un CSV REEMPLAZA COMPLETO lo cargado en la
+tabla de "Capturar Reales" — un día que no viene en el archivo vuelve a su valor
+programado (confirmado con el usuario). Una fila inválida (estación distinta, valor no
+parseable) se ignora y se reporta, sin tumbar el resto del archivo. El usuario sigue
+teniendo que presionar "Avanzar a 2.3 →" para persistir — cargar el layout solo llena la
+tabla, igual que una edición manual por fila. xlsx/xls/txt ya no se pueden subir en
+absoluto (ADR-155: se quitaron de la lista blanca, nunca se parseaban).
+
+**ADR-148/ADR-150 (petición del usuario):** salir de "Capturar Reales" sin "Avanzar a
+2.3" borra el archivo de layout que se haya subido EN ESA MISMA SESIÓN (mismo criterio
+que los overrides de la tabla, que ya se descartaban solos al no persistir hasta
+"Avanzar") — uno que ya existiera de una sesión anterior ya avanzada no se toca.
+`RealesForm.tsx` recuerda qué archivos había al abrir la pantalla; la limpieza vive en
+la función de limpieza de un `useEffect` (corre al DESMONTAR el componente), no en el
+`onClick` de un botón en particular — ADR-148 la había atado solo al botón "Cancelar",
+y el usuario reportó que si se abandonaba la pantalla por otra vía (navegar a otra
+sección) el archivo se quedaba sin borrar; ADR-150 la movió al desmontaje para cubrir
+cualquier forma de salir.
+
+**ADR-149 (petición del usuario) — suma de spots + días nuevos:** si 2+ filas del CSV
+comparten la MISMA fecha+hora, sus `Spots` se SUMAN (no se pisan entre sí). Una
+fecha+hora que NO existe entre los días de esta OE ya NO es un error — se ofrece como
+**día NUEVO** a crear al avanzar a 2.3, mismo criterio que asignar una hora distinta al
+crear la OE (ADR-127: una hora distinta, aunque sea por 1 minuto, es un registro
+distinto). El día nuevo nace con `spots_asignados = spots_solicitados =
+spots_verificados` = la suma de `Spots` del CSV (confirmado con el usuario) — por
+construcción nunca genera `Incidencia` (verificado == programado). Solo se crea de
+verdad al "Avanzar a 2.3" (`POST .../reales`, body `dias_nuevos`), validando lo mismo
+que un día nuevo al crear/editar la OE: rango de campaña de la OC, que no exista ya un
+día con esa fecha+hora, y el balance de spots de TODA la OC. Una fecha+hora nueva cuya
+suma de spots da 0 no se puede crear (`spots_solicitados` exige > 0) y se reporta como
+error.
+
+**ADR-151 (petición del usuario, corrige ADR-149):** sin cargar ningún layout, la
+tabla sigue el flujo de SIEMPRE (`oe.periodo_transmision`, edición manual). En cuanto
+un layout aporta algo útil, la tabla PRINCIPAL se reconstruye COMPLETA a partir de lo
+que trajo el archivo — ya NO hay una tabla aparte de "días nuevos": los días
+existentes que el layout tocó y las propuestas de día nuevo conviven en la MISMA
+tabla (columnas Día/Fecha/Horario/Spots/Resultado/Editar/✕, igual que siempre; un
+día nuevo muestra "Nuevo" en Resultado en vez de bonif./desc./sin cambio). Un día del
+periodo original que NO viene en el archivo ya no se queda visible como "sin cambio"
+— se quita de la vista por completo (el backend lo sigue verificando igual al
+avanzar, sin incidencia; es una decisión solo de qué se MUESTRA en pantalla).
+
+**ADR-152 (petición del usuario):** un día nuevo propuesto por el layout que el
+backend rechazaría al avanzar (fuera del rango de campaña de la OC, o fecha+hora
+duplicada) se marca EN LA MISMA FILA de la tabla — fondo rojo + el motivo debajo de
+"Nuevo" — en vez de que el usuario se entere hasta que "Avanzar a 2.3" falle con un
+mensaje genérico. El botón "Avanzar a 2.3" se deshabilita mientras exista alguna fila
+así. El balance de spots de toda la OC sigue validándose solo al avanzar (requiere una
+consulta al backend que esta validación local no hace).
+
+**ADR-153 (petición del usuario):** la celda "Fecha" de un día nuevo del layout
+también se puede editar inline (antes solo Hora/Spots) — mismo `<input type="date">`
+que llama a `actualizarDraftNuevo`, para corregir una fecha fuera de rango sin tener
+que volver a subir el CSV.
+
+**ADR-154 (corrige un bug de ADR-153):** la fila de cada día nuevo usaba una `key` que
+incluía `fecha`/`hora` — al editar la Fecha, React remontaba el `<input type="date">`
+a media edición y el usuario perdía el foco antes de terminar de teclear, dejando un
+valor incorrecto. Se cambió a una `key` estable por índice.
+
+**ADR-155 (petición del usuario):** "Carga de Órdenes Reales Desde Layout" se
+restringe a SOLO `.csv` (antes csv/xlsx/xls/txt) — xlsx/xls/txt nunca se parseaban,
+solo se guardaban sin avisar que no se iban a aplicar.
 
 `OrdenEstacion.estatus` es un ciclo de vida **propio e independiente** del de
 `OrdenCliente` (confirmado en la spec): cada OE cierra por su cuenta; `OrdenCliente`
@@ -369,8 +475,10 @@ muestra ni la manda al guardar (`toApi.ts` dejó de incluir `reporte_programados
 `create()`/`update()`, para no mandar `null` en cada "Guardar" y borrar en silencio un
 reporte ya adjuntado de antes). El backend NO cambió: columna, schema y endpoint siguen
 intactos, por si algún día se vuelve a necesitar o se quiere mostrar de solo lectura. Ojo:
-existe una sección DISTINTA con el mismo nombre "Reporte del afiliado" en "Capturar
-reales" (`RealesForm.tsx`, campo `reporte_reales_ref`) — esa NO se tocó.
+existía una sección DISTINTA con el mismo nombre "Reporte del afiliado" en "Capturar
+reales" (`RealesForm.tsx`, campo `reporte_reales_ref`) — en ese momento no se tocó, pero
+ADR-146 (2026-09-30) sí la retiró de esa pantalla, con el mismo criterio de no tocar el
+backend — ver esa entrada.
 
 ## Roles / permisos
 

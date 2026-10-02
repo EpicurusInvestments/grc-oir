@@ -5549,3 +5549,451 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   lo trae). Suite completa de `test_integraciones_correo.py`/`test_f1_11_correo_orden_transmision.py`
   en verde. Frontend: `tsc --noEmit`/`eslint` limpios (mismo warning preexistente de
   `useEffect`, no relacionado).
+
+### ADR-145 — Se retira "Enviar por correo" (envío real vía SES/SMTP/local); "Abrir correo" (`.eml`) queda como único flujo
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, petición del usuario: "ya no vamos a
+  implementar el botón de enviar por correo solo nos quedaremos con la funcionalidad del
+  botón abrir correo... quita toda funcionalidad que hayas hecho para el botón enviar por
+  correo y también quita el botón de la pantalla", con instrucción explícita de NO tocar
+  "Abrir correo": "eso debe quedar como actualmente está porque está funcionando bien").
+- **Contexto:** el sistema tenía DOS flujos de correo para los PDFs de OrdenEstacion: (1)
+  "Enviar por correo" — envío real, vía el adaptador configurado en `CORREO_BACKEND`
+  (`local`/`ses`/ADR-138 `smtp`) — y (2) "Abrir correo" (ADR-124/144) — genera un `.eml`
+  para que el propio usuario lo abra y lo mande desde su cliente de escritorio. Al probar
+  SES real (credenciales SMTP de ADR-138), el envío falló por estar la cuenta de AWS en
+  modo *sandbox* (remitente no verificado) — verificarla requiere trabajo de IT fuera del
+  alcance de este sistema. El usuario decidió no perseguir esa vía y quedarse solo con
+  "Abrir correo", que ya funciona sin depender de la verificación de SES.
+- **Decisión:** se retiró COMPLETO el flujo de envío real: backend —
+  `enviar_pdf_orden_estacion_por_correo()`, `enviar_correo_orden_transmision()`,
+  `EnvioCorreoIn` y sus 2 endpoints (`POST .../pdf/{tipo}/enviar-correo`,
+  `POST .../pdf/{tipo}/correo-orden-transmision`) — y todo `app/integrations/correo/`
+  salvo `mime.py` (que sigue usando `generar_eml_orden_transmision`) y el tipo `Adjunto`
+  de `port.py` (se quitó el resto de ese archivo: el `CorreoPort` Protocol, ya sin
+  ningún adaptador que lo implemente). Se borraron `adapter_local.py`, `adapter_ses.py`,
+  `adapter_smtp.py` (ADR-138, recién creado) y `errors.py` (`CorreoError`). En
+  `core/config.py`/`.env.example` se quitaron `CORREO_BACKEND`, `SES_FROM_EMAIL`,
+  `SES_FROM_NAME` y los `SMTP_*` de ADR-138 — se conservan intactos `AWS_REGION`/
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (compartidos con el almacenamiento S3 de
+  adjuntos, ADR-027, que NO se toca). Frontend: se quitó el botón "✉️ Enviar por correo"
+  y su handler (`FilaPdf` en `OrdenEstacionDetailPanel.tsx`), y las llamadas ya sin uso
+  `enviarCorreoPdfOrdenEstacionApi`/`enviarCorreoOrdenTransmisionApi` de `escrituraApi.ts`.
+  **"Abrir correo" NO se tocó en su comportamiento**: sigue gateado por los mismos
+  catálogos de contactos activos (`ContactoAfiliado`/`ContactoAnunciante`, ADR-140) —
+  internamente la prop se renombró de `puedeEnviarCorreo` a `hayContactos` (más preciso,
+  ya no hay nada que "enviar") pero la lógica, el tooltip y el mensaje de error son
+  idénticos a antes. La bitácora `LogEnvioCorreoOrdenEstacion` se conserva sin cambios de
+  esquema (sigue siendo el registro de cada `.eml` armado).
+- **Consecuencia:** el sistema ya no manda correo directamente — todo envío real lo hace
+  el usuario desde su propio cliente de escritorio. Esto es aceptable porque ya era la
+  ÚNICA vía confiable mientras SES siga en sandbox; si más adelante se verifica la cuenta
+  y se quiere retomar el envío directo, habría que reconstruir el adaptador (este ADR no
+  cierra la puerta, solo retira lo que no se estaba usando). ADR-144 sigue siendo el
+  registro histórico correcto de por qué `.eml` abre como borrador editable, aunque ya no
+  existan los adaptadores de envío real que mencionaba de pasada.
+- **Verificado:** backend completo en verde (`test_f1_09_envio_correo_pdf.py` y
+  `test_integraciones_correo.py` se borraron por completo — probaban solo lo que se
+  retiró; `test_f1_11_correo_orden_transmision.py` se podó para cubrir ÚNICAMENTE
+  `generar_eml_orden_transmision`, reescribiendo los casos de ADR-140/ADR-126 que antes
+  usaban el envío real para que ejerzan la misma lógica compartida —
+  `_armar_paquete_orden_transmision` — a través del `.eml`). Frontend: `tsc --noEmit`
+  limpio, suite `vitest` del módulo `ordenes` en verde (193/193).
+
+### ADR-146 — "Capturar Reales": Carga de Órdenes Reales Desde Layout + Formato Enviado al Cliente; se retira "Reporte del afiliado"
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, nuevo requerimiento del usuario para
+  la pantalla de captura de Reales).
+- **Contexto:** el usuario pidió 2 componentes nuevos de carga de archivos en "Evidencias
+  y notas" (junto a "Evidencias de lo Transmitido"/"Formato de Horarios Reales"), y que se
+  quite "Reporte del afiliado" de esa misma pantalla ("ya no se ocupará").
+- **Decisión:**
+  1. **"Carga de Órdenes Reales Desde Layout"** (izquierda): tabla nueva
+     `orden_estacion_layout_real` (mismo patrón lista-plana que `OrdenEstacionFormatoReal`
+     — `ref`/`nombre_archivo`/`created_at`, sin `orden` ni default), pero **lista BLANCA**
+     de extensiones (`EXTENSIONES_LAYOUT_REALES`: csv — el formato principal — más
+     xlsx/xls/txt) en vez de negra. Por ahora SOLO se guarda el archivo, sin ningún
+     parseo — el usuario confirmó que los requerimientos para interpretar el layout y
+     actualizar la tabla de reales se definen en una fase posterior. csv/txt no tienen
+     una firma binaria universal verificable (son texto plano): `_MAGIC_POR_EXTENSION` les
+     asigna una tupla vacía y `leer_adjunto()` ahora trata una tupla vacía como "sin firma
+     que validar" (antes habría lanzado `KeyError`) — para esos 2 formatos la única
+     defensa es la lista blanca de extensión, no el contenido.
+  2. **"Formato de Horarios Reales Enviado al Cliente"** (derecha): tabla nueva
+     `orden_estacion_formato_real_cliente`, mismo patrón, **lista NEGRA** igual de amplia
+     que "Formato de Horarios Reales" (`EXTENSIONES_PELIGROSAS`) PERO además excluye audio
+     (`EXTENSIONES_PELIGROSAS_O_AUDIO = EXTENSIONES_PELIGROSAS | EXTENSIONES_AUDIO_ORDENES
+     | {m4a, aac, flac, wma, aiff, opus, mid, midi}`) — a diferencia de "Formato de
+     Horarios Reales", que si admite audio.
+  3. Cada campo con su propio endpoint completo (`GET/POST /{id}/layout-reales`,
+     `GET .../{id}/archivo`, `DELETE`; mismo cuarteto en `/formatos-reales-cliente`), su
+     propio componente React (`CargaLayoutReales.tsx`/`FormatoRealesCliente.tsx`, mismo
+     look que `FormatoHorariosReales.tsx`) y su propio tope de tamaño (`
+     S3_MAX_LAYOUT_REALES_BYTES` 10 MB, `S3_MAX_FORMATO_REAL_CLIENTE_BYTES` 20 MB) — se
+     agregan en una segunda fila 2×2 debajo de Evidencias/Formato de Horarios Reales.
+  4. **"Reporte del afiliado" retirado de "Capturar Reales"** (`RealesForm.tsx`): se quitó
+     el `AdjuntoOrdenInput tipo="reporte_reales"` y su estado local. Igual que ADR-143:
+     `toApi.ts#realesToApi` mandaba `reporte_reales_ref: input.reporteRef ?? null`
+     INCONDICIONALMENTE en cada "Avanzar a 2.3" — se quitó esa línea también (y el campo
+     `reporteRef` de `AvanzarARealesInput`), para no borrar en silencio el reporte de
+     órdenes que ya lo tuvieran adjuntado. Backend (`OrdenEstacion.reporte_reales_ref`,
+     schema, endpoint genérico de adjuntos) queda intacto, sin tocar — mismo criterio que
+     ADR-143: reversible, sin pérdida de datos, solo se dejó de mostrar/enviar desde esta
+     pantalla.
+- **Consecuencia:** ninguna negativa. Migración nueva (`c9e5f2a7d1b3`, 2 tablas) aplicada
+  sobre SQLite y revisada a mano (mismo patrón que `b8d4c1a5e0f7`, sin necesidad de rama
+  por dialecto). El parseo del layout de "Carga de Órdenes Reales Desde Layout" queda
+  pendiente de requerimientos futuros del usuario — por ahora es solo almacenamiento.
+- **Verificado:** backend — 14 pruebas nuevas
+  (`test_f1_13_layout_reales_y_formato_real_cliente.py`) + suite completa en verde;
+  `ruff check` limpio. Frontend: `tsc --noEmit` limpio, suite `vitest` del módulo
+  `ordenes` en verde (196/196, +3 pruebas nuevas en `RealesForm.test.tsx`).
+
+### ADR-147 — "Carga de Órdenes Reales Desde Layout" ya parsea el CSV y reemplaza la tabla de reales
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, requerimiento del usuario para el
+  layout que quedó pendiente en ADR-146: "como debe estar formado o lo que se espera que
+  el usuario cargue en el layout... los campos son: Estacion, Fecha, Hora,
+  Spots(opción, default 1)").
+- **Contexto:** ADR-146 dejó el botón de carga solo guardando el archivo, sin parsear.
+  El usuario definió el formato: columnas `Estacion, Fecha, Hora, Spots` (Spots
+  opcional, default 1); "Estacion" es un control de que el archivo corresponde a la
+  estación de esta OE (no para mezclar datos de otra estación); "esto borraría lo
+  cargado cuando se cargue el archivo, sino se carga nada siguen saliendo los datos
+  normalmente" — es decir, reemplazo COMPLETO de los overrides de "reales", no un merge.
+  Se confirmaron con el usuario 3 decisiones de borde (`AskUserQuestion`, las 3
+  opciones recomendadas): (1) un día que no viene en el archivo vuelve a "sin cambio"
+  (programado); (2) una fila cuya fecha/hora no hace match con ningún día de la OE se
+  ignora y se reporta, sin tumbar el resto; (3) una fila con estación distinta a la de
+  esta OE, mismo criterio — se ignora y se reporta, no tumba el archivo.
+- **Decisión:**
+  - Backend, `_parsear_layout_reales_csv()` (`orden_estacion.py`): parsea con `csv.DictReader`
+    (UTF-8, con BOM opcional), encabezados normalizados (sin acentos/mayúsculas/espacios
+    — `_normalizar_texto_layout()`), valida `{estacion, fecha, hora}` como mínimo
+    (`spots` es opcional). Por fila: `Estacion` se compara normalizada contra
+    `Estacion.nombre_estacion` de esta OE; `Fecha`/`Hora` deben hacer match EXACTO con un
+    `OrdenEstacionDia` existente (`fecha_transmision` + `hora_inicio` — únicos por OE,
+    `uq_orden_estacion_dia_oe_fecha_hora`, ADR-127) — nunca se crean días nuevos, el
+    periodo de transmisión ya está fijo desde la asignación. `Spots` vacío → 1;
+    no-numérico o negativo → fila ignorada. Cualquier fila inválida se reporta en
+    `errores` (fila + motivo) y se salta, sin abortar el resto — solo un archivo
+    ilegible o sin los encabezados mínimos aborta todo (un único error con `fila=0`).
+  - `agregar_layout_real()` sigue guardando el archivo SIEMPRE (sin cambio); si la
+    extensión es `.csv`, además parsea y devuelve `aplicados`/`errores` en la misma
+    respuesta — `OrdenEstacionLayoutRealSubidoRead {archivo, aplicados, errores}`
+    (cambia la forma de la respuesta de `POST .../layout-reales`, antes devolvía el
+    archivo directo). xlsx/xls/txt: `aplicados`/`errores` vacíos, sin parseo (sigue sin
+    definirse ese formato).
+  - Frontend: `CargaLayoutReales.tsx` recibe el resultado, muestra "Se aplicaron N
+    día(s)..." y la lista de filas ignoradas con su motivo, y llama
+    `onAplicado(aplicados)`. `RealesForm.tsx#onLayoutAplicado` RECONSTRUYE `overrides`
+    desde cero a partir de `aplicados` (mapeando cada `orden_estacion_dia_id` contra
+    `oe.periodo_transmision` para tomar fecha/hora, con el `spots` del archivo) — full
+    replace, no merge, consistente con "esto borraría lo cargado". El usuario sigue
+    teniendo que revisar y presionar "Avanzar a 2.3 →" para persistir, igual que una
+    edición manual por fila.
+- **Consecuencia:** ninguna negativa. Un archivo con estación equivocada completa (todas
+  las filas ignoradas) sí resetea `overrides` a vacío igualmente (semántica de
+  reemplazo total, confirmada con el usuario) — recuperable, nada de esto persiste hasta
+  "Avanzar". `csv`/`txt` no tienen firma de contenido verificable (ADR-146); esta fase no
+  cambia eso, la única defensa de esos 2 sigue siendo la lista blanca de extensión.
+- **Verificado:** backend — 11 pruebas nuevas (`test_f1_14_layout_reales_aplicar_csv.py`:
+  match exacto por fecha+hora, default de Spots, estación normalizada
+  (acentos/mayúsculas/espacios), fila sin match ignorada, fecha/spots inválidos
+  ignorados, encabezados faltantes, xlsx sin parsear, HTTP) + 3 pruebas de
+  `test_f1_13...` ajustadas a la nueva forma de respuesta (`archivo.*` en vez de
+  directo) + suite completa en verde; `ruff check` limpio. Frontend: `tsc --noEmit`
+  limpio, `eslint` sin errores, suite `vitest` del módulo `ordenes` en verde (197/197,
+  +1 prueba nueva que cubre reemplazo completo + fila ignorada mostrada en pantalla).
+
+### ADR-148 — "Cancelar" en Capturar Reales borra el layout subido en esa sesión (no uno de antes)
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, petición del usuario: "cuando cargo
+  el layout y se aplican los cambios lo hace bien pero si le doy al botón de cancelar
+  para no realizar ningún cambio se sigue quedando el layout cargado — debería quitarse
+  si le doy cancelar y mantenerse si le doy avanzar a 2.3").
+- **Contexto:** a diferencia de "Evidencias de lo Transmitido"/"Formato de Horarios
+  Reales"/"Formato Cliente" (evidencia real que se conserva siempre, sin importar qué
+  botón se presione después), el layout es un INSUMO de trabajo de esta captura — el
+  archivo se guarda de inmediato al subirlo (mismo patrón de los otros 3), pero nada
+  lo borraba si el usuario se arrepentía y daba "Cancelar" sin avanzar.
+- **Decisión:** `RealesForm.tsx` recuerda (en un `useRef`, al cargar la pantalla) qué
+  archivos de layout YA existían antes de abrir esta sesión de captura. El botón
+  "Cancelar" ahora es async: compara `layoutReales` contra ese set inicial, borra (vía
+  `DELETE /layout-reales/{id}`) solo los que se subieron DURANTE esta sesión, y
+  entonces sí llama al `onCancelar` del padre. Uno que ya existía de una sesión
+  anterior (ya avanzada) no se toca. "Avanzar a 2.3" no cambia: no borra nada.
+- **Consecuencia:** ninguna negativa — los overrides/`diasNuevos` del layout (lo
+  aplicado a la tabla) nunca necesitaron este fix: al ser estado local de React, se
+  descartan solos en cuanto el componente se desmonta (nunca se persisten hasta
+  "Avanzar"). El fix era puramente sobre el ARCHIVO ya guardado en S3/local + su fila
+  en `orden_estacion_layout_real`.
+- **Verificado:** 2 pruebas nuevas en `RealesForm.test.tsx` (sube-y-cancela borra el
+  nuevo; uno preexistente al abrir la pantalla no se borra) — suite del módulo
+  `ordenes` en verde (199/199), `tsc`/`eslint` limpios.
+
+### ADR-149 — El layout suma spots por fecha+hora repetida y propone días NUEVOS cuando no existen
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, petición del usuario, con 2
+  confirmaciones vía `AskUserQuestion`): "primero... cuando se haga una carga por
+  layout la información del layout debe sustituir a toda la que tenemos cargada...
+  en teoría deberían aplicarse... la suma de spot's que sean iguales a la fecha y la
+  hora... si tiene otra hora debe ser un nuevo registro, es como lo que hacíamos con la
+  nueva orden de transmisión que se generen nuevos registros por hora aunque cambie
+  por 1 minuto".
+- **Contexto:** ADR-147 ya reemplazaba completo la tabla y ya ignoraba (reportando
+  error) cualquier fila cuya fecha+hora no hiciera match con un día existente. El
+  usuario pidió 2 ajustes sobre esa base: (1) si 2+ filas del CSV comparten la MISMA
+  fecha+hora, sus `Spots` deben SUMARSE, no "pisarse" entre sí; (2) una fecha+hora que
+  NO existe entre los días de la OE ya no es un error — debe ofrecerse como un DÍA
+  NUEVO a crear, con el mismo criterio que asignar una hora distinta al crear la OE
+  (ADR-127: una hora distinta, aunque sea por 1 minuto, es un registro distinto).
+  Confirmado con el usuario (`AskUserQuestion`): el día nuevo nace con
+  `spots_asignados = spots_solicitados = spots_verificados` = el valor de `Spots` del
+  CSV (no hay otro dato del que tomarlo) — por construcción, nunca genera `Incidencia`.
+- **Decisión:**
+  - `_parsear_layout_reales_csv()` ahora agrupa las filas VÁLIDAS por `(fecha, hora)`
+    exacta y SUMA sus `Spots` dentro de cada grupo, antes de decidir qué hacer con el
+    grupo: si la fecha+hora coincide con un día ya existente → `aplicados` (con la
+    suma); si no → `nuevos` (propuesta de día a crear, con la suma) — salvo que la
+    suma dé 0, caso en el que no se puede crear un día sin spots y se reporta como
+    `errores` en su lugar (`spots_solicitados` exige `> 0`, `CHECK` de la tabla).
+  - Nuevo schema `OrdenEstacionDiaNuevoIn` (`fecha_transmision`, `hora_inicio`, `spots
+    > 0`) y campo `dias_nuevos` en `OrdenEstacionRealesIn` — el `POST
+    .../layout-reales` solo PROPONE (nada se crea al subir el archivo); `POST
+    .../reales` (avanzar a 2.3) es quien de verdad crea los `OrdenEstacionDia` nuevos,
+    validando lo mismo que `create()`/`update()` validan para un día nuevo: rango de
+    campaña de la OC, que no exista ya un día con esa fecha+hora
+    (`uq_orden_estacion_dia_oe_fecha_hora`), y el balance de spots de TODA la OC
+    (`spots_asignados` sumados de todas las OE hermanas + los nuevos ≤
+    `oc.total_spots`). Los días nuevos se agregan a la MISMA lista `dias` que recorre
+    `avanzar_reales()` (con su `spots` también metido en `overrides`) para que el
+    bucle existente (que genera `Verificacion`/`Incidencia`) los trate exactamente
+    igual que cualquier día ya asignado — por eso nunca disparan `Incidencia` (verificado
+    == programado, sin diferencia).
+  - Frontend: `CargaLayoutReales.tsx` recibe `aplicados`/`nuevos`/`errores` y pasa
+    `aplicados`+`nuevos` al padre (`onAplicado`); `RealesForm.tsx` guarda `diasNuevos`
+    aparte (reemplazo completo, igual que `overrides`) y los muestra en una tabla
+    propia ("Días nuevos (del layout) — se crean al avanzar a 2.3") con un botón
+    "Quitar" por fila (local, antes de avanzar). Al "Avanzar a 2.3", `diasNuevos` viaja
+    en el body (`dias_nuevos`) junto con los overrides de siempre.
+- **Consecuencia:** un archivo cuya estación esté completamente equivocada (todas las
+  filas con error) sigue reseteando `overrides`/`diasNuevos` a vacío (semántica de
+  reemplazo total, ya confirmada en ADR-147) — nada de esto persiste hasta "Avanzar".
+- **Verificado:** backend — 8 pruebas nuevas en `test_f1_14...` (suma de spots en
+  aplicados y en nuevos, día nuevo sin incidencia, fuera de campaña, excede balance,
+  fecha+hora ya existente rechazada, HTTP con `dias_nuevos`) + 2 pruebas reescritas
+  (fecha/hora sin match ahora se prueba como "nuevo", no como error) + suite completa
+  en verde (19/19 en el archivo); `ruff check` limpio. Frontend: `tsc --noEmit`
+  limpio, `eslint` sin errores, suite `vitest` del módulo `ordenes` en verde (201/201,
+  +2 pruebas nuevas: día nuevo se muestra y se manda al avanzar, "Quitar" lo excluye).
+
+### ADR-150 — La limpieza de ADR-148 vivía solo en el clic de "Cancelar"; ahora corre al desmontar, sin importar la vía de salida
+
+- **Estado:** aceptada · **Fecha:** 2026-09-30 (F1, petición del usuario: "se sigue
+  mostrando el layout, cargué el layout pero me arrepentí y me salí de la pantalla de
+  reales y aun así no quiero la carga del archivo, lo siguió dejando mal").
+- **Contexto:** ADR-148 implementó la limpieza del layout subido-en-esta-sesión SOLO
+  dentro del `onClick` del botón "Cancelar" (`cancelar()` async, borraba y luego
+  llamaba `onCancelar`). El usuario reportó que el archivo seguía ahí después de salir
+  de "Capturar Reales" — abandonó la pantalla por OTRA vía (navegar a otra sección, no
+  el botón "Cancelar"), así que ese código nunca se ejecutó: React desmontó
+  `RealesForm` sin pasar por el handler que yo había atado al botón.
+- **Decisión:** se movió la limpieza del `onClick` a la función de limpieza de un
+  `useEffect` — corre al DESMONTAR el componente, sin importar la vía de salida (botón
+  "Cancelar", navegación a otra sección, cerrar la pestaña del modo "reales" desde
+  donde sea). Un `avanzadoRef` (en vez de un estado) marca "no borrar": se pone en
+  `true` justo al dar clic en "Avanzar a 2.3" (antes de llamar a `onAvanzar`, que es
+  quien de verdad hace el `await` y solo entonces desmonta esta pantalla) y se regresa
+  a `false` si `submitError` llega a aparecer (el intento falló — si el usuario
+  entonces decide salir, sí se debe limpiar). Como el closure de un efecto de limpieza
+  puede quedar con datos viejos, se agregó `layoutRealesRef` (espejo del estado más
+  reciente de `layoutReales` vía su propio `useEffect`) para que la limpieza siempre
+  lea la lista actual, no la de cuando se montó el componente. El botón "Cancelar"
+  volvió a ser síncrono (ya no hay `cancelando`/"Cancelando…": la limpieza ya no
+  bloquea la salida, corre de fondo tras el desmontaje).
+- **Consecuencia:** ninguna negativa — mismo comportamiento observable que ADR-148
+  (se borra lo de esta sesión, se conserva lo de antes, nada se borra si se avanzó con
+  éxito), pero ahora a prueba de CUALQUIER forma de abandonar la pantalla, no solo el
+  botón.
+- **Verificado:** `RealesForm.test.tsx` — las 2 pruebas de ADR-148 se reescribieron
+  usando `unmount()` de Testing Library en vez de solo el clic (el clic por sí solo ya
+  no desmonta nada en una prueba aislada) + 2 pruebas nuevas: salir SIN tocar
+  "Cancelar" también limpia (reproduce el bug reportado), y avanzar con éxito NO borra
+  el layout recién subido. Suite del módulo `ordenes` en verde (203/203), `tsc`/`eslint`
+  limpios.
+
+### ADR-151 — El layout reemplaza la tabla PRINCIPAL completa (no una tabla aparte de "días nuevos")
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, petición del usuario, corrigiendo
+  ADR-149: "no está bien cómo se cargan en la tabla... lo que yo quiero es: 1) Si el
+  usuario no decide cargar un layout se realiza el flujo normal... 2) Si decide
+  cargarlo: el sistema debe borrar la información que ya tenía en la tabla, esa ya no
+  deberá existir, se debe quitar, y el sistema actualiza la tabla con la información
+  que sacó del archivo, respetando las columnas Día | Fecha | Horario de Transmisión |
+  Spots | Resultado | Editar | X. No debes poner esa tabla a la mitad... solo debe ser
+  la tabla principal").
+- **Contexto:** ADR-149 construyó la propuesta de "días nuevos" como una tabla SEPARADA
+  debajo de la principal, y dejaba los días del layout que no coincidían con ningún día
+  existente simplemente "sin cambio" (visibles, sin tocar) en la tabla principal — dos
+  cosas que el usuario pidió corregir: una sola tabla, y un reemplazo de verdad
+  completo (no solo de los overrides).
+- **Decisión:** nuevo estado `layoutCargado: boolean` (arranca en `false`). Mientras
+  sea `false`, la tabla principal sigue exactamente el flujo de SIEMPRE: itera
+  `oe.periodo_transmision` completo, con edición manual por fila (sin cambios de
+  código en esa rama). En cuanto `onLayoutAplicado` recibe algo útil (`aplicados.length
+  > 0 || nuevos.length > 0`), `layoutCargado` pasa a `true` y el `<tbody>` CAMBIA de
+  fuente: deja de iterar `oe.periodo_transmision` y en su lugar renderiza
+  `Object.values(overrides)` (los días existentes que el layout tocó — ya NO se
+  recorren los que no vinieron en el archivo, así que esos simplemente dejan de
+  aparecer) seguido de `diasNuevos` (las propuestas de día nuevo) — ambos con las
+  MISMAS columnas/estilo que la tabla de siempre (Día | Fecha | Horario de transmisión
+  | Spots | Resultado | Editar | ✕), dentro del mismo `<table>`. Se quitó por completo
+  la tabla separada "Días nuevos (del layout)...". `diasNuevos` ahora es editable
+  inline igual que cualquier fila (nuevo tipo local `DiaNuevoDraft = LayoutRealNuevo &
+  {editing}`, con sus propios `abrirEdicionNuevo`/`cerrarEdicionNuevo`/
+  `actualizarDraftNuevo`); su columna "Resultado" muestra una etiqueta fija "Nuevo" (no
+  hay programado contra qué comparar). Para las filas existentes DENTRO de este modo,
+  se usa un cierre de edición dedicado (`cerrarEdicionEnLayout`) que NUNCA borra el
+  override aunque el valor editado coincida por casualidad con el programado original
+  — a diferencia de `cerrarEdicion` (pensada para el flujo normal), aquí la fila debe
+  seguir reflejando lo que trajo el archivo tal cual. `algunaEnEdicion` (que bloquea el
+  botón "Avanzar a 2.3") ahora también revisa `diasNuevos`.
+- **Consecuencia:** ninguna negativa — el flujo SIN layout (punto 1 del usuario) queda
+  bit-a-bit idéntico a como ya funcionaba (ninguna otra prueba existente se tocó por
+  esto). El cómputo de incidencias/estadísticas del panel derecho ("Al avanzar a 2.3 se
+  generarán...") NO cambia: sigue recorriendo `oe.periodo_transmision` + `overrides`
+  completo, independiente de qué se MUESTRE en la tabla — es correcto porque el
+  backend (`avanzar_reales`) sigue generando una `Verificacion` por CADA día real de la
+  OE exista o no en `overrides` (spec), así que un día "quitado" de la vista solo deja
+  de mostrarse, pero se sigue verificando con su valor programado de siempre (sin
+  incidencia) al avanzar — nada se pierde a nivel de datos, es puramente una decisión
+  de qué mostrar en pantalla.
+- **Verificado:** `RealesForm.test.tsx` — 2 pruebas nuevas (sin layout, flujo normal
+  sin tocar; aplicados+nuevos conviven en una ÚNICA `<table class="cat-table">`) + 2
+  pruebas existentes ajustadas al nuevo comportamiento (un día no incluido en el
+  archivo ya NO se muestra, en vez de seguir como "sin cambio"; el día nuevo se busca
+  por su etiqueta "Nuevo" en la tabla principal, no por el encabezado de la tabla que
+  se quitó). Suite del módulo `ordenes` en verde (205/205), `tsc`/`eslint` limpios.
+
+### ADR-152 — Un día nuevo del layout fuera de rango/duplicado se marca en la tabla ANTES de avanzar
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, petición del usuario: "cuando iba a
+  avanzar la orden a la 2.3 salió el mensaje [Hay días nuevos del layout fuera del
+  rango de campaña de la orden] y no deja avanzar — podrías indicar en caso de que haya
+  datos fuera de rango indicarlo en la tabla para saber qué corregir").
+- **Contexto:** ADR-149 ya validaba esto en el backend al avanzar (rango de campaña de
+  la OC, fecha+hora duplicada, balance de spots), pero el único aviso era el mensaje
+  de error genérico de `submitError` al fallar el `POST .../reales` — el usuario no
+  tenía forma de saber CUÁL de los días nuevos propuestos era el problema sin ir fila
+  por fila adivinando.
+- **Decisión:** `RealesForm` recibe ahora un prop opcional `oc?: OrdenCliente`
+  (`OrdenEstacionListPage.tsx` lo resuelve de `state.ordenesCliente`, mismo criterio
+  que ya usa para `OrdenEstacionDetailPanel`) — de ahí saca `fecha_inicio_campania`/
+  `fecha_fin_campania` para poder validar SIN ir al backend. Nueva función
+  `diaNuevoInvalidoMotivo()` revisa, por cada fila de `diasNuevos`: (1) si su fecha cae
+  fuera del rango de campaña de la OC, (2) si su fecha+hora ya existe entre los días
+  reales de esta OE o se repite con OTRO día nuevo propuesto (p.ej. tras editar la hora
+  a mano). El balance de spots de TODA la OC (spots de las OE hermanas) NO se valida
+  aquí — exigiría una consulta aparte al backend — esa sigue dándose solo al avanzar.
+  Una fila con motivo se pinta en rojo (`--red-bg`) en vez de ámbar, con el motivo
+  debajo de la etiqueta "Nuevo" (p.ej. "⚠ Fuera del rango de campaña (2025-06-01 a
+  2025-06-30)."). El botón "Avanzar a 2.3" se deshabilita mientras exista alguna fila
+  inválida (`hayDiasNuevosInvalidos`), con un tooltip que dice qué hacer — mismo
+  criterio que ya existía para `algunaEnEdicion`.
+- **Consecuencia:** ninguna negativa — el usuario corrige/quita la fila marcada ANTES
+  de intentar avanzar, en vez de descubrirlo después de un 400. El `oc` es opcional
+  (`RealesForm` puede renderizarse sin él, p.ej. en pruebas que no lo necesitan): sin
+  `oc`, simplemente no se valida el rango de campaña (el backend lo sigue validando
+  igual al avanzar).
+- **Verificado:** `RealesForm.test.tsx` — 1 prueba nueva (día nuevo fuera de la
+  campaña de la OC se marca en rojo con el motivo, y el botón "Avanzar a 2.3" queda
+  deshabilitado) + suite del módulo `ordenes` en verde (206/206), `tsc`/`eslint`
+  limpios.
+
+### ADR-153 — La Fecha de un día nuevo del layout también se puede editar inline (no solo Hora/Spots)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, petición del usuario, viendo en
+  pantalla justo la fila marcada en rojo por ADR-152: "quiero que me permitas también
+  editar la fecha para ya no modificar el registro desde el layout").
+- **Contexto:** ADR-149/151 ya dejaban editar "Hora" y "Spots" de un día nuevo
+  (columna "Editar" → `<input type="time">`/`<input type="number">`), pero "Fecha" se
+  mostraba como texto plano SIEMPRE, incluso en modo edición — para corregir una
+  fecha fuera de rango (el caso exacto que ADR-152 acababa de marcar en rojo) el único
+  camino era editar el CSV original y volver a subirlo.
+- **Decisión:** en el `<tbody>` de `diasNuevos`, la celda "Fecha" se movió DENTRO del
+  `d.editing ? (...) : (...)` (antes vivía fuera, se mostraba igual en ambos modos) y
+  gana un `<input type="date">` que llama a `actualizarDraftNuevo(i, { fecha:
+  e.target.value })` — misma función que ya usan Hora/Spots, sin cambios ahí.
+- **Consecuencia:** ninguna negativa — `diaNuevoInvalidoMotivo()` (ADR-152) ya
+  recalcula solo con el estado actual de `diasNuevos`, así que en cuanto se corrige la
+  fecha y se cierra la edición (✓ OK), la fila deja de marcarse en rojo sin ningún
+  cambio adicional.
+- **Verificado:** `RealesForm.test.tsx` — 1 prueba nueva (edita la Fecha de un día
+  fuera de rango a una fecha válida, confirma que desaparece la marca roja, que
+  "Avanzar a 2.3" se habilita, y que la fecha corregida es la que se manda) + suite
+  del módulo `ordenes` en verde (207/207), `tsc`/`eslint` limpios.
+
+### ADR-154 — Bug de ADR-153: editar la Fecha de un día nuevo perdía el foco a medio tecleo
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, bug reportado por el usuario
+  inmediatamente después de ADR-153: "metí la fecha en el rango correcto pero no me
+  dejo", con captura mostrando la fecha sin corregir y el mensaje de "fuera de rango"
+  persistiendo).
+- **Contexto:** la fila de cada día nuevo usaba
+  `key={`nuevo-${d.fecha}-${d.hora}-${i}`}` — justo los campos que ADR-153 acababa de
+  hacer editables. En cuanto el usuario cambiaba la Fecha, la `key` cambiaba a media
+  edición, React desmontaba y remontaba el `<input type="date">` (es un elemento
+  DISTINTO para React), y el input nativo perdía el foco/segmento activo antes de que
+  el usuario terminara de teclear la fecha completa — dejando un valor intermedio.
+- **Decisión:** la `key` pasa a ser `key={`nuevo-${i}`}` — estable mientras la fila
+  exista, igual que ya asumen `quitarDiaNuevo`/`abrirEdicionNuevo`/
+  `actualizarDraftNuevo`, que ya operan por índice internamente.
+- **Consecuencia:** ninguna negativa — los días nuevos no se reordenan entre sí
+  (se agregan/quitan por índice), así que una key de índice es segura aquí.
+- **Verificado:** `RealesForm.test.tsx` 17/17 en verde, `tsc --noEmit` limpio.
+
+### ADR-155 — "Carga de Órdenes Reales Desde Layout" se restringe a SOLO csv
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, petición del usuario: "la carga del
+  layout solo debe permitir cargar el formato csv quita el mensaje que colocaste que
+  permita excel y txt. solo colocale que debe permitir formato csv").
+- **Contexto:** ADR-146 aceptaba csv/xlsx/xls/txt como lista blanca, pero el parseo
+  (ADR-147) nunca entendió más que csv — xlsx/xls/txt solo se guardaban sin procesar,
+  lo que podía confundir al usuario (subir un Excel esperando que se aplicara a la
+  tabla de reales, sin que pasara nada).
+- **Decisión:** `EXTENSIONES_LAYOUT_REALES` pasa de `{csv, xlsx, xls, txt}` a `{csv}`
+  en backend (`documentos.py`) y frontend (`ordenes/constants.ts`), con el mismo
+  cambio reflejado en el `accept` del `<input type="file">` y en el subtítulo de
+  `CargaLayoutReales.tsx` ("Archivo de layout para actualizar la tabla de reales —
+  formato csv.").
+- **Consecuencia:** un archivo `.xlsx`/`.xls`/`.txt` que antes se guardaba sin avisar
+  nada ahora se rechaza de entrada, igual que cualquier otro formato fuera de la lista
+  blanca.
+- **Verificado:** `test_f1_13...` (`test_layout_acepta_csv` reemplaza al test que
+  subía los 3 formatos; nuevo `test_layout_rechaza_xlsx_y_txt_por_no_estar_en_la_lista_blanca`),
+  `test_f1_14...` (`test_xlsx_se_rechaza_por_no_estar_en_la_lista_blanca` reemplaza al
+  test que esperaba que xlsx se guardara sin parsear) — suite completa de backend en
+  verde, `RealesForm.test.tsx` 17/17, `tsc`/`eslint` limpios.
+
+### ADR-156 — Los reportes PDF (servicio y reales) dejan de mostrar Inicio/Término o un rango de hora
+
+- **Estado:** aceptada · **Fecha:** 2026-10-01 (F1, petición del usuario viendo el PDF
+  "Orden de Servicio": "el reporte 1 Orden de Servicio no debe mostrar la hora con las
+  columnas Inicio y Termino solo debe manejar un solo horario llamado Horario de
+  Transmisión lo mismo aplica para el reporte de los reales para la columna Hora").
+- **Contexto:** `generar_pdf_servicio` (`orden_estacion_pdf.py`) nunca se actualizó
+  cuando ADR-108 consolidó `hora_inicio`/`hora_fin` en un solo valor capturado — su
+  tabla de "Periodo de Transmisión" seguía mostrando 2 columnas ("Inicio"/"Término")
+  con el MISMO valor repetido. `generar_pdf_reales` tenía el mismo problema pero en una
+  sola columna ("HORA"): mostraba `"{hora_inicio} - {hora_fin}"`, un rango que en
+  realidad siempre eran los mismos dos horarios.
+- **Decisión:** en `generar_pdf_servicio`, la tabla de días pasa de 6 a 5 columnas —
+  "Inicio"/"Término" se consolidan en "Horario de Transmisión" (un solo
+  `dia.hora_inicio.strftime(...)`), con `colWidths` reajustados (las 2 columnas de
+  2.3cm se combinan en una de 4.6cm). En `generar_pdf_reales`, la columna "HORA" pasa
+  de `f"{_hora_24h(hora_inicio)} - {_hora_24h(hora_fin)}"` a solo `_hora_24h(hora_inicio)`.
+- **Consecuencia:** ninguna negativa — `hora_inicio == hora_fin` siempre en el modelo
+  (ADR-108), así que ningún reporte pierde información real, solo deja de repetirla.
+- **Verificado:** `test_f1_06_ordenes_pdf.py` (11 pruebas, smoke tests de generación)
+  en verde, suite completa de backend en verde, `ruff check` sin nuevas violaciones.
