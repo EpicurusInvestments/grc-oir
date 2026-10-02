@@ -1,45 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checklistProgress, FROZEN_STATES, isChecklistComplete, ODC_REVIEW_CHECKLIST, rootBadgeClass, rootLabel, rootState } from "../constants";
-
-describe("isChecklistComplete / checklistProgress", () => {
-  const TODOS_LOS_KEYS = ODC_REVIEW_CHECKLIST.map((it) => it.key);
-
-  function checklistCompleto(): Record<string, boolean> {
-    return Object.fromEntries(TODOS_LOS_KEYS.map((k) => [k, true]));
-  }
-
-  it("checklist undefined no está completo y tiene progreso 0", () => {
-    expect(isChecklistComplete(undefined)).toBe(false);
-    expect(checklistProgress(undefined)).toBe(0);
-  });
-
-  it("checklist vacío no está completo", () => {
-    expect(isChecklistComplete({})).toBe(false);
-    expect(checklistProgress({})).toBe(0);
-  });
-
-  it("9 de 10 no está completo (el checklist es todo o nada)", () => {
-    const nueve = checklistCompleto();
-    delete nueve[TODOS_LOS_KEYS[0]];
-    expect(isChecklistComplete(nueve)).toBe(false);
-    expect(checklistProgress(nueve)).toBe(9);
-  });
-
-  it("10 de 10 sí está completo", () => {
-    const completo = checklistCompleto();
-    expect(isChecklistComplete(completo)).toBe(true);
-    expect(checklistProgress(completo)).toBe(10);
-  });
-
-  it("claves ajenas al checklist (typos, campos futuros) no inflan el progreso ni cuentan como completo", () => {
-    const conBasura = checklistCompleto();
-    delete conBasura[TODOS_LOS_KEYS[0]];
-    conBasura["clave_que_no_existe"] = true;
-    expect(checklistProgress(conBasura)).toBe(9);
-    expect(isChecklistComplete(conBasura)).toBe(false);
-  });
-});
+import { FROZEN_STATES, rootBadgeClass, rootLabel, rootState } from "../constants";
 
 describe("rootState / rootLabel — jerarquía v5 de 5 raíces", () => {
   it("mapea cada EstadoOC a su raíz numérica esperada", () => {
@@ -57,7 +18,7 @@ describe("rootState / rootLabel — jerarquía v5 de 5 raíces", () => {
   });
 
   it("rootLabel antepone el número de raíz al nombre, salvo en cancelada", () => {
-    expect(rootLabel("orden_interna")).toBe("2 · Orden interna");
+    expect(rootLabel("orden_interna")).toBe("2 · Orden de Transmisión");
     expect(rootLabel("cancelada")).toBe("Cancelada");
   });
 });

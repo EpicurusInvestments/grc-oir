@@ -1,6 +1,6 @@
 /** Panel de detalle de OrdenCliente: timeline, datos comerciales, comisiones snapshot,
- * importes, progreso de asignación de spots, órdenes internas hijas, incidencias asociadas,
- * documentos y botonera contextual (Editar, Dar Vo.Bo., Asignar estaciones, Cerrar orden).
+ * importes, progreso de asignación de spots, órdenes de transmisión hijas, incidencias
+ * asociadas, documentos y botonera contextual (Editar, Asignar estaciones, Cerrar orden).
  */
 
 import { useState } from "react";
@@ -10,7 +10,7 @@ import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { CommissionSnapshotBlock } from "../../components/CommissionSnapshotBlock";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { Timeline } from "../../components/Timeline";
-import { FROZEN_STATES } from "../../constants";
+import { FROZEN_STATES, STATUS_LABELS } from "../../constants";
 import { fmtMonto, fmtRangoFechas, oGuion } from "../../format";
 import {
   findAfiliado,
@@ -73,7 +73,6 @@ export function OrdenClienteDetailPanel({
   const balance = balanceSpotsOC(oc, oes);
 
   const congelado = FROZEN_STATES.includes(oc.estatus_orden);
-  const ocConVobo = oc.estatus_orden !== "orden_cliente_sin_vobo";
   const incidenciasDeLaOC = incidencias.filter((i) => oes.some((oe) => oe.id === i.orden_interna_id));
   const historialDeLaOC = historialComisiones.filter((h) => h.entidad_id === oc.id);
 
@@ -88,11 +87,9 @@ export function OrdenClienteDetailPanel({
             <div className="dh-name">{oc.folio_orden}</div>
             <div className="dh-sub">
               <span className={`badge ${congelado ? "b-amber" : "b-teal"}`}>
-                {oc.estatus_orden === "orden_cliente_sin_vobo"
-                  ? "1.1 ODC sin Vo.Bo."
-                  : oc.estatus_orden === "orden_cliente_con_vobo"
-                    ? "1.2 Con Vo.Bo."
-                    : ""}
+                {oc.estatus_orden === "orden_cliente_sin_vobo" || oc.estatus_orden === "orden_cliente_con_vobo"
+                  ? STATUS_LABELS[oc.estatus_orden]
+                  : ""}
               </span>
               {anunciante && <span className="badge b-blue">{anunciante.nombre_comercial}</span>}
               {agencia ? <span className="badge b-purple">{agencia.nombre_agencia}</span> : <span className="badge b-amber">Sin agencia</span>}
@@ -211,23 +208,9 @@ export function OrdenClienteDetailPanel({
         )}
 
         <div className="sec">
-          Órdenes internas <span className="tb-count">{oes.length}</span>
+          Órdenes de Transmisión <span className="tb-count">{oes.length}</span>
         </div>
-        {!ocConVobo && (
-          <div
-            style={{
-              background: "var(--amber-bg)",
-              color: "var(--amber-text)",
-              borderRadius: "var(--r)",
-              padding: "8px 11px",
-              fontSize: 12,
-              marginBottom: 10,
-            }}
-          >
-            Esta ODC todavía no tiene Vo.Bo. de revisión (PO §2). No se pueden generar órdenes internas hasta completar el checklist.
-          </div>
-        )}
-        {oes.length === 0 && ocConVobo && <div className="fv muted">Sin órdenes internas todavía.</div>}
+        {oes.length === 0 && <div className="fv muted">Sin Órdenes de Transmisión todavía.</div>}
         {oes.map((oe) => {
           const estacion = findEstacion(oe.estacion_id);
           const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
@@ -305,12 +288,7 @@ export function OrdenClienteDetailPanel({
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>
-        {!ocConVobo && (
-          <button type="button" className="btn btn-sm btn-teal" onClick={onEditar}>
-            → Dar Vo.Bo. (abrir checklist)
-          </button>
-        )}
-        {ocConVobo && (oc.estatus_orden === "orden_interna" || oc.estatus_orden === "orden_cliente_con_vobo") && (
+        {(oc.estatus_orden === "orden_interna" || oc.estatus_orden === "orden_cliente_con_vobo") && (
           <button type="button" className="btn btn-sm btn-teal" onClick={onAsignarEstaciones}>
             + Asignar estaciones
           </button>

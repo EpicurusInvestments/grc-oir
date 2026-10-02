@@ -1,10 +1,10 @@
 /** Shell de la fase F1 — Órdenes: sidebar fija (flujo principal + vistas operativas, con
  * contadores en vivo) + área principal que conmuta entre las 4 pantallas de la fase
- * (Órdenes del cliente, Órdenes internas, Verificaciones, Incidencias).
+ * (Órdenes de Servicio, Órdenes de Transmisión, Verificaciones, Incidencias).
  *
  * A diferencia de `CatalogosExplorerPage` (F0), aquí NO hay un registry dinámico de
  * catálogos: F1 tiene un conjunto fijo de 4 pantallas de flujo + 4 vistas operativas
- * (filtros hacia Órdenes internas/del cliente), así que se listan directamente.
+ * (filtros hacia Órdenes de Transmisión/de Servicio), así que se listan directamente.
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -51,8 +51,8 @@ function OrdenesExplorerContent() {
     {
       title: "Flujo principal",
       items: [
-        { key: "orden_cliente", label: "Órdenes del cliente", count: counts.ordenesCliente },
-        { key: "orden_estacion", label: "Órdenes internas", count: counts.ordenesEstacion },
+        { key: "orden_cliente", label: "Órdenes de Servicio", count: counts.ordenesCliente },
+        { key: "orden_estacion", label: "Órdenes de Transmisión", count: counts.ordenesEstacion },
         { key: "verificacion", label: "Verificaciones", count: counts.verificaciones },
         { key: "incidencia", label: "Incidencias", count: counts.incidencias },
       ],

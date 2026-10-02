@@ -3,17 +3,27 @@
  * de `precio_spot` contra la tarifa de referencia (catálogo de Tarifas, por estación).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { contactoAfiliadoApi } from "@/modules/catalogos/afiliado/api";
+import { contactoAnuncianteApi } from "@/modules/catalogos/anunciante/api";
+import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 
+import {
+  descargarEmlOrdenTransmisionApi,
+  listarAudiosOrdenEstacionApi,
+  listarEnviosCorreoOrdenEstacionApi,
+} from "../../adapters/escrituraApi";
+import { logEnvioCorreoFromApi, ordenEstacionAudioFromApi } from "../../adapters/fromApi";
 import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../adapters/pdfsApi";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { IVA_RATE } from "../../constants";
 import { diaDeSemana, fmtMonto, fmtPct, oGuion } from "../../format";
-import { findAfiliado, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
+import { findAfiliado, findAnunciante, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
 import { oiImporte, oiTotalSpots } from "../../state/selectors";
-import type { Incidencia, OrdenCliente, OrdenEstacion } from "../../types";
+import type { Incidencia, LogEnvioCorreo, OrdenCliente, OrdenEstacion, OrdenEstacionAudio } from "../../types";
+import { MaterialATransmitir } from "./MaterialATransmitir";
 
 interface OrdenEstacionDetailPanelProps {
   oe: OrdenEstacion;
@@ -21,7 +31,6 @@ interface OrdenEstacionDetailPanelProps {
   incidencias: Incidencia[];
   onVerOC: () => void;
   onEditar: () => void;
-  onCapturarProgramados: () => void;
   onCapturarReales: () => void;
   onVerVerificacion: () => void;
 }
@@ -32,12 +41,12 @@ export function OrdenEstacionDetailPanel({
   incidencias,
   onVerOC,
   onEditar,
-  onCapturarProgramados,
   onCapturarReales,
   onVerVerificacion,
 }: OrdenEstacionDetailPanelProps) {
   const estacion = findEstacion(oe.estacion_id);
   const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
+  const anunciante = findAnunciante(oe.anunciante_id);
   const plaza = findPlaza(oe.plaza_id);
 
   const totalSpots = oiTotalSpots(oe);
@@ -49,11 +58,93 @@ export function OrdenEstacionDetailPanel({
   const ivaEmisora = importeEmisora * IVA_RATE;
   const totalEmisora = importeEmisora + ivaEmisora;
 
-  const tarRef = estacion ? tarifaReferencia(estacion.id, estacion.tipo_senal, oc?.duracion_spot ?? "30s") : undefined;
+  // ADR-106: la duración es propia de la OE, ya no heredada de la OC.
+  const tarRef = estacion
+    ? tarifaReferencia(estacion.id, estacion.tipo_senal, oe.duracion_spot, oe.producto_tarifa ?? undefined)
+    : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;
 
   const incidenciasDeLaOE = incidencias.filter((i) => i.orden_interna_id === oe.id);
+
+  // ADR-105/ADR-120/ADR-126: historial de correos generados (".eml") — se recarga al
+  // cambiar de OE. El último generado se muestra por-tipo dentro de cada `FilaPdf`
+  // (mismo `tipoPdf` que ese botón).
+  const [envios, setEnvios] = useState<LogEnvioCorreo[]>([]);
+  useEffect(() => {
+    let cancelado = false;
+    listarEnviosCorreoOrdenEstacionApi(oe.id)
+      .then((dtos) => {
+        if (!cancelado) setEnvios(dtos.map(logEnvioCorreoFromApi));
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [oe.id]);
+
+  // ADR-120/ADR-140/ADR-145: "Abrir correo" se deshabilita si el lado que corresponde a
+  // ese tipo de PDF no tiene ningún contacto ACTIVO con correo cargado — el backend
+  // necesita al menos un destinatario para armar el `.eml` (400 si no hay ninguno), así
+  // que se avisa antes de intentar. Servicio/Reales dependen del ANUNCIANTE
+  // (`ContactoAnunciante`); Programados depende del AFILIADO (`ContactoAfiliado`).
+  const [hayContactosAfiliado, setHayContactosAfiliado] = useState(false);
+  useEffect(() => {
+    let cancelado = false;
+    if (!afiliado) {
+      setHayContactosAfiliado(false);
+      return;
+    }
+    contactoAfiliadoApi
+      .listPorAfiliado(afiliado.id, { activo: true, size: 100 })
+      .then((page) => {
+        if (!cancelado) {
+          setHayContactosAfiliado(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setHayContactosAfiliado(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [afiliado]);
+
+  const [hayContactosAnunciante, setHayContactosAnunciante] = useState(false);
+  useEffect(() => {
+    let cancelado = false;
+    if (!anunciante) {
+      setHayContactosAnunciante(false);
+      return;
+    }
+    contactoAnuncianteApi
+      .listPorAnunciante(anunciante.id, { activo: true, size: 100 })
+      .then((page) => {
+        if (!cancelado) {
+          setHayContactosAnunciante(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setHayContactosAnunciante(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [anunciante]);
+
+  // ADR-103 (corrección): "Material a Transmitir" vive aquí, en el detalle — igual que
+  // los PDFs — para que se pueda subir/descargar/quitar audio sin tener que entrar a
+  // "Editar" primero. Se recarga al cambiar de OE.
+  const [audios, setAudios] = useState<OrdenEstacionAudio[]>([]);
+  useEffect(() => {
+    let cancelado = false;
+    listarAudiosOrdenEstacionApi(oe.id).then((dtos) => {
+      if (!cancelado) setAudios(dtos.map(ordenEstacionAudioFromApi));
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [oe.id]);
 
   return (
     <>
@@ -78,7 +169,7 @@ export function OrdenEstacionDetailPanel({
       </div>
 
       <div className="db">
-        <div className="sec">Datos heredados de la orden del cliente</div>
+        <div className="sec">Datos heredados de la Orden de Servicio</div>
         {oc ? (
           <div className="rel-item" onClick={onVerOC} style={{ cursor: "pointer" }}>
             <div>
@@ -88,7 +179,7 @@ export function OrdenEstacionDetailPanel({
             <span className="fv link">Ver OC →</span>
           </div>
         ) : (
-          <div className="fv muted">La orden del cliente ya no existe.</div>
+          <div className="fv muted">La Orden de Servicio ya no existe.</div>
         )}
 
         <div className="sec">Estación / plaza / afiliado</div>
@@ -115,11 +206,12 @@ export function OrdenEstacionDetailPanel({
               <th>Fecha</th>
               <th>Horario</th>
               <th className="td-center">Spots</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {oe.periodo_transmision.map((p, i) => (
-              <tr key={i}>
+              <tr key={i} style={p.cancelada ? { opacity: 0.55 } : undefined}>
                 <td className="td-2" style={{ fontSize: 11 }}>
                   {diaDeSemana(p.fecha)}
                 </td>
@@ -128,6 +220,9 @@ export function OrdenEstacionDetailPanel({
                   {p.hora_inicio}–{p.hora_termino}
                 </td>
                 <td className="td-center td-mono">{p.spots_diarios}</td>
+                <td style={{ fontSize: 11, color: "var(--red-text)", fontWeight: 600 }}>
+                  {p.cancelada ? "Cancelado" : ""}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -139,11 +234,22 @@ export function OrdenEstacionDetailPanel({
               <td className="td-center" style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>
                 {totalSpots}
               </td>
+              <td />
             </tr>
           </tfoot>
         </table>
 
         <div className="sec">Desglose económico</div>
+        <div className="r2">
+          <div>
+            <div className="fl">Producto</div>
+            <div className="fv">{oe.producto_tarifa ? etiquetaProducto(oe.producto_tarifa) : "—"}</div>
+          </div>
+          <div>
+            <div className="fl">Duración</div>
+            <div className="fv">{etiquetaDuracion(oe.duracion_spot)}</div>
+          </div>
+        </div>
         <div className="r2">
           <div>
             <div className="fl">Tarifa por spot</div>
@@ -210,22 +316,57 @@ export function OrdenEstacionDetailPanel({
           </>
         )}
 
+        <MaterialATransmitir ordenEstacionId={oe.id} audios={audios} onAudiosChange={setAudios} />
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6, marginRight: "auto", flexWrap: "wrap" }}>
-          <BotonPdf oe={oe} tipo="servicio" etiqueta="PDF #1 · Orden de servicio" />
-          {oe.estatus !== "asignada_afiliado" && (
-            <BotonPdf oe={oe} tipo="programados" etiqueta="PDF #2 · Programados" />
+        {/* ADR-135 (petición del usuario): esta sección (los 3 PDF + su historial de
+            envío) ya NO puede crecer libremente — antes, entre más PDFs con "Enviado
+            a..." acumulaban, más le quitaba espacio al `.db` de arriba (flex:1), que se
+            veía apachurrado. Con un `maxHeight` + scroll propio, `.df` queda con una
+            altura acotada y `.db` recupera todo su espacio. */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            marginRight: "auto",
+            maxHeight: 190,
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+        >
+          <FilaPdf
+            oe={oe}
+            tipo="servicio"
+            etiqueta="PDF #1 · Orden de servicio"
+            hayContactos={hayContactosAnunciante}
+            envios={envios}
+          />
+          {/* ADR-121: ya no gateado por sub-estado — los horarios "programados" se
+              capturan desde el alta (2.2 ya no es un paso manual separado). */}
+          <FilaPdf
+            oe={oe}
+            tipo="programados"
+            etiqueta="PDF #2 · Programados"
+            hayContactos={hayContactosAfiliado}
+            envios={envios}
+          />
+          {oe.estatus === "reales_conciliados" && (
+            <FilaPdf
+              oe={oe}
+              tipo="reales"
+              etiqueta="PDF #3 · Reales"
+              hayContactos={hayContactosAnunciante}
+              envios={envios}
+            />
           )}
-          {oe.estatus === "reales_conciliados" && <BotonPdf oe={oe} tipo="reales" etiqueta="PDF #3 · Reales" />}
         </div>
-        {oe.estatus === "asignada_afiliado" && (
-          <button type="button" className="btn btn-sm btn-teal" onClick={onCapturarProgramados}>
-            → Capturar programados (2.2)
-          </button>
-        )}
-        {oe.estatus === "programados_conciliados" && (
+        {/* ADR-121: "Capturar Programados" (2.2) ya no es un paso manual — se salta
+            directo a "Capturar Reales" desde "asignada_afiliado" (los datos que 2.2
+            capturaba ya se capturan desde el alta). `programados_conciliados` se
+            conserva por si alguna OE ya avanzó por la vía anterior (legado). */}
+        {(oe.estatus === "asignada_afiliado" || oe.estatus === "programados_conciliados") && (
           <button type="button" className="btn btn-sm btn-teal" onClick={onCapturarReales}>
             → Capturar reales (2.3)
           </button>
@@ -240,28 +381,131 @@ export function OrdenEstacionDetailPanel({
   );
 }
 
-/** Botón que abre el visor del PDF (pestaña nueva, PDF incrustado + barra de
- * imprimir/guardar) — generado al vuelo por el backend con los datos más recientes,
- * no es un archivo guardado. */
-function BotonPdf({ oe, tipo, etiqueta }: { oe: OrdenEstacion; tipo: TipoPdfOrdenEstacion; etiqueta: string }) {
+/** ADR-120/ADR-145: al hacer clic en un PDF, en vez de abrirlo directo se propone
+ * "Imprimir" (abre el PDF, como antes — el propio visor nativo del navegador ya trae su
+ * botón de imprimir) o "Abrir correo" (arma un `.eml` con el PDF + Material a Transmitir
+ * ya adjuntos, que el usuario abre y envía desde su propio cliente de correo). "Abrir
+ * correo" se deshabilita si el lado que le toca a este tipo de PDF (afiliado o
+ * anunciante, ADR-140) no tiene ningún contacto activo con correo cargado. */
+function FilaPdf({
+  oe,
+  tipo,
+  etiqueta,
+  hayContactos,
+  envios,
+}: {
+  oe: OrdenEstacion;
+  tipo: TipoPdfOrdenEstacion;
+  etiqueta: string;
+  hayContactos: boolean;
+  envios: LogEnvioCorreo[];
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [abriendoCorreo, setAbriendoCorreo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ADR-126: el bundle ahora manda el PDF de ESTE botón, así que el último `.eml`
+  // generado se filtra por el mismo `tipoPdf` (ya no por el valor fijo "orden_transmision").
+  const ultimoEnvio = envios.find((e) => e.tipoPdf === tipo && e.exitoso);
+  // ADR-140: el mensaje de "sin contactos" depende de a quién le toca este tipo de PDF
+  // (Servicio/Reales → anunciante; Programados → afiliado).
+  const sinContactosMensaje =
+    tipo === "programados"
+      ? "El afiliado no tiene contactos activos con correo cargado."
+      : "El anunciante no tiene contactos activos con correo cargado.";
+  // ADR-135 (petición del usuario): "Enviado a..." ya no queda fijo para siempre — se
+  // muestra como confirmación y se oculta solo a los 10s (reaparece si se manda otro
+  // correo, por el `useEffect` reiniciando el timer cada vez que cambia `ultimoEnvio`).
+  const [mostrarUltimoEnvio, setMostrarUltimoEnvio] = useState(true);
+  useEffect(() => {
+    if (!ultimoEnvio) return;
+    setMostrarUltimoEnvio(true);
+    const t = setTimeout(() => setMostrarUltimoEnvio(false), 10_000);
+    return () => clearTimeout(t);
+  }, [ultimoEnvio?.id]);
+
+  const imprimir = () => {
+    setError(null);
+    previsualizarPdfOrdenEstacion(oe.id, tipo, oe.folio_orden_interna)
+      .then(() => setAbierto(false))
+      .catch((e) => setError(e instanceof ApiRequestError ? e.message : "No se pudo abrir el PDF."));
+  };
+
+  // ADR-124/ADR-126/ADR-144: descarga el ".eml" con el PDF de ESTE botón (+ Material a
+  // Transmitir, si tiene, a los contactos activos del afiliado) — el usuario lo abre
+  // con doble clic en su cliente de correo de escritorio (Outlook, etc.), que gracias al
+  // encabezado X-Unsent lo abre directo como mensaje nuevo editable (con "Enviar"), no
+  // en modo lectura, y lo manda él mismo.
+  const abrirCorreo = async () => {
+    setAbriendoCorreo(true);
+    setError(null);
+    try {
+      await descargarEmlOrdenTransmisionApi(
+        oe.id,
+        tipo,
+        `orden_transmision_${tipo}_${oe.folio_orden_interna}.eml`,
+      );
+    } catch (e) {
+      setError(e instanceof ApiRequestError ? e.message : "No se pudo generar el correo.");
+    } finally {
+      setAbriendoCorreo(false);
+    }
+  };
+
   return (
     <div>
-      <button
-        type="button"
-        className="btn btn-sm"
-        onClick={() => {
-          setError(null);
-          previsualizarPdfOrdenEstacion(oe.id, tipo, oe.folio_orden_interna).catch((e) =>
-            setError(e instanceof ApiRequestError ? e.message : "No se pudo abrir el PDF."),
-          );
-        }}
-      >
-        📄 {etiqueta}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => {
+            setError(null);
+            setAbierto((v) => !v);
+          }}
+        >
+          📄 {etiqueta}
+        </button>
+        {abierto && (
+          <>
+            <button type="button" className="btn btn-sm" onClick={imprimir}>
+              🖨️ Imprimir
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={abriendoCorreo || !hayContactos}
+              title={hayContactos ? "Abre un borrador nuevo listo para enviar" : sinContactosMensaje}
+              aria-label="Abrir correo"
+              onClick={abrirCorreo}
+            >
+              {abriendoCorreo ? "Abriendo…" : "📧 Abrir correo"}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setAbierto(false)}>
+              Cancelar
+            </button>
+          </>
+        )}
+      </div>
       {error && <div className="fe">{error}</div>}
+      {ultimoEnvio && mostrarUltimoEnvio && (
+        <div className="fv muted" style={{ fontSize: 11 }}>
+          Enviado a {ultimoEnvio.destinatarioEmail} el {fmtFechaHora(ultimoEnvio.fechaEnvio)}
+        </div>
+      )}
     </div>
   );
+}
+
+function fmtFechaHora(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function etiquetaProducto(valor: string): string {
+  return PRODUCTO_OPCIONES.find((p) => p.value === valor)?.label ?? valor;
+}
+
+function etiquetaDuracion(valor: string): string {
+  return DURACION_SPOT_OPCIONES.find((d) => d.value === valor)?.label ?? valor;
 }
 
 function Linea({ label, valor, fuerte }: { label: string; valor: number; fuerte?: boolean }) {

@@ -9,7 +9,6 @@ import type { HistorialCambio, ListParams, Page } from "@/shared/types";
 import type {
   IncidenciaApiDTO,
   OrdenClienteApiDTO,
-  OrdenClienteVoBoItemApiDTO,
   OrdenEstacionApiDTO,
   OrdenEstacionDiaApiDTO,
   VerificacionApiDTO,
@@ -25,13 +24,6 @@ export async function listarOrdenesClienteApi(): Promise<OrdenClienteApiDTO[]> {
  * releer la lista completa. */
 export async function obtenerOrdenClienteApi(ordenId: string): Promise<OrdenClienteApiDTO> {
   const { data } = await apiClient.get<OrdenClienteApiDTO>(`/ordenes/clientes/${ordenId}`);
-  return data;
-}
-
-export async function listarVoboApi(ordenId: string): Promise<OrdenClienteVoBoItemApiDTO[]> {
-  const { data } = await apiClient.get<OrdenClienteVoBoItemApiDTO[]>(
-    `/ordenes/clientes/${ordenId}/vobo`,
-  );
   return data;
 }
 

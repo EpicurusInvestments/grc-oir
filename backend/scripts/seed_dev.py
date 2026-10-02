@@ -52,7 +52,7 @@ from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfi
 from app.modules.facturacion.factura_agencia import FacturaAgencia
 from app.modules.facturacion.factura_cliente import FacturaCliente, FacturaClienteOrden
 from app.modules.ordenes.incidencia import Incidencia
-from app.modules.ordenes.orden_cliente import ITEMS_VOBO, OrdenCliente, OrdenClienteVoBoItem
+from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
 from app.modules.ordenes.verificacion import Verificacion
 from app.modules.usuarios.models import Usuario
@@ -462,8 +462,9 @@ def seed_catalogos(db: Session) -> dict[str, dict[str, uuid.UUID]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # OrdenCliente.estatus_orden: los que no dependen del estado de sus OE mapean directo.
 # "orden_interna" (v5) se resuelve aparte, según el estado de sus OE (ver resolver_estatus_oc).
+# ADR-100: ya no existe el checklist de Vo.Bo. — toda orden nace directo en "capturada",
+# así que "orden_cliente_sin_vobo" (→ recibida) quedó sin ningún mock que lo use.
 MAPEO_ESTATUS_OC = {
-    "orden_cliente_sin_vobo": "recibida",
     "orden_cliente_con_vobo": "capturada",
     "orden_cerrada": "orden_cerrada",
     # facturada_archivo_plano y facturada_timbrada (4.1/4.2 del prototipo) colapsan en el
@@ -538,9 +539,9 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vp=Decimal("3.5"),
         comision_vs=None,
         comision_ag=Decimal("13"),
-        obs_libres="Aún en revisión comercial, pendiente de Vo.Bo.",
-        checklist={"razon_social", "plaza", "emisora", "duracion"},
-        estatus_v5="orden_cliente_sin_vobo",
+        obs_libres="Aún en revisión comercial, capturada.",
+        # ADR-100: ya no hay estado "sin Vo.Bo." — se guarda directo en capturada.
+        estatus_v5="orden_cliente_con_vobo",
         created_by="ve4",
     ),
     dict(
@@ -568,7 +569,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=None,
         obs_libres="Venta directa, cliente prioritario. Con Vo.Bo., lista para asignar estaciones.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_cliente_con_vobo",
         created_by="ve1",
     ),
@@ -598,7 +598,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_ag=Decimal("15"),
         obs_libres="Final Liga MX. Spots prime obligatorios. En proceso de asignación a "
         "estaciones.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_interna",
         created_by="ve2",
     ),
@@ -627,7 +626,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=Decimal("15"),
         obs_libres="Recién asignadas 2 estaciones, faltan 20 spots por repartir.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_interna",
         created_by="ve3",
     ),
@@ -656,7 +654,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=Decimal("15"),
         obs_libres="Todas sus órdenes internas ya están en 2.3 — lista para cerrar.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_interna",
         created_by="ve2",
     ),
@@ -685,7 +682,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=Decimal("15"),
         obs_libres="Cerrada sin la ODC cerrada firmada; se registró como faltante.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_cerrada",
         created_by="ve2",
         odc_cerrada_ref=None,
@@ -719,7 +715,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=Decimal("12.5"),
         obs_libres="Archivo plano generado, pendiente de recibir folio fiscal del timbrador.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="facturada_archivo_plano",
         created_by="ve5",
         odc_cerrada_ref="ODC_Cerrada_OC-2025-0047.pdf",
@@ -753,7 +748,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=Decimal("13"),
         obs_libres="CFDI timbrado y cargado. Pendiente de cobranza.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="facturada_timbrada",
         created_by="ve4",
         estatus_pago_afiliado="pagado",
@@ -789,7 +783,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_ag=Decimal("13.5"),
         obs_libres="Ciclo completo: cobrada. % de agencia renegociado tras el cierre "
         "(ver historial).",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="cobrada",
         created_by="ve2",
         estatus_pago_afiliado="pagado",
@@ -826,7 +819,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_ag=None,
         obs_libres="Cliente canceló la campaña por cambio de estrategia de marca, "
         "antes de asignar estaciones.",
-        checklist={"razon_social", "plaza"},
         estatus_v5="cancelada",
         created_by="ve1",
     ),
@@ -860,7 +852,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_vs=None,
         comision_ag=None,
         obs_libres="Cerrada y pendiente de facturar: alimenta la bandeja de F2.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_cerrada",
         created_by="ve3",
     ),
@@ -896,7 +887,6 @@ OC_MOCKS: list[dict[str, Any]] = [
         comision_ag=None,
         obs_libres="Segunda orden cerrada del mismo anunciante: habilita la prueba de "
         "facturación múltiple.",
-        checklist=set(ITEMS_VOBO),
         estatus_v5="orden_cerrada",
         created_by="ve3",
     ),
@@ -969,21 +959,6 @@ def seed_ordenes_cliente(db: Session, cat: dict[str, dict[str, uuid.UUID]]) -> d
             )
         )
         ids[oc["clave"]] = u
-
-        for item in ITEMS_VOBO:
-            completado = item in oc["checklist"]
-            db.merge(
-                OrdenClienteVoBoItem(
-                    orden_cliente_vobo_item_id=uid(f"vobo:{oc['clave']}:{item}"),
-                    orden_id=u,
-                    item_clave=item,
-                    completado=completado,
-                    usuario_id=ADMIN_ID if completado else None,
-                    fecha_completado=datetime.combine(oc["fecha_venta"], time(9, 0))
-                    if completado
-                    else None,
-                )
-            )
     hallazgo(
         "OrdenCliente.created_by: los mocks traen el ID de un VENDEDOR (ve1..ve5) como "
         "'creador', pero el modelo real exige un Usuario válido y no hay relación 1:1 "
@@ -1322,6 +1297,9 @@ def seed_ordenes_estacion(
                 if oc_mock["categoria"]
                 else None,
                 producto=oc_mock["producto"],
+                # ADR-102: todas las OE sembradas son spots normales (ninguna de las
+                # tarifas de referencia sembradas es de otro producto).
+                producto_tarifa="spot",
                 estacion_id=cat["estacion"][estacion_clave],
                 plaza_id=cat["plaza"][plaza_clave],
                 duracion_spot="30s",

@@ -11,7 +11,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.ordenes.adjuntos import router as adjuntos_router
+from app.modules.ordenes.envio_correo_pdf import router as envio_correo_router
 from app.modules.ordenes.incidencia import router as incidencia_router
+from app.modules.ordenes.material_staging import router as material_staging_router
 from app.modules.ordenes.orden_cliente import router_clientes
 from app.modules.ordenes.orden_estacion import router_estaciones
 from app.modules.ordenes.orden_estacion_pdf import router_pdf
@@ -22,6 +24,8 @@ router = APIRouter(prefix="/ordenes", tags=["ordenes"])
 router.include_router(router_clientes)
 router.include_router(router_estaciones)
 router.include_router(router_pdf)
+router.include_router(envio_correo_router)
 router.include_router(verificacion_router)
 router.include_router(incidencia_router)
 router.include_router(adjuntos_router)
+router.include_router(material_staging_router)

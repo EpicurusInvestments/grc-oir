@@ -62,8 +62,8 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
         <div>
           <div className="cat-title">Incidencias</div>
           <div className="cat-sub">
-            Diferencias entre lo programado y lo realmente transmitido, generadas automáticamente al avanzar una orden interna a 2.3. No
-            se capturan a mano.
+            Diferencias entre lo programado y lo realmente transmitido, generadas automáticamente al avanzar una Orden de Transmisión a
+            2.3. No se capturan a mano.
           </div>
         </div>
       </div>

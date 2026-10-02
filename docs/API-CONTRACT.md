@@ -327,8 +327,11 @@ tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097).
   solapamiento por vigencia):** al crear, editar o **reactivar** una tarifa activa, no
   puede existir OTRA tarifa activa con la misma combinación (estación + tipo_senal +
   duracion_spot + producto). `detalles` incluye la tarifa en conflicto.
-- **Filtros de lista:** `?activo` y `?q` (busca en nombre/siglas de la estación y en
-  notas) — el CRUD genérico alcanza sin filtros extra desde que se eliminó la vigencia.
+- **Filtros de lista:** `?activo`, `?q` (busca en nombre/siglas de la estación y en
+  notas), y (ADR-102, F1 los usa para sugerir `precio_spot` al asignar una estación)
+  `?estacion_id`, `?tipo_senal`, `?duracion_spot`, `?producto` — coincidencia EXACTA de
+  cada uno (no búsqueda parcial). Ruta propia (`listar_tarifas`), no la genérica de
+  `build_crud_router`.
 - **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la estación,
   siglas de la estación y notas** (coincide en cualquiera). Resuelta con un JOIN a
   `estacion` en el repositorio (sin N+1); `ilike` portable a SQL Server.
@@ -624,8 +627,6 @@ Filtros: `?q` (folio/número de orden), `?estatus_orden`, `?anunciante_id`, `?ag
 aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstring de
 `app/modules/ordenes/orden_cliente.py`. Montos/% como **string** (ADR-015).
 - **`GET /ordenes/clientes/{id}`** — uno (404 si no existe).
-- **`GET /ordenes/clientes/{id}/vobo`** — los 10 ítems fijos del checklist Vo.Bo.
-  (ADR-033), con su `completado`/`usuario_id`/`fecha_completado`.
 - **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a los % de
   comisión snapshot (más reciente primero; mismo mecanismo `LogCambioParametro` que los
   catálogos, `entidad="OrdenCliente"`).
@@ -638,6 +639,111 @@ Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de Orden
 - **`GET /ordenes/estaciones/{id}/dias`** — periodo de transmisión día a día
   (`OrdenEstacionDia`, ADR-030: `spots_solicitados`/`asignados`/`programados`), ordenado
   por `fecha_transmision`.
+- **`GET /ordenes/estaciones/{id}/historial-tarifa`** (ADR-102) — veces que `precio_spot`
+  se apartó de la tarifa sugerida del catálogo; mismo shape/endpoint que
+  `GET /catalogos/tarifas/{id}/historial` (`entidad="OrdenEstacion"`).
+- **"Material a Transmitir" — audios (ADR-103):**
+  - **`GET /ordenes/estaciones/{id}/audios`** — lista los audios subidos, ordenados
+    (`orden=0` es el DEFAULT).
+  - **`POST /ordenes/estaciones/{id}/audios`** (`ordenes:editar`, `multipart/form-data`,
+    campo `archivo`) — sube un audio (mp3/wav/ogg, ≤ `S3_MAX_AUDIO_BYTES` = 15 MB) y lo
+    agrega a la lista; **400** (`archivo_no_permitido`) si el formato/tamaño no cumple.
+  - **`GET /ordenes/estaciones/{id}/audios/{audio_id}/archivo`** (`ordenes:leer`) —
+    descarga el audio (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/audios/{audio_id}`** (`ordenes:editar`, 204) —
+    quita el audio de la lista (el objeto en S3 no se borra); los que quedan se
+    renumeran y cualquier día que lo tuviera asignado vuelve al default.
+  - **`PUT /ordenes/estaciones/{id}/dias/{dia_id}/audio`** (`ordenes:editar`) — body
+    `{orden_estacion_audio_id: string | null}`; asigna (o quita) el audio de UN día
+    puntual, independiente de `dias`/`PUT /{id}` (ver ADR-103 para el porqué).
+- **"Evidencias de lo Transmitido" — audios (ADR-119):** mismo patrón que "Material a
+  Transmitir", pero **lista PLANA** (sin `orden` ni default/override por día — la OE
+  siempre existe cuando se captura, no hay staging).
+  - **`GET /ordenes/estaciones/{id}/evidencias`** — lista las evidencias subidas.
+  - **`POST /ordenes/estaciones/{id}/evidencias`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube una evidencia (mp3/wav/ogg, ≤
+    `S3_MAX_AUDIO_BYTES` = 15 MB); **400** (`archivo_no_permitido`) si no cumple.
+  - **`GET /ordenes/estaciones/{id}/evidencias/{evidencia_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/evidencias/{evidencia_id}`** (`ordenes:editar`,
+    204) — quita la evidencia (el objeto en S3 no se borra); no afecta a las demás.
+- **"Formato de Horarios Reales" (ADR-123):** junto a Evidencias en la misma pantalla —
+  misma lista PLANA, pero acepta CUALQUIER formato salvo ejecutables/scripts (único
+  endpoint del sistema con lista NEGRA en vez de blanca; además rechaza cualquier
+  contenido con firma de ejecutable de Windows, "MZ", sin importar la extensión).
+  - **`GET /ordenes/estaciones/{id}/formatos-reales`** — lista los archivos subidos.
+  - **`POST /ordenes/estaciones/{id}/formatos-reales`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube un archivo de cualquier formato, ≤
+    `S3_MAX_FORMATO_REAL_BYTES` (20 MB); **400** (`archivo_no_permitido`) si la extensión
+    es de ejecutable/script, o si el contenido es un ejecutable de Windows.
+  - **`GET /ordenes/estaciones/{id}/formatos-reales/{formato_real_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/formatos-reales/{formato_real_id}`**
+    (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
+    a los demás.
+- **"Carga de Órdenes Reales Desde Layout" (ADR-146/ADR-147/ADR-148/ADR-149/ADR-150):** junto a
+  Evidencias/Formato de Horarios Reales en la misma pantalla — misma lista PLANA, pero
+  lista BLANCA de extensiones (csv — el formato principal — xlsx, xls, txt).
+  - **`GET /ordenes/estaciones/{id}/layout-reales`** — lista los archivos subidos.
+  - **`POST /ordenes/estaciones/{id}/layout-reales`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube csv/xlsx/xls/txt, ≤
+    `S3_MAX_LAYOUT_REALES_BYTES` (10 MB); **400** (`archivo_no_permitido`) si la
+    extensión no es una de esas 4. csv/txt no tienen firma de contenido verificable
+    (texto plano) — la lista blanca de extensión es la única defensa para esos 2.
+    Responde `{archivo, aplicados, nuevos, errores}`
+    (`OrdenEstacionLayoutRealSubidoRead`): el archivo se guarda siempre; si es `.csv`,
+    **ADR-147/ADR-149** lo parsea (columnas `Estacion, Fecha, Hora, Spots` — Spots
+    opcional, default 1), agrupa las filas VÁLIDAS por `fecha_transmision` +
+    `hora_inicio` exactas y SUMA sus `Spots` dentro de cada grupo (`Estacion` debe
+    coincidir normalizada con la de esta OE). Cada grupo resultante:
+    - Si la fecha+hora coincide con un día YA existente → `aplicados`
+      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots}` — `spots` ya
+      sumado).
+    - Si NO coincide con ningún día existente → `nuevos`
+      (`{fecha_transmision, hora_inicio, spots}` — propuesta de día NUEVO a crear al
+      avanzar a 2.3; nada se crea aquí). Si la suma da 0, no se puede crear un día
+      sin spots y se reporta en `errores` en su lugar.
+
+    `errores` trae `{fila, motivo}` por cada fila ignorada (estación distinta, valor
+    inválido) — NUNCA tumba el resto del archivo; un archivo ilegible o sin los
+    encabezados mínimos devuelve un único error con `fila=0`. xlsx/xls/txt:
+    `aplicados`/`nuevos`/`errores` vacíos (sin parseo definido todavía). El frontend
+    usa `aplicados`+`nuevos` para REEMPLAZAR COMPLETO lo cargado en "Capturar Reales"
+    — un día que no viene en el archivo vuelve a su valor programado; el usuario igual
+    debe presionar "Avanzar a 2.3" para persistir (incluidos los días nuevos).
+  - **`GET /ordenes/estaciones/{id}/layout-reales/{layout_real_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/layout-reales/{layout_real_id}`**
+    (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
+    a los demás. **ADR-148/ADR-150**: el frontend llama esto automáticamente, al
+    desmontar la pantalla de "Capturar Reales" sin haber avanzado, por cada layout
+    subido EN ESA SESIÓN (no uno de una sesión anterior ya avanzada) — sin importar
+    la vía de salida (botón "Cancelar" o cualquier otra).
+- **"Formato de Horarios Reales Enviado al Cliente" (ADR-146):** mismo patrón que
+  "Formato de Horarios Reales" — lista NEGRA igual de amplia, PERO además excluye audio
+  (mp3/wav/ogg y variantes comunes: m4a, aac, flac, wma, aiff, opus, mid, midi).
+  - **`GET /ordenes/estaciones/{id}/formatos-reales-cliente`** — lista los archivos
+    subidos.
+  - **`POST /ordenes/estaciones/{id}/formatos-reales-cliente`** (`ordenes:editar`,
+    `multipart/form-data`, campo `archivo`) — sube cualquier formato salvo
+    ejecutables/scripts/audio, ≤ `S3_MAX_FORMATO_REAL_CLIENTE_BYTES` (20 MB); **400**
+    (`archivo_no_permitido`) si no cumple.
+  - **`GET /ordenes/estaciones/{id}/formatos-reales-cliente/{formato_real_cliente_id}/archivo`**
+    (`ordenes:leer`) — descarga (`Content-Disposition: attachment`, nombre original).
+  - **`DELETE /ordenes/estaciones/{id}/formatos-reales-cliente/{formato_real_cliente_id}`**
+    (`ordenes:editar`, 204) — quita el archivo (el objeto en S3 no se borra); no afecta
+    a los demás.
+- **`POST /ordenes/estaciones/{id}/dias/{dia_id}/cancelar`** (`ordenes:editar`, ADR-104)
+  — "Cancelar transmisión" de UN día puntual, en cualquier momento (sin candado de
+  `estatus`). Body `{motivo: string}` (obligatorio, 1–500 caracteres). Marca el día como
+  `cancelada=true` (nunca se borra), genera una `Verificacion` (`spots_verificados=0`) y
+  una `Incidencia` tipo `spot_no_emitido` con `monto_ajuste` negativo, y recalcula
+  `importe_estacion`/`importe_oir`/`importe_emisora` de la OE excluyendo ese día (libera
+  su cupo en el balance de spots de la OC). Responde `OrdenEstacionRead` actualizado.
+  Errores: **404** si el día no existe o no pertenece a esa OE; **409**
+  (`estado_invalido`) si el día ya tiene una `Verificacion` (ya cancelado, o ya pasó por
+  el flujo normal `POST .../reales`); **400** (`dominio`) si cancelarlo dejaría los spots
+  bonificables de la OE por encima de los spots restantes.
 
 **`GET /ordenes/verificaciones`** (`ordenes:leer`) — lista **plana** (no solo anidada bajo
 una OE) de `Verificacion`, una fila por día verificado — refleja la pantalla
@@ -657,13 +763,13 @@ descuento_afiliado|sin_resolucion`).
 
 ### Escritura (Tanda 5)
 
-**`POST /ordenes/clientes`** (`ordenes:crear`) — alta de OrdenCliente. El servicio
-calcula `anio_venta`/`mes_venta`/`total_dias_campania`/`subtotal`/`iva`/`total` y el
+**`POST /ordenes/clientes`** (`ordenes:crear`) — alta de "Orden de Servicio"
+(OrdenCliente). El servicio calcula
+`anio_venta`/`mes_venta`/`total_dias_campania`/`subtotal`/`iva`/`total` y el
 `folio_orden` (correlativo global `OC-{año}-####`, nunca se acepta del cliente); valida
 que `contrato_id`/`marca_id` (si vienen) pertenezcan al `anunciante_id` de la orden.
-Nace en `recibida`, con las 10 filas del checklist Vo.Bo. (`revision_checklist` opcional
-en el body marca cuáles ya vienen `completado`). `dar_vobo: true` intenta la transición a
-`capturada` en la MISMA alta (409 si el checklist no viene completo). Los 3 % de
+**ADR-100:** nace DIRECTO en `capturada` — no hay checklist ni paso intermedio (`recibida`
+sigue en el enum por la spec, pero queda inalcanzable por este flujo). Los 3 % de
 comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría con motivo.
 - **`PUT /ordenes/clientes/{id}`** (`ordenes:editar`) — edición normal. **409** si la
   orden está en un estado congelado (`orden_cerrada`/`facturada`/`cobrada`). Recalcula
@@ -675,11 +781,6 @@ comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría
   tenga captura sobre el resto de la orden"*). **403** si el área no es Dirección/Admin;
   **400** si algún valor cambia sin `motivo_cambio`. Auditado en `LogCambioParametro`
   (`entidad="OrdenCliente"`).
-- **`PATCH /ordenes/clientes/{id}/vobo/{item_clave}`** (`ordenes:editar`) — marca/
-  desmarca UN ítem del checklist (`{"completado": bool}`). 422 si `item_clave` no es una
-  de las 10 fijas.
-- **`POST /ordenes/clientes/{id}/dar-vobo`** (`ordenes:editar`) — transición
-  `recibida`→`capturada`. 409 si falta algún ítem o si la orden ya no está en `recibida`.
 - **`POST /ordenes/clientes/{id}/cerrar`** (`ordenes:editar`) — transición a
   `orden_cerrada`. Body: `{odc_cerrada_ref, carta_conciliacion_ref}` (ambos opcionales).
   409 si la orden no está en `en_transmision`/`en_verificacion`, si no tiene ninguna
@@ -689,27 +790,71 @@ comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría
   `cierre_sin_odc_cerrada`/`cierre_sin_carta_conciliacion` de si los refs vinieron `null`.
 
 **`POST /ordenes/estaciones`** (`ordenes:crear`) — asigna una estación a una
-OrdenCliente. Hereda de la OC (`anunciante_id`, `vendedor_id`, `agencia_id`,
-`categoria_id`, `producto`, `contrato_id`, `duracion_spot`) y de la `Estacion`
-(`plaza_id`) — ninguno se acepta del cliente. Body: `orden_id`, `estacion_id`,
+"Orden de Servicio" (OrdenCliente), dando de alta su "Orden de Transmisión"
+(OrdenEstacion). Hereda de la OC (`anunciante_id`, `vendedor_id`, `agencia_id`,
+`categoria_id`, `producto`, `contrato_id`) y de la `Estacion` (`plaza_id`) — ninguno se
+acepta del cliente. Body: `orden_id`, `estacion_id`,
+`producto_tarifa` (req. — `spot|mencion|control_remoto|patrocinio`, ADR-102: **NO** es el
+`producto` heredado de la OC, es el producto del catálogo Tarifa, elegido por estación),
+`duracion_spot` (req. — `20s|30s|60s`; **ADR-106:** capturada POR ESTACIÓN, ya **no** se
+hereda de `OrdenCliente.duracion_spot` — corrige el alcance original de ADR-102),
 `precio_spot`, `observaciones_estacion`, `dias` (mín. 1: `fecha_transmision`,
-`hora_inicio`, `hora_fin`, `spots_asignados`, `spots_solicitados` opcional). Calcula
+`hora_inicio`, `hora_fin`, `spots_asignados`, `spots_solicitados` opcional),
+`motivo_cambio_tarifa` (opcional, transitorio), `reporte_programados_ref` (opcional —
+**ADR-121:** el backend lo acepta en `create`/`update`, mismo campo que antes solo vivía en
+`POST .../programados`. **ADR-143:** el frontend de alta/edición (`OrdenEstacionForm.tsx`)
+ya no muestra esta sección ni la manda al guardar — "ya no se ocupará" — pero el campo,
+schema y endpoint del backend siguen intactos sin cambios). Calcula
 `porcentaje_participacion_oir = (precio_unitario_OC − precio_spot) / precio_unitario_OC
-× 100` (1 decimal) y los 7 importes/IVA/totales. **400** si `precio_spot` excede la
-tarifa cliente de la OC, si el balance de spots (esta OE + hermanas) excede
-`oc.total_spots`, o si algún día cae fuera del rango de campaña. Si la OC estaba en
-`capturada`, la promueve a `en_transmision`.
+× 100` (1 decimal) y los 7 importes/IVA/totales. **ADR-101:** `precio_spot` puede superar
+la tarifa cliente de la OC — el margen OIR (`porcentaje_participacion_oir`/`importe_oir`/
+`iva_oir`/`total_oir`) simplemente se vuelve negativo (`precio_spot >= 0` sigue siendo el
+único piso; el tope superior de 100% en `porcentaje_participacion_oir` se mantiene).
+**ADR-102/ADR-106:** busca la tarifa ACTIVA de `TarifaPlaza` para (`estacion_id`,
+`Estacion.tipo_senal`, `duracion_spot` de ESTA OE, `producto_tarifa`); si `precio_spot` no
+coincide con su `tarifa_neta`, exige `motivo_cambio_tarifa` (**400** si falta) y audita en
+`LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — **sin** el
+candado de permiso de `TarifaPlaza.tarifa_bruta`/`descuento_pct` (Ventas sigue capturando
+libre). Sin tarifa activa para la combinación, no se audita nada.
+`PUT /ordenes/estaciones/{id}` acepta `duracion_spot` como OPCIONAL (mismo criterio que
+`producto_tarifa`: no forzar a capturarlo en una OE que aún no lo tenía).
+**400** si el balance de spots (esta OE + hermanas) excede `oc.total_spots`, o si algún
+día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promueve a
+`en_transmision`.
 - **`POST /ordenes/estaciones/{id}/programados`** (`ordenes:editar`) — 2.1→2.2. Body:
   `dias` (**solo excepciones** — los días no listados quedan `spots_programados =
-  spots_asignados`), `reporte_programados_ref`. 409 si la OE no está en `asignada`.
-- **`POST /ordenes/estaciones/{id}/reales`** (`ordenes:editar`) — 2.2→2.3. Body: `dias`
-  (solo excepciones respecto al programado EFECTIVO), `testigos_url`,
-  `testigos_ubicacion_alterna`, `notas_transmision`, `reporte_reales_ref`. Crea **una
-  `Verificacion` por CADA día** de la OE (spec — no solo los listados); genera una
+  spots_asignados`; cada excepción identifica su fila por `orden_estacion_dia_id`, **no**
+  por `fecha_transmision` — ver ADR-127: una OE puede tener 2+ días con la misma fecha,
+  varios spots/horarios el mismo día), `reporte_programados_ref`. 409 si la OE no está en
+  `asignada`. **ADR-121:** paso ya NO obligatorio ni con pantalla propia — la pantalla
+  ahora ofrece saltar directo de 2.1 a "Capturar Reales" (ver siguiente endpoint); este
+  sigue funcionando por compatibilidad, para un ajuste puntual de `spots_programados`
+  distinto al asignado.
+- **`POST /ordenes/estaciones/{id}/reales`** (`ordenes:editar`) — 2.2→2.3 (o **2.1→2.3
+  directo, ADR-121**: acepta la OE en `asignada` o en `en_transmision`). Body: `dias`
+  (solo excepciones respecto al programado EFECTIVO — `spots_programados` si se pasó por
+  `/programados`, si no `spots_asignados`; cada excepción identifica su fila por
+  `orden_estacion_dia_id`, **no** por `fecha_transmision`, mismo criterio de ADR-127 que
+  arriba), `notas_transmision`, `reporte_reales_ref` (el backend lo sigue aceptando sin
+  cambios; **ADR-146**: el frontend de "Capturar Reales" ya no muestra esta sección
+  ("Reporte del afiliado") ni la manda al avanzar — mismo criterio que ADR-143 con
+  `reporte_programados_ref`), `dias_nuevos` (**ADR-149**, opcional —
+  `{fecha_transmision, hora_inicio, spots > 0}[]`): crea días que NO existían, propuestos
+  por "Carga de Órdenes Reales Desde Layout" cuando una fecha+hora del CSV no coincide
+  con ningún día ya asignado. Cada uno nace con `spots_solicitados = spots_asignados =
+  spots_verificados = spots` (nunca genera `Incidencia`: verificado == programado). 400
+  (`error_dominio`) si la fecha cae fuera de la campaña de la OC, si ya existe un día con
+  esa fecha+hora, o si excede el balance de spots de TODA la OC (`spots_asignados`
+  sumados de las OE hermanas + los nuevos > `oc.total_spots`).
+  **ADR-119:** ya NO acepta `testigos_url`/
+  `testigos_ubicacion_alterna` — la pantalla de captura los reemplazó por "Evidencias de
+  lo Transmitido" (endpoints dedicados, arriba); esas 2 columnas siguen existiendo en
+  `OrdenEstacion` (dato histórico preservado) pero ya no se escriben desde aquí. Crea
+  **una `Verificacion` por CADA día** de la OE (spec — no solo los listados); genera una
   `Incidencia` automática (`faltante`/`excedente`, `monto_ajuste = diferencia ×
   precio_spot`, `resolucion="pendiente"`) por cada día con diferencia. 409 si la OE no
-  está en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la OC pasa de
-  `en_transmision` a `en_verificacion` automáticamente.
+  está en `asignada` ni en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la
+  OC pasa de `en_transmision` a `en_verificacion` automáticamente.
 
 **Adjuntos de Órdenes (ADR-042)** — antes "simulados" (solo se capturaba el nombre del
 archivo). Un endpoint genérico para los 5 campos de documento
@@ -745,6 +890,37 @@ Los 3 devuelven `application/pdf`. El nombre de empresa/domicilio del encabezado
 sale de `EmpresaFacturadora` (vía `OrdenCliente.empresa_facturadora_id`), no es un texto
 fijo. El encabezado incluye los logos de OIR y Grupo Radio Centro, leídos de
 `backend/app/assets/logos/` (sustituibles sin tocar código — ver ADR-044).
+
+**Correo de la Orden de Transmisión — `.eml` (ADR-105/120/124/126/140/144/145):**
+ADR-145 (petición del usuario) retiró el envío real por correo que existía antes (vía
+SES/SMTP/local) — la cuenta de SES sigue en modo *sandbox* (remitente no verificado,
+trabajo de IT fuera de alcance) y el usuario decidió no perseguirlo. El ÚNICO flujo de
+correo que queda es "Abrir correo": arma un `.eml` para que el usuario lo abra con su
+propio cliente de escritorio y lo mande él mismo. En la pantalla, al generar cualquiera
+de los 3 PDFs se propone "Imprimir" (el `GET` de vista previa de arriba, sin cambios) o
+"Abrir correo" (este endpoint).
+- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision/eml`**
+  (`ordenes:editar`) — `tipo` = `servicio` │ `programados` │ `reales`. Sin body. Resuelve
+  los destinatarios automáticamente según `tipo` (**ADR-140**): `servicio`/`reales` →
+  TODOS los `ContactoAnunciante` **activos** con `email_contacto` cargado del Anunciante
+  de la orden (quien contrató la pauta); `programados` → TODOS los `ContactoAfiliado`
+  **activos** con `email_contacto` cargado del Afiliado dueño de la Estación (quien
+  transmite). **400**, `error_dominio`, si no hay ninguno del lado que corresponda —
+  nunca se prepara un envío sin destinatarios. **400** también si la OE no ha llegado al
+  sub-estado que ese PDF requiere (mismo gateo que la descarga individual, p.ej. "reales"
+  antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta el PDF de `tipo` + TODO el
+  Material a Transmitir de la OE (si tiene). Regresa el archivo `.eml` crudo
+  (`Content-Type: message/rfc822`, `Content-Disposition: attachment;
+  filename="orden_transmision_<tipo>_<folio>.eml"`, con el encabezado `X-Unsent: 1` —
+  ADR-144) para que el usuario lo abra con doble clic en su cliente de correo de
+  escritorio (Outlook, etc.), directo como mensaje NUEVO editable (no en modo lectura).
+  Se registra en `LogEnvioCorreoOrdenEstacion` — `{log_envio_correo_id,
+  orden_estacion_id, tipo_pdf, destinatario_email, usuario, exitoso, mensaje_error,
+  fecha_envio}` — con `tipo_pdf` = el `tipo` pedido y `destinatario_email` como lista
+  separada por coma, siempre `exitoso=true` (armar el archivo no puede fallar como sí
+  podía fallar un envío real).
+- **`GET /ordenes/estaciones/{id}/envios-correo`** (`ordenes:leer`) — historial de `.eml`
+  generados para esta OE (los 3 tipos de PDF mezclados), del más reciente al más antiguo.
 
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo

@@ -8,7 +8,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { ODC_REVIEW_CHECKLIST } from "../constants";
 import { OrdenClienteForm } from "../ordenCliente/components/OrdenClienteForm";
 import { agencias, anunciantes, contratos, marcas, vendedores } from "../state/catalogosCache";
 import { fieldByLabelText } from "./domHelpers";
@@ -90,6 +89,25 @@ function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}
   );
   return { ...utils, onGuardar, onCancelar };
 }
+
+describe("ADR-141: 'Facturación directa'/'Afiliado factura' es un radio group mutuamente excluyente", () => {
+  it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", () => {
+    renderForm();
+
+    const directa = screen.getByLabelText(/Facturación directa al cliente/) as HTMLInputElement;
+    const afiliado = screen.getByLabelText(/Afiliado factura directo al cliente/) as HTMLInputElement;
+    expect(directa.checked).toBe(true);
+    expect(afiliado.checked).toBe(false);
+
+    fireEvent.click(afiliado);
+    expect(afiliado.checked).toBe(true);
+    expect(directa.checked).toBe(false);
+
+    fireEvent.click(directa);
+    expect(directa.checked).toBe(true);
+    expect(afiliado.checked).toBe(false);
+  });
+});
 
 describe("Cascada anunciante → contrato / marca (1.7)", () => {
   it("elegir un anunciante filtra sus contratos vigentes y sus marcas", () => {
@@ -185,6 +203,17 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").value).toBe("8");
   });
 
+  it("ADR-142 (corrige un bug real): volver a 'Sin vendedor secundario' limpia el % de comisión", () => {
+    const { container } = renderForm();
+    const vendedorSecundarioSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
+    fireEvent.change(vendedorSecundarioSelect, { target: { value: "ve1" } }); // auto-llena 5
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("5");
+
+    fireEvent.change(vendedorSecundarioSelect, { target: { value: "" } }); // Sin vendedor secundario
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("");
+  });
+
   it("el badge dice 'del catálogo' cuando coincide con el default, y 'sobrescrito' cuando se modifica a mano", () => {
     const { container } = renderForm();
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal"), { target: { value: "ve1" } });
@@ -226,30 +255,6 @@ describe("Snapshots de comisión — 1.8", () => {
   });
 });
 
-describe("Checklist de Vo.Bo. — transición 1.1 → 1.2 (1.5)", () => {
-  it("con 9 de 10 ítems marcados, 'Dar Vo.Bo.' permanece deshabilitado", () => {
-    renderForm();
-    for (const item of ODC_REVIEW_CHECKLIST.slice(0, 9)) {
-      fireEvent.click(screen.getByRole("checkbox", { name: item.label }));
-    }
-    expect(screen.getByRole("button", { name: /Dar Vo\.Bo\./ })).toBeDisabled();
-  });
-
-  it("con los 10 ítems marcados, 'Dar Vo.Bo.' se habilita", () => {
-    renderForm();
-    for (const item of ODC_REVIEW_CHECKLIST) {
-      fireEvent.click(screen.getByRole("checkbox", { name: item.label }));
-    }
-    expect(screen.getByRole("button", { name: /Dar Vo\.Bo\./ })).toBeEnabled();
-  });
-
-  it("al editar una OC que ya tiene Vo.Bo., el checklist ni el botón se muestran", () => {
-    renderForm({ isEdit: true, estatusActual: "orden_interna" });
-    expect(screen.queryByText("Checklist de revisión (PO §2)")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Dar Vo\.Bo\./ })).toBeNull();
-  });
-});
-
 describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
   it("fix: congelada deshabilita también los 3 campos de % de comisión (antes seguían editables)", () => {
     const { container } = renderForm({ isEdit: true, estatusActual: "orden_cerrada" });
@@ -270,14 +275,14 @@ describe("Aviso de tarifa cuando la OC ya tiene OE creadas", () => {
   it("con OE ya creadas, avisa que las existentes quedan con la tarifa anterior", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 2 });
     expect(
-      screen.getByText(/Esta OC ya tiene 2 órdenes internas creadas con la tarifa anterior/),
+      screen.getByText(/Esta orden ya tiene 2 Órdenes de Transmisión creadas con la tarifa anterior/),
     ).toBeInTheDocument();
   });
 
   it("con una sola OE, usa singular en vez de '1 órdenes'", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues: makeOCInput(), oeCount: 1 });
     expect(
-      screen.getByText(/Esta OC ya tiene 1 orden interna creada con la tarifa anterior/),
+      screen.getByText(/Esta orden ya tiene 1 Orden de Transmisión creada con la tarifa anterior/),
     ).toBeInTheDocument();
   });
 
@@ -329,7 +334,7 @@ describe("Spots bonificables (ADR-067)", () => {
     const { container, onGuardar } = renderForm();
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Total de spots"), { target: { value: "10" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables"), { target: { value: "11" } });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("No puede exceder el total de spots.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
@@ -343,7 +348,7 @@ describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
       target: { value: ayer },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("La fecha de inicio no puede ser una fecha pasada.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();
@@ -386,7 +391,7 @@ describe("Validación: fecha de venta no puede ser pasada", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
       target: { value: ayer },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como recibida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("La fecha de venta no puede ser una fecha pasada.")).toBeInTheDocument();
     expect(onGuardar).not.toHaveBeenCalled();

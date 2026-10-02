@@ -28,7 +28,7 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const footer = (
-    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", padding: "4px 24px 20px" }}>
       <button type="button" className="btn btn-sm" onClick={onCancel} disabled={loading}>
         {cancelLabel}
       </button>
@@ -37,13 +37,26 @@ export function ConfirmDialog({
         severity={danger ? "danger" : undefined}
         loading={loading}
         onClick={onConfirm}
+        style={{ fontSize: 12, padding: "0 14px" }}
       />
     </div>
   );
 
   return (
-    <Dialog header={title} visible={visible} onHide={onCancel} footer={footer} style={{ width: 420 }}>
-      <p style={{ fontSize: 13, color: "var(--text2)" }}>{message}</p>
+    // El reset global (`* { padding: 0 }` en theme.css) se come el padding que el tema
+    // de PrimeReact traía por default en header/content/footer — se repone a mano con
+    // `headerStyle`/`contentStyle` y el padding propio del footer (arriba), para que el
+    // texto y los botones no queden pegados al borde del diálogo.
+    <Dialog
+      header={title}
+      visible={visible}
+      onHide={onCancel}
+      footer={footer}
+      style={{ width: 480 }}
+      headerStyle={{ padding: "20px 24px 12px" }}
+      contentStyle={{ padding: "0 24px 20px" }}
+    >
+      <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text2)", margin: 0 }}>{message}</p>
     </Dialog>
   );
 }

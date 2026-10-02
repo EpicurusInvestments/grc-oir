@@ -27,7 +27,7 @@ const FILTROS: { key: FiltroOrdenCliente; label: string }[] = [
 ];
 
 const FILTRO_DESCRIPCION: Partial<Record<FiltroOrdenCliente, string>> = {
-  listas_cerrar: "Solo órdenes cuyas órdenes internas están todas en 2.3 (reales conciliados).",
+  listas_cerrar: "Solo órdenes cuyas órdenes de transmisión están todas en 2.3 (reales conciliados).",
   listas_facturar: "Solo órdenes ya cerradas (estado 3).",
 };
 
@@ -75,20 +75,21 @@ export function OrdenClienteListPage({
 
   const filtroDescripcion = filtro !== (filtroInicial ?? "todas") ? undefined : FILTRO_DESCRIPCION[filtro];
 
-  const onGuardar = async (input: OrdenClienteInput, opts: { darVobo: boolean; motivoComision?: string }) => {
+  const onGuardar = async (input: OrdenClienteInput, opts: { motivoComision?: string }) => {
     setSubmitError(null);
     setSubmitting(true);
     try {
       if (modo === "new") {
-        const nueva = await crearOC(input, opts.darVobo);
+        const nueva = await crearOC(input);
         setSelectedId(nueva.id);
+        setModo("view");
+        // ADR-100: alta unificada — al guardar la Orden de Servicio se encadena directo
+        // hacia la captura de su primera Orden de Transmisión, sin pasar por la lista.
+        onAsignarEstaciones(nueva.id);
+        return;
       } else if (modo === "edit" && selected) {
         const auditoria = opts.motivoComision ? { motivo: opts.motivoComision } : undefined;
-        await actualizarOC(
-          selected.id,
-          { ...input, ...(opts.darVobo ? { estatus_orden: "orden_cliente_con_vobo" as const } : {}) },
-          { auditoria },
-        );
+        await actualizarOC(selected.id, input, { auditoria });
       }
       setModo("view");
     } catch (e) {
@@ -101,7 +102,7 @@ export function OrdenClienteListPage({
   if (modo === "new" || modo === "edit") {
     return (
       <OrdenClienteForm
-        title={modo === "new" ? "Nueva orden del cliente" : `Editar: ${selected?.folio_orden}`}
+        title={modo === "new" ? "Nueva Orden de Servicio" : `Editar: ${selected?.folio_orden}`}
         isEdit={modo === "edit"}
         estatusActual={selected?.estatus_orden}
         defaultValues={modo === "edit" ? selected ?? undefined : undefined}
@@ -150,10 +151,10 @@ export function OrdenClienteListPage({
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Órdenes del cliente</div>
+          <div className="cat-title">Órdenes de Servicio</div>
           <div className="cat-sub">
-            Órdenes recibidas del anunciante o agencia. De aquí se derivan las órdenes internas (OI). El listado muestra el estado raíz
-            (1–5); el detalle de la OC muestra el sub-estado de cada OI hija.
+            Órdenes recibidas del anunciante o agencia. De aquí se derivan las órdenes de transmisión (OT). El listado muestra el estado
+            raíz (1–5); el detalle de la orden muestra el sub-estado de cada OT hija.
           </div>
         </div>
         <button
@@ -221,7 +222,7 @@ export function OrdenClienteListPage({
                   Total
                 </th>
                 <th className="td-center" style={{ width: "6%" }}>
-                  OI
+                  OT
                 </th>
                 <th className="td-center" style={{ width: "14%" }}>
                   Estado
@@ -294,7 +295,7 @@ export function OrdenClienteListPage({
               }}
             />
           ) : (
-            <DetailEmpty message="Selecciona una orden para ver sus datos y órdenes internas." />
+            <DetailEmpty message="Selecciona una orden para ver sus datos y órdenes de transmisión." />
           )
         }
       />

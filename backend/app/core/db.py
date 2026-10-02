@@ -132,4 +132,19 @@ def get_db() -> Iterator[Session]:
     try:
         yield session
     finally:
-        session.close()
+        try:
+            session.close()
+        except Exception:  # noqa: BLE001
+            # ADR-114 (fix): si la conexión a RDS se cae A MITAD de un request (corte de
+            # red intermitente — se observó en TODO tipo de endpoint, no solo escritura:
+            # es de conectividad, no de una consulta en particular), `session.close()`
+            # intenta un rollback implícito sobre un socket ya muerto y revienta con OTRA
+            # excepción. Esa segunda excepción ocurre dentro del `finally` de este
+            # generador, en un punto que ya no está envuelto por el middleware de manejo
+            # de errores de FastAPI — se escapa y aborta la conexión ASGI entera, así que
+            # el cliente nunca recibe el 500 con JSON que FastAPI ya iba a mandar por la
+            # excepción ORIGINAL: ve un corte crudo de conexión ("Network Error" en
+            # axios/el navegador) incluso cuando el error real ya se había manejado
+            # limpio. Tragarlo aquí no oculta nada — la sesión de todos modos se
+            # descarta; `pool_pre_ping` evita reutilizar una conexión muerta después.
+            pass

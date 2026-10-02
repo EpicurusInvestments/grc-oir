@@ -17,7 +17,7 @@ export function RootBadge({ estatus }: { estatus: EstadoOC }) {
   );
 }
 
-/** Badge del sub-estado completo de una OC (p.ej. "1.1 ODC sin Vo.Bo."). */
+/** Badge del sub-estado completo de una OC (p.ej. "1.2 Capturada"). */
 export function EstadoOCBadge({ estatus }: { estatus: EstadoOC }) {
   return <span className={`badge ${ESTADO_OC_BADGE_CLASS[estatus]}`}>{STATUS_LABELS[estatus]}</span>;
 }

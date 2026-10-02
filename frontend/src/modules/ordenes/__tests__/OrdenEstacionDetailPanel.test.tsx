@@ -4,23 +4,62 @@
  * Componente puramente presentacional: no necesita ningún Provider.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { previsualizarPdfOrdenEstacion } from "../adapters/pdfsApi";
 import { OrdenEstacionDetailPanel } from "../ordenEstacion/components/OrdenEstacionDetailPanel";
-import { estaciones, tarifas } from "../state/catalogosCache";
+import { afiliados, anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import { makeOC, makeOE, makeRow } from "./fixtures";
 
 vi.mock("../adapters/pdfsApi", () => ({
   previsualizarPdfOrdenEstacion: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../adapters/escrituraApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/escrituraApi")>()),
+  listarEnviosCorreoOrdenEstacionApi: vi.fn().mockResolvedValue([
+    {
+      log_envio_correo_id: "log-1",
+      orden_estacion_id: "oe-envio",
+      tipo_pdf: "servicio",
+      destinatario_email: "contacto@afiliado.com",
+      usuario: "dev.admin",
+      exitoso: true,
+      mensaje_error: null,
+      fecha_envio: "2026-09-27T14:48:00",
+    },
+  ]),
+  listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
+}));
+
+// ADR-140: Servicio/Reales dependen de `ContactoAnunciante`, Programados de
+// `ContactoAfiliado` — mockeados por separado para poder probarlos de forma
+// independiente (un tipo habilitado no debe habilitar el otro).
+const listPorAfiliadoMock = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+vi.mock("@/modules/catalogos/afiliado/api", () => ({
+  contactoAfiliadoApi: { listPorAfiliado: (...args: unknown[]) => listPorAfiliadoMock(...args) },
+}));
+const listPorAnuncianteMock = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+vi.mock("@/modules/catalogos/anunciante/api", () => ({
+  contactoAnuncianteApi: { listPorAnunciante: (...args: unknown[]) => listPorAnuncianteMock(...args) },
+}));
+
 // `state/catalogosCache.ts` nace vacío; el componente resuelve `estacion`/`tarifaReferencia`
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
 // necesitan: es6 = XHRC-FM (fm), ta1 = es6/fm/30s → tarifa_bruta 9500, descuento 10%.
 estaciones.push({ id: "es6", afiliado_id: "af3", plaza_id: "pl1", nombre_estacion: "XHRC-FM", frecuencia: "100.9 FM", tipo_senal: "fm" });
-tarifas.push({ id: "ta1", estacion_id: "es6", tipo_senal: "fm", duracion_spot: "30s", tarifa_bruta: 9500, descuento_pct: 10 });
+tarifas.push({ id: "ta1", estacion_id: "es6", tipo_senal: "fm", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+afiliados.push({ id: "af3", nombre_afiliado: "Afiliado Tres", porcentaje_participacion_oir_default: 20, contacto_email: null });
+anunciantes.push({
+  id: "an1",
+  agencia_id: null,
+  nombre_comercial: "Anunciante Uno",
+  nombre_fiscal: "Anunciante Uno SA de CV",
+  rfc_anunciante: "ANU900101AB1",
+  dias_credito_default: 30,
+  categoria_id: "cat1",
+});
 
 // Nota: SIN valor por defecto para `oc` a propósito — un parámetro con default no puede
 // distinguir "no lo pasé" de "pasé undefined a propósito" (ambos casos activan el default),
@@ -37,7 +76,6 @@ function renderPanel(
       incidencias={[]}
       onVerOC={vi.fn()}
       onEditar={onEditar}
-      onCapturarProgramados={vi.fn()}
       onCapturarReales={vi.fn()}
       onVerVerificacion={vi.fn()}
     />,
@@ -68,25 +106,25 @@ describe("Desvío contra tarifa de referencia — 1.4", () => {
   it("muestra el % de desvío contra la tarifa de referencia vigente del catálogo", () => {
     // es6 = XHRC-FM, plaza pl1, tipo fm. ta1 = pl1/fm/30s: tarifa_bruta 9500, descuento 10%
     // → tarifaRefNeta = 8,550. precio_spot 9,405 = 8,550 × 1.10 → desvío exacto de +10.0%.
-    const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1", precio_spot: 9405 });
-    const oc = makeOC({ duracion_spot: "30s" });
-    renderPanel(oe, oc);
+    // ADR-106: la duración es propia de la OE (ya no de la OC).
+    const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1", duracion_spot: "30s", precio_spot: 9405 });
+    renderPanel(oe, makeOC());
 
     expect(screen.getByText(/Tarifa de referencia \(catálogo, FM\): \$8,550\.00/)).toBeInTheDocument();
     expect(screen.getByText(/\+10\.0% vs\. catálogo/)).toBeInTheDocument();
   });
 
   it("sin tarifa de referencia vigente para la combinación, no revienta — pero la línea se omite por completo (no muestra un '—' explícito)", () => {
-    const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1", precio_spot: 9000 });
-    const oc = makeOC({ duracion_spot: "10s" }); // ninguna tarifa vigente tiene esta duración
-    expect(() => renderPanel(oe, oc)).not.toThrow();
+    // ta1 solo cubre 30s — 60s no tiene ninguna tarifa vigente para es6/fm.
+    const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1", duracion_spot: "60s", precio_spot: 9000 });
+    expect(() => renderPanel(oe, makeOC())).not.toThrow();
     expect(screen.queryByText(/Tarifa de referencia/)).toBeNull();
   });
 
   it("sin OrdenCliente asociada (oc undefined), tampoco revienta", () => {
     const oe = makeOE({ estacion_id: "es6", plaza_id: "pl1" });
     expect(() => renderPanel(oe, undefined)).not.toThrow();
-    expect(screen.getByText("La orden del cliente ya no existe.")).toBeInTheDocument();
+    expect(screen.getByText("La Orden de Servicio ya no existe.")).toBeInTheDocument();
   });
 });
 
@@ -114,12 +152,12 @@ describe('Botón "Editar" — corrección de errores de captura antes de transmi
 });
 
 describe("PDFs de la orden interna — botones de descarga por etapa", () => {
-  it("en 'asignada_afiliado', solo aparece el PDF de servicio", () => {
+  it("en 'asignada_afiliado', ya aparecen servicio y programados (ADR-121), no reales", () => {
     const oe = makeOE({ estatus: "asignada_afiliado" });
     renderPanel(oe, makeOC());
 
     expect(screen.getByText(/PDF #1 · Orden de servicio/)).toBeInTheDocument();
-    expect(screen.queryByText(/PDF #2 · Programados/)).toBeNull();
+    expect(screen.getByText(/PDF #2 · Programados/)).toBeInTheDocument();
     expect(screen.queryByText(/PDF #3 · Reales/)).toBeNull();
   });
 
@@ -132,7 +170,7 @@ describe("PDFs de la orden interna — botones de descarga por etapa", () => {
     expect(screen.queryByText(/PDF #3 · Reales/)).toBeNull();
   });
 
-  it("en 'reales_conciliados', aparecen los 3 y cada uno abre el visor con su propio tipo", () => {
+  it("en 'reales_conciliados', aparecen los 3 y cada uno ofrece Imprimir/Abrir correo con su propio tipo", async () => {
     const oe = makeOE({ estatus: "reales_conciliados" });
     renderPanel(oe, makeOC());
 
@@ -140,7 +178,78 @@ describe("PDFs de la orden interna — botones de descarga por etapa", () => {
     expect(screen.getByText(/PDF #2 · Programados/)).toBeInTheDocument();
     expect(screen.getByText(/PDF #3 · Reales/)).toBeInTheDocument();
 
+    // ADR-120: el clic ya no abre el PDF directo — primero propone Enviar/Imprimir.
     fireEvent.click(screen.getByText(/PDF #3 · Reales/));
+    fireEvent.click(screen.getByText("🖨️ Imprimir"));
     expect(previsualizarPdfOrdenEstacion).toHaveBeenCalledWith(oe.id, "reales", oe.folio_orden_interna);
+    await waitFor(() => expect(screen.queryByText("🖨️ Imprimir")).toBeNull());
+  });
+});
+
+describe("'Enviado a...' es una confirmación transitoria (ADR-135)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("se muestra al cargar el historial y se oculta sola a los 10s", async () => {
+    const oe = makeOE({ estatus: "reales_conciliados" });
+    vi.useFakeTimers();
+    renderPanel(oe, makeOC());
+
+    // Deja resolver el `listarEnviosCorreoOrdenEstacionApi` mockeado (microtask).
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Enviado a contacto@afiliado\.com/)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(screen.queryByText(/Enviado a contacto@afiliado\.com/)).toBeNull();
+  });
+});
+
+describe("ADR-140/ADR-145: Servicio/Reales dependen del anunciante; Programados del afiliado", () => {
+  it("un tipo habilitado no habilita al otro — cada uno consulta su propio catálogo de contactos", async () => {
+    // Anunciante CON contacto activo; afiliado SIN ninguno.
+    listPorAnuncianteMock.mockResolvedValueOnce({
+      items: [
+        {
+          contacto_anunciante_id: "ca-1",
+          anunciante_id: "an1",
+          nombre_contacto: "Contacto",
+          email_contacto: "anunciante@x.com",
+          activo: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 100,
+      pages: 1,
+    });
+    listPorAfiliadoMock.mockResolvedValueOnce({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+
+    const oe = makeOE({ estatus: "reales_conciliados", estacion_id: "es6" });
+    renderPanel(oe, makeOC());
+
+    await waitFor(() => expect(listPorAnuncianteMock).toHaveBeenCalledWith("an1", { activo: true, size: 100 }));
+    await waitFor(() => expect(listPorAfiliadoMock).toHaveBeenCalledWith("af3", { activo: true, size: 100 }));
+
+    // PDF #1 (Servicio) → depende del anunciante, que SÍ tiene contacto activo.
+    fireEvent.click(screen.getByText(/PDF #1 · Orden de servicio/));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Abrir correo/ })).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByText("Cancelar"));
+
+    // PDF #2 (Programados) → depende del afiliado, que NO tiene ninguno.
+    fireEvent.click(screen.getByText(/PDF #2 · Programados/));
+    expect(screen.getByRole("button", { name: /Abrir correo/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Abrir correo/ }).getAttribute("title"),
+    ).toBe("El afiliado no tiene contactos activos con correo cargado.");
   });
 });

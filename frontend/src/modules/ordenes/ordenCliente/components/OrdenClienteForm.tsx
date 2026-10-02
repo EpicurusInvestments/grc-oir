@@ -9,15 +9,14 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { FieldTag, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
-import { ChecklistVoBo } from "../../components/ChecklistVoBo";
-import { FROZEN_STATES, IVA_RATE, isChecklistComplete, OBS_PREDEFINIDAS } from "../../constants";
+import { FROZEN_STATES, IVA_RATE, OBS_PREDEFINIDAS } from "../../constants";
 import { fmtMonto } from "../../format";
 import {
   agencias,
@@ -136,7 +135,7 @@ interface OrdenClienteFormProps {
   title: string;
   isEdit?: boolean;
   estatusActual?: EstadoOC;
-  defaultValues?: Partial<OrdenClienteInput> & { revision_checklist?: Record<string, boolean> };
+  defaultValues?: Partial<OrdenClienteInput>;
   /** Nº de OrdenEstacion YA creadas para esta OC (solo aplica en edición). Aviso, no
    *  candado: cambiar la tarifa aquí no toca las OE existentes (cada una guarda su
    *  propio `precio_spot`), pero conviene que quien edita sepa que ya hay órdenes
@@ -144,7 +143,7 @@ interface OrdenClienteFormProps {
   oeCount?: number;
   submitting?: boolean;
   submitError?: string | null;
-  onGuardar: (input: OrdenClienteInput, opts: { darVobo: boolean; motivoComision?: string }) => void;
+  onGuardar: (input: OrdenClienteInput, opts: { motivoComision?: string }) => void;
   onCancelar: () => void;
 }
 
@@ -161,14 +160,11 @@ export function OrdenClienteForm({
   onGuardar,
   onCancelar,
 }: OrdenClienteFormProps) {
-  const [checklist, setChecklist] = useState<Record<string, boolean>>(defaultValues?.revision_checklist ?? {});
-
   const congelado = isEdit && estatusActual ? FROZEN_STATES.includes(estatusActual) : false;
   // Con la OC congelada (orden_cerrada+), el formulario completo es de solo lectura sin
   // excepción — el canal dedicado de comisiones (`PATCH /comisiones`) sigue existiendo en
   // el backend, pero este formulario ya no ofrece forma de llegar a él.
   const canEditComisiones = !congelado;
-  const puedeMostrarChecklist = !isEdit || estatusActual === "orden_cliente_sin_vobo";
 
   const {
     register,
@@ -191,7 +187,10 @@ export function OrdenClienteForm({
       producto: defaultValues?.producto ?? "",
       categoria_id: defaultValues?.categoria_id ?? "",
       direccion_facturacion: defaultValues?.direccion_facturacion ?? "",
-      facturacion_directa_cliente: defaultValues?.facturacion_directa_cliente ?? false,
+      // ADR-141 (petición del usuario): default del radio group en el ALTA (sin
+      // defaultValues) es "Facturación directa al cliente" — editar una orden existente
+      // conserva su valor real tal cual, incluido un `false` explícito.
+      facturacion_directa_cliente: defaultValues?.facturacion_directa_cliente ?? true,
       afiliado_factura_directo_al_cliente: defaultValues?.afiliado_factura_directo_al_cliente ?? false,
       fecha_inicio_campania: defaultValues?.fecha_inicio_campania ?? "",
       fecha_fin_campania: defaultValues?.fecha_fin_campania ?? "",
@@ -238,9 +237,14 @@ export function OrdenClienteForm({
   const onVendedorChange = (campo: "vendedor_principal_id" | "vendedor_secundario_id", id: string) => {
     setValue(campo, id);
     const pctCampo = campo === "vendedor_principal_id" ? "porcentaje_comision_vendedor_principal_snap" : "porcentaje_comision_vendedor_secundario_snap";
-    if (!watch(pctCampo)) {
-      const vendedor = findVendedor(id);
-      if (vendedor) setValue(pctCampo, String(vendedor.porcentaje_comision_default));
+    const vendedor = findVendedor(id);
+    if (vendedor) {
+      if (!watch(pctCampo)) setValue(pctCampo, String(vendedor.porcentaje_comision_default));
+    } else {
+      // ADR-142 (corrige un bug real): volver a "Sin vendedor secundario" dejaba pegado
+      // el % de comisión del vendedor elegido antes por error — sin vendedor no hay
+      // comisión que aplique (mismo criterio que "Sin agencia" en `onAgenciaChange`).
+      setValue(pctCampo, "");
     }
   };
 
@@ -303,8 +307,6 @@ export function OrdenClienteForm({
   // ── adjunto ODC (subida real; ver AdjuntoOrdenInput) ──
   const odcPdfRef = watch("odc_pdf_ref");
 
-  // handleSubmit necesita un callback (data)=>void; envolvemos para exponer 2 acciones
-  // (Guardar / Dar Vo.Bo.) que comparten la misma validación.
   const construir = (data: FormValues) => {
     const input: OrdenClienteInput = {
       numero_orden_cliente: data.numero_orden_cliente.trim(),
@@ -345,7 +347,6 @@ export function OrdenClienteForm({
       observaciones_predefinidas: data.observaciones_predefinidas ?? "",
       observaciones_libres: data.observaciones_libres?.trim() ?? "",
       odc_pdf_ref: data.odc_pdf_ref || null,
-      revision_checklist: checklist,
     };
     const cambioComision = CAMPOS_SNAP.some((campo) => input[campo] !== (defaultValues?.[campo] ?? null));
     return { input, motivoComision: cambioComision ? data.motivo_cambio_comision?.trim() || undefined : undefined, cambioComision };
@@ -366,16 +367,8 @@ export function OrdenClienteForm({
   const guardar = handleSubmit((data) => {
     const resultado = construirYValidar(data);
     if (!resultado) return;
-    onGuardar(resultado.input, { darVobo: false, motivoComision: resultado.motivoComision });
+    onGuardar(resultado.input, { motivoComision: resultado.motivoComision });
   });
-
-  const darVobo = handleSubmit((data) => {
-    const resultado = construirYValidar(data);
-    if (!resultado) return;
-    onGuardar(resultado.input, { darVobo: true, motivoComision: resultado.motivoComision });
-  });
-
-  const checklistCompleto = isChecklistComplete(checklist);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -527,8 +520,8 @@ export function OrdenClienteForm({
                 )}
               </div>
               <div>
-                <div className="fl">Producto específico</div>
-                <input className="fi" placeholder="Descripción del producto anunciado" disabled={congelado} {...register("producto")} />
+                <div className="fl">Campaña</div>
+                <input className="fi" placeholder="Descripción de la campaña anunciada" disabled={congelado} {...register("producto")} />
               </div>
             </div>
           </div>
@@ -623,8 +616,8 @@ export function OrdenClienteForm({
                   marginBottom: 10,
                 }}
               >
-                ⚠ Esta OC ya tiene {oeCount}{" "}
-                {oeCount === 1 ? "orden interna creada" : "órdenes internas creadas"} con la
+                ⚠ Esta orden ya tiene {oeCount}{" "}
+                {oeCount === 1 ? "Orden de Transmisión creada" : "Órdenes de Transmisión creadas"} con la
                 tarifa anterior; las nuevas usarán la tarifa actualizada.
               </div>
             )}
@@ -670,16 +663,41 @@ export function OrdenClienteForm({
               <span className="derivado-hint">editable si esta venta usa otra</span>
             </div>
             <textarea className="ftxt" rows={2} disabled={congelado} {...register("direccion_facturacion")} />
+            {/* ADR-141 (petición del usuario): antes eran 2 checkboxes independientes —
+                permitían los 4 estados (ninguno/uno/otro/los dos), pero solo UNO tiene
+                sentido de negocio a la vez. Un solo radio group garantiza exactamente
+                uno seleccionado siempre; siguen siendo 2 columnas booleanas del modelo
+                (spec BD v2, sin cambio de esquema) — el radio solo pone la contraria en
+                `false` al elegir una. Default (alta nueva): "Facturación directa al
+                cliente". */}
             <div className="r2" style={{ marginTop: 6 }}>
               <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
-                <input type="checkbox" disabled={congelado} {...register("facturacion_directa_cliente")} />
+                <input
+                  type="radio"
+                  name="tipo_facturacion"
+                  disabled={congelado}
+                  checked={watch("facturacion_directa_cliente")}
+                  onChange={() => {
+                    setValue("facturacion_directa_cliente", true);
+                    setValue("afiliado_factura_directo_al_cliente", false);
+                  }}
+                />
                 <div>
                   <div className="check-box-title">Facturación directa al cliente</div>
                   <div className="check-box-desc">Se factura al anunciante sin pasar por la agencia.</div>
                 </div>
               </label>
               <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
-                <input type="checkbox" disabled={congelado} {...register("afiliado_factura_directo_al_cliente")} />
+                <input
+                  type="radio"
+                  name="tipo_facturacion"
+                  disabled={congelado}
+                  checked={watch("afiliado_factura_directo_al_cliente")}
+                  onChange={() => {
+                    setValue("afiliado_factura_directo_al_cliente", true);
+                    setValue("facturacion_directa_cliente", false);
+                  }}
+                />
                 <div>
                   <div className="check-box-title">Afiliado factura directo al cliente</div>
                   <div className="check-box-desc">El afiliado emite su factura al cliente final, no a OIR.</div>
@@ -888,8 +906,6 @@ export function OrdenClienteForm({
               </>
             )}
           </div>
-
-          {puedeMostrarChecklist && <ChecklistVoBo checklist={checklist} onChange={setChecklist} />}
         </div>
       </div>
 
@@ -904,19 +920,8 @@ export function OrdenClienteForm({
             Cancelar
           </button>
           <button type="button" className="btn btn-sm btn-teal" onClick={guardar} disabled={submitting}>
-            {isEdit ? "Guardar cambios" : "Guardar como recibida"}
+            {isEdit ? "Guardar cambios" : "Guardar"}
           </button>
-          {puedeMostrarChecklist && (
-            <button
-              type="button"
-              className="btn btn-sm btn-teal"
-              onClick={darVobo}
-              disabled={submitting || !checklistCompleto}
-              title={checklistCompleto ? undefined : "Completa el checklist para dar Vo.Bo."}
-            >
-              Dar Vo.Bo. {isEdit ? "" : "y capturar"} →
-            </button>
-          )}
         </div>
       </div>
     </div>

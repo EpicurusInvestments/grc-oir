@@ -54,7 +54,7 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, Unicode, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -167,6 +167,17 @@ class TarifaPlazaUpdate(BaseModel):
     motivo_cambio: str | None = Field(default=None, max_length=500)
 
 
+class TarifaListParams(ListParams):
+    """`ListParams` + filtros propios (ADR-102, Fase 2 de Órdenes): F1 los usa para
+    encontrar la tarifa ACTIVA de una combinación exacta y sugerir `precio_spot` al
+    asignar una estación."""
+
+    estacion_id: uuid.UUID | None = None
+    tipo_senal: TipoSenal | None = None
+    duracion_spot: DuracionSpot | None = None
+    producto: ProductoTarifa | None = None
+
+
 class TarifaPlazaRead(CatalogoReadBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -209,6 +220,10 @@ class TarifaRepository(BaseRepository[TarifaPlaza]):
                     TarifaPlaza.notas.ilike(patron),
                 )
             )
+        for campo in ("estacion_id", "tipo_senal", "duracion_spot", "producto"):
+            valor = getattr(params, campo, None)
+            if valor is not None:
+                stmt = stmt.where(getattr(TarifaPlaza, campo) == valor)
         return stmt
 
     def existe_duplicado_activo(
@@ -419,6 +434,43 @@ router = build_crud_router(
     get_service=get_tarifa_service,
     id_type=uuid.UUID,
 )
+
+
+# La factory arma un `listar` genérico; F1 (Fase 2) necesita ADEMÁS los filtros
+# `estacion_id`/`tipo_senal`/`duracion_spot`/`producto` para encontrar la tarifa ACTIVA de
+# una combinación exacta. Se retira SOLO esa ruta y se registra una equivalente con esos
+# query params, sin tocar `crud_router.py` (mismo patrón que Estación/Anunciante/Contrato,
+# ADR-015 E-3) — evita además el problema de colisión de rutas que tuvo `/vobo` antes de
+# ADR-100 (un `GET /tarifas/buscar` agregado DESPUÉS de `/{item_id}` sería interceptado
+# por esa ruta genérica).
+router.routes = [r for r in router.routes if getattr(r, "name", None) != "listar"]
+
+
+@router.get("", response_model=Page[TarifaPlazaRead])
+def listar_tarifas(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    activo: bool | None = Query(None, description="None=todas, true=activas, false=inactivas"),
+    q: str | None = Query(None, description="Búsqueda por nombre/siglas de estación o notas"),
+    estacion_id: uuid.UUID | None = Query(None, description="Filtra por estación"),
+    tipo_senal: TipoSenal | None = Query(None, description="Filtra por tipo de señal"),
+    duracion_spot: DuracionSpot | None = Query(None, description="Filtra por duración de spot"),
+    producto: ProductoTarifa | None = Query(None, description="Filtra por producto"),
+    usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
+    svc: TarifaService = Depends(get_tarifa_service),
+) -> Page[TarifaPlazaRead]:
+    return svc.list(
+        TarifaListParams(
+            page=page,
+            size=size,
+            activo=activo,
+            q=q,
+            estacion_id=estacion_id,
+            tipo_senal=tipo_senal,
+            duracion_spot=duracion_spot,
+            producto=producto,
+        )
+    )
 
 
 @router.get("/{item_id}/historial", response_model=list[audit.LogCambioParametroRead])

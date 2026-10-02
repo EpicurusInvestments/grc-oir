@@ -4,14 +4,36 @@
  * debería necesitar conocer la forma de los DTOs (`ordenesApiDTO.ts`).
  */
 
-import type { Incidencia, OrdenCliente, OrdenEstacion, PeriodoTransmisionRow } from "../types";
+import type {
+  Incidencia,
+  LayoutRealAplicado,
+  LayoutRealError,
+  LayoutRealNuevo,
+  LogEnvioCorreo,
+  OrdenCliente,
+  OrdenEstacion,
+  OrdenEstacionAudio,
+  OrdenEstacionEvidencia,
+  OrdenEstacionFormatoReal,
+  OrdenEstacionFormatoRealCliente,
+  OrdenEstacionLayoutReal,
+  PeriodoTransmisionRow,
+} from "../types";
 import { estatusOCDesdeApi, estatusOEDesdeApi, tipoIncidenciaDesdeApi } from "./vocabulario";
 import type {
   IncidenciaApiDTO,
+  LayoutRealAplicadoApiDTO,
+  LayoutRealErrorApiDTO,
+  LayoutRealNuevoApiDTO,
+  LogEnvioCorreoApiDTO,
   OrdenClienteApiDTO,
-  OrdenClienteVoBoItemApiDTO,
   OrdenEstacionApiDTO,
+  OrdenEstacionAudioApiDTO,
   OrdenEstacionDiaApiDTO,
+  OrdenEstacionEvidenciaApiDTO,
+  OrdenEstacionFormatoRealApiDTO,
+  OrdenEstacionFormatoRealClienteApiDTO,
+  OrdenEstacionLayoutRealApiDTO,
   VerificacionApiDTO,
 } from "./ordenesApiDTO";
 
@@ -21,10 +43,7 @@ function soloHoraMinuto(hora: string): string {
   return hora.slice(0, 5);
 }
 
-export function ordenClienteFromApi(
-  dto: OrdenClienteApiDTO,
-  voboItems: OrdenClienteVoBoItemApiDTO[],
-): OrdenCliente {
+export function ordenClienteFromApi(dto: OrdenClienteApiDTO): OrdenCliente {
   const documentosFaltantes: ("odc_cerrada" | "carta_conciliacion")[] = [];
   if (dto.cierre_sin_odc_cerrada) documentosFaltantes.push("odc_cerrada");
   if (dto.cierre_sin_carta_conciliacion) documentosFaltantes.push("carta_conciliacion");
@@ -66,7 +85,6 @@ export function ordenClienteFromApi(
         : null,
     observaciones_predefinidas: dto.observaciones_predefinidas ?? "",
     observaciones_libres: dto.observaciones_libres ?? "",
-    revision_checklist: Object.fromEntries(voboItems.map((v) => [v.item_clave, v.completado])),
     estatus_orden: estatusOCDesdeApi(dto.estatus_orden),
     estatus_pago_afiliado: dto.estatus_pago_afiliado as OrdenCliente["estatus_pago_afiliado"],
     estatus_pago_agencia: dto.estatus_pago_agencia as OrdenCliente["estatus_pago_agencia"],
@@ -99,10 +117,17 @@ export function ordenEstacionFromApi(
     hora_inicio: soloHoraMinuto(d.hora_inicio),
     hora_termino: soloHoraMinuto(d.hora_fin),
     spots_diarios: d.spots_asignados,
+    orden_estacion_dia_id: d.orden_estacion_dia_id,
+    orden_estacion_audio_id: d.orden_estacion_audio_id,
+    cancelada: d.cancelada,
   }));
 
   // Solo los días con un valor CONFIRMADO que difiere del asignado (v5 solo guarda
   // overrides, no la serie completa — ver `programadoEfectivo` en selectors.ts).
+  // ADR-127: cada override lleva su propio `orden_estacion_dia_id` — antes se matcheaba
+  // por `fecha` solamente, lo que confundía las filas cuando una OE tiene 2+ spots el
+  // mismo día (el modelo ya lo permite: `uq_orden_estacion_dia_oe_fecha_hora` incluye
+  // `hora_inicio`, no solo la fecha).
   const horarios_programados: PeriodoTransmisionRow[] = diasOrdenados
     .filter((d) => d.spots_programados != null && d.spots_programados !== d.spots_asignados)
     .map((d) => ({
@@ -110,6 +135,7 @@ export function ordenEstacionFromApi(
       hora_inicio: soloHoraMinuto(d.hora_inicio),
       hora_termino: soloHoraMinuto(d.hora_fin),
       spots_diarios: d.spots_programados as number,
+      orden_estacion_dia_id: d.orden_estacion_dia_id,
     }));
 
   const verificacionPorDia = new Map(verificaciones.map((v) => [v.orden_estacion_dia_id, v]));
@@ -124,6 +150,7 @@ export function ordenEstacionFromApi(
         hora_inicio: soloHoraMinuto(d.hora_inicio),
         hora_termino: soloHoraMinuto(d.hora_fin),
         spots_diarios: verificacion.spots_verificados,
+        orden_estacion_dia_id: d.orden_estacion_dia_id,
       });
     }
   }
@@ -132,16 +159,17 @@ export function ordenEstacionFromApi(
     id: dto.orden_estacion_id,
     folio_orden_interna: dto.folio_orden_estacion,
     orden_id: dto.orden_id,
+    anunciante_id: dto.anunciante_id,
     estacion_id: dto.estacion_id,
     plaza_id: dto.plaza_id,
+    producto_tarifa: dto.producto_tarifa as OrdenEstacion["producto_tarifa"],
+    duracion_spot: dto.duracion_spot as OrdenEstacion["duracion_spot"],
     precio_spot: Number(dto.precio_spot),
     cantidad_spots_bonificables: dto.cantidad_spots_bonificables,
     porcentaje_participacion_oir: Number(dto.porcentaje_participacion_oir),
     periodo_transmision,
     horarios_programados: horarios_programados.length > 0 ? horarios_programados : undefined,
     horarios_reales: horarios_reales.length > 0 ? horarios_reales : undefined,
-    testigos_url: dto.testigos_url,
-    testigos_ubicacion_alterna: dto.testigos_ubicacion_alterna,
     notas_transmision: dto.notas_transmision,
     reporte_programados_ref: dto.reporte_programados_ref,
     reporte_reales_ref: dto.reporte_reales_ref,
@@ -149,6 +177,84 @@ export function ordenEstacionFromApi(
     estatus: estatusOEDesdeApi(dto.estatus),
     created_at: dto.created_at.slice(0, 10),
     updated_at: dto.updated_at ? dto.updated_at.slice(0, 10) : null,
+  };
+}
+
+export function ordenEstacionAudioFromApi(dto: OrdenEstacionAudioApiDTO): OrdenEstacionAudio {
+  return {
+    id: dto.orden_estacion_audio_id,
+    nombre_archivo: dto.nombre_archivo,
+    orden: dto.orden,
+  };
+}
+
+export function ordenEstacionEvidenciaFromApi(
+  dto: OrdenEstacionEvidenciaApiDTO,
+): OrdenEstacionEvidencia {
+  return {
+    id: dto.orden_estacion_evidencia_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function ordenEstacionFormatoRealFromApi(
+  dto: OrdenEstacionFormatoRealApiDTO,
+): OrdenEstacionFormatoReal {
+  return {
+    id: dto.orden_estacion_formato_real_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function ordenEstacionLayoutRealFromApi(
+  dto: OrdenEstacionLayoutRealApiDTO,
+): OrdenEstacionLayoutReal {
+  return {
+    id: dto.orden_estacion_layout_real_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function layoutRealAplicadoFromApi(dto: LayoutRealAplicadoApiDTO): LayoutRealAplicado {
+  return {
+    ordenEstacionDiaId: dto.orden_estacion_dia_id,
+    spots: dto.spots,
+  };
+}
+
+export function layoutRealErrorFromApi(dto: LayoutRealErrorApiDTO): LayoutRealError {
+  return {
+    fila: dto.fila,
+    motivo: dto.motivo,
+  };
+}
+
+export function layoutRealNuevoFromApi(dto: LayoutRealNuevoApiDTO): LayoutRealNuevo {
+  return {
+    fecha: dto.fecha_transmision,
+    hora: soloHoraMinuto(dto.hora_inicio),
+    spots: dto.spots,
+  };
+}
+
+export function ordenEstacionFormatoRealClienteFromApi(
+  dto: OrdenEstacionFormatoRealClienteApiDTO,
+): OrdenEstacionFormatoRealCliente {
+  return {
+    id: dto.orden_estacion_formato_real_cliente_id,
+    nombre_archivo: dto.nombre_archivo,
+  };
+}
+
+export function logEnvioCorreoFromApi(dto: LogEnvioCorreoApiDTO): LogEnvioCorreo {
+  return {
+    id: dto.log_envio_correo_id,
+    tipoPdf: dto.tipo_pdf,
+    destinatarioEmail: dto.destinatario_email,
+    usuario: dto.usuario,
+    exitoso: dto.exitoso,
+    mensajeError: dto.mensaje_error,
+    fechaEnvio: dto.fecha_envio,
   };
 }
 

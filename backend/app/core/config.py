@@ -113,6 +113,19 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     # Tamaño máximo de un PDF de contrato (bytes). Configurable por entorno; default 10 MB.
     s3_max_pdf_bytes: int = 10 * 1024 * 1024
+    # ADR-103: tope de un audio de "Material a Transmitir" (F1) — NO reusa
+    # `s3_max_pdf_bytes` (silenciosamente cambiaría el tope de los adjuntos de
+    # documentos). Configurable por entorno; default 15 MB (petición del usuario).
+    s3_max_audio_bytes: int = 15 * 1024 * 1024
+    # ADR-123: tope de "Formato de Horarios Reales" (F1) — acepta cualquier formato
+    # (menos ejecutables), tope propio para no acoplarlo a los de arriba. Default 20 MB.
+    s3_max_formato_real_bytes: int = 20 * 1024 * 1024
+    # ADR-146: tope de "Carga de Órdenes Reales Desde Layout" (F1) — csv/excel/txt,
+    # archivos de layout típicamente pequeños. Default 10 MB.
+    s3_max_layout_reales_bytes: int = 10 * 1024 * 1024
+    # ADR-146: tope de "Formato de Horarios Reales Enviado al Cliente" (F1) — cualquier
+    # formato salvo ejecutables/audio, mismo tope que "Formato de Horarios Reales".
+    s3_max_formato_real_cliente_bytes: int = 20 * 1024 * 1024
 
     @property
     def is_development(self) -> bool:

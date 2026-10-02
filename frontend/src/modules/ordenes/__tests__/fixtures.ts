@@ -22,6 +22,11 @@ export function makeRow(overrides: Partial<PeriodoTransmisionRow> = {}): Periodo
     hora_inicio: "07:00",
     hora_termino: "08:00",
     spots_diarios: 10,
+    // ADR-127: los selectors matchean overrides (`horarios_programados`/`horarios_reales`)
+    // contra `periodo_transmision` por este id, no por fecha — una fila y su override
+    // deben compartir el mismo id explícitamente (ver `selectors.test.ts`) para que el
+    // match funcione en las pruebas, igual que en datos reales (`fromApi.ts`).
+    orden_estacion_dia_id: nextId("dia"),
     ...overrides,
   };
 }
@@ -55,8 +60,9 @@ export function makeOC(overrides: Partial<OrdenCliente> = {}): OrdenCliente {
     porcentaje_comision_agencia_snap: null,
     observaciones_predefinidas: "",
     observaciones_libres: "",
-    revision_checklist: {},
-    estatus_orden: "orden_cliente_sin_vobo",
+    // ADR-100: sin checklist de Vo.Bo. — una orden recién guardada nace directo en
+    // capturada (v5: "orden_cliente_con_vobo"), nunca en "orden_cliente_sin_vobo".
+    estatus_orden: "orden_cliente_con_vobo",
     estatus_pago_afiliado: "pendiente",
     estatus_pago_agencia: "pendiente",
     created_by: "tester",
@@ -70,8 +76,10 @@ export function makeOE(overrides: Partial<OrdenEstacion> = {}): OrdenEstacion {
     id: nextId("oe"),
     folio_orden_interna: "OE-2025-0001A",
     orden_id: "oc-1",
+    anunciante_id: "an1",
     estacion_id: "est1",
     plaza_id: "pl1",
+    duracion_spot: "30s",
     precio_spot: 800,
     cantidad_spots_bonificables: 0,
     porcentaje_participacion_oir: 20,
@@ -111,7 +119,6 @@ export function makeOCInput(overrides: Partial<OrdenClienteInput> = {}): OrdenCl
     porcentaje_comision_agencia_snap: null,
     observaciones_predefinidas: "",
     observaciones_libres: "",
-    revision_checklist: {},
     ...overrides,
   };
 }

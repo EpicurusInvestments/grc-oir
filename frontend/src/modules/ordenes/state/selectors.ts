@@ -45,7 +45,9 @@ export function totalesOC(oc: OrdenCliente): TotalesOC {
 }
 
 export function oiTotalSpots(oe: OrdenEstacion): number {
-  return oe.periodo_transmision.reduce((s, p) => s + (p.spots_diarios || 0), 0);
+  // ADR-104: un día cancelado libera su cupo — mismo criterio que el backend, que
+  // excluye `cancelada` de las sumas de `spots_asignados` (balance de la OC e importe).
+  return oe.periodo_transmision.reduce((s, p) => (p.cancelada ? s : s + (p.spots_diarios || 0)), 0);
 }
 
 /** = oiTotalSpots − cantidad_spots_bonificables (ADR-068). Los bonificables siguen
@@ -118,8 +120,14 @@ export function todasReconciliadas(oes: OrdenEstacion[]): boolean {
  * fecha — contra ESE valor se compara lo real, no contra lo asignado en crudo.
  * ───────────────────────────────────────────────────────────────────────────── */
 
+// ADR-127: el match es por `orden_estacion_dia_id`, no por `fecha` — una OE puede tener
+// 2+ filas de `periodo_transmision` con la MISMA fecha (varios spots/horarios el mismo
+// día, ya permitido por el modelo); matchear por fecha aplicaba el override de una fila
+// a TODAS las que compartían fecha.
 export function programadoEfectivo(oe: OrdenEstacion, row: PeriodoTransmisionRow): PeriodoTransmisionRow {
-  return oe.horarios_programados?.find((h) => h.fecha === row.fecha) ?? row;
+  return (
+    oe.horarios_programados?.find((h) => h.orden_estacion_dia_id === row.orden_estacion_dia_id) ?? row
+  );
 }
 
 /** Total de spots REALES de una OI ya en 2.3 (aplica los overrides de `horarios_reales`
@@ -127,7 +135,9 @@ export function programadoEfectivo(oe: OrdenEstacion, row: PeriodoTransmisionRow
 export function totalRealDeOE(oe: OrdenEstacion): number {
   return oe.periodo_transmision.reduce((s, row) => {
     const programado = programadoEfectivo(oe, row);
-    const real = oe.horarios_reales?.find((h) => h.fecha === row.fecha) ?? programado;
+    const real =
+      oe.horarios_reales?.find((h) => h.orden_estacion_dia_id === row.orden_estacion_dia_id) ??
+      programado;
     return s + (real.spots_diarios || 0);
   }, 0);
 }
@@ -147,7 +157,9 @@ export function ajusteIncidenciasDeOEs(incidencias: Incidencia[], oes: OrdenEsta
 
 function diaVerificacion(oe: OrdenEstacion, row: PeriodoTransmisionRow): VerificacionDiaRow {
   const programado = programadoEfectivo(oe, row);
-  const real = oe.horarios_reales?.find((h) => h.fecha === row.fecha) ?? programado;
+  const real =
+    oe.horarios_reales?.find((h) => h.orden_estacion_dia_id === row.orden_estacion_dia_id) ??
+    programado;
   return { fecha: row.fecha, programado, real, diferenciaSpots: real.spots_diarios - programado.spots_diarios };
 }
 

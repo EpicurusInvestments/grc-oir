@@ -47,6 +47,7 @@ from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import (
     EstatusOrdenEstacion,
     OrdenEstacion,
+    OrdenEstacionAudio,
     OrdenEstacionDia,
 )
 from app.modules.ordenes.verificacion import Verificacion
@@ -191,6 +192,7 @@ class _Contexto:
         agencia: Agencia | None,
         empresa: EmpresaFacturadora,
         dias: list[OrdenEstacionDia],
+        audios: list[OrdenEstacionAudio],
     ) -> None:
         self.oe = oe
         self.oc = oc
@@ -200,6 +202,7 @@ class _Contexto:
         self.agencia = agencia
         self.empresa = empresa
         self.dias = dias
+        self.audios = audios
 
 
 def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
@@ -223,7 +226,14 @@ def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
             .order_by(OrdenEstacionDia.fecha_transmision)
         )
     )
-    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias)
+    audios = list(
+        db.scalars(
+            select(OrdenEstacionAudio)
+            .where(OrdenEstacionAudio.orden_estacion_id == orden_estacion_id)
+            .order_by(OrdenEstacionAudio.orden)
+        )
+    )
+    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias, audios)
 
 
 def _rango_campania(oc: OrdenCliente) -> str:
@@ -357,17 +367,34 @@ _TABLA_SIN_MARCO = TableStyle(
 _FILA_REALES = ParagraphStyle("fila_reales", parent=_STYLES["Normal"], fontSize=9, leading=11)
 
 
-def _fila_dia_programado(dia: OrdenEstacionDia, programado: int) -> list:
+def _nombre_material(dia: OrdenEstacionDia, audios: list[OrdenEstacionAudio]) -> str:
+    """Mismo criterio que `nombreMaterial()` del frontend (`PeriodoTransmisionGrid.tsx`):
+    el override propio del día si tiene uno asignado, si no el default (`audios[0]`, el
+    primero subido). Sin ningún audio subido, no hay nada que mostrar."""
+    if not audios:
+        return "—"
+    if dia.orden_estacion_audio_id:
+        coincidencia = next(
+            (a for a in audios if a.orden_estacion_audio_id == dia.orden_estacion_audio_id), None
+        )
+        if coincidencia:
+            return coincidencia.nombre_archivo
+    return audios[0].nombre_archivo
+
+
+def _fila_dia_programado(dia: OrdenEstacionDia, nombre_material: str) -> list:
     fecha_txt = (
         f"{_dia_semana(dia.fecha_transmision).capitalize()} {dia.fecha_transmision.day} "
         f"{MESES_ES[dia.fecha_transmision.month - 1]}, {dia.fecha_transmision.year}"
     )
+    # ADR-118 (petición del usuario): "Horario" pasa a un solo valor (ya no rango
+    # Inicio/Término — coherente con ADR-108, que consolidó lo mismo en la captura web:
+    # `hora_inicio`/`hora_fin` se capturan siempre iguales desde entonces); "Pedidos"/
+    # "Asignados" se quitan y se agrega "Material a Transmitir".
     return [
         Paragraph(f"<b>{fecha_txt}</b>", _FILA_PROGRAMADO),
-        Paragraph(f"Hora Inicio: <i>{_hora_12h(dia.hora_inicio)}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Hora Término: <i>{_hora_12h(dia.hora_fin)}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Pedidos: <i>{dia.spots_asignados}</i>", _FILA_PROGRAMADO),
-        Paragraph(f"Asignados: <i>{programado}</i>", _FILA_PROGRAMADO),
+        Paragraph(f"Horario: <i>{_hora_12h(dia.hora_inicio)}</i>", _FILA_PROGRAMADO),
+        Paragraph(f"Material a Transmitir: <i>{nombre_material}</i>", _FILA_PROGRAMADO),
     ]
 
 
@@ -460,57 +487,38 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         colWidths=_proporciones(_ANCHO_MARCO_INTERNO, [3, 5, 3.5, 4.5]),
     )
 
-    filas = [["Día", "Fecha", "Inicio", "Término", "Spots Diarios", "Importe"]]
+    # ADR-155 (petición del usuario): "Inicio"/"Término" se consolidan en una sola
+    # columna "Horario de Transmisión" — mismo criterio que ADR-108/ADR-118, que ya
+    # hicieron lo mismo en la captura web y en el PDF de programados: `hora_inicio`/
+    # `hora_fin` se capturan siempre iguales, así que mostrar las 2 por separado solo
+    # repetía el mismo valor.
+    filas = [["Día", "Fecha", "Horario de Transmisión", "Spots Diarios", "Importe"]]
     for dia in ctx.dias:
         filas.append(
             [
                 _dia_semana(dia.fecha_transmision).upper(),
                 _fecha_corta(dia.fecha_transmision),
                 dia.hora_inicio.strftime("%H:%M:%S"),
-                dia.hora_fin.strftime("%H:%M:%S"),
                 str(dia.spots_asignados),
                 _moneda((Decimal(dia.spots_asignados) * oe.precio_spot).quantize(CENTAVOS)),
             ]
         )
     tabla_dias = Table(
-        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
+        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 4.6 * cm, 3 * cm, 3 * cm]
     )
 
-    contenido_marco: list = [
-        tabla_campos,
-        Spacer(1, 12),
-        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
-        Spacer(1, 6),
-        tabla_dias,
-    ]
-
-    horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
-    if len(horarios) == 1:
-        ini, fin = next(iter(horarios))
-        contenido_marco.append(Spacer(1, 8))
-        contenido_marco.append(
-            Paragraph(
-                f"<b>Horario de transmisión:</b> {ini.strftime('%H:%M')} A {fin.strftime('%H:%M')}",
-                _VALOR,
-            )
-        )
-
-    contenido_marco.append(Spacer(1, 6))
-    contenido_marco.append(
-        Paragraph(
-            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
-            _VALOR,
-        )
-    )
-    contenido_marco.append(Spacer(1, 10))
-    contenido_marco.append(
-        Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
-    )
-    contenido_marco.append(Spacer(1, 20))
-    contenido_marco.append(Paragraph(ctx.empresa.direccion_empresa or "—", _PIE_IZQUIERDA))
-
+    # ADR-131 (corrige un bug real): `tabla_dias` YA NO va anidada dentro de la celda de
+    # `marco` — con ADR-127 (varios spots por día) esta tabla puede crecer a muchas más
+    # filas que antes (un renglón por spot, no por día), y una tabla anidada dentro de la
+    # celda de OTRA tabla NO puede partirse entre páginas en reportlab: si el contenido de
+    # esa celda no cabe completo en lo que queda de una página, truena con
+    # `LayoutError` ("too large ... in frame") en vez de continuar en la siguiente. El
+    # marco (borde) ahora envuelve SOLO el encabezado (`tabla_estacion_plaza` +
+    # `tabla_campos`, tamaño fijo, nunca crece con el número de días) — `tabla_dias` y el
+    # resto del contenido van como flowables de nivel superior, igual que ya hacían
+    # `generar_pdf_programados`/`generar_pdf_reales`, que sí paginan sin problema.
     marco = Table(
-        [[tabla_estacion_plaza], [contenido_marco]],
+        [[tabla_estacion_plaza], [[tabla_campos]]],
         colWidths=[_ANCHO_DISPONIBLE],
         style=_MARCO,
     )
@@ -521,20 +529,47 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         ),
         Spacer(1, 10),
         marco,
+        Spacer(1, 12),
+        Paragraph("Periodo de Transmisión", ParagraphStyle("h2", parent=_STYLES["Heading3"])),
+        Spacer(1, 6),
+        tabla_dias,
     ]
+
+    horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
+    if len(horarios) == 1:
+        ini, fin = next(iter(horarios))
+        elementos.append(Spacer(1, 8))
+        elementos.append(
+            Paragraph(
+                f"<b>Horario de transmisión:</b> {ini.strftime('%H:%M')} A {fin.strftime('%H:%M')}",
+                _VALOR,
+            )
+        )
+
+    elementos.append(Spacer(1, 6))
+    elementos.append(
+        Paragraph(
+            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
+            _VALOR,
+        )
+    )
+    elementos.append(Spacer(1, 10))
+    elementos.append(
+        Paragraph(f"<b>Facturar al término de la pauta a {ctx.empresa.nombre_empresa}</b>", _VALOR)
+    )
+    elementos.append(Spacer(1, 20))
+    elementos.append(Paragraph(ctx.empresa.direccion_empresa or "—", _PIE_IZQUIERDA))
 
     return _build(elementos)
 
 
 # ── PDF 2: Horarios programados (2.2) ────────────────────────────────────────────
 def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
+    # ADR-121: ya no se rechaza en 'asignada' — los horarios/spots "programados" se
+    # capturan desde el alta (fallback a `spots_asignados`, ver `avanzar_reales`), así
+    # que este PDF está listo desde que la OE existe.
     ctx = _cargar_contexto(db, orden_estacion_id)
     oe, oc, estacion, plaza = ctx.oe, ctx.oc, ctx.estacion, ctx.plaza
-    if oe.estatus == EstatusOrdenEstacion.ASIGNADA.value:
-        raise DomainError(
-            "Aún no se han capturado los horarios programados de esta orden interna.",
-            detalles={"estatus": oe.estatus},
-        )
 
     letra = _letra_sufijo(oe.folio_orden_estacion)
     total_programado = sum(
@@ -578,17 +613,13 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     ]
 
     filas = [
-        _fila_dia_programado(
-            dia,
-            dia.spots_programados if dia.spots_programados is not None else dia.spots_asignados,
-        )
-        for dia in ctx.dias
+        _fila_dia_programado(dia, _nombre_material(dia, ctx.audios)) for dia in ctx.dias
     ]
     elementos.append(
         Table(
             filas,
             style=_FILA_CON_LINEA,
-            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.7, 1.25, 1.25, 0.7, 0.75]),
+            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.4, 1.1, 2.5]),
         )
     )
 
@@ -657,6 +688,9 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Spacer(1, 12),
     ]
 
+    # ADR-155 (petición del usuario): igual que en el PDF de servicio, "HORA" deja de
+    # mostrar un rango `inicio - fin` (siempre el mismo valor repetido, ADR-108) — un
+    # solo horario.
     filas = [["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]]
     for i, dia in enumerate(ctx.dias, start=1):
         verificacion = verificaciones.get(dia.orden_estacion_dia_id)
@@ -665,7 +699,7 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             [
                 str(i),
                 _fecha_corta(dia.fecha_transmision),
-                f"{_hora_24h(dia.hora_inicio)} - {_hora_24h(dia.hora_fin)}",
+                _hora_24h(dia.hora_inicio),
                 str(spots),
                 Paragraph((oc.producto or "—").upper(), _FILA_REALES),
                 Paragraph(estacion.nombre_estacion.upper(), _FILA_REALES),

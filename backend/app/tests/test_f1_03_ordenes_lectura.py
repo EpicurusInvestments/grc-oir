@@ -34,7 +34,7 @@ from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.ordenes.incidencia import Incidencia
-from app.modules.ordenes.orden_cliente import ITEMS_VOBO, OrdenCliente, OrdenClienteVoBoItem
+from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion, OrdenEstacionDia
 from app.modules.ordenes.router import router as ordenes_router
 from app.modules.ordenes.verificacion import Verificacion
@@ -134,15 +134,6 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
             created_by=ADMIN_ID,
         )
     )
-    for item in ITEMS_VOBO:
-        db.add(
-            OrdenClienteVoBoItem(
-                orden_cliente_vobo_item_id=uuid.uuid4(),
-                orden_id=orden_id,
-                item_clave=item,
-                completado=item in ("razon_social", "plaza"),
-            )
-        )
 
     oe_id = uuid.uuid4()
     db.add(
@@ -258,15 +249,6 @@ def test_obtener_orden_cliente_404(client: TestClient) -> None:
     r = client.get(f"/api/v1/ordenes/clientes/{uuid.uuid4()}", headers=_hdr("ventas"))
     assert r.status_code == 404
     assert r.json()["error"]["codigo"] == "no_encontrado"
-
-
-def test_vobo_orden_cliente(client: TestClient, datos: dict[str, uuid.UUID]) -> None:
-    r = client.get(f"/api/v1/ordenes/clientes/{datos['orden_id']}/vobo", headers=_hdr("ventas"))
-    assert r.status_code == 200
-    items = r.json()
-    assert len(items) == len(ITEMS_VOBO)
-    completados = {i["item_clave"] for i in items if i["completado"]}
-    assert completados == {"razon_social", "plaza"}
 
 
 def test_historial_comisiones_orden_cliente_vacio(
