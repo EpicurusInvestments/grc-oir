@@ -487,20 +487,24 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         colWidths=_proporciones(_ANCHO_MARCO_INTERNO, [3, 5, 3.5, 4.5]),
     )
 
-    filas = [["Día", "Fecha", "Inicio", "Término", "Spots Diarios", "Importe"]]
+    # ADR-155 (petición del usuario): "Inicio"/"Término" se consolidan en una sola
+    # columna "Horario de Transmisión" — mismo criterio que ADR-108/ADR-118, que ya
+    # hicieron lo mismo en la captura web y en el PDF de programados: `hora_inicio`/
+    # `hora_fin` se capturan siempre iguales, así que mostrar las 2 por separado solo
+    # repetía el mismo valor.
+    filas = [["Día", "Fecha", "Horario de Transmisión", "Spots Diarios", "Importe"]]
     for dia in ctx.dias:
         filas.append(
             [
                 _dia_semana(dia.fecha_transmision).upper(),
                 _fecha_corta(dia.fecha_transmision),
                 dia.hora_inicio.strftime("%H:%M:%S"),
-                dia.hora_fin.strftime("%H:%M:%S"),
                 str(dia.spots_asignados),
                 _moneda((Decimal(dia.spots_asignados) * oe.precio_spot).quantize(CENTAVOS)),
             ]
         )
     tabla_dias = Table(
-        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
+        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 4.6 * cm, 3 * cm, 3 * cm]
     )
 
     # ADR-131 (corrige un bug real): `tabla_dias` YA NO va anidada dentro de la celda de
@@ -684,6 +688,9 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Spacer(1, 12),
     ]
 
+    # ADR-155 (petición del usuario): igual que en el PDF de servicio, "HORA" deja de
+    # mostrar un rango `inicio - fin` (siempre el mismo valor repetido, ADR-108) — un
+    # solo horario.
     filas = [["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]]
     for i, dia in enumerate(ctx.dias, start=1):
         verificacion = verificaciones.get(dia.orden_estacion_dia_id)
@@ -692,7 +699,7 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             [
                 str(i),
                 _fecha_corta(dia.fecha_transmision),
-                f"{_hora_24h(dia.hora_inicio)} - {_hora_24h(dia.hora_fin)}",
+                _hora_24h(dia.hora_inicio),
                 str(spots),
                 Paragraph((oc.producto or "—").upper(), _FILA_REALES),
                 Paragraph(estacion.nombre_estacion.upper(), _FILA_REALES),
