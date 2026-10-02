@@ -84,7 +84,7 @@ export function FormatoHorariosReales({
 
   return (
     <div className="form-card">
-      <div className="form-card-title">Formato de Horarios Reales</div>
+      <div className="form-card-title">Horarios Reales Recibidos de la Estación</div>
       <div className="form-card-sub">
         Cualquier formato (PDF, Excel, TXT, audio...) — no se permiten ejecutables ni scripts.
       </div>
