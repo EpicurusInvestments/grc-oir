@@ -100,8 +100,7 @@ export interface AfiliadoRef {
   id: string;
   nombre_afiliado: string;
   porcentaje_participacion_oir_default: number;
-  /** ADR-105: sugerido como destinatario por defecto al "Enviar por correo" un PDF de
-   *  OrdenEstacion — editable, `null` si el afiliado no tiene contacto capturado. */
+  /** Contacto de correo legado del catálogo de Afiliados (F0). `null` si no se capturó. */
   contacto_email: string | null;
 }
 

@@ -273,36 +273,6 @@ export async function asignarAudioDiaApi(
   return data;
 }
 
-/** ADR-105: envía un PDF de OrdenEstacion (servicio/programados/reales) por correo al
- * destinatario indicado. Lanza si el envío falla (el backend registra el intento en la
- * bitácora de todos modos). */
-export async function enviarCorreoPdfOrdenEstacionApi(
-  ordenEstacionId: string,
-  tipo: TipoPdfOrdenEstacion,
-  destinatarioEmail: string,
-): Promise<LogEnvioCorreoApiDTO> {
-  const { data } = await apiClient.post<LogEnvioCorreoApiDTO>(
-    `/ordenes/estaciones/${ordenEstacionId}/pdf/${tipo}/enviar-correo`,
-    { destinatario_email: destinatarioEmail },
-  );
-  return data;
-}
-
-/** ADR-120/ADR-126: envía el PDF `tipo` (servicio/programados/reales) + Material a
- * Transmitir (si tiene) a los contactos activos con correo del afiliado — sin body,
- * destinatarios resueltos por el backend. Lanza si no hay contactos, si la OE no ha
- * llegado al sub-estado que ese PDF requiere, o si el envío falla (bitácora igual
- * queda registrada). */
-export async function enviarCorreoOrdenTransmisionApi(
-  ordenEstacionId: string,
-  tipo: TipoPdfOrdenEstacion,
-): Promise<LogEnvioCorreoApiDTO> {
-  const { data } = await apiClient.post<LogEnvioCorreoApiDTO>(
-    `/ordenes/estaciones/${ordenEstacionId}/pdf/${tipo}/correo-orden-transmision`,
-  );
-  return data;
-}
-
 /** ADR-124/ADR-126: arma el paquete del PDF `tipo` (+ Material a Transmitir, a los
  * contactos activos del afiliado) pero lo descarga como `.eml` — el usuario lo abre con
  * su cliente de correo de escritorio (Outlook, etc.), que lo recibe como un borrador

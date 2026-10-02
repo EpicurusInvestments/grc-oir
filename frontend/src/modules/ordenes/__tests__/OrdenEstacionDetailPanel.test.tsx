@@ -170,7 +170,7 @@ describe("PDFs de la orden interna — botones de descarga por etapa", () => {
     expect(screen.queryByText(/PDF #3 · Reales/)).toBeNull();
   });
 
-  it("en 'reales_conciliados', aparecen los 3 y cada uno ofrece Enviar/Imprimir con su propio tipo", async () => {
+  it("en 'reales_conciliados', aparecen los 3 y cada uno ofrece Imprimir/Abrir correo con su propio tipo", async () => {
     const oe = makeOE({ estatus: "reales_conciliados" });
     renderPanel(oe, makeOC());
 
@@ -212,7 +212,7 @@ describe("'Enviado a...' es una confirmación transitoria (ADR-135)", () => {
   });
 });
 
-describe("ADR-140: Servicio/Reales dependen del anunciante; Programados del afiliado", () => {
+describe("ADR-140/ADR-145: Servicio/Reales dependen del anunciante; Programados del afiliado", () => {
   it("un tipo habilitado no habilita al otro — cada uno consulta su propio catálogo de contactos", async () => {
     // Anunciante CON contacto activo; afiliado SIN ninguno.
     listPorAnuncianteMock.mockResolvedValueOnce({
@@ -241,15 +241,15 @@ describe("ADR-140: Servicio/Reales dependen del anunciante; Programados del afil
     // PDF #1 (Servicio) → depende del anunciante, que SÍ tiene contacto activo.
     fireEvent.click(screen.getByText(/PDF #1 · Orden de servicio/));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Enviar por correo/ })).not.toBeDisabled(),
+      expect(screen.getByRole("button", { name: /Abrir correo/ })).not.toBeDisabled(),
     );
     fireEvent.click(screen.getByText("Cancelar"));
 
     // PDF #2 (Programados) → depende del afiliado, que NO tiene ninguno.
     fireEvent.click(screen.getByText(/PDF #2 · Programados/));
-    expect(screen.getByRole("button", { name: /Enviar por correo/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Abrir correo/ })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /Enviar por correo/ }).getAttribute("title"),
+      screen.getByRole("button", { name: /Abrir correo/ }).getAttribute("title"),
     ).toBe("El afiliado no tiene contactos activos con correo cargado.");
   });
 });

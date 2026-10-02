@@ -1,6 +1,6 @@
-"""Construcción del mensaje MIME (asunto, cuerpo, adjuntos) — compartida por `CorreoSES`
-(lo manda de verdad) y `CorreoLocal` (ADR-122: lo guarda como `.eml` en disco, para poder
-revisar cómo quedó armado el mensaje SIN enviar nada real ni depender de SES/AWS).
+"""Construcción del mensaje MIME (asunto, cuerpo, adjuntos) — usada por
+`generar_eml_orden_transmision` para armar el `.eml` que el usuario abre y envía desde su
+propio cliente de correo (ADR-145: único flujo de correo del sistema).
 """
 
 from __future__ import annotations

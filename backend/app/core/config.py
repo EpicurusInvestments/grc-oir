@@ -120,29 +120,12 @@ class Settings(BaseSettings):
     # ADR-123: tope de "Formato de Horarios Reales" (F1) — acepta cualquier formato
     # (menos ejecutables), tope propio para no acoplarlo a los de arriba. Default 20 MB.
     s3_max_formato_real_bytes: int = 20 * 1024 * 1024
-
-    # ── Correo (envío de PDFs de OrdenEstacion — ADR-105, local | SES | SMTP) ────
-    # CORREO_BACKEND elige el adaptador (ver integrations/correo): 'local' (no envía
-    # nada real, solo registra en el log; default para dev/pruebas — SES en sandbox
-    # exige verificar cada destinatario), 'ses' (Amazon SES vía API/boto3) o 'smtp'
-    # (ADR-138: cualquier servidor SMTP real, incluido el endpoint SMTP de SES — usa
-    # credenciales SMTP dedicadas, DISTINTAS de un access key/secret de IAM).
-    correo_backend: str = "local"
-    # Remitente y región/credenciales de SES (requeridos si CORREO_BACKEND=ses).
-    # Reusa `aws_region`/`aws_access_key_id`/`aws_secret_access_key` de arriba: SES vive
-    # en la misma cuenta/región de AWS que S3.
-    ses_from_email: str = ""
-    ses_from_name: str = ""
-    # ADR-138: credenciales SMTP (requeridas si CORREO_BACKEND=smtp) — el usuario/password
-    # de este bloque son un PAR DISTINTO del access key/secret de IAM (aunque el usuario
-    # tenga formato AKIA…, es un usuario SMTP derivado, generado aparte en la consola de
-    # AWS específicamente para autenticación SMTP; no sirve como aws_access_key_id).
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from_email: str = ""
-    smtp_from_name: str = ""
+    # ADR-146: tope de "Carga de Órdenes Reales Desde Layout" (F1) — csv/excel/txt,
+    # archivos de layout típicamente pequeños. Default 10 MB.
+    s3_max_layout_reales_bytes: int = 10 * 1024 * 1024
+    # ADR-146: tope de "Formato de Horarios Reales Enviado al Cliente" (F1) — cualquier
+    # formato salvo ejecutables/audio, mismo tope que "Formato de Horarios Reales".
+    s3_max_formato_real_cliente_bytes: int = 20 * 1024 * 1024
 
     @property
     def is_development(self) -> bool:

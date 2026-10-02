@@ -829,55 +829,36 @@ sale de `EmpresaFacturadora` (vía `OrdenCliente.empresa_facturadora_id`), no es
 fijo. El encabezado incluye los logos de OIR y Grupo Radio Centro, leídos de
 `backend/app/assets/logos/` (sustituibles sin tocar código — ver ADR-044).
 
-**Envío de los PDFs por correo (ADR-105, Fase 5 del rediseño):**
-- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/enviar-correo`** (`ordenes:editar`) — `tipo`
-  es `servicio`/`programados`/`reales` (mismos gateos por sub-estado que su `GET`
-  equivalente de arriba — **400** si la OE no ha llegado ahí). Body
-  `{destinatario_email: string}` (formato de correo validado, **422** si no lo es). Genera
-  el PDF y lo manda como adjunto (Amazon SES, o el adaptador `local` en dev que no envía
-  nada real — **ADR-122:** además guarda el mensaje armado como `.eml` en
-  `_storage_local/correos_simulados/`, abrible con un cliente de correo de escritorio
-  para revisar cómo quedó, sin depender de SES/AWS). Responde `LogEnvioCorreoRead`:
-  `{log_envio_correo_id, orden_estacion_id, tipo_pdf, destinatario_email, usuario,
-  exitoso, mensaje_error, fecha_envio}`. **502** (`correo_no_disponible`) si el envío
-  falla — el intento queda registrado en la bitácora de todos modos (`exitoso=false` +
-  `mensaje_error`), no se pierde solo porque falló.
-- **`GET /ordenes/estaciones/{id}/envios-correo`** (`ordenes:leer`) — historial de envíos
-  de esta OE (los 3 tipos de PDF + el "bundle" de abajo mezclados), del más reciente al
-  más antiguo.
-
-**Envío "bundle" de la Orden de Transmisión (ADR-120, corregido por ADR-126):** la
-pantalla ofrece este envío en vez del de arriba — al generar cualquiera de los 3 PDFs,
-propone "Enviar por correo" (este endpoint) o "Imprimir" (el `GET` de vista previa de
-arriba, sin cambios). ADR-126 corrigió el diseño original de ADR-120 (que SIEMPRE
-adjuntaba el PDF de Programados sin importar qué botón disparó el diálogo): ahora cada
-uno de los 3 botones manda **su propio** PDF.
-- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision`**
+**Correo de la Orden de Transmisión — `.eml` (ADR-105/120/124/126/140/144/145):**
+ADR-145 (petición del usuario) retiró el envío real por correo que existía antes (vía
+SES/SMTP/local) — la cuenta de SES sigue en modo *sandbox* (remitente no verificado,
+trabajo de IT fuera de alcance) y el usuario decidió no perseguirlo. El ÚNICO flujo de
+correo que queda es "Abrir correo": arma un `.eml` para que el usuario lo abra con su
+propio cliente de escritorio y lo mande él mismo. En la pantalla, al generar cualquiera
+de los 3 PDFs se propone "Imprimir" (el `GET` de vista previa de arriba, sin cambios) o
+"Abrir correo" (este endpoint).
+- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision/eml`**
   (`ordenes:editar`) — `tipo` = `servicio` │ `programados` │ `reales`. Sin body. Resuelve
   los destinatarios automáticamente según `tipo` (**ADR-140**): `servicio`/`reales` →
   TODOS los `ContactoAnunciante` **activos** con `email_contacto` cargado del Anunciante
   de la orden (quien contrató la pauta); `programados` → TODOS los `ContactoAfiliado`
   **activos** con `email_contacto` cargado del Afiliado dueño de la Estación (quien
   transmite). **400**, `error_dominio`, si no hay ninguno del lado que corresponda —
-  nunca se intenta un envío sin destinatarios. **400** también si la OE no ha llegado al
-  sub-estado que ese PDF requiere (mismo gateo que la descarga individual, p.ej.
-  "reales" antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta
-  el PDF de `tipo` + TODO el Material a Transmitir de la OE (si tiene). Responde
-  `LogEnvioCorreoRead` igual que el envío individual, con `tipo_pdf` = el `tipo`
-  enviado y `destinatario_email` como lista separada por coma. **502** si el envío falla
-  (bitácora igual queda registrada).
-- **`POST /ordenes/estaciones/{id}/pdf/{tipo}/correo-orden-transmision/eml`**
-  (`ordenes:editar`, **ADR-124/ADR-126/ADR-144**) — mismo paquete/destinatarios/gateo que
-  el endpoint de arriba para ese `tipo`, pero en vez de mandarlo por SES/local regresa el
-  archivo `.eml` crudo (`Content-Type: message/rfc822`, `Content-Disposition:
-  attachment; filename="orden_transmision_<tipo>_<folio>.eml"`, con el encabezado
-  `X-Unsent: 1` — ADR-144) para que el usuario lo abra con doble clic en su propio
-  cliente de correo de escritorio (Outlook, etc.), directo como mensaje NUEVO editable
-  (no en modo lectura), y lo mande él mismo desde su cuenta — útil mientras SES no esté
-  en producción. Se registra en la misma bitácora, siempre `exitoso=true` (armar el
-  archivo no falla como sí puede fallar SES). El botón verde "Enviar por correo" sigue
-  existiendo sin cambios; este es un ícono ADICIONAL (📧, junto a "Imprimir"), no lo
-  reemplaza.
+  nunca se prepara un envío sin destinatarios. **400** también si la OE no ha llegado al
+  sub-estado que ese PDF requiere (mismo gateo que la descarga individual, p.ej. "reales"
+  antes de 2.3). Asunto fijo `"Orden de Transmisión"`; adjunta el PDF de `tipo` + TODO el
+  Material a Transmitir de la OE (si tiene). Regresa el archivo `.eml` crudo
+  (`Content-Type: message/rfc822`, `Content-Disposition: attachment;
+  filename="orden_transmision_<tipo>_<folio>.eml"`, con el encabezado `X-Unsent: 1` —
+  ADR-144) para que el usuario lo abra con doble clic en su cliente de correo de
+  escritorio (Outlook, etc.), directo como mensaje NUEVO editable (no en modo lectura).
+  Se registra en `LogEnvioCorreoOrdenEstacion` — `{log_envio_correo_id,
+  orden_estacion_id, tipo_pdf, destinatario_email, usuario, exitoso, mensaje_error,
+  fecha_envio}` — con `tipo_pdf` = el `tipo` pedido y `destinatario_email` como lista
+  separada por coma, siempre `exitoso=true` (armar el archivo no puede fallar como sí
+  podía fallar un envío real).
+- **`GET /ordenes/estaciones/{id}/envios-correo`** (`ordenes:leer`) — historial de `.eml`
+  generados para esta OE (los 3 tipos de PDF mezclados), del más reciente al más antiguo.
 
 **Nota de permisos — `PATCH /clientes/{id}/comisiones`:** su permiso de ROUTER es
 deliberadamente `ordenes:leer` (no `editar`): Dirección solo tiene lectura del módulo

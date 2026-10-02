@@ -12,7 +12,6 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 
 import {
   descargarEmlOrdenTransmisionApi,
-  enviarCorreoOrdenTransmisionApi,
   listarAudiosOrdenEstacionApi,
   listarEnviosCorreoOrdenEstacionApi,
 } from "../../adapters/escrituraApi";
@@ -68,9 +67,9 @@ export function OrdenEstacionDetailPanel({
 
   const incidenciasDeLaOE = incidencias.filter((i) => i.orden_interna_id === oe.id);
 
-  // ADR-105/ADR-120/ADR-126: historial de envíos por correo — se recarga al cambiar de
-  // OE. Desde ADR-126 cada botón manda su propio PDF, así que el último envío exitoso
-  // se muestra por-tipo dentro de cada `FilaPdf` (mismo `tipoPdf` que ese botón).
+  // ADR-105/ADR-120/ADR-126: historial de correos generados (".eml") — se recarga al
+  // cambiar de OE. El último generado se muestra por-tipo dentro de cada `FilaPdf`
+  // (mismo `tipoPdf` que ese botón).
   const [envios, setEnvios] = useState<LogEnvioCorreo[]>([]);
   useEffect(() => {
     let cancelado = false;
@@ -84,48 +83,49 @@ export function OrdenEstacionDetailPanel({
     };
   }, [oe.id]);
 
-  // ADR-120/ADR-140: "Enviar por correo" se deshabilita si el lado que corresponde a
-  // ese tipo de PDF no tiene ningún contacto ACTIVO con correo cargado — se avisa antes
-  // de intentar, no se deja fallar el envío. Servicio/Reales dependen del ANUNCIANTE
+  // ADR-120/ADR-140/ADR-145: "Abrir correo" se deshabilita si el lado que corresponde a
+  // ese tipo de PDF no tiene ningún contacto ACTIVO con correo cargado — el backend
+  // necesita al menos un destinatario para armar el `.eml` (400 si no hay ninguno), así
+  // que se avisa antes de intentar. Servicio/Reales dependen del ANUNCIANTE
   // (`ContactoAnunciante`); Programados depende del AFILIADO (`ContactoAfiliado`).
-  const [puedeEnviarAfiliado, setPuedeEnviarAfiliado] = useState(false);
+  const [hayContactosAfiliado, setHayContactosAfiliado] = useState(false);
   useEffect(() => {
     let cancelado = false;
     if (!afiliado) {
-      setPuedeEnviarAfiliado(false);
+      setHayContactosAfiliado(false);
       return;
     }
     contactoAfiliadoApi
       .listPorAfiliado(afiliado.id, { activo: true, size: 100 })
       .then((page) => {
         if (!cancelado) {
-          setPuedeEnviarAfiliado(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+          setHayContactosAfiliado(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
         }
       })
       .catch(() => {
-        if (!cancelado) setPuedeEnviarAfiliado(false);
+        if (!cancelado) setHayContactosAfiliado(false);
       });
     return () => {
       cancelado = true;
     };
   }, [afiliado]);
 
-  const [puedeEnviarAnunciante, setPuedeEnviarAnunciante] = useState(false);
+  const [hayContactosAnunciante, setHayContactosAnunciante] = useState(false);
   useEffect(() => {
     let cancelado = false;
     if (!anunciante) {
-      setPuedeEnviarAnunciante(false);
+      setHayContactosAnunciante(false);
       return;
     }
     contactoAnuncianteApi
       .listPorAnunciante(anunciante.id, { activo: true, size: 100 })
       .then((page) => {
         if (!cancelado) {
-          setPuedeEnviarAnunciante(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
+          setHayContactosAnunciante(page.items.some((c) => (c.email_contacto ?? "").trim() !== ""));
         }
       })
       .catch(() => {
-        if (!cancelado) setPuedeEnviarAnunciante(false);
+        if (!cancelado) setHayContactosAnunciante(false);
       });
     return () => {
       cancelado = true;
@@ -340,9 +340,8 @@ export function OrdenEstacionDetailPanel({
             oe={oe}
             tipo="servicio"
             etiqueta="PDF #1 · Orden de servicio"
-            puedeEnviarCorreo={puedeEnviarAnunciante}
+            hayContactos={hayContactosAnunciante}
             envios={envios}
-            onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
           {/* ADR-121: ya no gateado por sub-estado — los horarios "programados" se
               capturan desde el alta (2.2 ya no es un paso manual separado). */}
@@ -350,18 +349,16 @@ export function OrdenEstacionDetailPanel({
             oe={oe}
             tipo="programados"
             etiqueta="PDF #2 · Programados"
-            puedeEnviarCorreo={puedeEnviarAfiliado}
+            hayContactos={hayContactosAfiliado}
             envios={envios}
-            onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
           />
           {oe.estatus === "reales_conciliados" && (
             <FilaPdf
               oe={oe}
               tipo="reales"
               etiqueta="PDF #3 · Reales"
-              puedeEnviarCorreo={puedeEnviarAnunciante}
+              hayContactos={hayContactosAnunciante}
               envios={envios}
-              onEnviado={(log) => setEnvios((prev) => [log, ...prev])}
             />
           )}
         </div>
@@ -384,32 +381,30 @@ export function OrdenEstacionDetailPanel({
   );
 }
 
-/** ADR-120: al hacer clic en un PDF, en vez de abrirlo directo se propone "Enviar por
- * correo" (el paquete fijo de la Orden de Transmisión — mismo destino sin importar cuál
- * de los 3 PDFs disparó el diálogo) o "Imprimir" (abre el PDF, como antes — el propio
- * visor nativo del navegador ya trae su botón de imprimir). "Enviar por correo" se
- * deshabilita si el afiliado no tiene ningún contacto activo con correo cargado. */
+/** ADR-120/ADR-145: al hacer clic en un PDF, en vez de abrirlo directo se propone
+ * "Imprimir" (abre el PDF, como antes — el propio visor nativo del navegador ya trae su
+ * botón de imprimir) o "Abrir correo" (arma un `.eml` con el PDF + Material a Transmitir
+ * ya adjuntos, que el usuario abre y envía desde su propio cliente de correo). "Abrir
+ * correo" se deshabilita si el lado que le toca a este tipo de PDF (afiliado o
+ * anunciante, ADR-140) no tiene ningún contacto activo con correo cargado. */
 function FilaPdf({
   oe,
   tipo,
   etiqueta,
-  puedeEnviarCorreo,
+  hayContactos,
   envios,
-  onEnviado,
 }: {
   oe: OrdenEstacion;
   tipo: TipoPdfOrdenEstacion;
   etiqueta: string;
-  puedeEnviarCorreo: boolean;
+  hayContactos: boolean;
   envios: LogEnvioCorreo[];
-  onEnviado: (log: LogEnvioCorreo) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
-  const [enviando, setEnviando] = useState(false);
   const [abriendoCorreo, setAbriendoCorreo] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // ADR-126: el bundle ahora manda el PDF de ESTE botón, así que el último envío
-  // exitoso se filtra por el mismo `tipoPdf` (ya no por el valor fijo "orden_transmision").
+  // ADR-126: el bundle ahora manda el PDF de ESTE botón, así que el último `.eml`
+  // generado se filtra por el mismo `tipoPdf` (ya no por el valor fijo "orden_transmision").
   const ultimoEnvio = envios.find((e) => e.tipoPdf === tipo && e.exitoso);
   // ADR-140: el mensaje de "sin contactos" depende de a quién le toca este tipo de PDF
   // (Servicio/Reales → anunciante; Programados → afiliado).
@@ -433,20 +428,6 @@ function FilaPdf({
     previsualizarPdfOrdenEstacion(oe.id, tipo, oe.folio_orden_interna)
       .then(() => setAbierto(false))
       .catch((e) => setError(e instanceof ApiRequestError ? e.message : "No se pudo abrir el PDF."));
-  };
-
-  const enviarCorreo = async () => {
-    setEnviando(true);
-    setError(null);
-    try {
-      const dto = await enviarCorreoOrdenTransmisionApi(oe.id, tipo);
-      onEnviado(logEnvioCorreoFromApi(dto));
-      setAbierto(false);
-    } catch (e) {
-      setError(e instanceof ApiRequestError ? e.message : "No se pudo enviar el correo.");
-    } finally {
-      setEnviando(false);
-    }
   };
 
   // ADR-124/ADR-126/ADR-144: descarga el ".eml" con el PDF de ESTE botón (+ Material a
@@ -485,29 +466,20 @@ function FilaPdf({
         </button>
         {abierto && (
           <>
-            <button
-              type="button"
-              className="btn btn-sm btn-teal"
-              disabled={enviando || !puedeEnviarCorreo}
-              title={puedeEnviarCorreo ? undefined : sinContactosMensaje}
-              onClick={enviarCorreo}
-            >
-              {enviando ? "Enviando…" : "✉️ Enviar por correo"}
-            </button>
-            <button type="button" className="btn btn-sm" disabled={enviando} onClick={imprimir}>
+            <button type="button" className="btn btn-sm" onClick={imprimir}>
               🖨️ Imprimir
             </button>
             <button
               type="button"
               className="btn btn-sm"
-              disabled={enviando || abriendoCorreo || !puedeEnviarCorreo}
-              title={puedeEnviarCorreo ? "Abre un borrador nuevo listo para enviar" : sinContactosMensaje}
+              disabled={abriendoCorreo || !hayContactos}
+              title={hayContactos ? "Abre un borrador nuevo listo para enviar" : sinContactosMensaje}
               aria-label="Abrir correo"
               onClick={abrirCorreo}
             >
               {abriendoCorreo ? "Abriendo…" : "📧 Abrir correo"}
             </button>
-            <button type="button" className="btn btn-sm" disabled={enviando} onClick={() => setAbierto(false)}>
+            <button type="button" className="btn btn-sm" onClick={() => setAbierto(false)}>
               Cancelar
             </button>
           </>
