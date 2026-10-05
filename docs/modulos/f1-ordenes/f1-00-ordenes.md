@@ -386,6 +386,8 @@ día nuevo muestra "Nuevo" en Resultado en vez de bonif./desc./sin cambio). Un d
 periodo original que NO viene en el archivo ya no se queda visible como "sin cambio"
 — se quita de la vista por completo (el backend lo sigue verificando igual al
 avanzar, sin incidencia; es una decisión solo de qué se MUESTRA en pantalla).
+**Corregido por ADR-157:** esto resultó ser un vacío real, no solo una decisión de UI
+— ver abajo.
 
 **ADR-152 (petición del usuario):** un día nuevo propuesto por el layout que el
 backend rechazaría al avanzar (fuera del rango de campaña de la OC, o fecha+hora
@@ -408,6 +410,21 @@ valor incorrecto. Se cambió a una `key` estable por índice.
 **ADR-155 (petición del usuario):** "Carga de Órdenes Reales Desde Layout" se
 restringe a SOLO `.csv` (antes csv/xlsx/xls/txt) — xlsx/xls/txt nunca se parseaban,
 solo se guardaban sin avisar que no se iban a aplicar.
+
+**ADR-157 (petición del usuario, corrige ADR-151):** "validar lo que el botón OK hace
+actualmente... esas validaciones no las hemos hecho cuando cargamos el layout" — la
+carga del layout ahora CONCILIA de verdad contra lo programado, de los 4 casos que
+pidió el usuario: (1) diferencia en spots en un día que coincide → ya marcaba
+bonif./desc. correctamente (sin cambios); (2) diferencia de hora → el usuario
+confirmó NO intentar adivinar un match por solo fecha (se resuelve con los otros 2
+casos: el horario viejo queda como faltante, el nuevo como "Nuevo"); (3) registros
+adicionales → ya se marcaban "Nuevo" (sin cambios); (4) **registros faltantes**
+(un día ya programado que el CSV no menciona) — antes desaparecía de la tabla
+(ADR-151); ahora `_parsear_layout_reales_csv()` lo agrega a `aplicados` con `spots=0`
+(como si el usuario lo hubiera editado a mano a 0), así que sigue viéndose en la
+tabla con su descuento y genera su `Incidencia` normal al avanzar. Un día ya
+**cancelado** (ADR-104) se excluye de este chequeo (ya tiene su propia
+`Verificacion`).
 
 `OrdenEstacion.estatus` es un ciclo de vida **propio e independiente** del de
 `OrdenCliente` (confirmado en la spec): cada OE cierra por su cuenta; `OrdenCliente`

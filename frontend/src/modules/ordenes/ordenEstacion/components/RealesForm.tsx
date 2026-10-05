@@ -111,11 +111,13 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
   // agrega aquí (no viene del backend) para poder editarlos inline igual que las
   // filas existentes, dentro de la MISMA tabla (ADR-151: ya no van en una tabla aparte).
   const [diasNuevos, setDiasNuevos] = useState<DiaNuevoDraft[]>([]);
-  // ADR-151 (petición del usuario): mientras no se cargue ningún layout, la tabla
-  // sigue el flujo de SIEMPRE (`oe.periodo_transmision`, edición manual por fila). En
-  // cuanto un layout aporta algo (aplicados o nuevos), la tabla se RECONSTRUYE
-  // completa a partir de lo que trajo el archivo — los días que ya no vienen en él
-  // dejan de mostrarse (se "quitan" de la tabla, no solo de sus overrides).
+  // ADR-151/ADR-157 (petición del usuario): mientras no se cargue ningún layout, la
+  // tabla sigue el flujo de SIEMPRE (`oe.periodo_transmision`, edición manual por
+  // fila). En cuanto un layout aporta algo (aplicados o nuevos), la tabla se
+  // RECONSTRUYE completa a partir de lo que trajo el archivo — PERO ya no "esconde"
+  // los días que no vinieron en él (ADR-151 lo hacía; ADR-157 lo corrigió): el backend
+  // concilia contra lo programado y manda esos días también en `aplicados`, con
+  // `spots=0` — se siguen viendo en la tabla, con su incidencia de faltante marcada.
   const [layoutCargado, setLayoutCargado] = useState(false);
 
   // ADR-119: "Evidencias de lo Transmitido" — requiere el `orden_estacion_id` real de
@@ -236,10 +238,13 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
     setOverrides((prev) => ({ ...prev, [diaId]: { ...prev[diaId], ...patch } }));
   };
 
-  // ADR-147/ADR-149/ADR-151 (petición del usuario): cargar un layout REEMPLAZA completo
-  // la tabla — los días que ya no vienen en el archivo dejan de mostrarse (se
-  // construyen `overrides`/`diasNuevos` desde cero, nunca se hace merge con lo
-  // anterior) y la tabla pasa a mostrar SOLO lo que trajo el archivo (`layoutCargado`).
+  // ADR-147/ADR-149/ADR-151/ADR-157 (petición del usuario): cargar un layout REEMPLAZA
+  // completo `overrides`/`diasNuevos` (nunca se hace merge con lo anterior) — pero
+  // desde ADR-157 el backend ya manda en `aplicados` un override `spots=0` por cada
+  // día programado que el archivo no tocó (conciliación completa contra lo
+  // programado), así que en la práctica la tabla sigue mostrando TODOS los días: los
+  // que el archivo confirmó (con su spots real), los que no mencionó (en 0, marcados
+  // como faltante) y los que propone como nuevos (`diasNuevos`).
   const onLayoutAplicado = (aplicados: LayoutRealAplicado[], nuevos: LayoutRealNuevo[]) => {
     const overridesNuevos: Record<string, Draft> = {};
     aplicados.forEach((a) => {
@@ -427,11 +432,13 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   );
                 })}
 
-              {/* ADR-151 (petición del usuario): con un layout cargado, la tabla deja de
-                  mostrar `oe.periodo_transmision` tal cual — se reconstruye COMPLETA a
-                  partir de lo que trajo el archivo (`overrides` = aplicados, `diasNuevos`
-                  = propuestas de día nuevo). Un día que ya no viene en el archivo
-                  simplemente deja de aparecer aquí (no solo "sin cambio"). */}
+              {/* ADR-151/ADR-157 (petición del usuario): con un layout cargado, la tabla
+                  deja de mostrar `oe.periodo_transmision` tal cual — se reconstruye
+                  COMPLETA a partir de lo que trajo el archivo (`overrides` = aplicados,
+                  `diasNuevos` = propuestas de día nuevo). Un día que no viene en el
+                  archivo YA NO desaparece (ADR-151 lo escondía; ADR-157 lo corrigió):
+                  el backend lo manda en `overrides` con spots=0, así que sigue en la
+                  tabla marcado como descuento/faltante, con su incidencia. */}
               {layoutCargado &&
                 Object.values(overrides).map((ov) => {
                   const diaId = ov.orden_estacion_dia_id!;

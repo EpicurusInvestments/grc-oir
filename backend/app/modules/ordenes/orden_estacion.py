@@ -1048,6 +1048,14 @@ def _parsear_layout_reales_csv(
     `errores` — nunca tumba el resto del archivo. Devuelve `([], [], [error único])` si
     el archivo no se puede leer como CSV o le faltan encabezados — ahí sí no hay nada
     que procesar.
+
+    ADR-157 (petición del usuario): además de lo anterior, CONCILIA contra lo ya
+    programado — cualquier día de `dias` (no cancelado) cuya fecha+hora NO aparezca en
+    ninguna fila válida del archivo se agrega también a `aplicados`, con `spots=0` (se
+    trata exactamente como si el usuario lo hubiera editado a mano a 0 — mismo mecanismo
+    de incidencia que cualquier otro override, sin caso especial en `avanzar_reales`).
+    Antes (ADR-151) un día así simplemente dejaba de mostrarse; ahora el archivo debe
+    reflejar TODA la realidad de la OE, no solo lo que trae.
     """
     try:
         texto = contenido.decode("utf-8-sig")
@@ -1164,6 +1172,30 @@ def _parsear_layout_reales_csv(
                     ),
                 )
             )
+
+    # ADR-157 (petición del usuario): un día YA programado que el archivo NO menciona
+    # para nada ya no se "esconde" de la tabla (ADR-151) — se concilia contra lo
+    # programado, igual que si el usuario lo editara a mano a 0 spots: se agrega a
+    # `aplicados` con `spots=0`, así el front lo sigue mostrando (con su badge de
+    # descuento) y `avanzar_reales` genera su `Incidencia` normalmente (incidencia =
+    # verificado(0) - programado_efectivo, mismo mecanismo que cualquier otro override,
+    # sin lógica especial). Un día YA cancelado se excluye: ya tiene su propia
+    # `Verificacion` creada al cancelar (ADR-104), una segunda violaría
+    # `uq_verificacion_orden_estacion_dia`.
+    tocados = set(grupos)
+    for dia in dias:
+        if dia.cancelada:
+            continue
+        if (dia.fecha_transmision, dia.hora_inicio) not in tocados:
+            aplicados.append(
+                LayoutRealAplicadoRead(
+                    orden_estacion_dia_id=dia.orden_estacion_dia_id,
+                    fecha_transmision=dia.fecha_transmision,
+                    hora_inicio=dia.hora_inicio,
+                    spots=0,
+                )
+            )
+    aplicados.sort(key=lambda a: (a.fecha_transmision, a.hora_inicio))
 
     return aplicados, nuevos, errores
 
