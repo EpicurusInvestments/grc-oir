@@ -153,7 +153,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText("layout.csv")).toBeInTheDocument());
   });
 
-  it("ADR-147/ADR-151: aplicar un layout reemplaza COMPLETO la tabla de reales (no solo los overrides)", async () => {
+  it("ADR-147/ADR-157: aplicar un layout reemplaza la tabla, pero CONCILIA contra lo programado (un día no mencionado se marca como faltante, no desaparece)", async () => {
     const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
     const diaB = makeRow({ orden_estacion_dia_id: "dia-b", fecha: "2025-06-02", spots_diarios: 5 });
     const oe = makeOE({ periodo_transmision: [diaA, diaB] });
@@ -171,6 +171,15 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 15,
+        },
+        // ADR-157: dia-b no viene en el archivo — el backend lo manda igual, en 0
+        // (conciliación completa contra lo programado, no un "no se menciona = sin
+        // cambio").
+        {
+          orden_estacion_dia_id: "dia-b",
+          fecha_transmision: "2025-06-02",
+          hora_inicio: "07:00",
+          spots: 0,
         },
       ],
       nuevos: [],
@@ -191,12 +200,13 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     // dia-a (aplicado) pasa a 15 spots, con bonificación de +5 sobre lo programado (10).
     await waitFor(() => expect(screen.getByText("15")).toBeInTheDocument());
     expect(screen.getByText("+5 bonif.")).toBeInTheDocument();
-    // ADR-151 (petición del usuario): dia-b no vino en el archivo — ya NO se muestra en
-    // la tabla (se "quita" por completo, no se queda visible como "sin cambio").
-    expect(screen.queryByText("2025-06-02")).toBeNull();
+    // ADR-157 (petición del usuario, corrige ADR-151): dia-b no vino en el archivo —
+    // sigue mostrándose (ya NO desaparece), marcado como descuento completo (-5).
+    expect(screen.getByText("2025-06-02")).toBeInTheDocument();
+    expect(screen.getByText("-5 desc.")).toBeInTheDocument();
     expect(screen.queryByText("sin cambio")).toBeNull();
 
-    expect(screen.getByText("Se aplicaron 1 día(s) a la tabla de reales.")).toBeInTheDocument();
+    expect(screen.getByText("Se aplicaron 2 día(s) a la tabla de reales.")).toBeInTheDocument();
     expect(screen.getByText("1 fila(s) no se aplicaron:")).toBeInTheDocument();
     expect(screen.getByText(/Radio MTY/)).toBeInTheDocument();
   });

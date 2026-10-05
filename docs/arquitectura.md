@@ -5997,3 +5997,49 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   (ADR-108), así que ningún reporte pierde información real, solo deja de repetirla.
 - **Verificado:** `test_f1_06_ordenes_pdf.py` (11 pruebas, smoke tests de generación)
   en verde, suite completa de backend en verde, `ruff check` sin nuevas violaciones.
+
+### ADR-157 — "Carga de Órdenes Reales Desde Layout" concilia contra lo programado: un día no mencionado se marca como faltante, no desaparece
+
+- **Estado:** aceptada · **Fecha:** 2026-10-02 (F1, petición del usuario viendo la
+  tabla de "Capturar Reales" ya funcionando bien para el caso de match: "nos falta un
+  paso más validar lo que el botón OK hace actualmente... esas validaciones no las
+  hemos hecho cuando cargamos el layout... [4] Corregir la carga del layout una vez
+  que cargue la información concilie contra lo programado... Diferencia en spots debe
+  marcar las incidencias correspondientes. Diferencia en hora solo marcar que cambio.
+  Si tiene registros adicionales marcarlo como nuevo registro. Si faltan registros
+  debería marcar la diferencia y generar la incidencia").
+- **Contexto:** `_parsear_layout_reales_csv()` (ADR-147) solo clasificaba lo que SÍ
+  venía en el archivo (`aplicados`/`nuevos`/`errores`) — nunca revisaba qué días YA
+  programados se quedaban sin ninguna fila del CSV. ADR-151 "escondía" esos días de la
+  tabla en vez de marcarlos, lo cual impedía generar su incidencia de faltante al
+  avanzar. De los 4 casos que pidió el usuario, 3 ya funcionaban (spots distintos →
+  bonif./desc. ya calculado por `distinto()`/`programadoEfectivo()`; registros
+  adicionales → "Nuevo"); preguntado específicamente por el caso de "diferencia en
+  hora" (¿reclasificar como 'cambio de horario' buscando el día existente por sólo la
+  fecha?), el usuario confirmó explícitamente **no** hacer ese match difuso — el
+  match sigue siendo SIEMPRE por fecha+hora exacta (`AskUserQuestion`: "Nunca
+  reclasificar por fecha"); una hora distinta simplemente se resuelve solo con los
+  otros 2 casos ya cubiertos (el horario viejo → faltante con su incidencia; el
+  horario nuevo → "Nuevo").
+- **Decisión:** `_parsear_layout_reales_csv()` ahora, además de procesar las filas del
+  CSV, recorre `dias` (todos los días YA existentes de la OE) y por cada uno cuya
+  `(fecha_transmision, hora_inicio)` NO esté entre las filas válidas del archivo, lo
+  agrega también a `aplicados` con `spots=0` — exactamente como si el usuario lo
+  hubiera editado a mano a 0 (reutiliza 100% el mecanismo de `distinto()`/diff/badge
+  del frontend y de incidencia de `avanzar_reales`, sin ningún caso especial). Un día
+  YA **cancelado** se excluye (ya tiene su propia `Verificacion` creada al cancelar,
+  ADR-104; una segunda violaría `uq_verificacion_orden_estacion_dia`). `aplicados` se
+  ordena al final por `(fecha_transmision, hora_inicio)` para que la tabla se siga
+  viendo en orden cronológico. Sin cambios de schema/API — `aplicados` sigue siendo el
+  mismo tipo, solo con más entradas; cero cambios en frontend salvo comentarios.
+- **Consecuencia:** ninguna negativa — es un caso más de la misma mecánica de
+  overrides que ya existía. El usuario sigue pudiendo editar/quitar manualmente una
+  fila marcada como faltante antes de avanzar, igual que cualquier otra.
+- **Verificado:** `test_f1_14...` — 9 pruebas existentes actualizadas (ahora esperan
+  los días no tocados como faltantes en 0, en vez de una lista corta) + 3 pruebas
+  nuevas (`test_dia_no_mencionado_se_marca_como_faltante_en_cero`,
+  `test_dia_faltante_genera_incidencia_al_avanzar` — confirma la `Incidencia` tipo
+  `faltante` al avanzar —, `test_dia_cancelado_no_se_marca_como_faltante`); suite
+  completa de backend en verde. `RealesForm.test.tsx` — la prueba de ADR-151 que
+  esperaba que un día no mencionado desapareciera se reescribió para esperar lo
+  contrario (17/17 en verde); `tsc`/`eslint` limpios.
