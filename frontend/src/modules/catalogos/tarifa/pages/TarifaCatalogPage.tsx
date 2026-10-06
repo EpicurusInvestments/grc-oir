@@ -3,8 +3,12 @@
  * ADR-097 (petición del usuario): ya no filtra por vigencia (eliminada por completo);
  * filtros Activas/Inactivas/Todas. Alta/edición en el panel derecho; la `tarifa_neta` es
  * calculada (solo lectura). Los conflictos de negocio del backend (p.ej. tarifa activa
- * duplicada para la misma estación/señal/duración/producto, 409) se muestran al usuario
- * sin romper la pantalla.
+ * duplicada para la misma estación/duración/producto, 409) se muestran al usuario sin
+ * romper la pantalla.
+ *
+ * ADR-158 (petición del usuario): se quita la columna "Señal" de la lista y la señal
+ * del encabezado del detalle — `tipo_senal` se eliminó de `TarifaPlaza` (es propiedad
+ * de la Estación, no de la tarifa).
  */
 
 import { useState } from "react";
@@ -25,8 +29,8 @@ import {
 import { TarifaForm, type TarifaFormOutput } from "../components/TarifaForm";
 import { fmtMoneda } from "../format";
 import { useHistorialTarifa, useTarifas } from "../hooks";
-import type { DuracionSpot, ProductoTarifa, TarifaPlaza, TipoSenal } from "../types";
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES, TIPO_SENAL_OPCIONES } from "../types";
+import type { DuracionSpot, ProductoTarifa, TarifaPlaza } from "../types";
+import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "../types";
 
 type Filtro = "todas" | "activas" | "inactivas";
 type Modo = "view" | "new" | "edit";
@@ -40,7 +44,6 @@ const FILTROS: { key: Filtro; label: string }[] = [
 const activoDeFiltro = (f: Filtro): boolean | undefined =>
   f === "activas" ? true : f === "inactivas" ? false : undefined;
 
-const senalLabel = (v: TipoSenal) => TIPO_SENAL_OPCIONES.find((o) => o.value === v)?.label ?? v;
 const duracionLabel = (v: DuracionSpot) =>
   DURACION_SPOT_OPCIONES.find((o) => o.value === v)?.label ?? v;
 const productoLabel = (v: ProductoTarifa) =>
@@ -151,7 +154,6 @@ export function TarifaCatalogPage() {
         isEdit
         defaultValues={{
           estacion_id: selected.estacion_id,
-          tipo_senal: selected.tipo_senal,
           duracion_spot: selected.duracion_spot,
           producto: selected.producto,
           tarifa_bruta: selected.tarifa_bruta,
@@ -174,8 +176,7 @@ export function TarifaCatalogPage() {
           <div className="dh-row">
             <div>
               <div className="dh-name">
-                {selected.estacion_nombre ?? "—"} · {senalLabel(selected.tipo_senal)}{" "}
-                {duracionLabel(selected.duracion_spot)}
+                {selected.estacion_nombre ?? "—"} · {duracionLabel(selected.duracion_spot)}
               </div>
               <div className="dh-sub">
                 <StatusBadge activo={selected.activo} />
@@ -275,7 +276,6 @@ export function TarifaCatalogPage() {
           <tr>
             <th>Emisora</th>
             <th style={{ width: 110 }}>Producto</th>
-            <th style={{ width: 70 }}>Señal</th>
             <th style={{ width: 90 }}>Duración</th>
             <th className="td-right" style={{ width: 120 }}>
               Tarifa bruta
@@ -300,7 +300,6 @@ export function TarifaCatalogPage() {
             >
               <td className="td-main">{t.estacion_nombre ?? "—"}</td>
               <td className="td-2">{productoLabel(t.producto)}</td>
-              <td className="td-2">{senalLabel(t.tipo_senal)}</td>
               <td className="td-2">{t.duracion_spot}</td>
               <td className="td-right td-mono">{fmtMoneda(t.tarifa_bruta)}</td>
               <td className="td-center td-mono">{t.descuento_pct}%</td>
@@ -342,8 +341,8 @@ export function TarifaCatalogPage() {
         <div>
           <div className="cat-title">Tarifas</div>
           <div className="cat-sub">
-            Tarifas de referencia por emisora, producto, tipo de señal y duración. Se
-            sugieren al capturar órdenes; el precio final puede sobreescribirse.
+            Tarifas de referencia por emisora, producto y duración. Se sugieren al
+            capturar órdenes; el precio final puede sobreescribirse.
           </div>
         </div>
         {canWrite && (

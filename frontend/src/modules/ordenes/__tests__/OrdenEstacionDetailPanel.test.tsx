@@ -49,7 +49,7 @@ vi.mock("@/modules/catalogos/anunciante/api", () => ({
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
 // necesitan: es6 = XHRC-FM (fm), ta1 = es6/fm/30s → tarifa_bruta 9500, descuento 10%.
 estaciones.push({ id: "es6", afiliado_id: "af3", plaza_id: "pl1", nombre_estacion: "XHRC-FM", frecuencia: "100.9 FM", tipo_senal: "fm" });
-tarifas.push({ id: "ta1", estacion_id: "es6", tipo_senal: "fm", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+tarifas.push({ id: "ta1", estacion_id: "es6", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
 afiliados.push({ id: "af3", nombre_afiliado: "Afiliado Tres", porcentaje_participacion_oir_default: 20, contacto_email: null });
 anunciantes.push({
   id: "an1",

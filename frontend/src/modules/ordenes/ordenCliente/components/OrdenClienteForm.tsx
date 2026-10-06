@@ -555,7 +555,7 @@ export function OrdenClienteForm({
             <div className="r4">
               <div>
                 <div className="fl">
-                  Duración del spot <FieldTag origin="catalogo" />
+                  Duración <FieldTag origin="catalogo" />
                 </div>
                 <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
                   {OPCIONES_DURACION.map((d) => (

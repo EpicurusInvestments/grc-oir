@@ -47,9 +47,10 @@ catálogo sugerida + auditada:**
   cambio es de origen del dato, no de esquema — `OrdenEstacionCreate`/`Update` la aceptan
   como entrada en vez de que el servicio la copie de la OC.
 - Al crear/editar, el servicio busca la tarifa ACTIVA que coincide en
-  estación+tipo_señal (de `Estacion.tipo_senal`)+duración (capturada en la OE)+producto —
-  mismo criterio "sin duplicado activo" de `TarifaPlaza` (ADR-097) — y la usa como
-  SUGERENCIA (el frontend la pre-carga en `precio_spot`, editable).
+  estación+duración (capturada en la OE)+producto — mismo criterio "sin duplicado
+  activo" de `TarifaPlaza` (ADR-097/ADR-158: `tipo_senal` se retiró de `TarifaPlaza`
+  por ser redundante con `Estacion.tipo_senal`, que ya determinaba `estacion_id`) — y
+  la usa como SUGERENCIA (el frontend la pre-carga en `precio_spot`, editable).
 - **Auditoría condicional, NO el mecanismo de "parámetro sensible" de campo (ADR-016):**
   a diferencia de `TarifaPlaza.tarifa_bruta`/`descuento_pct` (que sí exigen
   `field_permissions.verificar`, hoy solo Admin), aquí el "capturista" normal es Ventas —
@@ -1794,14 +1795,13 @@ class OrdenEstacionService(
     def _tarifa_sugerida(
         self, db: Session, *, estacion: Estacion, duracion_spot: str, producto_tarifa: str | None
     ) -> TarifaPlaza | None:
-        """Tarifa ACTIVA para (estación, tipo de señal, duración, producto), o `None` si
-        no hay ninguna capturada — en ese caso no hay nada contra qué comparar/auditar."""
+        """Tarifa ACTIVA para (estación, duración, producto), o `None` si no hay ninguna
+        capturada — en ese caso no hay nada contra qué comparar/auditar."""
         if producto_tarifa is None:
             return None
         tarifa_repo = TarifaRepository(db, TarifaPlaza)
         return tarifa_repo.existe_duplicado_activo(
             estacion_id=estacion.estacion_id,
-            tipo_senal=estacion.tipo_senal,
             duracion_spot=duracion_spot,
             producto=producto_tarifa,
         )

@@ -14,20 +14,24 @@
  * SENSIBLES — cada cambio se audita (`HistorialCambio`, mismo mecanismo que
  * Agencia/Vendedor/Contrato). `motivo_cambio` es transitorio (solo en `TarifaPlazaUpdate`,
  * nunca en Create/Read).
+ *
+ * ADR-158 (petición del usuario): se elimina `tipo_senal` por completo — es propiedad
+ * de la Estación (`@/modules/catalogos/estacion/types`), no de la tarifa; mantenerla
+ * aquí duplicada permitía capturar un tipo de señal distinto al de la estación
+ * seleccionada, sin ningún beneficio (la unicidad/sugerencia ya filtran por
+ * `estacion_id`, que determina el tipo de señal por sí solo).
  */
 
 import type { CatalogoBase, HistorialCambio } from "@/shared/types";
 
 export type { HistorialCambio };
 
-export type TipoSenal = "fm" | "am" | "tv";
 export type DuracionSpot = "20s" | "30s" | "60s";
 export type ProductoTarifa = "spot" | "mencion" | "control_remoto" | "patrocinio";
 
 export interface TarifaPlaza extends CatalogoBase {
   tarifa_plaza_id: string;
   estacion_id: string;
-  tipo_senal: TipoSenal;
   duracion_spot: DuracionSpot;
   producto: ProductoTarifa;
   tarifa_bruta: string; // Decimal como string
@@ -41,7 +45,6 @@ export interface TarifaPlaza extends CatalogoBase {
 
 export interface TarifaPlazaCreate {
   estacion_id: string;
-  tipo_senal: TipoSenal;
   duracion_spot: DuracionSpot;
   producto: ProductoTarifa;
   tarifa_bruta: string; // se envía como string para preservar Decimal
@@ -54,12 +57,6 @@ export interface TarifaPlazaUpdate extends Partial<TarifaPlazaCreate> {
   /** Transitorio (no persiste): requerido si `tarifa_bruta`/`descuento_pct` cambian. */
   motivo_cambio?: string | null;
 }
-
-export const TIPO_SENAL_OPCIONES: { value: TipoSenal; label: string }[] = [
-  { value: "fm", label: "FM" },
-  { value: "am", label: "AM" },
-  { value: "tv", label: "TV" },
-];
 
 export const DURACION_SPOT_OPCIONES: { value: DuracionSpot; label: string }[] = [
   { value: "20s", label: "20 segundos" },

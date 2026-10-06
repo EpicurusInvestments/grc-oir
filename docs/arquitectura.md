@@ -6044,7 +6044,130 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   esperaba que un día no mencionado desapareciera se reescribió para esperar lo
   contrario (17/17 en verde); `tsc`/`eslint` limpios.
 
-### ADR-158 — El panel "Al avanzar a 2.3 se generarán" ignoraba los días nuevos del layout (no contaba sus spots como bonificación)
+### ADR-158 — El catálogo Tarifas deja de capturar "Tipo de señal"; "Duración del spot" pasa a llamarse solo "Duración"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F0, petición del usuario viendo la
+  pantalla de edición de tarifa: "Modificar Catálogo Tarifas se quitará el campo tipo
+  de señal porque es una propiedad de la estación y no de la tarifa. también el campo
+  duración del spot solo se llamara Duración también quitarlo de la lista de Tarifas
+  eliminar la columna señal. Hacer pruebas del flujo completo de todas las
+  pantallas.").
+- **Contexto:** `TarifaPlaza.tipo_senal` (ADR-097) se capturaba de forma INDEPENDIENTE
+  al "Nombre de la emisora" seleccionado — el formulario permitía, por ejemplo, elegir
+  una estación FM real pero guardar "AM" en la tarifa, una inconsistencia de datos sin
+  ningún beneficio: tanto la regla "sin duplicado activo" (`existe_duplicado_activo`)
+  como la sugerencia de tarifa al capturar una OE (`_tarifa_sugerida`,
+  `orden_estacion.py`) y su espejo en frontend (`tarifaReferencia`,
+  `OrdenEstacionForm.tsx`/`OrdenEstacionDetailPanel.tsx`) YA filtraban también por
+  `estacion_id`, que por sí solo determina el tipo de señal real de la emisora
+  (`Estacion.tipo_senal`, que SÍ se conserva — es propiedad de la estación, no de la
+  tarifa).
+- **Decisión:**
+  - Backend (`tarifa.py`): se elimina la columna `tipo_senal` de `TarifaPlaza` (CHECK
+    `ck_tarifa_plaza_tipo_senal`, el enum local `TipoSenal` — ya redundante con el de
+    `Estacion` — y el campo de los schemas Create/Update/List/Read). La combinación de
+    "sin duplicado activo" pasa de (estación+tipo_senal+duración+producto) a
+    (estación+duración+producto); mismo ajuste en `_tarifa_sugerida`
+    (`orden_estacion.py`). Migración `ec3a357e7c0a` (drop de columna/CHECK, recompone
+    `ix_tarifa_plaza_combo` sin `tipo_senal`; patrón `batch_alter_table` para SQLite,
+    igual que ADR-096/ADR-097).
+  - Frontend: se quita el campo "Tipo de señal" de `TarifaForm.tsx` y la columna
+    "Señal" de la lista/detalle en `TarifaCatalogPage.tsx`; "Duración del spot" pasa a
+    "Duración" (solo en esta pantalla — `OrdenClienteForm.tsx` tiene su propia etiqueta
+    independiente, fuera de alcance de esta petición). `tarifaReferencia()`
+    (`catalogosCache.ts`) y sus 2 llamadores (`OrdenEstacionForm.tsx`,
+    `OrdenEstacionDetailPanel.tsx`) dejan de recibir/filtrar por tipo de señal.
+  - `seed_dev.py`: la tupla `TARIFAS` deja de traer `tipo_senal` (ya es redundante con
+    la estación referenciada).
+- **Consecuencia:** ninguna negativa — ninguna tarifa pierde información real (el tipo
+  de señal se sigue mostrando/filtrando, ahora correctamente desde `Estacion`, nunca
+  duplicado ni potencialmente inconsistente). `test_f0_02_tarifas.py` pierde el test
+  dedicado a "tipo_senal inválido" (ya no existe ese campo) y ajusta 2 pruebas que
+  dependían de variar `tipo_senal` para no chocar como "duplicado activo" (ahora usan
+  `producto`/`duracion_spot` distintos en su lugar).
+- **Verificado — "flujo completo" (petición explícita del usuario):** suite completa
+  de backend en verde (incluye `test_f0_02_tarifas.py` reescrito, 32/32, y
+  `test_f1_05`/`test_f1_06`, que ejercitan `_tarifa_sugerida` end-to-end); migración
+  probada con roundtrip `upgrade`→`downgrade`→`upgrade` sobre la BD de desarrollo;
+  suite de frontend `ordenes` en verde (207/207) + `tsc`/`eslint` limpios en todo el
+  repo. Además, contra el backend real ya corriendo: `GET /catalogos/tarifas` confirma
+  que la respuesta ya NO trae `tipo_senal`; `POST /catalogos/tarifas` sin ese campo
+  crea una tarifa correctamente, y un segundo POST con la misma
+  estación+duración+producto sí la rechaza con 409 (duplicado activo), sin que
+  `tipo_senal` participe en ningún lado. No se tiene navegador disponible en este
+  entorno para clics manuales en pantalla — la verificación de UI se apoya en las
+  pruebas de componente (`vitest`) más la API real, no en una sesión de navegador.
+  Corrida la suite COMPLETA de frontend (no solo `ordenes`/`tarifa`): 4 archivos de
+  `auth`/`seguridad`/`shared` (login, sesión, guard de área, `apiClient`) fallan — pero
+  ya fallaban igual corridos solos, sin tocar nada de este cambio (confirmado por
+  `git diff` vacío sobre esos archivos); es un problema preexistente de este entorno,
+  no una regresión de ADR-158.
+
+### ADR-159 — Catálogo nuevo "DuracionSpotCatalogo" (F0-06): CRUD standalone, sin tocar el enum DuracionSpot
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F0, petición del usuario: "ahora no
+  quiero que modifiques nada de loS ENUMS donde configuras el tiempo de los Spots vamos
+  a crear un catalogo nuevo llamado DuracionSpots basicamente daremos de alta estos
+  registros para poder ir agregandole mas tiempo etc. IdDuracion, IdProducto,
+  Descripción de la duración por ahora solo 20|30|60 (para los spots) ... 1|2|3 | sin
+  duración (para la mención) ... sin duración - (Control Remoto) ... sin duración -
+  (Patrocinio) solo crea el catalogo por ahora no lo usaremos solo quiero ver el CRUD
+  completo").
+- **Contexto:** el enum compartido `DuracionSpot` (`app/shared/enums.py`, ADR-032:
+  `20s|30s|60s`) sigue siendo la fuente de verdad para `TarifaPlaza`/`OrdenCliente`/
+  `OrdenEstacion` — el usuario fue explícito en NO tocarlo. Lo que pide es un catálogo
+  ADMINISTRABLE aparte, con duraciones en texto libre (no un enum cerrado) agrupadas por
+  `producto`, para poder agregar valores nuevos ("más tiempo etc.") sin una migración
+  por cada uno — justo lo que un enum+CHECK no permite. Es, conceptualmente, la misma
+  decisión que ya se tomó para `producto` en `TarifaPlaza` (ADR-097: "entidad nueva,
+  fuera de la spec BD v2"), aplicada ahora a una tabla propia en vez de un campo.
+- **Decisión:**
+  - Nombre de la clase/tabla: `DuracionSpotCatalogo` / `duracion_spot_catalogo` (NO
+    `DuracionSpot`, para no chocar con el enum del mismo nombre en
+    `app/shared/enums.py` — ambos conviven en el mismo backend).
+  - Campos: `producto` (ENUM reusado de `ProductoTarifa`, ya existente en `tarifa.py` —
+    import directo, no se duplica) + `descripcion_duracion` (texto libre, NVARCHAR(60),
+    sin CHECK) + `activo`/`created_at`/`updated_at` (patrón F0 estándar).
+  - Sin duplicado activo por (`producto` + `descripcion_duracion`, case-insensitive) —
+    mismo criterio que `Categoria` (ADR-017) extendido a 2 campos, para que "sin
+    duración" pueda repetirse en productos DISTINTOS sin chocar.
+  - Replica al pie de la letra el patrón del catálogo F0 más simple ya existente
+    (`Categoria`): modelo + schemas + `BaseRepository`/`BaseService`/`build_crud_router`,
+    sin lógica adicional.
+  - Backend: módulo nuevo `duracion_spot_catalogo.py`, registrado en
+    `catalogos/router.py`; migración `2047cd2e1d53` (tabla nueva, sin FKs). Frontend:
+    módulo nuevo `catalogos/duracionSpot/` (types/api/hooks/form/página), registrado en
+    `catalogRegistry.tsx` (grupo "Operación", junto a Tarifas) y en los contadores de
+    `CatalogosExplorerPage.tsx`.
+  - **Por petición expresa, NINGÚN otro módulo lo usa todavía** — no se tocó
+    `TarifaForm.tsx`/`OrdenClienteForm.tsx`/`OrdenEstacionForm.tsx` ni el enum
+    `DuracionSpot`. Documentado como módulo F0-06, fuera del bloque original de 6
+    módulos que F0 ya daba por completo (`f0-00-indice.md`).
+  - De paso, se completó el rename "Duración del spot" → "Duración" en TODAS las
+    pantallas (petición del usuario, "en todas las pantallas"): quedaba pendiente un
+    solo lugar, `OrdenClienteForm.tsx` — Tarifa/OrdenEstacion ya decían solo "Duración"
+    desde ADR-158/trabajo previo.
+- **Consecuencia:** ninguna negativa — catálogo nuevo, aislado, sin ningún impacto en
+  flujos existentes (Tarifa/Órdenes siguen usando el enum `DuracionSpot` exactamente
+  igual que antes). Queda pendiente, para una petición futura, decidir si y cómo se
+  conecta a las pantallas que hoy usan el enum.
+- **Verificado:** `test_f0_06_duracion_spot_catalogo.py` — 11 pruebas nuevas (alta,
+  duplicado mismo producto+descripción rechazado, distinto producto misma descripción
+  NO duplica, edición sin/con duplicado, baja lógica, producto inválido, descripción
+  vacía, búsqueda, 2 de portabilidad SQL Server); migración con roundtrip
+  upgrade→downgrade→upgrade. `tsc`/`eslint` limpios en todo el repo. Verificado en vivo
+  contra el backend real: se crearon los 9 registros de ejemplo exactos que pidió el
+  usuario (spot 20/30/60; mención 1/2/3/sin duración; control remoto sin duración;
+  patrocinio sin duración) vía `POST /catalogos/duraciones-spot`, el listado confirma
+  `total: 9`, y un décimo POST duplicado (`spot`/`20` otra vez) se rechaza con 409.
+
+### ADR-160 — El panel "Al avanzar a 2.3 se generarán" ignoraba los días nuevos del layout (no contaba sus spots como bonificación)
+
+> Renumerado de ADR-158 a ADR-160 al fusionar esta rama con
+> `fix/catalogos-correcciones-f0` (que ya usaba ADR-158/159 para la corrección de
+> Tarifas y el catálogo nuevo) — el código (`RealesForm.tsx`, `RealesForm.test.tsx`) ya
+> usaba ADR-160 desde que se escribió, antes de saber que esta rama se iba a fusionar;
+> este documento se ajusta para que coincidan.
 
 - **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "revisar que
   en el panel derecho se calcule bien las incidencias cuando se cargan registros desde
@@ -6080,7 +6203,11 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   Suite completa de `ordenes` en verde (208/208, mismos 4 errores de red preexistentes
   sin relación), `tsc`/`eslint` limpios.
 
-### ADR-159 — El panel de Orden de Transmisión nunca mostraba el historial de cambios de tarifa (el backend sí lo registraba)
+### ADR-161 — El panel de Orden de Transmisión nunca mostraba el historial de cambios de tarifa (el backend sí lo registraba)
+
+> Renumerado de ADR-159 a ADR-161 por la misma razón que ADR-160 arriba (código ya
+> escrito con ADR-161 antes de saber que esta rama se iba a fusionar con
+> `fix/catalogos-correcciones-f0`).
 
 - **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "otro bug que
   encontré es que no se está registrando el log de la pantalla de órdenes de
@@ -6107,12 +6234,12 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Consecuencia:** ninguna negativa — solo agrega una lectura más al abrir el panel;
   no cambia nada de la lógica de auditoría del backend, que ya funcionaba bien.
 - **Verificado:** `tsc`/`eslint` limpios; `OrdenEstacionDetailPanel.test.tsx` (12/12) y
-  `RealesForm.test.tsx` (18/18) en verde sin cambios de comportamiento. No se pudo
-  probar en vivo contra el backend real en esta sesión: la BD de desarrollo
-  (`backend/dev_ordenes.db`, un archivo SQLite fuera de git) se comparte entre ramas, y
-  quedó en el esquema de la rama `fix/catalogos-correcciones-f0` (que le quitó
-  `tipo_senal` a `tarifa_plaza` en una sesión previa) — un intento de editar una Orden
-  de Transmisión en esta rama truena con `no such column: tarifa_plaza.tipo_senal`
-  porque el código de ESTA rama todavía espera esa columna. Corregir la base compartida
-  requiere una acción destructiva (recrear/editar el esquema de `dev_ordenes.db`) que
-  quedó pendiente de confirmación explícita del usuario — ver aviso en el chat.
+  `RealesForm.test.tsx` (18/18) en verde sin cambios de comportamiento. En el momento de
+  escribir este ADR no se pudo probar en vivo contra el backend real: la BD de
+  desarrollo (`backend/dev_ordenes.db`, un archivo SQLite fuera de git) se comparte
+  entre ramas, y había quedado en el esquema de `fix/catalogos-correcciones-f0` (que le
+  quitó `tipo_senal` a `tarifa_plaza`, ver ADR-158 arriba) mientras esta rama todavía
+  esperaba esa columna. Resuelto en el mismo commit que fusiona ambas ramas (ver nota al
+  final de ADR-159 arriba): con el código de ADR-158/159 ya presente en esta rama,
+  `alembic upgrade head` vuelve a ubicar la migración y la base queda sincronizada sin
+  necesidad de tocarla a mano.

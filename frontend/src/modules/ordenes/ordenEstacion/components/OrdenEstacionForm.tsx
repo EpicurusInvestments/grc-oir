@@ -185,12 +185,14 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
   const plaza = estacion ? findPlaza(estacion.plaza_id) : undefined;
 
-  // ADR-102/ADR-106: tarifa ACTIVA del catálogo para (estación, tipo de señal, duración
-  // — capturada POR ESTACIÓN, ya no heredada de la orden, producto). Sin ella no hay
-  // nada que sugerir/auditar: precio_spot sigue siendo 100% libre, igual que antes.
+  // ADR-102/ADR-106: tarifa ACTIVA del catálogo para (estación, duración — capturada POR
+  // ESTACIÓN, ya no heredada de la orden —, producto). Sin ella no hay nada que
+  // sugerir/auditar: precio_spot sigue siendo 100% libre, igual que antes.
+  // ADR-158: ya no filtra por tipo de señal — se retiró de TarifaPlaza (es propiedad de
+  // la Estación, ya implícita en `estacion.id`).
   const tarifaSugerida = useMemo(() => {
     if (!estacion || !productoTarifa || !duracionSpot) return undefined;
-    return tarifaReferencia(estacion.id, estacion.tipo_senal, duracionSpot, productoTarifa);
+    return tarifaReferencia(estacion.id, duracionSpot, productoTarifa);
   }, [estacion, productoTarifa, duracionSpot]);
 
   // Auto-carga `precioSpot` con la tarifa sugerida SOLO si el campo está vacío o todavía

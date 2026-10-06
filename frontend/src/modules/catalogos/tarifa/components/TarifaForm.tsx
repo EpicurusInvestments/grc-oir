@@ -12,11 +12,16 @@
  * (no uno por campo), validado a mano en el submit porque el schema de Zod no conoce
  * `defaultValues` al definirse.
  *
- * Refleja las validaciones del backend: estación obligatoria, tipo de señal/duración/
- * producto (enums), tarifa bruta ≥ 0, descuento 0–100. La `tarifa_neta` es CALCULADA: se
- * muestra solo lectura con tag «Calculado» y NO se envía (la calcula y persiste el
- * servidor). Los errores de negocio del backend (p.ej. tarifa activa duplicada, 409) se
- * muestran vía `submitError`.
+ * Refleja las validaciones del backend: estación obligatoria, duración/producto (enums),
+ * tarifa bruta ≥ 0, descuento 0–100. La `tarifa_neta` es CALCULADA: se muestra solo
+ * lectura con tag «Calculado» y NO se envía (la calcula y persiste el servidor). Los
+ * errores de negocio del backend (p.ej. tarifa activa duplicada, 409) se muestran vía
+ * `submitError`.
+ *
+ * ADR-158 (petición del usuario): se quita el campo "Tipo de señal" — es propiedad de
+ * la estación seleccionada (`Estacion.tipo_senal`), capturarla aquí también permitía
+ * una inconsistencia sin ningún beneficio. "Duración del spot" se renombra a solo
+ * "Duración".
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,16 +32,10 @@ import type { Estacion } from "@/modules/catalogos/estacion/types";
 import { FieldTag, MoneyInput, SavingOverlay } from "@/shared/ui";
 
 import { calcularNetaPreview, fmtMoneda } from "../format";
-import {
-  DURACION_SPOT_OPCIONES,
-  PRODUCTO_OPCIONES,
-  TIPO_SENAL_OPCIONES,
-  type TarifaPlazaCreate,
-} from "../types";
+import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES, type TarifaPlazaCreate } from "../types";
 
 const schema = z.object({
   estacion_id: z.string().min(1, "Selecciona una emisora."),
-  tipo_senal: z.enum(["fm", "am", "tv"]),
   duracion_spot: z.enum(["20s", "30s", "60s"]),
   producto: z.enum(["spot", "mencion", "control_remoto", "patrocinio"]),
   tarifa_bruta: z
@@ -94,7 +93,6 @@ export function TarifaForm({
     resolver: zodResolver(schema),
     defaultValues: {
       estacion_id: "",
-      tipo_senal: "fm",
       duracion_spot: "30s",
       producto: "spot",
       tarifa_bruta: "",
@@ -129,7 +127,6 @@ export function TarifaForm({
     }
     onSubmit({
       estacion_id: data.estacion_id,
-      tipo_senal: data.tipo_senal,
       duracion_spot: data.duracion_spot,
       producto: data.producto,
       tarifa_bruta: data.tarifa_bruta.trim(),
@@ -170,30 +167,15 @@ export function TarifaForm({
         </select>
         <div className="fe">{errors.producto?.message}</div>
 
-        <div className="r2">
-          <div>
-            <div className="fl fl-required">Tipo de señal</div>
-            <select className="fsel" {...register("tipo_senal")}>
-              {TIPO_SENAL_OPCIONES.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <div className="fe">{errors.tipo_senal?.message}</div>
-          </div>
-          <div>
-            <div className="fl fl-required">Duración del spot</div>
-            <select className="fsel" {...register("duracion_spot")}>
-              {DURACION_SPOT_OPCIONES.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <div className="fe">{errors.duracion_spot?.message}</div>
-          </div>
-        </div>
+        <div className="fl fl-required">Duración</div>
+        <select className="fsel" {...register("duracion_spot")}>
+          {DURACION_SPOT_OPCIONES.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.duracion_spot?.message}</div>
 
         <div className="sec">Tarifa</div>
         <div className="r2">

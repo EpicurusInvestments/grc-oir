@@ -70,8 +70,10 @@ duración (`20s│30s│60s`), AMBOS elegidos POR ESTACIÓN — secuencia del fo
 Estación → Producto → Duración → Tarifa. NO confundir `producto_tarifa` con el campo
 `producto` de esta misma tabla (heredado de `OrdenCliente.producto`, "Campaña" en texto
 libre). Al crear/editar, el servicio busca la tarifa ACTIVA de `TarifaPlaza` para
-(estación + `Estacion.tipo_senal` + `duracion_spot` de ESTA OE + `producto_tarifa`) y,
-solo si `precio_spot` no coincide con su `tarifa_neta`, exige `motivo_cambio_tarifa` y
+(estación + `duracion_spot` de ESTA OE + `producto_tarifa` — ADR-158: ya NO filtra
+también por `Estacion.tipo_senal`, retirado de `TarifaPlaza` por redundante con
+`estacion_id`) y, solo si `precio_spot` no coincide con su `tarifa_neta`, exige
+`motivo_cambio_tarifa` y
 audita en `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — sin
 candado de permiso (Ventas sigue capturando libre; ver ADR-102 para el porqué).
 **ADR-106 corrige el alcance original de ADR-102:** ahí se había decidido que
@@ -426,14 +428,17 @@ tabla con su descuento y genera su `Incidencia` normal al avanzar. Un día ya
 **cancelado** (ADR-104) se excluye de este chequeo (ya tiene su propia
 `Verificacion`).
 
-**ADR-158 (petición del usuario):** el panel "Al avanzar a 2.3 se generarán" (bonif./
-desc./impacto neto) solo sumaba `oe.periodo_transmision` — un día NUEVO del layout
-(ADR-149) nunca entraba a esa cuenta, aunque sus spots sean reales adicionales a lo ya
-vendido ("se agregaron 2 nuevos spots y no los registró como bonificaciones"). Un día
-nuevo siempre cuenta como bonificación completa en el panel (nunca genera `Incidencia`
-en el backend, eso no cambia — es puro ajuste de presentación en el frontend).
+**ADR-160 (petición del usuario; renumerado de ADR-158 al fusionar con
+`fix/catalogos-correcciones-f0`, que ya usaba ADR-158/159):** el panel "Al avanzar a
+2.3 se generarán" (bonif./desc./impacto neto) solo sumaba `oe.periodo_transmision` — un
+día NUEVO del layout (ADR-149) nunca entraba a esa cuenta, aunque sus spots sean reales
+adicionales a lo ya vendido ("se agregaron 2 nuevos spots y no los registró como
+bonificaciones"). Un día nuevo siempre cuenta como bonificación completa en el panel
+(nunca genera `Incidencia` en el backend, eso no cambia — es puro ajuste de
+presentación en el frontend).
 
-**ADR-159 (petición del usuario):** "no se está registrando el log... hice un cambio en
+**ADR-161 (petición del usuario; renumerado de ADR-159, mismo motivo):** "no se está
+registrando el log... hice un cambio en
 la tarifa y me pidió el motivo lo coloqué y al guardar no se registró en el detalle
 ningún log" — el backend (`_auditar_precio_spot_si_difiere`, ADR-102) ya auditaba bien
 en `LogCambioParametro` y el endpoint `GET .../historial-tarifa` ya existía; el panel de

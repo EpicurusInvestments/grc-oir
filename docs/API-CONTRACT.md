@@ -296,19 +296,20 @@ Ejemplo alta de estación (Plaza y Afiliado, ambos explícitos):
 
 ### Tarifas (F0-02) — TarifaPlaza
 
-Catálogo de tarifas de referencia por **estación + tipo de señal + duración de spot +
-producto**, sobre el patrón CRUD estándar (escritura solo **admin** en F0). Depende de
-Estación. **ADR-097 (petición del usuario):** el diseño original de F0-02 era por
-**plaza** y con **vigencia** — ambos se eliminaron; ver ADR-097 en `docs/arquitectura.md`.
+Catálogo de tarifas de referencia por **estación + duración de spot + producto**, sobre
+el patrón CRUD estándar (escritura solo **admin** en F0). Depende de Estación.
+**ADR-097 (petición del usuario):** el diseño original de F0-02 era por **plaza** y con
+**vigencia** — ambos se eliminaron; ver ADR-097 en `docs/arquitectura.md`. **ADR-158
+(petición del usuario):** ya NO tiene `tipo_senal` — es propiedad de la Estación
+referenciada (`Estacion.tipo_senal`), no de la tarifa.
 
 **`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `estacion_id` (req., FK),
-`tipo_senal` (`fm|am|tv`, CHECK), `duracion_spot` (`20s|30s|60s`, CHECK — **ya sin
-`mencion`**, ver ADR-098),
+`duracion_spot` (`20s|30s|60s`, CHECK — **ya sin `mencion`**, ver ADR-098),
 `producto` (`spot|mencion|control_remoto|patrocinio`, CHECK, **campo nuevo** ADR-097,
 fuera de la spec BD v2), **`tarifa_bruta` (req., ≥0, PARÁMETRO SENSIBLE, ADR-099)**,
 **`descuento_pct` (req., 0–100, PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta`
 (Calculado)**, `notas`, `activo`, `created_at`, `created_by`, `updated_at`. **Ya NO
-tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097).
+tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097) ni `tipo_senal` (ADR-158).
 - **Montos como string:** `tarifa_bruta`, `descuento_pct` y `tarifa_neta` viajan como
   **string** en el JSON (entrada y salida) para preservar la precisión `Decimal` (E-4). El
   servidor acepta también número, pero devuelve string.
@@ -324,14 +325,15 @@ tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097).
 - **`created_by`:** username del capturista (texto, no FK; la entidad Usuario llega en
   F0-04). Lo fija el servidor desde el usuario autenticado, no el cliente.
 - **Sin duplicado activo (409 `conflicto`, ADR-097 — reemplaza la validación de
-  solapamiento por vigencia):** al crear, editar o **reactivar** una tarifa activa, no
-  puede existir OTRA tarifa activa con la misma combinación (estación + tipo_senal +
-  duracion_spot + producto). `detalles` incluye la tarifa en conflicto.
+  solapamiento por vigencia; combinación simplificada por ADR-158):** al crear, editar
+  o **reactivar** una tarifa activa, no puede existir OTRA tarifa activa con la misma
+  combinación (estación + duracion_spot + producto). `detalles` incluye la tarifa en
+  conflicto.
 - **Filtros de lista:** `?activo`, `?q` (busca en nombre/siglas de la estación y en
   notas), y (ADR-102, F1 los usa para sugerir `precio_spot` al asignar una estación)
-  `?estacion_id`, `?tipo_senal`, `?duracion_spot`, `?producto` — coincidencia EXACTA de
-  cada uno (no búsqueda parcial). Ruta propia (`listar_tarifas`), no la genérica de
-  `build_crud_router`.
+  `?estacion_id`, `?duracion_spot`, `?producto` — coincidencia EXACTA de cada uno (no
+  búsqueda parcial; ADR-158 quitó `?tipo_senal`). Ruta propia (`listar_tarifas`), no la
+  genérica de `build_crud_router`.
 - **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la estación,
   siglas de la estación y notas** (coincide en cualquiera). Resuelta con un JOIN a
   `estacion` en el repositorio (sin N+1); `ilike` portable a SQL Server.
@@ -344,7 +346,7 @@ ordenado del **más reciente al más antiguo**. Mismo shape de respuesta que Age
 Ejemplo alta de tarifa (sin `tarifa_neta`):
 ```json
 {
-  "estacion_id": "1a...", "tipo_senal": "fm", "duracion_spot": "30s", "producto": "spot",
+  "estacion_id": "1a...", "duracion_spot": "30s", "producto": "spot",
   "tarifa_bruta": "9000.00", "descuento_pct": "10",
   "notas": "Tarifa general FM CDMX"
 }
@@ -360,6 +362,31 @@ Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivad
 Ejemplo edición del monto (requiere `motivo_cambio`):
 ```json
 { "tarifa_bruta": "9500.00", "motivo_cambio": "Ajuste de temporada" }
+```
+
+### Duración de Spots (F0-06) — DuracionSpotCatalogo
+
+**ADR-159 (petición del usuario):** catálogo NUEVO, fuera de la spec BD v2, agregado
+DESPUÉS de que F0 ya se diera por completa (ver `f0-00-indice.md`). Desconectado del
+enum `DuracionSpot` que ya usan Tarifa/Órdenes — ese enum no se toca. Por ahora NINGUNA
+otra pantalla/módulo lo consume ("solo crea el catálogo... solo quiero ver el CRUD
+completo").
+
+**`/catalogos/duraciones-spot`** — campos: `duracion_spot_catalogo_id`, `producto`
+(`spot|mencion|control_remoto|patrocinio`, CHECK — reusa el enum `ProductoTarifa` ya
+existente de Tarifa, no se duplica), `descripcion_duracion` (req., 1–60 caracteres,
+**texto libre, sin CHECK** — a propósito, para poder agregar valores nuevos sin
+migración), `activo`, `created_at`, `updated_at`.
+- **Sin duplicado activo (409 `conflicto`):** para la misma combinación `producto` +
+  `descripcion_duracion` (comparación case-insensitive), no puede existir otro registro
+  activo. Dos productos DISTINTOS sí pueden compartir la misma descripción (p. ej. "sin
+  duración" para `control_remoto` y para `patrocinio`).
+- **Filtros de lista:** `?activo`, `?q` (busca en `descripcion_duracion`).
+- Patrón CRUD estándar (escritura solo **admin** en F0), igual que `Categoria`.
+
+Ejemplo alta:
+```json
+{ "producto": "spot", "descripcion_duracion": "20" }
 ```
 
 ### Parámetros sensibles y auditoría (F0-03) — mecanismo transversal
@@ -811,8 +838,9 @@ la tarifa cliente de la OC — el margen OIR (`porcentaje_participacion_oir`/`im
 `iva_oir`/`total_oir`) simplemente se vuelve negativo (`precio_spot >= 0` sigue siendo el
 único piso; el tope superior de 100% en `porcentaje_participacion_oir` se mantiene).
 **ADR-102/ADR-106:** busca la tarifa ACTIVA de `TarifaPlaza` para (`estacion_id`,
-`Estacion.tipo_senal`, `duracion_spot` de ESTA OE, `producto_tarifa`); si `precio_spot` no
-coincide con su `tarifa_neta`, exige `motivo_cambio_tarifa` (**400** si falta) y audita en
+`duracion_spot` de ESTA OE, `producto_tarifa` — ADR-158: ya NO filtra también por
+`Estacion.tipo_senal`, redundante con `estacion_id`); si `precio_spot` no coincide con
+su `tarifa_neta`, exige `motivo_cambio_tarifa` (**400** si falta) y audita en
 `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — **sin** el
 candado de permiso de `TarifaPlaza.tarifa_bruta`/`descuento_pct` (Ventas sigue capturando
 libre). Sin tarifa activa para la combinación, no se audita nada.
