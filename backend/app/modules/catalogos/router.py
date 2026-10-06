@@ -20,7 +20,6 @@ from app.modules.catalogos.codigo_postal import router as codigo_postal_router
 from app.modules.catalogos.constantes_sistema import router as constantes_router
 from app.modules.catalogos.contrato import router as contrato_router
 from app.modules.catalogos.cuenta_contable import router as cuenta_contable_router
-from app.modules.catalogos.duracion_spot_catalogo import router as duracion_spot_catalogo_router
 from app.modules.catalogos.empresa_facturadora import router as empresa_facturadora_router
 from app.modules.catalogos.estacion import router as estacion_router
 from app.modules.catalogos.plaza import router as plaza_router
@@ -59,8 +58,3 @@ router.include_router(cuenta_contable_router)
 
 # Domicilio estructurado (Anunciante/EmpresaFacturadora): CP → colonia/municipio/estado.
 router.include_router(codigo_postal_router)
-
-# F0-06 · catálogo NUEVO, fuera de la spec BD v2 (ADR-159, petición del usuario):
-# duraciones administrables por producto — desconectado del enum DuracionSpot que ya
-# usan Tarifa/Órdenes; todavía no lo usa ningún otro módulo.
-router.include_router(duracion_spot_catalogo_router)
