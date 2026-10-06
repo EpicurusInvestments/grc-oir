@@ -8,7 +8,7 @@
 
 import { apiClient, postFormData } from "@/shared/lib/apiClient";
 import { fetchAllPages } from "@/shared/lib/fetchAllPages";
-import type { ListParams, Page } from "@/shared/types";
+import type { HistorialCambio, ListParams, Page } from "@/shared/types";
 
 import type {
   IncidenciaApiDTO,
@@ -412,6 +412,20 @@ export async function listarEnviosCorreoOrdenEstacionApi(
 ): Promise<LogEnvioCorreoApiDTO[]> {
   const { data } = await apiClient.get<LogEnvioCorreoApiDTO[]>(
     `/ordenes/estaciones/${ordenEstacionId}/envios-correo`,
+  );
+  return data;
+}
+
+/** ADR-161 (petición del usuario): historial de veces que `precio_spot` se apartó de
+ * la tarifa sugerida del catálogo (ADR-102) — el backend ya lo registraba en
+ * `LogCambioParametro`/exponía en `GET .../historial-tarifa`, pero el panel de detalle
+ * de Orden de Transmisión nunca lo mostraba. Mismo shape que el historial de Tarifas
+ * (`HistorialCambio`), sin necesidad de un DTO/adaptador propio. */
+export async function listarHistorialTarifaOrdenEstacionApi(
+  ordenEstacionId: string,
+): Promise<HistorialCambio[]> {
+  const { data } = await apiClient.get<HistorialCambio[]>(
+    `/ordenes/estaciones/${ordenEstacionId}/historial-tarifa`,
   );
   return data;
 }

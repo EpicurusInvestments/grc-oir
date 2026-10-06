@@ -6080,3 +6080,39 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   Suite completa de `ordenes` en verde (208/208, mismos 4 errores de red preexistentes
   sin relación), `tsc`/`eslint` limpios.
 
+### ADR-159 — El panel de Orden de Transmisión nunca mostraba el historial de cambios de tarifa (el backend sí lo registraba)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "otro bug que
+  encontré es que no se está registrando el log de la pantalla de órdenes de
+  transmisión lo verifiqué cuando hice un cambio en la tarifa y me pidió el motivo lo
+  coloqué y al guardar no se registró en el detalle ningún log de los cambios").
+- **Contexto:** `OrdenEstacionService._auditar_precio_spot_si_difiere` (ADR-102) SÍ
+  escribe en `LogCambioParametro` cuando `precio_spot` no coincide con la tarifa
+  sugerida del catálogo y el usuario captura `motivo_cambio_tarifa` — el endpoint
+  `GET /ordenes/estaciones/{id}/historial-tarifa` (mismo shape que
+  `GET /catalogos/tarifas/{id}/historial`) ya existía y funcionaba. El bug NO estaba en
+  el backend: `OrdenEstacionDetailPanel.tsx` simplemente NUNCA llamaba ese endpoint ni
+  mostraba una sección "Historial de cambios" — a diferencia del panel de detalle de
+  Tarifas, que sí la tiene (`useHistorialTarifa`). El usuario entraba el motivo, el
+  backend lo auditaba correctamente, pero no había ningún lugar en pantalla donde
+  verlo.
+- **Decisión:** se agrega `listarHistorialTarifaOrdenEstacionApi()` en
+  `adapters/escrituraApi.ts` (mismo tipo `HistorialCambio` que ya usa Tarifa, sin DTO
+  propio — el shape del backend ya coincide exactamente) y una sección "Historial de
+  cambios de tarifa" en `OrdenEstacionDetailPanel.tsx`, justo debajo de la nota de
+  "Tarifa de referencia (catálogo...)" — mismo patrón visual (`rel-item`/`rel-name`/
+  `rel-sub`) que ya usa `TarifaCatalogPage.tsx`. Se carga con un `useEffect` igual al ya
+  existente para `envios` (historial de correos), con el mismo `.catch(() => {})`
+  silencioso si falla.
+- **Consecuencia:** ninguna negativa — solo agrega una lectura más al abrir el panel;
+  no cambia nada de la lógica de auditoría del backend, que ya funcionaba bien.
+- **Verificado:** `tsc`/`eslint` limpios; `OrdenEstacionDetailPanel.test.tsx` (12/12) y
+  `RealesForm.test.tsx` (18/18) en verde sin cambios de comportamiento. No se pudo
+  probar en vivo contra el backend real en esta sesión: la BD de desarrollo
+  (`backend/dev_ordenes.db`, un archivo SQLite fuera de git) se comparte entre ramas, y
+  quedó en el esquema de la rama `fix/catalogos-correcciones-f0` (que le quitó
+  `tipo_senal` a `tarifa_plaza` en una sesión previa) — un intento de editar una Orden
+  de Transmisión en esta rama truena con `no such column: tarifa_plaza.tipo_senal`
+  porque el código de ESTA rama todavía espera esa columna. Corregir la base compartida
+  requiere una acción destructiva (recrear/editar el esquema de `dev_ordenes.db`) que
+  quedó pendiente de confirmación explícita del usuario — ver aviso en el chat.
