@@ -5997,3 +5997,198 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   (ADR-108), así que ningún reporte pierde información real, solo deja de repetirla.
 - **Verificado:** `test_f1_06_ordenes_pdf.py` (11 pruebas, smoke tests de generación)
   en verde, suite completa de backend en verde, `ruff check` sin nuevas violaciones.
+
+### ADR-157 — "Carga de Órdenes Reales Desde Layout" concilia contra lo programado: un día no mencionado se marca como faltante, no desaparece
+
+- **Estado:** aceptada · **Fecha:** 2026-10-02 (F1, petición del usuario viendo la
+  tabla de "Capturar Reales" ya funcionando bien para el caso de match: "nos falta un
+  paso más validar lo que el botón OK hace actualmente... esas validaciones no las
+  hemos hecho cuando cargamos el layout... [4] Corregir la carga del layout una vez
+  que cargue la información concilie contra lo programado... Diferencia en spots debe
+  marcar las incidencias correspondientes. Diferencia en hora solo marcar que cambio.
+  Si tiene registros adicionales marcarlo como nuevo registro. Si faltan registros
+  debería marcar la diferencia y generar la incidencia").
+- **Contexto:** `_parsear_layout_reales_csv()` (ADR-147) solo clasificaba lo que SÍ
+  venía en el archivo (`aplicados`/`nuevos`/`errores`) — nunca revisaba qué días YA
+  programados se quedaban sin ninguna fila del CSV. ADR-151 "escondía" esos días de la
+  tabla en vez de marcarlos, lo cual impedía generar su incidencia de faltante al
+  avanzar. De los 4 casos que pidió el usuario, 3 ya funcionaban (spots distintos →
+  bonif./desc. ya calculado por `distinto()`/`programadoEfectivo()`; registros
+  adicionales → "Nuevo"); preguntado específicamente por el caso de "diferencia en
+  hora" (¿reclasificar como 'cambio de horario' buscando el día existente por sólo la
+  fecha?), el usuario confirmó explícitamente **no** hacer ese match difuso — el
+  match sigue siendo SIEMPRE por fecha+hora exacta (`AskUserQuestion`: "Nunca
+  reclasificar por fecha"); una hora distinta simplemente se resuelve solo con los
+  otros 2 casos ya cubiertos (el horario viejo → faltante con su incidencia; el
+  horario nuevo → "Nuevo").
+- **Decisión:** `_parsear_layout_reales_csv()` ahora, además de procesar las filas del
+  CSV, recorre `dias` (todos los días YA existentes de la OE) y por cada uno cuya
+  `(fecha_transmision, hora_inicio)` NO esté entre las filas válidas del archivo, lo
+  agrega también a `aplicados` con `spots=0` — exactamente como si el usuario lo
+  hubiera editado a mano a 0 (reutiliza 100% el mecanismo de `distinto()`/diff/badge
+  del frontend y de incidencia de `avanzar_reales`, sin ningún caso especial). Un día
+  YA **cancelado** se excluye (ya tiene su propia `Verificacion` creada al cancelar,
+  ADR-104; una segunda violaría `uq_verificacion_orden_estacion_dia`). `aplicados` se
+  ordena al final por `(fecha_transmision, hora_inicio)` para que la tabla se siga
+  viendo en orden cronológico. Sin cambios de schema/API — `aplicados` sigue siendo el
+  mismo tipo, solo con más entradas; cero cambios en frontend salvo comentarios.
+- **Consecuencia:** ninguna negativa — es un caso más de la misma mecánica de
+  overrides que ya existía. El usuario sigue pudiendo editar/quitar manualmente una
+  fila marcada como faltante antes de avanzar, igual que cualquier otra.
+- **Verificado:** `test_f1_14...` — 9 pruebas existentes actualizadas (ahora esperan
+  los días no tocados como faltantes en 0, en vez de una lista corta) + 3 pruebas
+  nuevas (`test_dia_no_mencionado_se_marca_como_faltante_en_cero`,
+  `test_dia_faltante_genera_incidencia_al_avanzar` — confirma la `Incidencia` tipo
+  `faltante` al avanzar —, `test_dia_cancelado_no_se_marca_como_faltante`); suite
+  completa de backend en verde. `RealesForm.test.tsx` — la prueba de ADR-151 que
+  esperaba que un día no mencionado desapareciera se reescribió para esperar lo
+  contrario (17/17 en verde); `tsc`/`eslint` limpios.
+
+### ADR-158 — El catálogo Tarifas deja de capturar "Tipo de señal"; "Duración del spot" pasa a llamarse solo "Duración"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F0, petición del usuario viendo la
+  pantalla de edición de tarifa: "Modificar Catálogo Tarifas se quitará el campo tipo
+  de señal porque es una propiedad de la estación y no de la tarifa. también el campo
+  duración del spot solo se llamara Duración también quitarlo de la lista de Tarifas
+  eliminar la columna señal. Hacer pruebas del flujo completo de todas las
+  pantallas.").
+- **Contexto:** `TarifaPlaza.tipo_senal` (ADR-097) se capturaba de forma INDEPENDIENTE
+  al "Nombre de la emisora" seleccionado — el formulario permitía, por ejemplo, elegir
+  una estación FM real pero guardar "AM" en la tarifa, una inconsistencia de datos sin
+  ningún beneficio: tanto la regla "sin duplicado activo" (`existe_duplicado_activo`)
+  como la sugerencia de tarifa al capturar una OE (`_tarifa_sugerida`,
+  `orden_estacion.py`) y su espejo en frontend (`tarifaReferencia`,
+  `OrdenEstacionForm.tsx`/`OrdenEstacionDetailPanel.tsx`) YA filtraban también por
+  `estacion_id`, que por sí solo determina el tipo de señal real de la emisora
+  (`Estacion.tipo_senal`, que SÍ se conserva — es propiedad de la estación, no de la
+  tarifa).
+- **Decisión:**
+  - Backend (`tarifa.py`): se elimina la columna `tipo_senal` de `TarifaPlaza` (CHECK
+    `ck_tarifa_plaza_tipo_senal`, el enum local `TipoSenal` — ya redundante con el de
+    `Estacion` — y el campo de los schemas Create/Update/List/Read). La combinación de
+    "sin duplicado activo" pasa de (estación+tipo_senal+duración+producto) a
+    (estación+duración+producto); mismo ajuste en `_tarifa_sugerida`
+    (`orden_estacion.py`). Migración `ec3a357e7c0a` (drop de columna/CHECK, recompone
+    `ix_tarifa_plaza_combo` sin `tipo_senal`; patrón `batch_alter_table` para SQLite,
+    igual que ADR-096/ADR-097).
+  - Frontend: se quita el campo "Tipo de señal" de `TarifaForm.tsx` y la columna
+    "Señal" de la lista/detalle en `TarifaCatalogPage.tsx`; "Duración del spot" pasa a
+    "Duración" (solo en esta pantalla — `OrdenClienteForm.tsx` tiene su propia etiqueta
+    independiente, fuera de alcance de esta petición). `tarifaReferencia()`
+    (`catalogosCache.ts`) y sus 2 llamadores (`OrdenEstacionForm.tsx`,
+    `OrdenEstacionDetailPanel.tsx`) dejan de recibir/filtrar por tipo de señal.
+  - `seed_dev.py`: la tupla `TARIFAS` deja de traer `tipo_senal` (ya es redundante con
+    la estación referenciada).
+- **Consecuencia:** ninguna negativa — ninguna tarifa pierde información real (el tipo
+  de señal se sigue mostrando/filtrando, ahora correctamente desde `Estacion`, nunca
+  duplicado ni potencialmente inconsistente). `test_f0_02_tarifas.py` pierde el test
+  dedicado a "tipo_senal inválido" (ya no existe ese campo) y ajusta 2 pruebas que
+  dependían de variar `tipo_senal` para no chocar como "duplicado activo" (ahora usan
+  `producto`/`duracion_spot` distintos en su lugar).
+- **Verificado — "flujo completo" (petición explícita del usuario):** suite completa
+  de backend en verde (incluye `test_f0_02_tarifas.py` reescrito, 32/32, y
+  `test_f1_05`/`test_f1_06`, que ejercitan `_tarifa_sugerida` end-to-end); migración
+  probada con roundtrip `upgrade`→`downgrade`→`upgrade` sobre la BD de desarrollo;
+  suite de frontend `ordenes` en verde (207/207) + `tsc`/`eslint` limpios en todo el
+  repo. Además, contra el backend real ya corriendo: `GET /catalogos/tarifas` confirma
+  que la respuesta ya NO trae `tipo_senal`; `POST /catalogos/tarifas` sin ese campo
+  crea una tarifa correctamente, y un segundo POST con la misma
+  estación+duración+producto sí la rechaza con 409 (duplicado activo), sin que
+  `tipo_senal` participe en ningún lado. No se tiene navegador disponible en este
+  entorno para clics manuales en pantalla — la verificación de UI se apoya en las
+  pruebas de componente (`vitest`) más la API real, no en una sesión de navegador.
+  Corrida la suite COMPLETA de frontend (no solo `ordenes`/`tarifa`): 4 archivos de
+  `auth`/`seguridad`/`shared` (login, sesión, guard de área, `apiClient`) fallan — pero
+  ya fallaban igual corridos solos, sin tocar nada de este cambio (confirmado por
+  `git diff` vacío sobre esos archivos); es un problema preexistente de este entorno,
+  no una regresión de ADR-158.
+
+### ADR-160 — El panel "Al avanzar a 2.3 se generarán" ignoraba los días nuevos del layout (no contaba sus spots como bonificación)
+
+> Renumerado de ADR-158 a ADR-160 al fusionar esta rama con
+> `fix/catalogos-correcciones-f0` (que ya usaba ADR-158/159 para la corrección de
+> Tarifas y el catálogo nuevo) — el código (`RealesForm.tsx`, `RealesForm.test.tsx`) ya
+> usaba ADR-160 desde que se escribió, antes de saber que esta rama se iba a fusionar;
+> este documento se ajusta para que coincidan.
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "revisar que
+  en el panel derecho se calcule bien las incidencias cuando se cargan registros desde
+  el layout puesto que no esta calculando bien las bonificaciones y descuentos";
+  confirmado con un caso concreto: "hice pruebas y en un ejercicio en el layout se
+  agregaron 2 nuevos spots y no los registró como bonificaciones").
+- **Contexto:** se investigó primero con pruebas unitarias replicando varios
+  escenarios de conciliación (2 días, 10 días con mezcla de bonif/desc/sin cambio/
+  faltante) y el cálculo salió correcto en todos — la discrepancia NO estaba en la
+  conciliación de días existentes (ADR-157), sino en que el bloque que suma
+  `nBonif`/`nDesc`/`montoNeto` SOLO recorre `oe.periodo_transmision` (los días YA
+  existentes); `diasNuevos` (las propuestas de día nuevo del layout, ADR-149) nunca
+  entraban a esa cuenta. Por diseño el backend NO genera una `Incidencia` para un día
+  nuevo (nace con `verificado == programado`, no hay nada programado contra qué
+  comparar) — correcto y sin cambios —, pero esos spots SÍ son reales adicionales a lo
+  ya vendido/planeado: desde la perspectiva de negocio son una bonificación, y el
+  resumen de "esto se va a generar" debía reflejarlo aunque técnicamente no exista una
+  fila de `Incidencia` detrás.
+- **Decisión:** después del `forEach` sobre `oe.periodo_transmision`, un segundo
+  `forEach` sobre `diasNuevos` (ignorando los que están en edición, mismo criterio que
+  `overrides`) sube `totalReal` y, si `spots > 0`, incrementa `nBonif` y suma
+  `spots * precio_spot` a `montoNeto` — un día nuevo siempre sale como bonificación
+  completa (nunca como descuento: nace con spots > 0 por construcción, ADR-149 ya
+  rechaza un día nuevo con 0 spots).
+- **Consecuencia:** ninguna negativa — cambio puramente de presentación en el
+  frontend, no toca la generación real de `Incidencia` en el backend (que sigue sin
+  crear una para días nuevos, correctamente).
+- **Verificado:** reproducido primero con un script de depuración ad hoc (confirmando
+  que el panel mostraba 0 bonificaciones con un día nuevo de 2 spots, antes del fix) y
+  luego con una prueba de regresión nueva en `RealesForm.test.tsx` (18/18 en verde) que
+  confirma "1 bonificación(es)", "+$1,600.00" de impacto neto y "Reales 12" (10
+  existentes + 2 del día nuevo) tras cargar un layout con un día nuevo de 2 spots.
+  Suite completa de `ordenes` en verde (208/208, mismos 4 errores de red preexistentes
+  sin relación), `tsc`/`eslint` limpios.
+
+### ADR-161 — El panel de Orden de Transmisión nunca mostraba el historial de cambios de tarifa (el backend sí lo registraba)
+
+> Renumerado de ADR-159 a ADR-161 por la misma razón que ADR-160 arriba (código ya
+> escrito con ADR-161 antes de saber que esta rama se iba a fusionar con
+> `fix/catalogos-correcciones-f0`).
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "otro bug que
+  encontré es que no se está registrando el log de la pantalla de órdenes de
+  transmisión lo verifiqué cuando hice un cambio en la tarifa y me pidió el motivo lo
+  coloqué y al guardar no se registró en el detalle ningún log de los cambios").
+- **Contexto:** `OrdenEstacionService._auditar_precio_spot_si_difiere` (ADR-102) SÍ
+  escribe en `LogCambioParametro` cuando `precio_spot` no coincide con la tarifa
+  sugerida del catálogo y el usuario captura `motivo_cambio_tarifa` — el endpoint
+  `GET /ordenes/estaciones/{id}/historial-tarifa` (mismo shape que
+  `GET /catalogos/tarifas/{id}/historial`) ya existía y funcionaba. El bug NO estaba en
+  el backend: `OrdenEstacionDetailPanel.tsx` simplemente NUNCA llamaba ese endpoint ni
+  mostraba una sección "Historial de cambios" — a diferencia del panel de detalle de
+  Tarifas, que sí la tiene (`useHistorialTarifa`). El usuario entraba el motivo, el
+  backend lo auditaba correctamente, pero no había ningún lugar en pantalla donde
+  verlo.
+- **Decisión:** se agrega `listarHistorialTarifaOrdenEstacionApi()` en
+  `adapters/escrituraApi.ts` (mismo tipo `HistorialCambio` que ya usa Tarifa, sin DTO
+  propio — el shape del backend ya coincide exactamente) y una sección "Historial de
+  cambios de tarifa" en `OrdenEstacionDetailPanel.tsx`, justo debajo de la nota de
+  "Tarifa de referencia (catálogo...)" — mismo patrón visual (`rel-item`/`rel-name`/
+  `rel-sub`) que ya usa `TarifaCatalogPage.tsx`. Se carga con un `useEffect` igual al ya
+  existente para `envios` (historial de correos), con el mismo `.catch(() => {})`
+  silencioso si falla.
+- **Consecuencia:** ninguna negativa — solo agrega una lectura más al abrir el panel;
+  no cambia nada de la lógica de auditoría del backend, que ya funcionaba bien.
+- **Verificado:** `tsc`/`eslint` limpios; `OrdenEstacionDetailPanel.test.tsx` (12/12) y
+  `RealesForm.test.tsx` (18/18) en verde sin cambios de comportamiento. En el momento de
+  escribir este ADR no se pudo probar en vivo contra el backend real: la BD de
+  desarrollo (`backend/dev_ordenes.db`, un archivo SQLite fuera de git) se comparte
+  entre ramas, y había quedado en el esquema de `fix/catalogos-correcciones-f0` (que le
+  quitó `tipo_senal` a `tarifa_plaza`, ver ADR-158 arriba) mientras esta rama todavía
+  esperaba esa columna. Resuelto trayendo ADR-158 a esta rama (merge +
+  `alembic upgrade head`) y confirmado en vivo después: `PUT` a una Orden de
+  Transmisión con `precio_spot` distinto + `motivo_cambio_tarifa` ahora sí deja su
+  registro en `GET .../historial-tarifa`.
+
+> **Nota (petición del usuario, 2026-10-06):** esta rama trae de `fix/catalogos-correcciones-f0`
+> SOLO el ADR-158 (Tarifas sin `tipo_senal`) — necesario para que el código coincida con
+> el esquema de la BD compartida. El catálogo nuevo `DuracionSpotCatalogo` (ADR-159 en
+> `fix/catalogos-correcciones-f0`) se revirtió aquí a propósito (commit de revert
+> después de este ADR) — ese trabajo sigue viviendo solo en la rama de catálogos, para
+> continuarlo ahí.

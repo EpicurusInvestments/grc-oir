@@ -238,13 +238,12 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
   });
 });
 
-// es1 = XEW-AM (tipo_senal "am"). ta-am-60-spot: la ÚNICA tarifa vigente para
-// es1/am/60s/spot — 60s a propósito (NO 30s, que ya usan otras pruebas de este archivo
-// sin esperar ninguna tarifa sembrada) para no interferir con ellas.
+// es1 = XEW-AM. ta-am-60-spot: la ÚNICA tarifa vigente para es1/60s/spot — 60s a
+// propósito (NO 30s, que ya usan otras pruebas de este archivo sin esperar ninguna
+// tarifa sembrada) para no interferir con ellas.
 tarifas.push({
   id: "ta-am-60-spot",
   estacion_id: "es1",
-  tipo_senal: "am",
   duracion_spot: "60s",
   producto: "spot",
   tarifa_bruta: 1000,

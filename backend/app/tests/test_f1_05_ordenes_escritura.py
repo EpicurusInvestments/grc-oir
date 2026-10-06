@@ -889,7 +889,6 @@ def _seed_tarifa(
         TarifaPlaza(
             tarifa_plaza_id=uuid.uuid4(),
             estacion_id=cat["estacion"],
-            tipo_senal="fm",
             duracion_spot=duracion_spot,
             producto=producto,
             tarifa_bruta=tarifa_bruta,

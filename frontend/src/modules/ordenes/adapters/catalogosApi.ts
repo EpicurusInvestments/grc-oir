@@ -198,7 +198,6 @@ export async function cargarCatalogosReales(): Promise<void> {
     tarifasReales.map((t) => ({
       id: t.tarifa_plaza_id,
       estacion_id: t.estacion_id,
-      tipo_senal: t.tipo_senal,
       duracion_spot: t.duracion_spot,
       producto: t.producto,
       tarifa_bruta: Number(t.tarifa_bruta),

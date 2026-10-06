@@ -52,8 +52,10 @@ from app.modules.ordenes.orden_estacion import (
     OrdenEstacion,
     OrdenEstacionCreate,
     OrdenEstacionDia,
+    OrdenEstacionDiaCancelarIn,
     OrdenEstacionDiaCreate,
     OrdenEstacionDiaNuevoIn,
+    OrdenEstacionDiaRealIn,
     OrdenEstacionRealesIn,
     OrdenEstacionRepository,
     OrdenEstacionService,
@@ -289,10 +291,13 @@ def test_aplica_spots_por_fecha_y_hora_exactas(
     )
 
     assert resultado.errores == []
-    assert len(resultado.aplicados) == 2
-    por_hora = {a.hora_inicio: a.spots for a in resultado.aplicados}
-    assert por_hora[time(7, 0)] == 12
-    assert por_hora[time(20, 0)] == 6
+    # 2 coincidencias reales + el 3er día de la OE (DIA_2 07:00), que el archivo no
+    # menciona, se agrega como faltante en 0 (ADR-157).
+    assert len(resultado.aplicados) == 3
+    por_fecha_hora = {(a.fecha_transmision, a.hora_inicio): a.spots for a in resultado.aplicados}
+    assert por_fecha_hora[(_DIA_1, time(7, 0))] == 12
+    assert por_fecha_hora[(_DIA_1, time(20, 0))] == 6
+    assert por_fecha_hora[(_DIA_2, time(7, 0))] == 0
 
 
 def test_spots_vacio_usa_default_1(db: Session, oe_svc: OrdenEstacionService, oe, tmp_path) -> None:
@@ -303,7 +308,8 @@ def test_spots_vacio_usa_default_1(db: Session, oe_svc: OrdenEstacionService, oe
     )
 
     assert resultado.errores == []
-    assert len(resultado.aplicados) == 1
+    # + 2 faltantes (DIA_1 20:00 y DIA_2 07:00, que el archivo no menciona — ADR-157).
+    assert len(resultado.aplicados) == 3
     assert resultado.aplicados[0].spots == 1
 
 
@@ -332,7 +338,9 @@ def test_estacion_distinta_se_ignora_sin_tumbar_las_demas(
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
 
-    assert len(resultado.aplicados) == 1
+    # + 2 faltantes (DIA_1 20:00 — su única fila válida vino con la estación
+    # equivocada, así que cuenta como no mencionado — y DIA_2 07:00 — ADR-157).
+    assert len(resultado.aplicados) == 3
     assert resultado.aplicados[0].spots == 12
     assert len(resultado.errores) == 1
     assert resultado.errores[0].fila == 3
@@ -368,7 +376,8 @@ def test_fecha_hora_sin_match_se_propone_como_dia_nuevo(
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
 
-    assert len(resultado.aplicados) == 1
+    # + 2 faltantes (DIA_1 20:00 y DIA_2 07:00 — ADR-157).
+    assert len(resultado.aplicados) == 3
     assert resultado.errores == []
     assert len(resultado.nuevos) == 1
     assert resultado.nuevos[0].fecha_transmision == otra_fecha
@@ -389,7 +398,10 @@ def test_fecha_hora_nueva_con_spots_cero_es_error(
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
 
-    assert resultado.aplicados == []
+    # El archivo no tocó ningún día existente de la OE (la única fila válida era una
+    # fecha nueva, rechazada) — los 3 se agregan como faltantes en 0 (ADR-157).
+    assert len(resultado.aplicados) == 3
+    assert all(a.spots == 0 for a in resultado.aplicados)
     assert resultado.nuevos == []
     assert len(resultado.errores) == 1
     assert "0 spots" in resultado.errores[0].motivo
@@ -411,7 +423,8 @@ def test_filas_con_misma_fecha_hora_suman_spots(
     )
 
     assert resultado.errores == []
-    assert len(resultado.aplicados) == 1
+    # + 2 faltantes (DIA_1 20:00 y DIA_2 07:00 — ADR-157).
+    assert len(resultado.aplicados) == 3
     assert resultado.aplicados[0].spots == 14
 
 
@@ -440,7 +453,10 @@ def test_fecha_invalida_se_ignora(db: Session, oe_svc: OrdenEstacionService, oe,
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
 
-    assert resultado.aplicados == []
+    # Ninguna fila válida tocó ningún día de la OE — los 3 se agregan como faltantes
+    # en 0 (ADR-157).
+    assert len(resultado.aplicados) == 3
+    assert all(a.spots == 0 for a in resultado.aplicados)
     assert "Fecha inválida" in resultado.errores[0].motivo
 
 
@@ -453,7 +469,10 @@ def test_spots_no_numerico_se_ignora(
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
 
-    assert resultado.aplicados == []
+    # Ninguna fila válida tocó ningún día de la OE — los 3 se agregan como faltantes
+    # en 0 (ADR-157).
+    assert len(resultado.aplicados) == 3
+    assert all(a.spots == 0 for a in resultado.aplicados)
     assert "Spots inválido" in resultado.errores[0].motivo
 
 
@@ -470,6 +489,102 @@ def test_encabezados_faltantes_reporta_un_solo_error(
     assert len(resultado.errores) == 1
     assert resultado.errores[0].fila == 0
     assert "Encabezados esperados" in resultado.errores[0].motivo
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ADR-157 (petición del usuario): conciliación completa contra lo programado — un día
+# que el archivo no menciona ya no desaparece, se marca como faltante (spots=0).
+# ══════════════════════════════════════════════════════════════════════════════════
+def test_dia_no_mencionado_se_marca_como_faltante_en_cero(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    # Solo toca 1 de los 3 días de la OE.
+    contenido = _csv(f"Radio Disney,{_DIA_1},07:00,12")
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+
+    assert len(resultado.aplicados) == 3
+    por_fecha_hora = {(a.fecha_transmision, a.hora_inicio): a.spots for a in resultado.aplicados}
+    assert por_fecha_hora[(_DIA_1, time(7, 0))] == 12
+    assert por_fecha_hora[(_DIA_1, time(20, 0))] == 0
+    assert por_fecha_hora[(_DIA_2, time(7, 0))] == 0
+
+
+def test_dia_faltante_genera_incidencia_al_avanzar(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """El `spots=0` que ADR-157 agrega para un día no mencionado en el archivo se manda
+    a `avanzar_reales` exactamente como cualquier otro override manual — sin caso
+    especial: genera su `Incidencia` de tipo `faltante` igual que si el usuario hubiera
+    editado ese día a 0 a mano."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(f"Radio Disney,{_DIA_1},07:00,12")
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    dia_faltante = next(
+        a
+        for a in resultado.aplicados
+        if (a.fecha_transmision, a.hora_inicio) == (_DIA_1, time(20, 0))
+    )
+    assert dia_faltante.spots == 0
+
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    orden_estacion_dia_id=dia_faltante.orden_estacion_dia_id,
+                    spots_verificados=0,
+                )
+            ],
+            dias_nuevos=[],
+        ),
+        VENTAS,
+    )
+
+    verificacion = db.scalar(
+        select(Verificacion).where(
+            Verificacion.orden_estacion_dia_id == dia_faltante.orden_estacion_dia_id
+        )
+    )
+    assert verificacion is not None
+    assert verificacion.spots_verificados == 0
+
+    incidencia = db.scalar(
+        select(Incidencia).where(Incidencia.verificacion_id == verificacion.verificacion_id)
+    )
+    assert incidencia is not None
+    assert incidencia.tipo_incidencia == "faltante"
+
+
+def test_dia_cancelado_no_se_marca_como_faltante(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """Un día ya cancelado (ADR-104) tiene su propia `Verificacion` creada al cancelar —
+    no debe volver a aparecer como "faltante" solo porque el archivo no lo menciona
+    (una segunda `Verificacion` violaría `uq_verificacion_orden_estacion_dia`)."""
+    dias = oe_svc._repo.listar_dias(oe.orden_estacion_id)
+    dia_a_cancelar = next(d for d in dias if d.hora_inicio == time(20, 0))
+    oe_svc.cancelar_dia(
+        oe.orden_estacion_id,
+        dia_a_cancelar.orden_estacion_dia_id,
+        OrdenEstacionDiaCancelarIn(motivo="Prueba"),
+        VENTAS,
+    )
+
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(f"Radio Disney,{_DIA_1},07:00,12")
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+
+    # Solo el día cancelado queda fuera: DIA_1 07:00 (tocado) + DIA_2 07:00 (faltante).
+    # El cancelado (DIA_1 20:00) NO debe aparecer.
+    claves = {(a.fecha_transmision, a.hora_inicio) for a in resultado.aplicados}
+    assert claves == {(_DIA_1, time(7, 0)), (_DIA_2, time(7, 0))}
 
 
 def test_xlsx_se_rechaza_por_no_estar_en_la_lista_blanca(
@@ -525,7 +640,9 @@ def test_http_post_layout_devuelve_archivo_aplicados_y_errores(
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["archivo"]["nombre_archivo"] == "layout.csv"
-    assert len(body["aplicados"]) == 1
+    # + 2 faltantes (DIA_1 20:00 — su única fila vino con la estación equivocada — y
+    # DIA_2 07:00 — ADR-157).
+    assert len(body["aplicados"]) == 3
     assert body["aplicados"][0]["spots"] == 12
     assert body["nuevos"] == []
     assert len(body["errores"]) == 1

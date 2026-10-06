@@ -10,10 +10,13 @@ import { contactoAnuncianteApi } from "@/modules/catalogos/anunciante/api";
 import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 
+import type { HistorialCambio } from "@/shared/types";
+
 import {
   descargarEmlOrdenTransmisionApi,
   listarAudiosOrdenEstacionApi,
   listarEnviosCorreoOrdenEstacionApi,
+  listarHistorialTarifaOrdenEstacionApi,
 } from "../../adapters/escrituraApi";
 import { logEnvioCorreoFromApi, ordenEstacionAudioFromApi } from "../../adapters/fromApi";
 import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../adapters/pdfsApi";
@@ -59,8 +62,9 @@ export function OrdenEstacionDetailPanel({
   const totalEmisora = importeEmisora + ivaEmisora;
 
   // ADR-106: la duración es propia de la OE, ya no heredada de la OC.
+  // ADR-158: ya no filtra por tipo de señal — se retiró de TarifaPlaza.
   const tarRef = estacion
-    ? tarifaReferencia(estacion.id, estacion.tipo_senal, oe.duracion_spot, oe.producto_tarifa ?? undefined)
+    ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined)
     : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;
@@ -76,6 +80,23 @@ export function OrdenEstacionDetailPanel({
     listarEnviosCorreoOrdenEstacionApi(oe.id)
       .then((dtos) => {
         if (!cancelado) setEnvios(dtos.map(logEnvioCorreoFromApi));
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [oe.id]);
+
+  // ADR-161 (petición del usuario): "hice un cambio en la tarifa y me pidió el
+  // motivo... al guardar no se registró en el detalle ningún log" — el backend SÍ lo
+  // registraba (`GET .../historial-tarifa`, mismo mecanismo que el historial de
+  // Tarifas), pero este panel nunca lo pedía ni lo mostraba.
+  const [historialTarifa, setHistorialTarifa] = useState<HistorialCambio[]>([]);
+  useEffect(() => {
+    let cancelado = false;
+    listarHistorialTarifaOrdenEstacionApi(oe.id)
+      .then((dtos) => {
+        if (!cancelado) setHistorialTarifa(dtos);
       })
       .catch(() => {});
     return () => {
@@ -290,6 +311,25 @@ export function OrdenEstacionDetailPanel({
               {desvioPct.toFixed(1)}% vs. catálogo
             </span>
           </div>
+        )}
+
+        {historialTarifa.length > 0 && (
+          <>
+            <div className="sec">Historial de cambios de tarifa</div>
+            {historialTarifa.map((h) => (
+              <div className="rel-item" key={h.log_cambio_parametro_id}>
+                <div>
+                  <div className="rel-name">
+                    {oGuion(h.valor_anterior)} → <span className="mono">{oGuion(h.valor_nuevo)}</span>
+                  </div>
+                  <div className="rel-sub">
+                    {fmtFechaHora(h.fecha_cambio)} · {h.usuario}
+                    {h.motivo_cambio ? ` · ${h.motivo_cambio}` : ""}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
         )}
 
         {oe.observaciones_estacion && (

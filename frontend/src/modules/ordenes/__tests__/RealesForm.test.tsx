@@ -153,7 +153,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText("layout.csv")).toBeInTheDocument());
   });
 
-  it("ADR-147/ADR-151: aplicar un layout reemplaza COMPLETO la tabla de reales (no solo los overrides)", async () => {
+  it("ADR-147/ADR-157: aplicar un layout reemplaza la tabla, pero CONCILIA contra lo programado (un día no mencionado se marca como faltante, no desaparece)", async () => {
     const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
     const diaB = makeRow({ orden_estacion_dia_id: "dia-b", fecha: "2025-06-02", spots_diarios: 5 });
     const oe = makeOE({ periodo_transmision: [diaA, diaB] });
@@ -171,6 +171,15 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 15,
+        },
+        // ADR-157: dia-b no viene en el archivo — el backend lo manda igual, en 0
+        // (conciliación completa contra lo programado, no un "no se menciona = sin
+        // cambio").
+        {
+          orden_estacion_dia_id: "dia-b",
+          fecha_transmision: "2025-06-02",
+          hora_inicio: "07:00",
+          spots: 0,
         },
       ],
       nuevos: [],
@@ -191,12 +200,13 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     // dia-a (aplicado) pasa a 15 spots, con bonificación de +5 sobre lo programado (10).
     await waitFor(() => expect(screen.getByText("15")).toBeInTheDocument());
     expect(screen.getByText("+5 bonif.")).toBeInTheDocument();
-    // ADR-151 (petición del usuario): dia-b no vino en el archivo — ya NO se muestra en
-    // la tabla (se "quita" por completo, no se queda visible como "sin cambio").
-    expect(screen.queryByText("2025-06-02")).toBeNull();
+    // ADR-157 (petición del usuario, corrige ADR-151): dia-b no vino en el archivo —
+    // sigue mostrándose (ya NO desaparece), marcado como descuento completo (-5).
+    expect(screen.getByText("2025-06-02")).toBeInTheDocument();
+    expect(screen.getByText("-5 desc.")).toBeInTheDocument();
     expect(screen.queryByText("sin cambio")).toBeNull();
 
-    expect(screen.getByText("Se aplicaron 1 día(s) a la tabla de reales.")).toBeInTheDocument();
+    expect(screen.getByText("Se aplicaron 2 día(s) a la tabla de reales.")).toBeInTheDocument();
     expect(screen.getByText("1 fila(s) no se aplicaron:")).toBeInTheDocument();
     expect(screen.getByText(/Radio MTY/)).toBeInTheDocument();
   });
@@ -285,6 +295,54 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     expect(onAvanzar).toHaveBeenCalledTimes(1);
     const [, extra] = onAvanzar.mock.calls[0];
     expect(extra.diasNuevos).toEqual([{ fecha: "2025-07-01", hora: "09:00", spots: 6 }]);
+  });
+
+  it("ADR-160 (petición del usuario): un día nuevo del layout cuenta como bonificación en el panel de 'Al avanzar a 2.3 se generarán'", async () => {
+    const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
+    const oe = makeOE({ periodo_transmision: [diaA], precio_spot: 800 });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-8",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      // dia-a sin cambio (sigue en 10) — el backend NUNCA deja de mandar los días ya
+      // existentes (ADR-157), aquí se simula el caso "sin cambio" explícitamente.
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 10,
+        },
+      ],
+      // 2 spots que antes NO existían en esta OE — un día nuevo.
+      nuevos: [{ fecha_transmision: "2025-07-01", hora_inicio: "09:00:00", spots: 2 }],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    await waitFor(() => expect(screen.getByText("Nuevo")).toBeInTheDocument());
+
+    // ANTES de ADR-160: el panel ignoraba por completo los días nuevos — "no los
+    // registró como bonificaciones" (petición del usuario). Ahora sí cuentan: 2 spots
+    // nuevos a $800 c/u = +$1,600.00, y se refleja también en "Reales".
+    expect(screen.getByText("• 1 bonificación(es)")).toBeInTheDocument();
+    expect(screen.queryByText(/descuento\(s\)/)).toBeNull();
+    expect(screen.getByText("+$1,600.00")).toBeInTheDocument();
+    expect(screen.getByText(/Programados 10 spots → Reales 12/)).toBeInTheDocument();
   });
 
   it("ADR-152: un día nuevo fuera de la campaña de la OC se marca en la tabla y bloquea 'Avanzar'", async () => {
