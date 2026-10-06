@@ -305,6 +305,20 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
       montoNeto += diff * (oe.precio_spot || 0);
     }
   });
+  // ADR-160 (petición del usuario): un día NUEVO propuesto por el layout no genera
+  // Incidencia en el backend (ADR-149: nace con verificado == programado, por
+  // construcción, ya que no hay nada programado con qué compararlo) — pero sus spots
+  // SÍ son reales adicionales a lo ya vendido/planeado, así que cuentan como
+  // bonificación en este resumen (antes no se contaban en absoluto: "se agregaron 2
+  // spots nuevos y no los registró como bonificaciones").
+  diasNuevos.forEach((d) => {
+    if (d.editing) return;
+    totalReal += d.spots;
+    if (d.spots > 0) {
+      nBonif++;
+      montoNeto += d.spots * (oe.precio_spot || 0);
+    }
+  });
 
   const avanzar = () => {
     // Marca "no borrar al desmontar" ANTES de llamar a `onAvanzar` (el padre hace el

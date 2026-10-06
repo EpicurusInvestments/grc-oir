@@ -297,6 +297,54 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     expect(extra.diasNuevos).toEqual([{ fecha: "2025-07-01", hora: "09:00", spots: 6 }]);
   });
 
+  it("ADR-160 (petición del usuario): un día nuevo del layout cuenta como bonificación en el panel de 'Al avanzar a 2.3 se generarán'", async () => {
+    const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
+    const oe = makeOE({ periodo_transmision: [diaA], precio_spot: 800 });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-8",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      // dia-a sin cambio (sigue en 10) — el backend NUNCA deja de mandar los días ya
+      // existentes (ADR-157), aquí se simula el caso "sin cambio" explícitamente.
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 10,
+        },
+      ],
+      // 2 spots que antes NO existían en esta OE — un día nuevo.
+      nuevos: [{ fecha_transmision: "2025-07-01", hora_inicio: "09:00:00", spots: 2 }],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    await waitFor(() => expect(screen.getByText("Nuevo")).toBeInTheDocument());
+
+    // ANTES de ADR-160: el panel ignoraba por completo los días nuevos — "no los
+    // registró como bonificaciones" (petición del usuario). Ahora sí cuentan: 2 spots
+    // nuevos a $800 c/u = +$1,600.00, y se refleja también en "Reales".
+    expect(screen.getByText("• 1 bonificación(es)")).toBeInTheDocument();
+    expect(screen.queryByText(/descuento\(s\)/)).toBeNull();
+    expect(screen.getByText("+$1,600.00")).toBeInTheDocument();
+    expect(screen.getByText(/Programados 10 spots → Reales 12/)).toBeInTheDocument();
+  });
+
   it("ADR-152: un día nuevo fuera de la campaña de la OC se marca en la tabla y bloquea 'Avanzar'", async () => {
     const oe = makeOE();
     const oc = makeOC({ fecha_inicio_campania: "2025-06-01", fecha_fin_campania: "2025-06-30" });

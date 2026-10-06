@@ -6043,3 +6043,40 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   completa de backend en verde. `RealesForm.test.tsx` — la prueba de ADR-151 que
   esperaba que un día no mencionado desapareciera se reescribió para esperar lo
   contrario (17/17 en verde); `tsc`/`eslint` limpios.
+
+### ADR-158 — El panel "Al avanzar a 2.3 se generarán" ignoraba los días nuevos del layout (no contaba sus spots como bonificación)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F1, petición del usuario: "revisar que
+  en el panel derecho se calcule bien las incidencias cuando se cargan registros desde
+  el layout puesto que no esta calculando bien las bonificaciones y descuentos";
+  confirmado con un caso concreto: "hice pruebas y en un ejercicio en el layout se
+  agregaron 2 nuevos spots y no los registró como bonificaciones").
+- **Contexto:** se investigó primero con pruebas unitarias replicando varios
+  escenarios de conciliación (2 días, 10 días con mezcla de bonif/desc/sin cambio/
+  faltante) y el cálculo salió correcto en todos — la discrepancia NO estaba en la
+  conciliación de días existentes (ADR-157), sino en que el bloque que suma
+  `nBonif`/`nDesc`/`montoNeto` SOLO recorre `oe.periodo_transmision` (los días YA
+  existentes); `diasNuevos` (las propuestas de día nuevo del layout, ADR-149) nunca
+  entraban a esa cuenta. Por diseño el backend NO genera una `Incidencia` para un día
+  nuevo (nace con `verificado == programado`, no hay nada programado contra qué
+  comparar) — correcto y sin cambios —, pero esos spots SÍ son reales adicionales a lo
+  ya vendido/planeado: desde la perspectiva de negocio son una bonificación, y el
+  resumen de "esto se va a generar" debía reflejarlo aunque técnicamente no exista una
+  fila de `Incidencia` detrás.
+- **Decisión:** después del `forEach` sobre `oe.periodo_transmision`, un segundo
+  `forEach` sobre `diasNuevos` (ignorando los que están en edición, mismo criterio que
+  `overrides`) sube `totalReal` y, si `spots > 0`, incrementa `nBonif` y suma
+  `spots * precio_spot` a `montoNeto` — un día nuevo siempre sale como bonificación
+  completa (nunca como descuento: nace con spots > 0 por construcción, ADR-149 ya
+  rechaza un día nuevo con 0 spots).
+- **Consecuencia:** ninguna negativa — cambio puramente de presentación en el
+  frontend, no toca la generación real de `Incidencia` en el backend (que sigue sin
+  crear una para días nuevos, correctamente).
+- **Verificado:** reproducido primero con un script de depuración ad hoc (confirmando
+  que el panel mostraba 0 bonificaciones con un día nuevo de 2 spots, antes del fix) y
+  luego con una prueba de regresión nueva en `RealesForm.test.tsx` (18/18 en verde) que
+  confirma "1 bonificación(es)", "+$1,600.00" de impacto neto y "Reales 12" (10
+  existentes + 2 del día nuevo) tras cargar un layout con un día nuevo de 2 spots.
+  Suite completa de `ordenes` en verde (208/208, mismos 4 errores de red preexistentes
+  sin relación), `tsc`/`eslint` limpios.
+
