@@ -15,6 +15,7 @@ import { useCategorias } from "@/modules/catalogos/categoria/hooks";
 import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useContratos } from "@/modules/catalogos/contrato/hooks";
 import { useCuentasContables } from "@/modules/catalogos/cuentaContable/hooks";
+import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { useEmpresasFacturadoras } from "@/modules/catalogos/empresaFacturadora/hooks";
 import { useEstaciones } from "@/modules/catalogos/estacion/hooks";
 import { useVendedores } from "@/modules/catalogos/vendedor/hooks";
@@ -39,6 +40,7 @@ export function CatalogosExplorerPage() {
   const afiliadoTotal = useAfiliados().useList({ page: 1, size: 1 }).data?.total;
   const estacionTotal = useEstaciones().useList({ page: 1, size: 1 }).data?.total;
   const tarifaTotal = useTarifas().useList({ page: 1, size: 1 }).data?.total;
+  const duracionSpotTotal = useDuracionesSpot().useList({ page: 1, size: 1 }).data?.total;
   const agenciaTotal = useAgencias().useList({ page: 1, size: 1 }).data?.total;
   const anuncianteTotal = useAnunciantes().useList({ page: 1, size: 1 }).data?.total;
   const contratoTotal = useContratos().useList({ page: 1, size: 1 }).data?.total;
@@ -54,6 +56,7 @@ export function CatalogosExplorerPage() {
       afiliado: afiliadoTotal,
       estacion: estacionTotal,
       tarifa: tarifaTotal,
+      duracion_spot_catalogo: duracionSpotTotal,
       agencia: agenciaTotal,
       anunciante: anuncianteTotal,
       contrato: contratoTotal,
@@ -73,6 +76,7 @@ export function CatalogosExplorerPage() {
     afiliadoTotal,
     estacionTotal,
     tarifaTotal,
+    duracionSpotTotal,
     agenciaTotal,
     anuncianteTotal,
     contratoTotal,

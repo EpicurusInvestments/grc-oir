@@ -364,6 +364,31 @@ Ejemplo edición del monto (requiere `motivo_cambio`):
 { "tarifa_bruta": "9500.00", "motivo_cambio": "Ajuste de temporada" }
 ```
 
+### Duración de Spots (F0-06) — DuracionSpotCatalogo
+
+**ADR-159 (petición del usuario):** catálogo NUEVO, fuera de la spec BD v2, agregado
+DESPUÉS de que F0 ya se diera por completa (ver `f0-00-indice.md`). Desconectado del
+enum `DuracionSpot` que ya usan Tarifa/Órdenes — ese enum no se toca. Por ahora NINGUNA
+otra pantalla/módulo lo consume ("solo crea el catálogo... solo quiero ver el CRUD
+completo").
+
+**`/catalogos/duraciones-spot`** — campos: `duracion_spot_catalogo_id`, `producto`
+(`spot|mencion|control_remoto|patrocinio`, CHECK — reusa el enum `ProductoTarifa` ya
+existente de Tarifa, no se duplica), `descripcion_duracion` (req., 1–60 caracteres,
+**texto libre, sin CHECK** — a propósito, para poder agregar valores nuevos sin
+migración), `activo`, `created_at`, `updated_at`.
+- **Sin duplicado activo (409 `conflicto`):** para la misma combinación `producto` +
+  `descripcion_duracion` (comparación case-insensitive), no puede existir otro registro
+  activo. Dos productos DISTINTOS sí pueden compartir la misma descripción (p. ej. "sin
+  duración" para `control_remoto` y para `patrocinio`).
+- **Filtros de lista:** `?activo`, `?q` (busca en `descripcion_duracion`).
+- Patrón CRUD estándar (escritura solo **admin** en F0), igual que `Categoria`.
+
+Ejemplo alta:
+```json
+{ "producto": "spot", "descripcion_duracion": "20" }
+```
+
 ### Parámetros sensibles y auditoría (F0-03) — mecanismo transversal
 
 Algunos campos de la spec están marcados como **PARÁMETRO SENSIBLE** (p.ej.
