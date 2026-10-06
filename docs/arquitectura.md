@@ -6103,6 +6103,64 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   `git diff` vacío sobre esos archivos); es un problema preexistente de este entorno,
   no una regresión de ADR-158.
 
+### ADR-159 — Catálogo nuevo "DuracionSpotCatalogo" (F0-06): CRUD standalone, sin tocar el enum DuracionSpot
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F0, petición del usuario: "ahora no
+  quiero que modifiques nada de loS ENUMS donde configuras el tiempo de los Spots vamos
+  a crear un catalogo nuevo llamado DuracionSpots basicamente daremos de alta estos
+  registros para poder ir agregandole mas tiempo etc. IdDuracion, IdProducto,
+  Descripción de la duración por ahora solo 20|30|60 (para los spots) ... 1|2|3 | sin
+  duración (para la mención) ... sin duración - (Control Remoto) ... sin duración -
+  (Patrocinio) solo crea el catalogo por ahora no lo usaremos solo quiero ver el CRUD
+  completo").
+- **Contexto:** el enum compartido `DuracionSpot` (`app/shared/enums.py`, ADR-032:
+  `20s|30s|60s`) sigue siendo la fuente de verdad para `TarifaPlaza`/`OrdenCliente`/
+  `OrdenEstacion` — el usuario fue explícito en NO tocarlo. Lo que pide es un catálogo
+  ADMINISTRABLE aparte, con duraciones en texto libre (no un enum cerrado) agrupadas por
+  `producto`, para poder agregar valores nuevos ("más tiempo etc.") sin una migración
+  por cada uno — justo lo que un enum+CHECK no permite. Es, conceptualmente, la misma
+  decisión que ya se tomó para `producto` en `TarifaPlaza` (ADR-097: "entidad nueva,
+  fuera de la spec BD v2"), aplicada ahora a una tabla propia en vez de un campo.
+- **Decisión:**
+  - Nombre de la clase/tabla: `DuracionSpotCatalogo` / `duracion_spot_catalogo` (NO
+    `DuracionSpot`, para no chocar con el enum del mismo nombre en
+    `app/shared/enums.py` — ambos conviven en el mismo backend).
+  - Campos: `producto` (ENUM reusado de `ProductoTarifa`, ya existente en `tarifa.py` —
+    import directo, no se duplica) + `descripcion_duracion` (texto libre, NVARCHAR(60),
+    sin CHECK) + `activo`/`created_at`/`updated_at` (patrón F0 estándar).
+  - Sin duplicado activo por (`producto` + `descripcion_duracion`, case-insensitive) —
+    mismo criterio que `Categoria` (ADR-017) extendido a 2 campos, para que "sin
+    duración" pueda repetirse en productos DISTINTOS sin chocar.
+  - Replica al pie de la letra el patrón del catálogo F0 más simple ya existente
+    (`Categoria`): modelo + schemas + `BaseRepository`/`BaseService`/`build_crud_router`,
+    sin lógica adicional.
+  - Backend: módulo nuevo `duracion_spot_catalogo.py`, registrado en
+    `catalogos/router.py`; migración `2047cd2e1d53` (tabla nueva, sin FKs). Frontend:
+    módulo nuevo `catalogos/duracionSpot/` (types/api/hooks/form/página), registrado en
+    `catalogRegistry.tsx` (grupo "Operación", junto a Tarifas) y en los contadores de
+    `CatalogosExplorerPage.tsx`.
+  - **Por petición expresa, NINGÚN otro módulo lo usa todavía** — no se tocó
+    `TarifaForm.tsx`/`OrdenClienteForm.tsx`/`OrdenEstacionForm.tsx` ni el enum
+    `DuracionSpot`. Documentado como módulo F0-06, fuera del bloque original de 6
+    módulos que F0 ya daba por completo (`f0-00-indice.md`).
+  - De paso, se completó el rename "Duración del spot" → "Duración" en TODAS las
+    pantallas (petición del usuario, "en todas las pantallas"): quedaba pendiente un
+    solo lugar, `OrdenClienteForm.tsx` — Tarifa/OrdenEstacion ya decían solo "Duración"
+    desde ADR-158/trabajo previo.
+- **Consecuencia:** ninguna negativa — catálogo nuevo, aislado, sin ningún impacto en
+  flujos existentes (Tarifa/Órdenes siguen usando el enum `DuracionSpot` exactamente
+  igual que antes). Queda pendiente, para una petición futura, decidir si y cómo se
+  conecta a las pantallas que hoy usan el enum.
+- **Verificado:** `test_f0_06_duracion_spot_catalogo.py` — 11 pruebas nuevas (alta,
+  duplicado mismo producto+descripción rechazado, distinto producto misma descripción
+  NO duplica, edición sin/con duplicado, baja lógica, producto inválido, descripción
+  vacía, búsqueda, 2 de portabilidad SQL Server); migración con roundtrip
+  upgrade→downgrade→upgrade. `tsc`/`eslint` limpios en todo el repo. Verificado en vivo
+  contra el backend real: se crearon los 9 registros de ejemplo exactos que pidió el
+  usuario (spot 20/30/60; mención 1/2/3/sin duración; control remoto sin duración;
+  patrocinio sin duración) vía `POST /catalogos/duraciones-spot`, el listado confirma
+  `total: 9`, y un décimo POST duplicado (`spot`/`20` otra vez) se rechaza con 409.
+
 ### ADR-160 — El panel "Al avanzar a 2.3 se generarán" ignoraba los días nuevos del layout (no contaba sus spots como bonificación)
 
 > Renumerado de ADR-158 a ADR-160 al fusionar esta rama con
@@ -6181,14 +6239,7 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   desarrollo (`backend/dev_ordenes.db`, un archivo SQLite fuera de git) se comparte
   entre ramas, y había quedado en el esquema de `fix/catalogos-correcciones-f0` (que le
   quitó `tipo_senal` a `tarifa_plaza`, ver ADR-158 arriba) mientras esta rama todavía
-  esperaba esa columna. Resuelto trayendo ADR-158 a esta rama (merge +
-  `alembic upgrade head`) y confirmado en vivo después: `PUT` a una Orden de
-  Transmisión con `precio_spot` distinto + `motivo_cambio_tarifa` ahora sí deja su
-  registro en `GET .../historial-tarifa`.
-
-> **Nota (petición del usuario, 2026-10-06):** esta rama trae de `fix/catalogos-correcciones-f0`
-> SOLO el ADR-158 (Tarifas sin `tipo_senal`) — necesario para que el código coincida con
-> el esquema de la BD compartida. El catálogo nuevo `DuracionSpotCatalogo` (ADR-159 en
-> `fix/catalogos-correcciones-f0`) se revirtió aquí a propósito (commit de revert
-> después de este ADR) — ese trabajo sigue viviendo solo en la rama de catálogos, para
-> continuarlo ahí.
+  esperaba esa columna. Resuelto en el mismo commit que fusiona ambas ramas (ver nota al
+  final de ADR-159 arriba): con el código de ADR-158/159 ya presente en esta rama,
+  `alembic upgrade head` vuelve a ubicar la migración y la base queda sincronizada sin
+  necesidad de tocarla a mano.

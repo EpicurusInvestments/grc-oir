@@ -22,6 +22,7 @@ import { CategoriaCatalogPage } from "./categoria/pages/CategoriaCatalogPage";
 import { ConstantesSistemaPage } from "./constantesSistema/pages/ConstantesSistemaPage";
 import { ContratoCatalogPage } from "./contrato/pages/ContratoCatalogPage";
 import { CuentaContableCatalogPage } from "./cuentaContable/pages/CuentaContableCatalogPage";
+import { DuracionSpotCatalogPage } from "./duracionSpot/pages/DuracionSpotCatalogPage";
 import { EmpresaFacturadoraCatalogPage } from "./empresaFacturadora/pages/EmpresaFacturadoraCatalogPage";
 import { EstacionCatalogPage } from "./estacion/pages/EstacionCatalogPage";
 import { PlazaCatalogPage } from "./plaza/pages/PlazaCatalogPage";
@@ -78,6 +79,12 @@ export const catalogRegistry: CatalogEntry[] = [
     label: "Tarifas",
     group: "Operación",
     render: () => <TarifaCatalogPage />,
+  },
+  {
+    key: "duracion_spot_catalogo",
+    label: "Duración de Spots",
+    group: "Operación",
+    render: () => <DuracionSpotCatalogPage />,
   },
   {
     key: "vendedor",
