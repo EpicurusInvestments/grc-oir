@@ -126,7 +126,6 @@ export interface EstacionRef {
 export interface TarifaRef {
   id: string;
   estacion_id: string;
-  tipo_senal: TipoSenal;
   duracion_spot: string;
   producto: ProductoTarifa;
   tarifa_bruta: number;
@@ -188,17 +187,18 @@ export function findPlaza(id: string): PlazaRef | undefined {
 /** `producto` es opcional por compatibilidad con el único consumidor previo a ADR-102
  * (`OrdenEstacionDetailPanel.tsx`, que ya lo manda ahora vía `oe.producto_tarifa`) — sin
  * él, la combinación puede ser ambigua si hay más de una tarifa para la misma
- * estación+tipo_señal+duración mismo criterio "sin duplicado activo" que el backend. */
+ * estación+duración, mismo criterio "sin duplicado activo" que el backend.
+ *
+ * ADR-158 (petición del usuario): ya NO recibe/filtra por `tipoSenal` — se retiró de
+ * `TarifaPlaza` (es propiedad de la Estación, ya implícita en `estacionId`). */
 export function tarifaReferencia(
   estacionId: string,
-  tipoSenal: TipoSenal,
   duracionSpot: string,
   producto?: ProductoTarifa,
 ): TarifaRef | undefined {
   return tarifas.find(
     (t) =>
       t.estacion_id === estacionId &&
-      t.tipo_senal === tipoSenal &&
       t.duracion_spot === duracionSpot &&
       (producto == null || t.producto === producto),
   );

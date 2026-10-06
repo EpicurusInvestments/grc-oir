@@ -52,7 +52,7 @@ contratos.push(
   { id: "co1", anunciante_id: "an1", numero_contrato: "CT-2025-001", nombre_contrato: "Campaña Verano 2025", estado_contrato: "vigente" },
   { id: "co1b", anunciante_id: "an1", numero_contrato: "CT-2024-098", nombre_contrato: "Anual 2024 (cerrado)", estado_contrato: "finalizado" },
 );
-tarifas.push({ id: "ta1", estacion_id: "es1", tipo_senal: "fm", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+tarifas.push({ id: "ta1", estacion_id: "es1", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
 
 describe("totalesOC — 1.1", () => {
   it("subtotal = total_spots × precio_unitario", () => {
@@ -295,20 +295,20 @@ describe("Periodo de transmisión de una OI — 1.3", () => {
 });
 
 describe("Tarifa de referencia — parte pura de 1.4", () => {
-  it("encuentra la tarifa activa para estación + tipo de señal + duración", () => {
-    const tarifa = tarifaReferencia("es1", "fm", "30s");
+  it("encuentra la tarifa activa para estación + duración", () => {
+    const tarifa = tarifaReferencia("es1", "30s");
     expect(tarifa).toBeDefined();
     expect(tarifa?.tarifa_bruta).toBe(9500);
     expect(tarifa?.descuento_pct).toBe(10);
   });
 
   it("sin tarifa de referencia para la combinación, regresa undefined sin romperse (no lanza)", () => {
-    expect(() => tarifaReferencia("es1", "fm", "10s")).not.toThrow();
-    expect(tarifaReferencia("es1", "fm", "10s")).toBeUndefined();
+    expect(() => tarifaReferencia("es1", "10s")).not.toThrow();
+    expect(tarifaReferencia("es1", "10s")).toBeUndefined();
   });
 
   it("una estación inexistente también regresa undefined, no lanza", () => {
-    expect(tarifaReferencia("estacion-que-no-existe", "fm", "30s")).toBeUndefined();
+    expect(tarifaReferencia("estacion-que-no-existe", "30s")).toBeUndefined();
   });
 });
 

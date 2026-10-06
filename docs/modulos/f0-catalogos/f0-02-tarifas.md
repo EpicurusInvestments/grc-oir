@@ -8,17 +8,24 @@
 > era por **plaza** y con **vigencia**. Se reemplazó por completo: ahora es por
 > **estación** ("Nombre de la emisora") + **producto** (campo nuevo), y ya NO tiene
 > vigencia. Ver ADR-097 en `docs/arquitectura.md` para el detalle de la decisión.
+>
+> **ADR-158 (petición del usuario, 2026-10-05):** se elimina `tipo_senal` por completo —
+> es propiedad de la ESTACIÓN (`Estacion.tipo_senal`), no de la tarifa; mantenerla aquí
+> duplicada permitía capturar un tipo de señal distinto al de la estación seleccionada,
+> sin ningún beneficio (la unicidad/sugerencia ya filtraban también por `estacion_id`).
+> "Duración del spot" pasa a llamarse solo "Duración" en el formulario. Ver ADR-158 en
+> `docs/arquitectura.md`.
 
 ## Propósito
 
-Mantener la tarifa sugerida por estación, producto, tipo de señal y duración de spot,
-usada como valor sugerido al capturar órdenes (F1).
+Mantener la tarifa sugerida por estación, producto y duración de spot, usada como valor
+sugerido al capturar órdenes (F1).
 
-## Entidad (post-ADR-097 — YA NO coincide con la spec BD v2 original)
+## Entidad (post-ADR-097/ADR-158 — YA NO coincide con la spec BD v2 original)
 
-### TarifaPlaza (12 campos)
-`tarifa_plaza_id` (PK), `estacion_id` (FK NOT NULL a `Estacion`), `tipo_senal` (ENUM:
-fm│am│tv), `duracion_spot` (ENUM: 20s│30s│60s — **sin `mencion`**, ADR-098),
+### TarifaPlaza (11 campos)
+`tarifa_plaza_id` (PK), `estacion_id` (FK NOT NULL a `Estacion`),
+`duracion_spot` (ENUM: 20s│30s│60s — **sin `mencion`**, ADR-098),
 **`producto`** (ENUM NUEVO, fuera de la spec: spot│mencion│control_remoto│patrocinio),
 **`tarifa_bruta` (PARÁMETRO SENSIBLE, ADR-099)**, **`descuento_pct` (PARÁMETRO SENSIBLE,
 ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `created_by`.
@@ -43,10 +50,11 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 ## Estados
 - Solo `activo`. Ya NO hay filtro Vigentes/Expiradas (eliminado junto con la vigencia).
 
-## Pantallas (de la pantalla F0, ajustada por ADR-097)
+## Pantallas (de la pantalla F0, ajustada por ADR-097/ADR-158)
 - Lista + detalle con filtros (Todas / Activas / Inactivas) y paginación por página.
-- Formulario: Nombre de la emisora (select de Estación), Producto (select), Tipo de
-  señal, Duración de spot, Tarifa bruta, Descuento, Tarifa neta (Calc, solo lectura).
+- Formulario: Nombre de la emisora (select de Estación), Producto (select), Duración
+  (ADR-158: ya no "Duración del spot"), Tarifa bruta, Descuento, Tarifa neta (Calc,
+  solo lectura).
 
 ## Roles / permisos
 - **Captura: solo Admin (IT)** por ahora (edita catálogos y fija tarifas). Lectura: demás.
@@ -57,10 +65,10 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 ## Reglas de negocio clave
 - `tarifa_neta` nunca se acepta como entrada (es calculado por el servicio).
 - **Sin duplicado activo (ADR-097, reemplaza la validación de solapamiento por
-  vigencia):** al crear/editar/reactivar una tarifa, el servicio valida que, para la
-  misma combinación **estación + tipo_senal + duracion_spot + producto**, no exista otra
-  tarifa **activa**. Si existe, rechaza con 409 `conflicto` indicando la tarifa en
-  conflicto.
+  vigencia; combinación simplificada por ADR-158):** al crear/editar/reactivar una
+  tarifa, el servicio valida que, para la misma combinación **estación +
+  duracion_spot + producto**, no exista otra tarifa **activa**. Si existe, rechaza con
+  409 `conflicto` indicando la tarifa en conflicto.
 - **`tarifa_bruta`/`descuento_pct` como parámetros sensibles (ADR-099):** el alta audita
   ambos campos con `anterior=None` (sin exigir motivo — es la captura inicial); la
   edición exige `motivo_cambio` (transitorio, no es columna) SOLO si el valor
@@ -78,13 +86,15 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 
 Implementado sobre la base de F0-00 (`BaseRepository`/`BaseService`/`build_crud_router`).
 Modelo, schemas, repositorio y servicio en `backend/app/modules/catalogos/tarifa.py`;
-migraciones `20260708_1200-b73f13de1b80_f0_02_tarifas.py` (original, por plaza + vigencia)
-y `20260921_1500-96798afba3cc_f0_02_tarifa_por_estacion.py` (ADR-097: por estación +
-producto, sin vigencia). **Sin migración propia para ADR-099** (parámetros sensibles): no
-agrega columnas — reutiliza la tabla `log_cambio_parametro` ya existente (ADR-016).
-Pantalla en `frontend/src/modules/catalogos/tarifa/`. Endpoints en `docs/API-CONTRACT.md`
-(sección Tarifas). Detalles de diseño original en **ADR-015**; la restructuración de
-Plaza→Estación en **ADR-097**; los parámetros sensibles en **ADR-099**.
+migraciones `20260708_1200-b73f13de1b80_f0_02_tarifas.py` (original, por plaza + vigencia),
+`20260921_1500-96798afba3cc_f0_02_tarifa_por_estacion.py` (ADR-097: por estación +
+producto, sin vigencia) y `20261005_1248-ec3a357e7c0a_f0_tarifa_sin_tipo_senal.py`
+(ADR-158: quita `tipo_senal`). **Sin migración propia para ADR-099** (parámetros
+sensibles): no agrega columnas — reutiliza la tabla `log_cambio_parametro` ya existente
+(ADR-016). Pantalla en `frontend/src/modules/catalogos/tarifa/`. Endpoints en
+`docs/API-CONTRACT.md` (sección Tarifas). Detalles de diseño original en **ADR-015**; la
+restructuración de Plaza→Estación en **ADR-097**; los parámetros sensibles en
+**ADR-099**; el retiro de `tipo_senal` en **ADR-158**.
 
 **Decisiones tomadas al implementar originalmente (E-1..E-5, superadas por ADR-097 donde
 se indica):**
@@ -97,15 +107,16 @@ se indica):**
   `TarifaRepository._apply_filters`, que no depende de la ruta).
 - **E-4** — Los montos (`tarifa_bruta`, `descuento_pct`, `tarifa_neta`) viajan como
   **string** en el JSON para preservar la precisión `Decimal`. **Vigente.**
-- **E-5** — Lista con columnas: Emisora · Producto · Señal · Duración · Tarifa bruta ·
-  Desc · Tarifa neta · Estatus (ajustada por ADR-097: sin columna Vigencia).
+- **E-5** — Lista con columnas: Emisora · Producto · Duración · Tarifa bruta · Desc ·
+  Tarifa neta · Estatus (ajustada por ADR-097: sin columna Vigencia; ADR-158: sin
+  columna Señal).
 
 **Reglas clave, dónde viven:**
 - `tarifa_neta`: calculada con `Decimal` (`ROUND_HALF_UP`, 2 decimales) en el servicio y
   persistida; recalculada en cada edición; nunca aceptada del cliente.
-- **Sin duplicado activo (ADR-097):** consulta en el repositorio (misma combinación
-  estación+tipo_senal+duracion_spot+producto, solo contra tarifas activas, excluyendo la
-  propia al editar); se valida al crear, editar y **reactivar** → 409 `conflicto`.
+- **Sin duplicado activo (ADR-097/ADR-158):** consulta en el repositorio (misma
+  combinación estación+duracion_spot+producto, solo contra tarifas activas, excluyendo
+  la propia al editar); se valida al crear, editar y **reactivar** → 409 `conflicto`.
 
 **Búsqueda (`q`):** abarca **nombre de estación, siglas de estación y notas** (parcial,
 case-insensitive, coincide en cualquiera). Como nombre/siglas están en `estacion`, se
@@ -114,13 +125,13 @@ no duplica filas por ser N:1); `ilike` es portable a SQL Server (`lower() LIKE l
 
 **Portabilidad SQL Server:** comparaciones `activo == True` (→ `activo = 1`, ADR-014);
 tests compilan el filtro de duplicado y el JOIN de búsqueda con el dialecto mssql. Pruebas
-de backend en `app/tests/test_f0_02_tarifas.py` (33 casos: neta/redondeo, ausencia de
+de backend en `app/tests/test_f0_02_tarifas.py` (32 casos: neta/redondeo, ausencia de
 vigencia, duplicado activo y reactivación, dependencia de Estación, enums —incl.
-`producto`—, búsqueda por nombre/siglas/notas, enriquecimiento, y 10 nuevos de auditoría
-de `tarifa_bruta`/`descuento_pct` — alta con `anterior=None`, edición con/sin motivo,
-permiso no-Admin rechazado, mismo valor no audita, campo no sensible no audita, un solo
-motivo audita los dos campos, `motivo_cambio` no es columna, historial completo,
-historial 404).
+`producto`, ya sin el de `tipo_senal` que retiró ADR-158—, búsqueda por nombre/siglas/
+notas, enriquecimiento, y 10 de auditoría de `tarifa_bruta`/`descuento_pct` — alta con
+`anterior=None`, edición con/sin motivo, permiso no-Admin rechazado, mismo valor no
+audita, campo no sensible no audita, un solo motivo audita los dos campos,
+`motivo_cambio` no es columna, historial completo, historial 404).
 
 **Historial de auditoría:** `GET /catalogos/tarifas/{id}/historial` (ADR-021, mismo
 endpoint que los demás catálogos con campos sensibles) — panel "Historial de cambios" en
@@ -137,10 +148,11 @@ Ajuste de temporada` (mismo formato que Agencia/Vendedor/Contrato).
   los catálogos ya implementados, reutilizando el `total` del listado paginado (una
   consulta `size:1` por catálogo). Los catálogos aún no implementados (F0-03/04/05) siguen
   en 0 sin error.
-- **`OrdenEstacionDetailPanel` (F1):** el desvío contra la tarifa de referencia
-  (`tarifaReferencia` en `state/catalogosCache.ts`) ahora busca por `estacion_id` en vez de
-  `plaza_id` — más directo, ya que el componente ya resuelve la `Estacion` de la
-  `OrdenEstacion`.
+- **`OrdenEstacionDetailPanel`/`OrdenEstacionForm` (F1):** el desvío/sugerencia contra la
+  tarifa de referencia (`tarifaReferencia` en `state/catalogosCache.ts`) busca por
+  `estacion_id` (no `plaza_id`, desde ADR-097) + `duracion_spot` + `producto` — ya NO
+  recibe/filtra por tipo de señal (ADR-158): `estacion_id` por sí solo ya determina el
+  tipo de señal real de la emisora.
 
 ## Pendientes / dudas
 - (Resuelto, histórico) La tarifa era por **plaza + señal + duración** (no por estación).
@@ -150,3 +162,6 @@ Ajuste de temporada` (mismo formato que Agencia/Vendedor/Contrato).
 - (Resuelto ADR-098) `duracion_spot` ya no acepta `mencion` (vive solo en `producto`).
 - (Resuelto ADR-099) `tarifa_bruta`/`descuento_pct` son parámetros sensibles con
   auditoría e historial, mismo mecanismo que Agencia/Vendedor/Contrato.
+- (Resuelto ADR-158) `tipo_senal` se eliminó de `TarifaPlaza` por completo — es
+  propiedad de la Estación, no de la tarifa. "Duración del spot" pasa a llamarse solo
+  "Duración" en el formulario.

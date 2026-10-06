@@ -6043,3 +6043,63 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   completa de backend en verde. `RealesForm.test.tsx` — la prueba de ADR-151 que
   esperaba que un día no mencionado desapareciera se reescribió para esperar lo
   contrario (17/17 en verde); `tsc`/`eslint` limpios.
+
+### ADR-158 — El catálogo Tarifas deja de capturar "Tipo de señal"; "Duración del spot" pasa a llamarse solo "Duración"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-05 (F0, petición del usuario viendo la
+  pantalla de edición de tarifa: "Modificar Catálogo Tarifas se quitará el campo tipo
+  de señal porque es una propiedad de la estación y no de la tarifa. también el campo
+  duración del spot solo se llamara Duración también quitarlo de la lista de Tarifas
+  eliminar la columna señal. Hacer pruebas del flujo completo de todas las
+  pantallas.").
+- **Contexto:** `TarifaPlaza.tipo_senal` (ADR-097) se capturaba de forma INDEPENDIENTE
+  al "Nombre de la emisora" seleccionado — el formulario permitía, por ejemplo, elegir
+  una estación FM real pero guardar "AM" en la tarifa, una inconsistencia de datos sin
+  ningún beneficio: tanto la regla "sin duplicado activo" (`existe_duplicado_activo`)
+  como la sugerencia de tarifa al capturar una OE (`_tarifa_sugerida`,
+  `orden_estacion.py`) y su espejo en frontend (`tarifaReferencia`,
+  `OrdenEstacionForm.tsx`/`OrdenEstacionDetailPanel.tsx`) YA filtraban también por
+  `estacion_id`, que por sí solo determina el tipo de señal real de la emisora
+  (`Estacion.tipo_senal`, que SÍ se conserva — es propiedad de la estación, no de la
+  tarifa).
+- **Decisión:**
+  - Backend (`tarifa.py`): se elimina la columna `tipo_senal` de `TarifaPlaza` (CHECK
+    `ck_tarifa_plaza_tipo_senal`, el enum local `TipoSenal` — ya redundante con el de
+    `Estacion` — y el campo de los schemas Create/Update/List/Read). La combinación de
+    "sin duplicado activo" pasa de (estación+tipo_senal+duración+producto) a
+    (estación+duración+producto); mismo ajuste en `_tarifa_sugerida`
+    (`orden_estacion.py`). Migración `ec3a357e7c0a` (drop de columna/CHECK, recompone
+    `ix_tarifa_plaza_combo` sin `tipo_senal`; patrón `batch_alter_table` para SQLite,
+    igual que ADR-096/ADR-097).
+  - Frontend: se quita el campo "Tipo de señal" de `TarifaForm.tsx` y la columna
+    "Señal" de la lista/detalle en `TarifaCatalogPage.tsx`; "Duración del spot" pasa a
+    "Duración" (solo en esta pantalla — `OrdenClienteForm.tsx` tiene su propia etiqueta
+    independiente, fuera de alcance de esta petición). `tarifaReferencia()`
+    (`catalogosCache.ts`) y sus 2 llamadores (`OrdenEstacionForm.tsx`,
+    `OrdenEstacionDetailPanel.tsx`) dejan de recibir/filtrar por tipo de señal.
+  - `seed_dev.py`: la tupla `TARIFAS` deja de traer `tipo_senal` (ya es redundante con
+    la estación referenciada).
+- **Consecuencia:** ninguna negativa — ninguna tarifa pierde información real (el tipo
+  de señal se sigue mostrando/filtrando, ahora correctamente desde `Estacion`, nunca
+  duplicado ni potencialmente inconsistente). `test_f0_02_tarifas.py` pierde el test
+  dedicado a "tipo_senal inválido" (ya no existe ese campo) y ajusta 2 pruebas que
+  dependían de variar `tipo_senal` para no chocar como "duplicado activo" (ahora usan
+  `producto`/`duracion_spot` distintos en su lugar).
+- **Verificado — "flujo completo" (petición explícita del usuario):** suite completa
+  de backend en verde (incluye `test_f0_02_tarifas.py` reescrito, 32/32, y
+  `test_f1_05`/`test_f1_06`, que ejercitan `_tarifa_sugerida` end-to-end); migración
+  probada con roundtrip `upgrade`→`downgrade`→`upgrade` sobre la BD de desarrollo;
+  suite de frontend `ordenes` en verde (207/207) + `tsc`/`eslint` limpios en todo el
+  repo. Además, contra el backend real ya corriendo: `GET /catalogos/tarifas` confirma
+  que la respuesta ya NO trae `tipo_senal`; `POST /catalogos/tarifas` sin ese campo
+  crea una tarifa correctamente, y un segundo POST con la misma
+  estación+duración+producto sí la rechaza con 409 (duplicado activo), sin que
+  `tipo_senal` participe en ningún lado. No se tiene navegador disponible en este
+  entorno para clics manuales en pantalla — la verificación de UI se apoya en las
+  pruebas de componente (`vitest`) más la API real, no en una sesión de navegador.
+  Corrida la suite COMPLETA de frontend (no solo `ordenes`/`tarifa`): 4 archivos de
+  `auth`/`seguridad`/`shared` (login, sesión, guard de área, `apiClient`) fallan — pero
+  ya fallaban igual corridos solos, sin tocar nada de este cambio (confirmado por
+  `git diff` vacío sobre esos archivos); es un problema preexistente de este entorno,
+  no una regresión de ADR-158.
+

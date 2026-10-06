@@ -59,8 +59,9 @@ export function OrdenEstacionDetailPanel({
   const totalEmisora = importeEmisora + ivaEmisora;
 
   // ADR-106: la duración es propia de la OE, ya no heredada de la OC.
+  // ADR-158: ya no filtra por tipo de señal — se retiró de TarifaPlaza.
   const tarRef = estacion
-    ? tarifaReferencia(estacion.id, estacion.tipo_senal, oe.duracion_spot, oe.producto_tarifa ?? undefined)
+    ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined)
     : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;

@@ -38,7 +38,6 @@ from app.modules.catalogos.tarifa import (
     TarifaPlazaUpdate,
     TarifaRepository,
     TarifaService,
-    TipoSenal,
     calcular_tarifa_neta,
 )
 from app.shared.base_repository import BaseRepository
@@ -129,7 +128,6 @@ def _tarifa(
     svc: TarifaService,
     estacion_id: uuid.UUID,
     *,
-    tipo: str = "fm",
     dur: str = "30s",
     producto: str = "spot",
     bruta: str = "9000",
@@ -139,7 +137,6 @@ def _tarifa(
     return svc.create(
         TarifaPlazaCreate(
             estacion_id=estacion_id,
-            tipo_senal=TipoSenal(tipo),
             duracion_spot=DuracionSpot(dur),
             producto=ProductoTarifa(producto),
             tarifa_bruta=Decimal(bruta),
@@ -319,20 +316,21 @@ def test_tarifa_sin_campos_de_vigencia() -> None:
     assert "vigencia_hasta" not in TarifaPlazaUpdate.model_fields
 
 
-# ── Sin duplicado activo (ADR-097, reemplaza el solapamiento por vigencia) ────────
+# ── Sin duplicado activo (ADR-097, reemplaza el solapamiento por vigencia;
+#    ADR-158 retira tipo_senal de la combinación) ─────────────────────────────────
 def test_duplicado_activo_rechazado(contexto: tuple[TarifaService, Estacion]) -> None:
     svc, estacion = contexto
-    _tarifa(svc, estacion.estacion_id, tipo="fm", dur="30s", producto="spot")
+    _tarifa(svc, estacion.estacion_id, dur="30s", producto="spot")
     with pytest.raises(ConflictError):
-        _tarifa(svc, estacion.estacion_id, tipo="fm", dur="30s", producto="spot")
+        _tarifa(svc, estacion.estacion_id, dur="30s", producto="spot")
 
 
 def test_distinta_combinacion_no_duplica(contexto: tuple[TarifaService, Estacion]) -> None:
     svc, estacion = contexto
-    _tarifa(svc, estacion.estacion_id, tipo="fm", dur="30s", producto="spot")
-    # Misma estación, pero distinta señal / duración / producto → no hay duplicado.
-    t_60 = _tarifa(svc, estacion.estacion_id, tipo="fm", dur="60s", producto="spot")
-    t_mencion = _tarifa(svc, estacion.estacion_id, tipo="fm", dur="30s", producto="mencion")
+    _tarifa(svc, estacion.estacion_id, dur="30s", producto="spot")
+    # Misma estación, pero distinta duración / producto → no hay duplicado.
+    t_60 = _tarifa(svc, estacion.estacion_id, dur="60s", producto="spot")
+    t_mencion = _tarifa(svc, estacion.estacion_id, dur="30s", producto="mencion")
     assert t_60.tarifa_plaza_id and t_mencion.tarifa_plaza_id
 
 
@@ -374,22 +372,12 @@ def test_estacion_inexistente_rechazada(contexto: tuple[TarifaService, Estacion]
 
 
 # ── ENUMs ─────────────────────────────────────────────────────────────────────
-def test_tipo_senal_invalido_rechazado() -> None:
-    with pytest.raises(ValidationError):
-        TarifaPlazaCreate(
-            estacion_id=uuid.uuid4(),
-            tipo_senal="xx",
-            duracion_spot=DuracionSpot.S30,
-            producto=ProductoTarifa.SPOT,
-            tarifa_bruta=Decimal("100"),
-        )
-
-
+# ADR-158: `tipo_senal` se retiró por completo de `TarifaPlazaCreate` — ya no hay un
+# test de ENUM inválido para él (ese chequeo ahora vive solo en `Estacion`, F0-01).
 def test_duracion_spot_invalida_rechazada() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            tipo_senal=TipoSenal.FM,
             duracion_spot="45s",
             producto=ProductoTarifa.SPOT,
             tarifa_bruta=Decimal("100"),
@@ -400,7 +388,6 @@ def test_producto_invalido_rechazado() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            tipo_senal=TipoSenal.FM,
             duracion_spot=DuracionSpot.S30,
             producto="jingle",
             tarifa_bruta=Decimal("100"),
@@ -411,7 +398,6 @@ def test_descuento_fuera_de_rango_rechazado() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            tipo_senal=TipoSenal.FM,
             duracion_spot=DuracionSpot.S30,
             producto=ProductoTarifa.SPOT,
             tarifa_bruta=Decimal("100"),
@@ -456,8 +442,10 @@ def test_busqueda_q_por_nombre_de_estacion(contexto: tuple[TarifaService, Estaci
 
 def test_busqueda_q_por_notas(contexto: tuple[TarifaService, Estacion]) -> None:
     svc, estacion = contexto
-    _tarifa(svc, estacion.estacion_id, tipo="fm", notas="Temporada alta")
-    _tarifa(svc, estacion.estacion_id, tipo="am", notas=None)
+    # ADR-158: tipo_senal ya no existe en TarifaPlaza — se usa `producto` distinto para
+    # que las 2 tarifas de la misma estación no choquen como "duplicado activo".
+    _tarifa(svc, estacion.estacion_id, producto="spot", notas="Temporada alta")
+    _tarifa(svc, estacion.estacion_id, producto="mencion", notas=None)
     res = svc.list(ListParams(q="temporada"))
     assert res.total == 1
     assert res.items[0].notas == "Temporada alta"

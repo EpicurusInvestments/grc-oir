@@ -1,17 +1,28 @@
 """Catálogo TarifaPlaza (F0-02).
 
-Tarifa de referencia por **estación + tipo de señal + duración de spot + producto**, con
-un campo CALCULADO (`tarifa_neta`). Se sugiere al capturar órdenes (F1). Monta la base de
-F0-00 (`BaseRepository`/`BaseService`/`build_crud_router`) y añade sus reglas en la capa de
+Tarifa de referencia por **estación + duración de spot + producto**, con un campo
+CALCULADO (`tarifa_neta`). Se sugiere al capturar órdenes (F1). Monta la base de F0-00
+(`BaseRepository`/`BaseService`/`build_crud_router`) y añade sus reglas en la capa de
 servicio:
 
 - **Campo calculado (spec):** `tarifa_neta = tarifa_bruta * (1 - descuento_pct / 100)`.
   Lo calcula el servicio con `Decimal` y se persiste; NO se acepta en el request (no está
   en los schemas Create/Update).
-- **Sin duplicado activo:** para la misma combinación (estación + tipo_senal +
-  duracion_spot + producto) no puede existir otra tarifa ACTIVA → 409 `conflicto`.
+- **Sin duplicado activo:** para la misma combinación (estación + duracion_spot +
+  producto) no puede existir otra tarifa ACTIVA → 409 `conflicto`.
 - **`created_by`:** se guarda el username (texto), no FK: la tabla `Usuario` llega en F0-04
   (decisión E-2).
+
+**ADR-158 (petición del usuario):** se elimina `tipo_senal` de `TarifaPlaza` por
+completo — es una propiedad de la ESTACIÓN (`Estacion.tipo_senal`, ya existente), no de
+la tarifa; mantenerla aquí duplicada permitía capturar un tipo de señal distinto al de
+la estación seleccionada (inconsistencia de datos sin ningún beneficio, ya que tanto el
+chequeo de "sin duplicado activo" como la sugerencia de tarifa al capturar una OE
+(`_tarifa_sugerida`, `orden_estacion.py`) YA filtraban también por `estacion_id` — el
+tipo de señal nunca aportaba nada que `estacion_id` no determinara ya por sí solo. La
+combinación de unicidad pasa de (estación+tipo_senal+duracion_spot+producto) a
+(estación+duracion_spot+producto). En el formulario, la etiqueta "Duración del spot"
+pasa a ser simplemente "Duración".
 
 **ADR-097 (petición del usuario, reemplaza el diseño original de F0-02/ADR-015):**
 - Se elimina `plaza_id` → se reemplaza por `estacion_id` (FK a `Estacion`, ADR-094): la
@@ -27,7 +38,7 @@ servicio:
   control_remoto│patrocinio` — selector justo debajo de la emisora.
 - La regla "sin solapamiento" (basada en fechas) se reemplaza por "sin duplicado activo"
   para la misma combinación estación+tipo_senal+duracion_spot+producto (incluida en
-  reactivación, mismo criterio que antes).
+  reactivación, mismo criterio que antes). `tipo_senal` se retiró después, ver ADR-158.
 
 **ADR-099 (petición del usuario) — `tarifa_bruta`/`descuento_pct` como PARÁMETROS
 SENSIBLES:** cada cambio a estos dos campos se registra en `LogCambioParametro` (usuario,
@@ -71,12 +82,6 @@ from app.shared.enums import DuracionSpot
 from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
 
-class TipoSenal(StrEnum):
-    FM = "fm"
-    AM = "am"
-    TV = "tv"
-
-
 class ProductoTarifa(StrEnum):
     SPOT = "spot"
     MENCION = "mencion"
@@ -101,7 +106,6 @@ def calcular_tarifa_neta(tarifa_bruta: Decimal, descuento_pct: Decimal) -> Decim
 class TarifaPlaza(Base):
     __tablename__ = "tarifa_plaza"
     __table_args__ = (
-        CheckConstraint("tipo_senal IN ('fm', 'am', 'tv')", name="ck_tarifa_plaza_tipo_senal"),
         CheckConstraint(
             "duracion_spot IN ('20s', '30s', '60s')",
             name="ck_tarifa_plaza_duracion_spot",
@@ -115,14 +119,13 @@ class TarifaPlaza(Base):
             name="ck_tarifa_plaza_descuento_pct",
         ),
         # Acelera el filtrado por combinación y la consulta de "sin duplicado activo".
-        Index("ix_tarifa_plaza_combo", "estacion_id", "tipo_senal", "duracion_spot", "producto"),
+        Index("ix_tarifa_plaza_combo", "estacion_id", "duracion_spot", "producto"),
     )
 
     tarifa_plaza_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     estacion_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("estacion.estacion_id"), index=True
     )
-    tipo_senal: Mapped[str] = mapped_column(Unicode(4))
     duracion_spot: Mapped[str] = mapped_column(Unicode(10))
     producto: Mapped[str] = mapped_column(Unicode(20))
     tarifa_bruta: Mapped[Decimal] = mapped_column(Numeric(14, 2))
@@ -142,7 +145,6 @@ class TarifaPlaza(Base):
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class TarifaPlazaCreate(BaseModel):
     estacion_id: uuid.UUID
-    tipo_senal: TipoSenal
     duracion_spot: DuracionSpot
     producto: ProductoTarifa
     tarifa_bruta: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
@@ -154,7 +156,6 @@ class TarifaPlazaCreate(BaseModel):
 
 class TarifaPlazaUpdate(BaseModel):
     estacion_id: uuid.UUID | None = None
-    tipo_senal: TipoSenal | None = None
     duracion_spot: DuracionSpot | None = None
     producto: ProductoTarifa | None = None
     tarifa_bruta: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
@@ -173,7 +174,6 @@ class TarifaListParams(ListParams):
     asignar una estación."""
 
     estacion_id: uuid.UUID | None = None
-    tipo_senal: TipoSenal | None = None
     duracion_spot: DuracionSpot | None = None
     producto: ProductoTarifa | None = None
 
@@ -183,7 +183,6 @@ class TarifaPlazaRead(CatalogoReadBase):
 
     tarifa_plaza_id: uuid.UUID
     estacion_id: uuid.UUID
-    tipo_senal: TipoSenal
     duracion_spot: DuracionSpot
     producto: ProductoTarifa
     tarifa_bruta: Decimal
@@ -220,7 +219,7 @@ class TarifaRepository(BaseRepository[TarifaPlaza]):
                     TarifaPlaza.notas.ilike(patron),
                 )
             )
-        for campo in ("estacion_id", "tipo_senal", "duracion_spot", "producto"):
+        for campo in ("estacion_id", "duracion_spot", "producto"):
             valor = getattr(params, campo, None)
             if valor is not None:
                 stmt = stmt.where(getattr(TarifaPlaza, campo) == valor)
@@ -230,16 +229,14 @@ class TarifaRepository(BaseRepository[TarifaPlaza]):
         self,
         *,
         estacion_id: uuid.UUID,
-        tipo_senal: str,
         duracion_spot: str,
         producto: str,
         excluir_id: uuid.UUID | None = None,
     ) -> TarifaPlaza | None:
-        """Devuelve la primera tarifa ACTIVA con la misma combinación (estación + tipo de
-        señal + duración + producto), o None."""
+        """Devuelve la primera tarifa ACTIVA con la misma combinación (estación +
+        duración + producto), o None."""
         stmt = select(TarifaPlaza).where(
             TarifaPlaza.estacion_id == estacion_id,
-            TarifaPlaza.tipo_senal == tipo_senal,
             TarifaPlaza.duracion_spot == duracion_spot,
             TarifaPlaza.producto == producto,
             TarifaPlaza.activo == True,  # noqa: E712  (portable a SQL Server; ver ADR-014)
@@ -306,7 +303,6 @@ class TarifaService(
         # Una tarifa se crea ACTIVA → siempre se valida el duplicado.
         self._verificar_sin_duplicado_activo(
             estacion_id=payload["estacion_id"],
-            tipo_senal=payload["tipo_senal"],
             duracion_spot=payload["duracion_spot"],
             producto=payload["producto"],
             excluir_id=None,
@@ -334,7 +330,6 @@ class TarifaService(
 
         # Valores EFECTIVOS: lo que trae el payload o, si no, el valor actual del registro.
         estacion_id = payload.get("estacion_id", obj.estacion_id)
-        tipo_senal = payload.get("tipo_senal", obj.tipo_senal)
         duracion_spot = payload.get("duracion_spot", obj.duracion_spot)
         producto = payload.get("producto", obj.producto)
         bruta = payload.get("tarifa_bruta", obj.tarifa_bruta)
@@ -347,7 +342,6 @@ class TarifaService(
         if obj.activo:
             self._verificar_sin_duplicado_activo(
                 estacion_id=estacion_id,
-                tipo_senal=tipo_senal,
                 duracion_spot=duracion_spot,
                 producto=producto,
                 excluir_id=obj.tarifa_plaza_id,
@@ -376,7 +370,6 @@ class TarifaService(
         if activo and not obj.activo:
             self._verificar_sin_duplicado_activo(
                 estacion_id=obj.estacion_id,
-                tipo_senal=obj.tipo_senal,
                 duracion_spot=obj.duracion_spot,
                 producto=obj.producto,
                 excluir_id=obj.tarifa_plaza_id,
@@ -396,22 +389,20 @@ class TarifaService(
         self,
         *,
         estacion_id: uuid.UUID,
-        tipo_senal: str,
         duracion_spot: str,
         producto: str,
         excluir_id: uuid.UUID | None,
     ) -> None:
         conflicto = self._tarifa_repo.existe_duplicado_activo(
             estacion_id=estacion_id,
-            tipo_senal=tipo_senal,
             duracion_spot=duracion_spot,
             producto=producto,
             excluir_id=excluir_id,
         )
         if conflicto is not None:
             raise ConflictError(
-                "Ya existe una tarifa activa para esta estación con el mismo tipo de "
-                "señal, duración y producto.",
+                "Ya existe una tarifa activa para esta estación con la misma duración "
+                "y producto.",
                 detalles={"tarifa_en_conflicto": str(conflicto.tarifa_plaza_id)},
             )
 
@@ -437,8 +428,8 @@ router = build_crud_router(
 
 
 # La factory arma un `listar` genérico; F1 (Fase 2) necesita ADEMÁS los filtros
-# `estacion_id`/`tipo_senal`/`duracion_spot`/`producto` para encontrar la tarifa ACTIVA de
-# una combinación exacta. Se retira SOLO esa ruta y se registra una equivalente con esos
+# `estacion_id`/`duracion_spot`/`producto` para encontrar la tarifa ACTIVA de una
+# combinación exacta. Se retira SOLO esa ruta y se registra una equivalente con esos
 # query params, sin tocar `crud_router.py` (mismo patrón que Estación/Anunciante/Contrato,
 # ADR-015 E-3) — evita además el problema de colisión de rutas que tuvo `/vobo` antes de
 # ADR-100 (un `GET /tarifas/buscar` agregado DESPUÉS de `/{item_id}` sería interceptado
@@ -453,7 +444,6 @@ def listar_tarifas(
     activo: bool | None = Query(None, description="None=todas, true=activas, false=inactivas"),
     q: str | None = Query(None, description="Búsqueda por nombre/siglas de estación o notas"),
     estacion_id: uuid.UUID | None = Query(None, description="Filtra por estación"),
-    tipo_senal: TipoSenal | None = Query(None, description="Filtra por tipo de señal"),
     duracion_spot: DuracionSpot | None = Query(None, description="Filtra por duración de spot"),
     producto: ProductoTarifa | None = Query(None, description="Filtra por producto"),
     usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
@@ -466,7 +456,6 @@ def listar_tarifas(
             activo=activo,
             q=q,
             estacion_id=estacion_id,
-            tipo_senal=tipo_senal,
             duracion_spot=duracion_spot,
             producto=producto,
         )
