@@ -62,6 +62,21 @@ catálogo sugerida + auditada:**
   no hay ninguna tarifa activa para la combinación, no hay nada contra qué comparar y no
   se audita nada (mismo comportamiento 100% libre de antes de esta fase).
 
+**ADR-169 (petición del usuario) — Producto/Duración conectados al catálogo "Producto
+Duración":** `producto_tarifa` y `duracion_spot` dejan de ser los CHECK/enum cerrados
+(`ProductoTarifa`/`DuracionSpot`) y pasan a texto libre — se eligen del catálogo
+`DuracionSpotCatalogo` (F0-06), mismo patrón ya usado en Tarifa (ADR-166) y OrdenCliente
+(ADR-167/168). `producto_tarifa` sigue siendo obligatorio al crear (como ya lo era);
+`duracion_spot` se vuelve NULLABLE (antes CHECK NOT NULL `20s|30s|60s`) — si el producto
+elegido no tiene ninguna duración real en el catálogo (p.ej. Mención, solo "sin
+resultado"), queda sin capturar y NO bloquea nada: el usuario sigue pudiendo teclear
+`precio_spot` a mano y llenar el resto del formulario, igual que ya permitía
+OrdenCliente. `_tarifa_sugerida()` simplemente no encuentra nada que sugerir cuando
+`duracion_spot` es `None` (mismo criterio que ya tenía para `producto_tarifa is None`) —
+la lógica de sugerencia de tarifa activa para (estación, duración, producto) NO cambia
+cuando SÍ hay ambos valores: sigue siendo una comparación de texto exacta contra
+`TarifaPlaza`, que desde ADR-166 también es texto libre.
+
 **ADR-103 (petición del usuario) — Fase 3 del rediseño: "Material a Transmitir"
 (audios):** tabla hija nueva `OrdenEstacionAudio` (uno o más archivos de audio por OE,
 subidos vía endpoints DEDICADOS `POST`/`GET`/`DELETE .../{id}/audios`, NO por el
@@ -120,11 +135,10 @@ from app.integrations.almacenamiento.documentos import (
 )
 from app.integrations.almacenamiento.port import AlmacenamientoPort
 from app.modules.catalogos.estacion import Estacion
-from app.modules.catalogos.tarifa import ProductoTarifa, TarifaPlaza, TarifaRepository
+from app.modules.catalogos.tarifa import TarifaPlaza, TarifaRepository
 from app.modules.usuarios.lookup import resolver_usuario_id
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
-from app.shared.enums import DuracionSpot  # noqa: F401 — reexportado para quien importe desde aquí
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
@@ -163,17 +177,6 @@ class OrdenEstacion(Base):
             "estatus IN ('borrador', 'asignada', 'en_transmision', 'en_revision', "
             "'cerrada', 'cancelada')",
             name="ck_orden_estacion_estatus",
-        ),
-        CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s')",
-            name="ck_orden_estacion_duracion_spot",
-        ),
-        # ADR-102: nullable (filas viejas, sembradas antes de esta fase, no lo tienen);
-        # `OrdenEstacionCreate` sí lo exige para las capturas nuevas.
-        CheckConstraint(
-            "producto_tarifa IS NULL OR producto_tarifa IN "
-            "('spot', 'mencion', 'control_remoto', 'patrocinio')",
-            name="ck_orden_estacion_producto_tarifa",
         ),
         # ADR-101 (petición del usuario): se quitó el candado que impedía que
         # `precio_spot` superara `OrdenCliente.precio_unitario` — ahora el margen OIR
@@ -276,10 +279,10 @@ class OrdenEstacion(Base):
         default=None,
     )
     producto: Mapped[str | None] = mapped_column(Unicode(200), default=None)
-    # ADR-102: producto de TARIFA (spot/mención/control remoto/patrocinio), elegido por
-    # estación — NO confundir con `producto` de arriba ("Campaña", texto libre heredado
-    # de la OC). Nullable: filas sembradas antes de esta fase no lo tienen.
-    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    # ADR-102/169: producto elegido por estación, del catálogo Producto Duración (F0-06)
+    # desde ADR-169 — NO confundir con `producto` de arriba ("Campaña", texto libre
+    # heredado de la OC). Nullable: filas sembradas antes de ADR-102 no lo tienen.
+    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(60), default=None)
 
     estacion_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("estacion.estacion_id", name="fk_orden_estacion_estacion", ondelete="NO ACTION"),
@@ -292,8 +295,11 @@ class OrdenEstacion(Base):
     )
 
     # ADR-106: capturada POR ESTACIÓN (ya no heredada de OrdenCliente.duracion_spot —
-    # ver docstring del módulo).
-    duracion_spot: Mapped[str] = mapped_column(Unicode(10))
+    # ver docstring del módulo). ADR-169: texto libre y NULLABLE (antes CHECK NOT NULL
+    # 20s|30s|60s) — se elige del catálogo Producto Duración (F0-06), igual que Tarifa
+    # (ADR-166) y OrdenCliente (ADR-167); si el producto no tiene duración real en el
+    # catálogo, queda `None` y NO bloquea nada (mismo criterio que OrdenCliente).
+    duracion_spot: Mapped[str | None] = mapped_column(Unicode(60), default=None)
     precio_spot: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     # Spots bonificables de esta OI (ADR-067/ADR-068): se transmiten y cuentan para el
     # balance de spots de la OC igual que cualquier otro, pero no se cobran a la
@@ -589,10 +595,10 @@ class OrdenEstacionRead(BaseModel):
     agencia_id: uuid.UUID | None = None
     categoria_id: uuid.UUID | None = None
     producto: str | None = None
-    producto_tarifa: ProductoTarifa | None = None
+    producto_tarifa: str | None = None
     estacion_id: uuid.UUID
     plaza_id: uuid.UUID
-    duracion_spot: str
+    duracion_spot: str | None = None
     precio_spot: Decimal
     cantidad_spots_bonificables: int
     importe_estacion: Decimal
@@ -815,9 +821,12 @@ class OrdenEstacionAudioStagedIn(BaseModel):
 class OrdenEstacionCreate(BaseModel):
     orden_id: uuid.UUID
     estacion_id: uuid.UUID
-    producto_tarifa: ProductoTarifa
+    # ADR-169: texto libre, del catálogo Producto Duración — `producto_tarifa` sigue
+    # obligatorio al crear (mismo criterio que `OrdenCliente`, ADR-168); `duracion_spot`
+    # es opcional (puede quedar sin capturar si el producto no tiene duración real).
+    producto_tarifa: str = Field(min_length=1, max_length=60)
     # ADR-106: capturada por estación (ya no heredada de OrdenCliente.duracion_spot).
-    duracion_spot: DuracionSpot
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_spot: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     # ADR-068: se valida contra los spots asignados de esta OI en el servicio (esa suma
     # no se conoce a nivel de schema, depende de `dias`).
@@ -846,8 +855,8 @@ class OrdenEstacionUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    producto_tarifa: ProductoTarifa | None = None
-    duracion_spot: DuracionSpot | None = None
+    producto_tarifa: str | None = Field(default=None, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_spot: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     cantidad_spots_bonificables: int | None = Field(default=None, ge=0)
     observaciones_estacion: str | None = Field(default=None, max_length=2000)
@@ -1793,11 +1802,18 @@ class OrdenEstacionService(
 
     # ── ADR-102: tarifa sugerida del catálogo + auditoría condicional ────────────────
     def _tarifa_sugerida(
-        self, db: Session, *, estacion: Estacion, duracion_spot: str, producto_tarifa: str | None
+        self,
+        db: Session,
+        *,
+        estacion: Estacion,
+        duracion_spot: str | None,
+        producto_tarifa: str | None,
     ) -> TarifaPlaza | None:
         """Tarifa ACTIVA para (estación, duración, producto), o `None` si no hay ninguna
-        capturada — en ese caso no hay nada contra qué comparar/auditar."""
-        if producto_tarifa is None:
+        capturada — en ese caso no hay nada contra qué comparar/auditar. ADR-169:
+        `duracion_spot` puede venir `None` (producto sin duración real en el catálogo) —
+        sin duración no hay nada que buscar."""
+        if producto_tarifa is None or duracion_spot is None:
             return None
         tarifa_repo = TarifaRepository(db, TarifaPlaza)
         return tarifa_repo.existe_duplicado_activo(
@@ -1813,6 +1829,7 @@ class OrdenEstacionService(
         orden_estacion_id: uuid.UUID,
         tarifa: TarifaPlaza | None,
         precio_spot: Decimal,
+        precio_spot_anterior: Decimal | None,
         motivo: str | None,
         usuario: CurrentUser,
     ) -> None:
@@ -1820,7 +1837,14 @@ class OrdenEstacionService(
         parámetro sensible de `TarifaPlaza` (ADR-099, solo Admin), aquí NO hay candado de
         permiso. Se audita en `LogCambioParametro` solo cuando el valor final no coincide
         con la tarifa sugerida, exigiendo `motivo_cambio_tarifa` en ese caso — mismo
-        criterio (sin `field_permissions`) que `OrdenClienteService.actualizar_comisiones`."""
+        criterio (sin `field_permissions`) que `OrdenClienteService.actualizar_comisiones`.
+
+        ADR-162: `precio_spot_anterior` (el valor YA persistido antes de este `update`,
+        `None` en `create`) evita re-pedir motivo y re-auditar en cada edición: si el
+        precio no cambió respecto a lo ya guardado, la divergencia con el catálogo ya se
+        auditó antes — no es un cambio nuevo."""
+        if precio_spot_anterior is not None and precio_spot == precio_spot_anterior:
+            return
         if tarifa is None or precio_spot == tarifa.tarifa_neta:
             return
         if not (motivo and motivo.strip()):
@@ -1963,6 +1987,7 @@ class OrdenEstacionService(
             orden_estacion_id=orden_estacion_id,
             tarifa=tarifa,
             precio_spot=data.precio_spot,
+            precio_spot_anterior=None,
             motivo=data.motivo_cambio_tarifa,
             usuario=usuario,
         )
@@ -2180,7 +2205,9 @@ class OrdenEstacionService(
         iva_emisora = (importe_emisora * IVA_RATE).quantize(CENTAVOS)
 
         # ADR-102: tarifa sugerida del catálogo — auditoría condicional (sin candado de
-        # permiso) si el `precio_spot` efectivo no coincide.
+        # permiso) si el `precio_spot` efectivo no coincide. ADR-162: se le pasa también
+        # el `precio_spot` YA persistido (antes de sobrescribirlo abajo) para no volver a
+        # pedir motivo/auditar si no cambió desde el último guardado.
         producto_tarifa = (
             data.producto_tarifa if "producto_tarifa" in campos else obj.producto_tarifa
         )
@@ -2197,6 +2224,7 @@ class OrdenEstacionService(
             orden_estacion_id=obj.orden_estacion_id,
             tarifa=tarifa,
             precio_spot=precio_spot,
+            precio_spot_anterior=obj.precio_spot,
             motivo=data.motivo_cambio_tarifa,
             usuario=usuario,
         )

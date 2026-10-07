@@ -65,7 +65,6 @@ from app.modules.catalogos.vendedor import Vendedor
 from app.modules.usuarios.lookup import resolver_usuario_id
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
-from app.shared.enums import DuracionSpot
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
@@ -123,10 +122,6 @@ class OrdenCliente(Base):
         CheckConstraint(
             "estatus_pago_agencia IN ('pendiente', 'en_revision', 'pagado')",
             name="ck_orden_cliente_estatus_pago_agencia",
-        ),
-        CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s')",
-            name="ck_orden_cliente_duracion_spot",
         ),
         CheckConstraint(
             "fecha_fin_campania >= fecha_inicio_campania",
@@ -245,7 +240,12 @@ class OrdenCliente(Base):
     # Calculado (spec): = DATEDIFF(fin, inicio) + 1. Persistido por el servicio.
     total_dias_campania: Mapped[int] = mapped_column()
 
-    duracion_spot: Mapped[str] = mapped_column(Unicode(10))
+    # ADR-167 (petición del usuario): texto libre y OPCIONAL (antes CHECK NOT NULL
+    # `20s|30s|60s`) — se capturan eligiendo del catálogo `DuracionSpotCatalogo`
+    # ("Producto Duración", F0-06), igual que Tarifa (ADR-166), pero aquí SÍ se permite
+    # dejarlos sin capturar (p.ej. Mención, cuyo catálogo solo tiene "sin resultado").
+    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(60), default=None)
+    duracion_spot: Mapped[str | None] = mapped_column(Unicode(60), default=None)
     precio_unitario: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     total_spots: Mapped[int] = mapped_column()
     # Extensión aditiva (ADR-067): spots que se transmiten normalmente (siguen contando
@@ -336,7 +336,8 @@ class OrdenClienteRead(BaseModel):
     fecha_inicio_campania: date
     fecha_fin_campania: date
     total_dias_campania: int
-    duracion_spot: str
+    producto_tarifa: str | None = None
+    duracion_spot: str | None = None
     precio_unitario: Decimal
     total_spots: int
     cantidad_spots_bonificables: int
@@ -414,7 +415,12 @@ class OrdenClienteCreate(BaseModel):
     archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date
     fecha_fin_campania: date
-    duracion_spot: DuracionSpot
+    # ADR-167/168: ambos se eligen del catálogo Producto Duración (F0-06). `producto_tarifa`
+    # es OBLIGATORIO al crear (ADR-168, petición del usuario: habilita el resto de "Campaña
+    # y montos" en pantalla) — `duracion_spot` sigue opcional, a diferencia de Tarifa
+    # (ADR-166) aquí SÍ se puede dejar sin capturar una duración real.
+    producto_tarifa: str = Field(min_length=1, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_unitario: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     total_spots: int = Field(gt=0)
     # Extensión aditiva (ADR-067): se valida contra `total_spots` en el servicio, no
@@ -470,7 +476,8 @@ class OrdenClienteUpdate(BaseModel):
     archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date | None = None
     fecha_fin_campania: date | None = None
-    duracion_spot: DuracionSpot | None = None
+    producto_tarifa: str | None = Field(default=None, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_unitario: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     total_spots: int | None = Field(default=None, gt=0)
     cantidad_spots_bonificables: int | None = Field(default=None, ge=0)

@@ -15,6 +15,13 @@
 > sin ningún beneficio (la unicidad/sugerencia ya filtraban también por `estacion_id`).
 > "Duración del spot" pasa a llamarse solo "Duración" en el formulario. Ver ADR-158 en
 > `docs/arquitectura.md`.
+>
+> **ADR-166 (petición del usuario, 2026-10-06):** `producto`/`duracion_spot` dejan de ser
+> los ENUMs cerrados de esta ficha y pasan a TEXTO LIBRE — se capturan eligiendo del
+> catálogo F0-06 "Producto Duración" (`DuracionSpotCatalogo`) en vez de un selector fijo.
+> El literal "sin resultado" de ese catálogo (ADR-165, su default cuando no se captura una
+> duración) NO es una duración válida aquí — Tarifa lo rechaza y pide ir a dar de alta una
+> real. Ver ADR-166 en `docs/arquitectura.md`.
 
 ## Propósito
 
@@ -25,14 +32,19 @@ sugerido al capturar órdenes (F1).
 
 ### TarifaPlaza (11 campos)
 `tarifa_plaza_id` (PK), `estacion_id` (FK NOT NULL a `Estacion`),
-`duracion_spot` (ENUM: 20s│30s│60s — **sin `mencion`**, ADR-098),
-**`producto`** (ENUM NUEVO, fuera de la spec: spot│mencion│control_remoto│patrocinio),
-**`tarifa_bruta` (PARÁMETRO SENSIBLE, ADR-099)**, **`descuento_pct` (PARÁMETRO SENSIBLE,
-ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `created_by`.
-- **`duracion_spot` ya NO acepta `mencion` (ADR-098):** ese valor solo vive en
-  `producto` desde ADR-097 — tenerlo también aquí era conceptualmente redundante (una
-  "mención" no dura 20/30/60 segundos). El mismo cambio aplica a `OrdenCliente`/
-  `OrdenEstacion` (F1), que comparten el enum `DuracionSpot` (ADR-032).
+`duracion_spot` (NVARCHAR(60), TEXTO LIBRE desde ADR-166 — antes ENUM 20s│30s│60s),
+**`producto`** (NVARCHAR(60), TEXTO LIBRE desde ADR-166 — antes ENUM fuera de la spec:
+spot│mencion│control_remoto│patrocinio), **`tarifa_bruta` (PARÁMETRO SENSIBLE,
+ADR-099)**, **`descuento_pct` (PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta`
+(Calculado)**, `notas`, `activo`, `created_at`, `created_by`.
+- **`producto`/`duracion_spot` son TEXTO LIBRE (ADR-166):** se capturan eligiendo del
+  catálogo F0-06 "Producto Duración" (`DuracionSpotCatalogo`), no de un selector fijo —
+  así se pueden dar de alta valores nuevos sin migración. El literal "sin resultado" de
+  ese catálogo (ADR-165) está explícitamente PROHIBIDO como `duracion_spot` aquí (ver
+  regla de negocio abajo). Antes de ADR-166, `duracion_spot` tampoco aceptaba `mencion`
+  (ADR-098, redundante con `producto`) — eso sigue siendo cierto en la práctica (el
+  catálogo no suele tener una entrada "mención" bajo `duracion_spot`), solo que ya no hay
+  un CHECK que lo imponga.
 
 - **Campo calculado (fórmula de la spec, sin cambio):**
   `tarifa_neta = tarifa_bruta * (1 - descuento_pct / 100)`.
@@ -50,11 +62,13 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 ## Estados
 - Solo `activo`. Ya NO hay filtro Vigentes/Expiradas (eliminado junto con la vigencia).
 
-## Pantallas (de la pantalla F0, ajustada por ADR-097/ADR-158)
+## Pantallas (de la pantalla F0, ajustada por ADR-097/ADR-158/ADR-166)
 - Lista + detalle con filtros (Todas / Activas / Inactivas) y paginación por página.
-- Formulario: Nombre de la emisora (select de Estación), Producto (select), Duración
-  (ADR-158: ya no "Duración del spot"), Tarifa bruta, Descuento, Tarifa neta (Calc,
-  solo lectura).
+- Formulario: Nombre de la emisora (select de Estación), Producto (select poblado desde
+  el catálogo Producto Duración, ADR-166 — al elegir uno, limpia Duración), Duración
+  (select poblado con las descripciones de ESE producto en el catálogo, excluyendo "sin
+  resultado"; si no queda ninguna real, un banner bloquea Guardar), Tarifa bruta,
+  Descuento, Tarifa neta (Calc, solo lectura).
 
 ## Roles / permisos
 - **Captura: solo Admin (IT)** por ahora (edita catálogos y fija tarifas). Lectura: demás.
@@ -75,12 +89,19 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
   efectivamente cambió, y audita cada campo que cambió por separado. Los dos campos
   comparten un único "Motivo del cambio" en la pantalla (mismo criterio que los 3 % de
   comisión de `OrdenCliente`, F1) — no uno por campo.
+- **`duracion_spot` nunca puede ser "sin resultado" (ADR-166):** aunque el catálogo
+  Producto Duración SÍ permite ese literal (equivale a nulo ahí, ADR-165), Tarifa
+  requiere una duración real capturada — el servicio lo rechaza con un error de dominio
+  (tanto en alta como en edición) que indica ir a dar de alta una duración en el
+  catálogo.
 
 ## Integraciones
 - Ninguna.
 
 ## Dependencias
-- F0-00 (fundamentos) y F0-01 (Estación debe existir — ADR-094).
+- F0-00 (fundamentos), F0-01 (Estación debe existir — ADR-094) y, desde ADR-166, F0-06
+  (catálogo `DuracionSpotCatalogo`/"Producto Duración" — de ahí salen las opciones de
+  Producto y Duración del formulario).
 
 ## Estado de implementación (F0-02 entregada, restructurada por ADR-097)
 
@@ -88,13 +109,16 @@ Implementado sobre la base de F0-00 (`BaseRepository`/`BaseService`/`build_crud_
 Modelo, schemas, repositorio y servicio en `backend/app/modules/catalogos/tarifa.py`;
 migraciones `20260708_1200-b73f13de1b80_f0_02_tarifas.py` (original, por plaza + vigencia),
 `20260921_1500-96798afba3cc_f0_02_tarifa_por_estacion.py` (ADR-097: por estación +
-producto, sin vigencia) y `20261005_1248-ec3a357e7c0a_f0_tarifa_sin_tipo_senal.py`
-(ADR-158: quita `tipo_senal`). **Sin migración propia para ADR-099** (parámetros
-sensibles): no agrega columnas — reutiliza la tabla `log_cambio_parametro` ya existente
-(ADR-016). Pantalla en `frontend/src/modules/catalogos/tarifa/`. Endpoints en
-`docs/API-CONTRACT.md` (sección Tarifas). Detalles de diseño original en **ADR-015**; la
-restructuración de Plaza→Estación en **ADR-097**; los parámetros sensibles en
-**ADR-099**; el retiro de `tipo_senal` en **ADR-158**.
+producto, sin vigencia), `20261005_1248-ec3a357e7c0a_f0_tarifa_sin_tipo_senal.py`
+(ADR-158: quita `tipo_senal`) y
+`20261006_1445-f4c9c5db55eb_f0_tarifa_producto_duracion_texto_libre.py` (ADR-166: quita
+los CHECK de `producto`/`duracion_spot`, ensancha a `Unicode(60)`). **Sin migración
+propia para ADR-099** (parámetros sensibles): no agrega columnas — reutiliza la tabla
+`log_cambio_parametro` ya existente (ADR-016). Pantalla en
+`frontend/src/modules/catalogos/tarifa/`. Endpoints en `docs/API-CONTRACT.md` (sección
+Tarifas). Detalles de diseño original en **ADR-015**; la restructuración de
+Plaza→Estación en **ADR-097**; los parámetros sensibles en **ADR-099**; el retiro de
+`tipo_senal` en **ADR-158**; la conexión al catálogo Producto Duración en **ADR-166**.
 
 **Decisiones tomadas al implementar originalmente (E-1..E-5, superadas por ADR-097 donde
 se indica):**

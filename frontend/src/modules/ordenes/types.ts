@@ -25,15 +25,6 @@ export type EstadoOI = "asignada_afiliado" | "programados_conciliados" | "reales
 export type EstatusPagoAfiliado = "pendiente" | "en_revision" | "pagado";
 export type EstatusPagoAgencia = "pendiente" | "en_revision" | "pagado";
 
-/** Producto de TARIFA (spot/mención/control remoto/patrocinio, ADR-097 del catálogo
- * Tarifa) — NO confundir con `OrdenCliente.producto`/`OrdenEstacion.producto` ("Campaña",
- * texto libre heredado de la orden). Se elige por estación desde ADR-102. */
-export type ProductoTarifa = "spot" | "mencion" | "control_remoto" | "patrocinio";
-
-/** Duración del spot (catálogo Tarifa) — capturada POR ESTACIÓN (ADR-106), no heredada
- * de `OrdenCliente.duracion_spot`. */
-export type DuracionSpot = "20s" | "30s" | "60s";
-
 /** Fila desagregada de programación/transmisión: un día con su horario y spots. */
 export interface PeriodoTransmisionRow {
   fecha: string;
@@ -71,7 +62,14 @@ export interface OrdenCliente {
   afiliado_factura_directo_al_cliente: boolean;
   fecha_inicio_campania: string;
   fecha_fin_campania: string;
-  duracion_spot: string;
+  /** ADR-167 (petición del usuario): se eligen del catálogo `DuracionSpotCatalogo`
+   *  ("Producto Duración", F0-06), igual criterio que Tarifa (ADR-166) — Producto
+   *  primero, Duración según ese producto. A diferencia de Tarifa, AMBOS son opcionales
+   *  aquí (puede quedar sin capturar, p.ej. Mención). `producto_tarifa` es NUEVO, fuera
+   *  de la spec BD v2 (mismo criterio que `TarifaPlaza.producto`, ADR-097) — no
+   *  confundir con `producto` de arriba ("Campaña", texto libre sin relación). */
+  producto_tarifa: string | null;
+  duracion_spot: string | null;
   total_spots: number;
   /** Spots que se transmiten y se asignan a OrdenEstacion igual que cualquier otro, pero
    *  no se cobran al cliente (ADR-067): descuentan del subtotal facturable, no de
@@ -185,12 +183,15 @@ export interface OrdenEstacion {
   anunciante_id: string;
   estacion_id: string;
   plaza_id: string;
-  /** Producto de TARIFA (ADR-102) — spot/mención/control remoto/patrocinio, elegido por
-   *  estación. NO confundir con `producto` de OrdenCliente ("Campaña", texto libre): esta
-   *  OE no tiene ese campo por separado, solo el heredado de la OC (ver selectors.ts). */
-  producto_tarifa?: ProductoTarifa | null;
-  /** ADR-106: capturada por estación (ya no heredada de `OrdenCliente.duracion_spot`). */
-  duracion_spot: DuracionSpot;
+  /** Producto de TARIFA (ADR-102), elegido por estación. NO confundir con `producto` de
+   *  OrdenCliente ("Campaña", texto libre): esta OE no tiene ese campo por separado, solo
+   *  el heredado de la OC (ver selectors.ts). ADR-169: texto libre (catálogo Producto
+   *  Duración, F0-06), ya no el enum `ProductoTarifa`. */
+  producto_tarifa?: string | null;
+  /** ADR-106: capturada por estación (ya no heredada de `OrdenCliente.duracion_spot`).
+   *  ADR-169: texto libre y OPCIONAL (antes el enum `DuracionSpot`, obligatorio) — puede
+   *  quedar sin capturar si el producto no tiene duración real en el catálogo. */
+  duracion_spot: string | null;
   /** Tarifa pactada con la estación (por spot). */
   precio_spot: number;
   /** Spots que se asignan y transmiten igual que cualquier otro (cuentan para el balance
@@ -307,11 +308,10 @@ export type OrdenEstacionInput = Pick<
   | "periodo_transmision"
   | "observaciones_estacion"
 > & {
-  /** ADR-106: requerido solo al CREAR (el backend lo exige en `OrdenEstacionCreate`,
-   *  opcional en `OrdenEstacionUpdate`) — mismo criterio que `producto_tarifa`, que por
-   *  la misma razón tampoco se marca requerido aquí (una OE existente sigue editable sin
-   *  forzar a volver a elegirlo). */
-  duracion_spot?: DuracionSpot;
+  /** ADR-106/169: texto libre y OPCIONAL (el backend lo permite `None` incluso al crear
+   *  desde ADR-169 — un producto sin duración real en el catálogo, p.ej. Mención, puede
+   *  quedar sin capturar sin bloquear nada). */
+  duracion_spot?: string;
   /** ADR-102: transitorio (no persiste como campo propio) — requerido SOLO si
    * `precio_spot` no coincide con la tarifa sugerida del catálogo. */
   motivo_cambio_tarifa?: string;

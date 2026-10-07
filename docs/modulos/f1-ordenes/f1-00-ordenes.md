@@ -49,6 +49,25 @@ Transmisión"): se elimina por completo — `OrdenClienteService.create()` guard
 DIRECTO a `capturada`, sin checklist ni paso intermedio. `recibida` sigue en el enum
 (la spec la define) pero queda inalcanzable por el flujo normal.
 
+**`producto_tarifa` (NUEVO, fuera de la spec) y `duracion_spot`** (ADR-167, petición del
+usuario): sección "Campaña y montos" de "Orden de Servicio" — se eligen del catálogo
+`DuracionSpotCatalogo` ("Producto Duración", F0-06), mismo patrón Producto→Duración que
+Tarifa (ADR-166). `duracion_spot` dejó el CHECK `20s|30s|60s` y se volvió NULLABLE (antes
+NOT NULL) — decisión tomada con el usuario, ver ADR-167 en `docs/arquitectura.md`. Esta
+columna es puramente informativa a nivel de campaña: ADR-106 ya había desconectado su
+herencia hacia `OrdenEstacion.duracion_spot` (que sigue con su propio selector fijo, sin
+cambios aquí). El literal "sin resultado" nunca aparece como opción seleccionable en
+Duración; si el producto elegido (p.ej. Mención) no tiene ninguna duración real en el
+catálogo, el combo de Duración simplemente queda deshabilitado ("Selecciona…", `NULL` por
+dentro) y NO bloquea nada.
+
+**ADR-168 (petición del usuario, probado en vivo):** a diferencia de `duracion_spot`,
+`producto_tarifa` SÍ es obligatorio al crear — gatea el resto de "Campaña y montos":
+Total de spots/Spots bonificables/Precio unitario están deshabilitados hasta elegir un
+producto, y no se puede guardar la orden sin él. La columna de BD sigue NULLABLE (la
+obligatoriedad vive en el schema `OrdenClienteCreate`, no en un `NOT NULL` — evita tener
+que inventar un valor de relleno para filas ya existentes sin el campo).
+
 ### OrdenEstacion (27 campos spec + 6 aditivos)
 PK `orden_estacion_id`. FK a `OrdenCliente`, `Contrato`, `Anunciante`, `Vendedor`,
 `Agencia`, `Categoria`, `Estacion`, `Plaza`, `Usuario`. Calculados (servicio):
@@ -65,15 +84,13 @@ lo acote contra los spots asignados: esa suma vive en `OrdenEstacionDia` (tabla 
 es una columna propia de `orden_estacion` — la validación es del servicio.
 
 **`producto_tarifa` y `duracion_spot`** (ADR-102 + ADR-106, Fase 2 del rediseño "Asignar
-estaciones"): producto del catálogo Tarifa (`spot│mencion│control_remoto│patrocinio`) Y
-duración (`20s│30s│60s`), AMBOS elegidos POR ESTACIÓN — secuencia del formulario:
-Estación → Producto → Duración → Tarifa. NO confundir `producto_tarifa` con el campo
-`producto` de esta misma tabla (heredado de `OrdenCliente.producto`, "Campaña" en texto
-libre). Al crear/editar, el servicio busca la tarifa ACTIVA de `TarifaPlaza` para
-(estación + `duracion_spot` de ESTA OE + `producto_tarifa` — ADR-158: ya NO filtra
-también por `Estacion.tipo_senal`, retirado de `TarifaPlaza` por redundante con
-`estacion_id`) y, solo si `precio_spot` no coincide con su `tarifa_neta`, exige
-`motivo_cambio_tarifa` y
+estaciones"): AMBOS elegidos POR ESTACIÓN — secuencia del formulario: Estación →
+Producto → Duración → Tarifa. NO confundir `producto_tarifa` con el campo `producto` de
+esta misma tabla (heredado de `OrdenCliente.producto`, "Campaña" en texto libre). Al
+crear/editar, el servicio busca la tarifa ACTIVA de `TarifaPlaza` para (estación +
+`duracion_spot` de ESTA OE + `producto_tarifa` — ADR-158: ya NO filtra también por
+`Estacion.tipo_senal`, retirado de `TarifaPlaza` por redundante con `estacion_id`) y,
+solo si `precio_spot` no coincide con su `tarifa_neta`, exige `motivo_cambio_tarifa` y
 audita en `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — sin
 candado de permiso (Ventas sigue capturando libre; ver ADR-102 para el porqué).
 **ADR-106 corrige el alcance original de ADR-102:** ahí se había decidido que
@@ -83,7 +100,40 @@ columna ya existía (mismo CHECK del catálogo), solo cambió de dónde sale el 
 **ADR-115 (fix, frontend):** en el formulario, si la combinación estación/producto/
 duración NO tiene tarifa en el catálogo, "Tarifa por spot" se VACÍA para que el usuario
 la capture a mano (antes se quedaba con el valor de la última combinación que sí tenía
-tarifa). Un precio ya tecleado a mano nunca se pisa.
+tarifa).
+
+**ADR-170 (petición del usuario, reemplaza el criterio de ADR-115 para este flujo
+específico):** "un precio ya tecleado a mano nunca se pisa" dejó de ser cierto al cambiar
+de Producto o Duración — ahora, cambiar cualquiera de los dos SIEMPRE limpia "Tarifa por
+spot" primero (los `onChange` llaman `setPrecioSpot("")` explícitamente), y luego el
+mismo mecanismo de siempre recarga la tarifa de la nueva combinación si existe en el
+catálogo. Antes, un precio editado a mano sobrevivía al cambiar de combinación —
+confundía, porque parecía que la tarifa vieja seguía aplicando. El criterio de ADR-115
+("no pisar un precio no vacío") sigue intacto para cualquier otro caso (p.ej. no pisar
+`precio_spot` ya guardado de una OE existente al montar el formulario para editarla).
+
+**ADR-169 (petición del usuario, tras probar ADR-167/168 en "Orden de Servicio"):**
+`producto_tarifa`/`duracion_spot` dejan los CHECK/enum (`spot│mencion│control_remoto│
+patrocinio` / `20s│30s│60s`) y pasan a texto libre — se eligen del catálogo
+`DuracionSpotCatalogo` ("Producto Duración", F0-06), mismo patrón que Tarifa (ADR-166) y
+"Orden de Servicio" (ADR-167). `producto_tarifa` sigue obligatorio al crear (sin cambio);
+`duracion_spot` se vuelve OPCIONAL (antes CHECK NOT NULL) — si el producto elegido no
+tiene ninguna duración real en el catálogo (p.ej. Mención), el select de Duración se
+deshabilita ("Sin duración capturada para este producto") pero la sección "Tarifa por
+spot" se habilita igual con solo elegir el Producto (antes dependía de Duración) — se
+puede teclear la tarifa y seguir llenando el resto del formulario sin bloquear nada. La
+lógica de `_tarifa_sugerida()` (buscar la tarifa activa y auto-cargar `precio_spot`) NO
+cambia: sigue siendo una comparación de texto exacta contra `TarifaPlaza` (texto libre
+desde ADR-166), así que un producto/duración MÁS ALLÁ del enum anterior encuentra su
+tarifa sembrada exactamente igual.
+
+**ADR-173 (petición del usuario):** al crear una OE ya amarrada a su OC (`ocIdFijo`, el
+flujo normal desde "+ Asignar estaciones"), Producto/Duración arrancan precargados con
+los que esa OC capturó (en vez de vacíos) — si la OC no capturó Duración, arranca vacía,
+sin cambiar el gateo de siempre (deshabilitada si el producto no tiene duraciones reales
+en el catálogo). El usuario sigue pudiendo cambiar cualquiera de los dos; si la
+combinación precargada tiene tarifa sembrada, se autocarga sola igual que si se
+eligieran a mano. Nada más de la pantalla cambia — es solo el valor inicial.
 
 **"Material a Transmitir" — `OrdenEstacionAudio`** (ADR-103, Fase 3 del rediseño): tabla
 hija NUEVA, fuera de la spec BD v2 — uno o más audios por OE, subidos vía endpoints
@@ -445,6 +495,18 @@ en `LogCambioParametro` y el endpoint `GET .../historial-tarifa` ya existía; el
 detalle de Orden de Transmisión simplemente nunca lo llamaba ni mostraba. Se agrega la
 sección "Historial de cambios de tarifa" en `OrdenEstacionDetailPanel.tsx`, mismo patrón
 visual que el historial de Tarifas.
+
+**ADR-162 (petición del usuario, a raíz del historial de ADR-161):** "cada vez que
+editas te está pidiendo poner el motivo aunque ya lo hayas hecho previamente, por eso ya
+hay varios logs" — `_auditar_precio_spot_si_difiere` (ADR-102) solo comparaba contra la
+tarifa del catálogo, nunca contra el `precio_spot` ya guardado; cualquier guardado
+posterior de una OE con precio intencionalmente apartado del catálogo volvía a exigir
+motivo y a duplicar el log. Ahora recibe también `precio_spot_anterior` (el valor antes
+de sobrescribirlo, `None` solo en `create`) y no audita si el precio no cambió desde el
+último guardado — un cambio real del precio sigue exigiendo motivo y auditando como
+antes. Mismo criterio en el frontend (`OrdenEstacionForm.tsx`): el campo "Motivo del
+cambio de tarifa" solo se exige si, además de diferir del catálogo, el precio se editó
+en esta sesión respecto a `oe.precio_spot`.
 
 `OrdenEstacion.estatus` es un ciclo de vida **propio e independiente** del de
 `OrdenCliente` (confirmado en la spec): cada OE cierra por su cuenta; `OrdenCliente`
@@ -877,6 +939,9 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
 
 ## Pendientes / dudas
 
+- (Resuelto ADR-169) `OrdenEstacionForm.tsx` ya conecta `producto_tarifa`/`duracion_spot`
+  al catálogo Producto Duración, igual que Tarifa (ADR-166) y "Orden de Servicio"
+  (ADR-167/168) — las 3 pantallas que usan producto/duración ya están conectadas.
 - **Limitación conocida (Tanda 4):** `estatus_orden = facturada` (spec) no distingue
   `facturada_archivo_plano` de `facturada_timbrada` (v5) — se mapea siempre a
   `facturada_timbrada` (decisión explícita). Se resuelve de raíz cuando F2 (Facturación)

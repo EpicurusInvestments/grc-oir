@@ -6,11 +6,31 @@
  *
  * Balance de spots en vivo + constructor de `periodo_transmision`, igual que en el
  * prototipo aprobado: nada se calcula "a mano", todo sale de `state/selectors.ts`.
+ *
+ * ADR-169 (petición del usuario): "Producto" y "Duración" se llenan desde el catálogo
+ * `DuracionSpotCatalogo` ("Producto Duración", F0-06) — mismo patrón ya usado en Tarifa
+ * (ADR-166) y "Orden de Servicio" (OrdenCliente, ADR-167/168): el select de Producto
+ * lista los valores distintos y activos del catálogo; al elegir uno, el select de
+ * Duración lista las `descripcion_duracion` de ESE producto, excluyendo siempre el
+ * literal "sin resultado" (nunca se muestra como opción). Si no queda ninguna duración
+ * real, el select de Duración se deshabilita ("Sin duración capturada para este
+ * producto") pero SIN bloquear nada — Tarifa y el resto de los campos se habilitan en
+ * cuanto se elige un Producto (antes dependían de Duración). La sugerencia de tarifa
+ * del catálogo (`tarifaReferencia`) sigue funcionando igual: sigue siendo una
+ * comparación de texto exacta contra `TarifaPlaza`, que también es texto libre desde
+ * ADR-166.
+ *
+ * ADR-173 (petición del usuario): al CREAR una OE que llega ya amarrada a su OC
+ * (`ocIdFijo`, el flujo normal desde "+ Asignar estaciones"), Producto/Duración
+ * arrancan precargados con los de esa Orden de Servicio en vez de vacíos — el resto de
+ * la pantalla (validaciones, habilitado/deshabilitado de Duración, sugerencia de
+ * tarifa) no cambia en nada, el usuario sigue pudiendo editarlos como siempre.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
+import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
+import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
@@ -36,15 +56,15 @@ import {
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oesDeOC, oiTotalSpots, type BalanceSpotsOC } from "../../state/selectors";
 import type {
-  DuracionSpot,
   OrdenCliente,
   OrdenEstacion,
   OrdenEstacionAudio,
   OrdenEstacionInput,
   PeriodoTransmisionRow,
-  ProductoTarifa,
 } from "../../types";
 import { MaterialATransmitir } from "./MaterialATransmitir";
+
+const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
 
 interface OrdenEstacionFormProps {
   /** Si viene fija (desde el detalle de una OC), aquí ya no se puede cambiar de OC. */
@@ -74,8 +94,19 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const { state, cancelarDia } = useOrdenes();
   const [ocId, setOcId] = useState<string>(ocIdFijo ?? oe?.orden_id ?? "");
   const [estacionId, setEstacionId] = useState(oe?.estacion_id ?? "");
-  const [productoTarifa, setProductoTarifa] = useState<ProductoTarifa | "">(oe?.producto_tarifa ?? "");
-  const [duracionSpot, setDuracionSpot] = useState<DuracionSpot | "">(oe?.duracion_spot ?? "");
+  // ADR-173 (petición del usuario): al CREAR una OE ya amarrada a una OC (llega con
+  // `ocIdFijo`, el flujo normal desde "+ Asignar estaciones" de la Orden de Servicio),
+  // Producto/Duración se precargan con los que esa OC capturó — el usuario los puede
+  // cambiar igual, es solo el valor inicial. Si la OC no capturó Duración (quedó sin
+  // seleccionar o es el literal "sin resultado"), arranca vacía — el que el select se
+  // deshabilite o no sigue siendo el mismo criterio de siempre (si el producto tiene
+  // duraciones reales en el catálogo), sin ningún cambio ahí.
+  const ocOrigen = !isEdit && ocIdFijo ? state.ordenesCliente.find((o) => o.id === ocIdFijo) : undefined;
+  const [productoTarifa, setProductoTarifa] = useState(oe?.producto_tarifa ?? ocOrigen?.producto_tarifa ?? "");
+  const duracionInicial = oe?.duracion_spot ?? ocOrigen?.duracion_spot ?? "";
+  const [duracionSpot, setDuracionSpot] = useState(
+    duracionInicial && !esSinResultado(duracionInicial) ? duracionInicial : "",
+  );
   const [precioSpot, setPrecioSpot] = useState(oe ? String(oe.precio_spot) : "");
   const [motivoCambioTarifa, setMotivoCambioTarifa] = useState("");
   const [spotsBonificables, setSpotsBonificables] = useState(oe ? String(oe.cantidad_spots_bonificables) : "0");
@@ -185,6 +216,45 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
   const plaza = estacion ? findPlaza(estacion.plaza_id) : undefined;
 
+  // ── Producto/Duración desde el catálogo "Producto Duración" (ADR-169) ─────────
+  const catalogoDuraciones = useDuracionesSpot().useList({ activo: true, size: 100 });
+  const entradasDuracion = useMemo(
+    () => catalogoDuraciones.data?.items ?? [],
+    [catalogoDuraciones.data],
+  );
+
+  const productosDuracion = useMemo(() => {
+    const vistos = new Map<string, string>();
+    for (const e of entradasDuracion) vistos.set(e.producto.trim().toLowerCase(), e.producto);
+    // Respaldo: el producto ya elegido (de una OE existente al editar, o precargado
+    // desde la OC de origen al crear — ADR-173) que todavía no esté en el catálogo no
+    // debe perder su valor.
+    if (productoTarifa && !vistos.has(productoTarifa.trim().toLowerCase())) {
+      vistos.set(productoTarifa.trim().toLowerCase(), productoTarifa);
+    }
+    return [...vistos.values()].sort((a, b) => a.localeCompare(b, "es"));
+  }, [entradasDuracion, productoTarifa]);
+
+  const duracionesDelProducto = useMemo(() => {
+    const delProducto = entradasDuracion.filter(
+      (e) => e.producto.trim().toLowerCase() === productoTarifa.trim().toLowerCase(),
+    );
+    const vistos = new Map<string, string>();
+    for (const e of delProducto) {
+      if (esSinResultado(e.descripcion_duracion)) continue;
+      vistos.set(e.descripcion_duracion.trim().toLowerCase(), e.descripcion_duracion);
+    }
+    // Mismo respaldo que arriba: la duración ya elegida (de una OE existente al editar,
+    // o precargada desde la OC de origen al crear — ADR-173) que todavía no esté en el
+    // catálogo para ESTE producto no debe perder su valor. Cambiar de producto siempre
+    // limpia `duracionSpot` (ver su `onChange`), así que esto nunca arrastra una
+    // duración de un producto distinto al ya seleccionado.
+    if (duracionSpot && !esSinResultado(duracionSpot) && !vistos.has(duracionSpot.trim().toLowerCase())) {
+      vistos.set(duracionSpot.trim().toLowerCase(), duracionSpot);
+    }
+    return [...vistos.values()];
+  }, [entradasDuracion, productoTarifa, duracionSpot]);
+
   // ADR-102/ADR-106: tarifa ACTIVA del catálogo para (estación, duración — capturada POR
   // ESTACIÓN, ya no heredada de la orden —, producto). Sin ella no hay nada que
   // sugerir/auditar: precio_spot sigue siendo 100% libre, igual que antes.
@@ -197,7 +267,12 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
 
   // Auto-carga `precioSpot` con la tarifa sugerida SOLO si el campo está vacío o todavía
   // tiene la ÚLTIMA sugerencia sin tocar — así no pisa un valor que el usuario ya escribió
-  // a mano (ni el que ya traía una OE existente al editar).
+  // a mano (ni el que ya traía una OE existente al editar). ADR-170 (petición del
+  // usuario): cambiar de Producto o Duración ahora limpia `precioSpot` explícitamente
+  // (ver los `onChange` de ambos selects) ANTES de que este efecto corra — así, aunque
+  // el usuario haya editado la tarifa a mano, cambiar de combinación siempre la
+  // reemplaza por la nueva sugerencia (o la deja vacía si no hay ninguna), en vez de
+  // arrastrar el valor editado.
   const ultimaSugeridaRef = useRef<string | null>(null);
   useEffect(() => {
     // ADR-115 (fix): el valor "anterior" se captura en un `const` ANTES de mutar el ref —
@@ -265,7 +340,13 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
 
   // ADR-102: solo se exige motivo cuando el precio final se APARTA de la tarifa
   // sugerida — coincidir con ella (o no tener ninguna tarifa capturada) no audita nada.
-  const tarifaDivergente = tarifaSugerida != null && precio !== tarifaSugerida.tarifa_neta;
+  // ADR-162: en edición, además debe haber CAMBIADO respecto al precio ya guardado
+  // (`oe.precio_spot`) — si no se tocó, la divergencia con el catálogo ya se justificó
+  // antes; volver a pedir el motivo en cada edición solo duplicaba el log de auditoría.
+  const tarifaDivergente =
+    tarifaSugerida != null &&
+    precio !== tarifaSugerida.tarifa_neta &&
+    (!isEdit || precio !== oe!.precio_spot);
 
   const errores: string[] = [];
   if (!oc) errores.push("Selecciona la Orden de Servicio de origen.");
@@ -274,7 +355,9 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   // es requerido, `OrdenEstacionUpdate.producto_tarifa` es opcional) — así una OE existente sin
   // este dato (sembrada antes de ADR-102) sigue editable sin forzar a elegirlo primero.
   if (oc && !isEdit && !productoTarifa) errores.push("Selecciona el producto.");
-  if (oc && !isEdit && !duracionSpot) errores.push("Selecciona la duración.");
+  // ADR-169 (petición del usuario): Duración ya NO es obligatoria — un producto sin
+  // ninguna duración real en el catálogo (p.ej. Mención) puede quedarse sin capturar,
+  // sin bloquear el resto de la Orden de Transmisión.
   if (oc && (!precioSpot.trim() || precio <= 0)) errores.push("Captura una tarifa por spot mayor a 0.");
   if (tarifaDivergente && !motivoCambioTarifa.trim()) {
     errores.push("El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio.");
@@ -384,49 +467,77 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 {/* ADR-106: revelado progresivo Estación → Producto → Duración → Tarifa
                     (al CREAR); al editar se muestran todos de una vez, para no dejar
                     inaccesible el campo de una OE existente que aún no lo tenía capturado.
-                    Producto y Duración van en la misma fila (petición del usuario). */}
+                    Producto y Duración van en la misma fila (petición del usuario).
+                    ADR-169: ambos salen del catálogo Producto Duración. */}
                 {(isEdit || estacionId) && (
                   <div className="r2" style={{ marginTop: 10 }}>
                     <div>
-                      <div className="fl fl-required">Producto</div>
+                      <div className="fl fl-required">
+                        Producto{" "}
+                        <span style={{ color: "var(--text3)", fontWeight: 400 }}>
+                          (catálogo Producto Duración)
+                        </span>
+                      </div>
                       <select
                         className="fsel"
                         value={productoTarifa}
-                        onChange={(e) => setProductoTarifa(e.target.value as ProductoTarifa)}
+                        disabled={catalogoDuraciones.isLoading}
+                        onChange={(e) => {
+                          setProductoTarifa(e.target.value);
+                          setDuracionSpot("");
+                          // ADR-170 (petición del usuario): cambiar de producto SIEMPRE
+                          // limpia la tarifa (aunque se haya editado a mano) — el efecto
+                          // de abajo la vuelve a autocargar si la nueva combinación tiene
+                          // una tarifa configurada en el catálogo.
+                          setPrecioSpot("");
+                        }}
                       >
-                        <option value="">Selecciona…</option>
-                        {PRODUCTO_OPCIONES.map((p) => (
-                          <option key={p.value} value={p.value}>
-                            {p.label}
+                        <option value="">{catalogoDuraciones.isLoading ? "Cargando…" : "Selecciona…"}</option>
+                        {productosDuracion.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
                           </option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      {(isEdit || productoTarifa) && (
-                        <>
-                          <div className="fl fl-required">Duración</div>
-                          <select
-                            className="fsel"
-                            value={duracionSpot}
-                            onChange={(e) => setDuracionSpot(e.target.value as DuracionSpot)}
-                          >
-                            <option value="">Selecciona…</option>
-                            {DURACION_SPOT_OPCIONES.map((d) => (
-                              <option key={d.value} value={d.value}>
-                                {d.label}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      )}
+                      <div className="fl">Duración</div>
+                      <select
+                        className="fsel"
+                        value={duracionSpot}
+                        disabled={!productoTarifa || duracionesDelProducto.length === 0}
+                        onChange={(e) => {
+                          setDuracionSpot(e.target.value);
+                          // ADR-170 (petición del usuario): cambiar de duración SIEMPRE
+                          // limpia la tarifa (aunque se haya editado a mano), igual que
+                          // al cambiar de producto.
+                          setPrecioSpot("");
+                        }}
+                      >
+                        <option value="">
+                          {!productoTarifa
+                            ? "Elige un producto primero"
+                            : duracionesDelProducto.length === 0
+                              ? "Sin duración capturada para este producto"
+                              : "Selecciona…"}
+                        </option>
+                        {duracionesDelProducto.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 )}
 
                 <div className="r2" style={{ marginTop: 10 }}>
                   <div>
-                    {isEdit || duracionSpot ? (
+                    {/* ADR-169 (petición del usuario): basta con elegir el Producto —
+                        Duración puede quedar sin capturar (sin duración real en el
+                        catálogo) y aun así se puede teclear la tarifa y seguir
+                        llenando el resto del formulario. */}
+                    {isEdit || productoTarifa ? (
                       <>
                         <div className="fl fl-required">Tarifa por spot (MXN)</div>
                         <MoneyInput
@@ -455,7 +566,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                       </>
                     ) : (
                       <div className="fv muted" style={{ fontSize: 12 }}>
-                        Selecciona producto y duración para capturar la tarifa.
+                        Selecciona el producto para capturar la tarifa.
                       </div>
                     )}
                   </div>

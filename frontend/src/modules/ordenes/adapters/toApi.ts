@@ -33,7 +33,9 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput) {
     archivo_orden_original_path: input.odc_pdf_ref || null,
     fecha_inicio_campania: input.fecha_inicio_campania,
     fecha_fin_campania: input.fecha_fin_campania,
-    duracion_spot: input.duracion_spot,
+    // ADR-167: ambos opcionales — "" (combo sin elegir) se manda como null.
+    producto_tarifa: input.producto_tarifa || null,
+    duracion_spot: input.duracion_spot || null,
     precio_unitario: input.precio_unitario,
     total_spots: input.total_spots,
     cantidad_spots_bonificables: input.cantidad_spots_bonificables,
@@ -67,6 +69,7 @@ const CAMPOS_ACTUALIZABLES = [
   "afiliado_factura_directo_al_cliente",
   "fecha_inicio_campania",
   "fecha_fin_campania",
+  "producto_tarifa",
   "duracion_spot",
   "precio_unitario",
   "total_spots",

@@ -4,6 +4,7 @@
  * el catálogo como parámetro) no tienen nada que filtrar hasta que se siembra aquí abajo.
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +13,25 @@ import { OrdenClienteForm } from "../ordenCliente/components/OrdenClienteForm";
 import { agencias, anunciantes, contratos, marcas, vendedores } from "../state/catalogosCache";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOCInput } from "./fixtures";
+
+// ADR-167: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" —
+// mock del catálogo (sin pegarle a la red real desde jsdom), 2 productos: uno con
+// duraciones reales (Spot) y uno cuyo único registro es "sin resultado" (Mención).
+vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
+  duracionSpotCatalogoApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { duracion_spot_catalogo_id: "d1", producto: "Spot", descripcion_duracion: "20", activo: true },
+        { duracion_spot_catalogo_id: "d2", producto: "Spot", descripcion_duracion: "30", activo: true },
+        { duracion_spot_catalogo_id: "d3", producto: "Mención", descripcion_duracion: "sin resultado", activo: true },
+      ],
+      total: 3,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
 
 // Sembrado una sola vez, a nivel de módulo: an1/an3 sugieren ag1, an2 sugiere ag2 — cubre la
 // cascada anunciante→agencia/contrato/marca y los defaults de comisión de vendedor/agencia.
@@ -84,8 +104,12 @@ vendedores.push({ id: "ve-inactivo", nombre_vendedor: "Vendedor Dado de Baja", p
 function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}) {
   const onGuardar = vi.fn();
   const onCancelar = vi.fn();
+  // ADR-167: el formulario ahora lee el catálogo "Producto Duración" vía react-query.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <OrdenClienteForm title="Nueva orden" onGuardar={onGuardar} onCancelar={onCancelar} {...props} />,
+    <QueryClientProvider client={qc}>
+      <OrdenClienteForm title="Nueva orden" onGuardar={onGuardar} onCancelar={onCancelar} {...props} />
+    </QueryClientProvider>,
   );
   return { ...utils, onGuardar, onCancelar };
 }
@@ -450,5 +474,84 @@ describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edició
     expect(within(selectPrincipal).queryByText("Vendedor Dado de Baja")).toBeNull();
     expect(within(selectSecundario).getByText("Renata Aguilar")).toBeInTheDocument();
     expect(within(selectSecundario).queryByText("Vendedor Dado de Baja")).toBeNull();
+  });
+});
+
+describe("Producto/Duración desde el catálogo Producto Duración — ADR-167/168", () => {
+  it("al elegir un producto con duraciones reales, el combo de Duración se llena (sin 'sin resultado')", async () => {
+    const { container } = renderForm();
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(within(selectDuracion).getByText("20")).toBeInTheDocument();
+    expect(within(selectDuracion).getByText("30")).toBeInTheDocument();
+    expect(within(selectDuracion).queryByText("sin resultado")).toBeNull();
+  });
+
+  it("al elegir un producto cuyo único registro es 'sin resultado', Duración queda vacía/deshabilitada y NO bloquea el guardado", async () => {
+    // El resto de campos obligatorios ya viene prellenado (makeOCInput) — así se aísla la
+    // prueba al comportamiento de Producto/Duración, que es lo que importa aquí.
+    const { container, onGuardar } = renderForm({ defaultValues: makeOCInput() });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Mención")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Mención" } });
+
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(selectDuracion).toBeDisabled();
+    expect(within(selectDuracion).queryByText("sin resultado")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+    const [input] = onGuardar.mock.calls[0];
+    expect(input.producto_tarifa).toBe("Mención");
+    expect(input.duracion_spot).toBeNull();
+  });
+
+  it("cambiar de producto limpia la duración ya elegida", async () => {
+    const { container } = renderForm();
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30" } });
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("30");
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Mención" } });
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("");
+  });
+
+  it("ADR-168: sin elegir Producto, Total de spots/Spots bonificables/Precio unitario quedan deshabilitados y no se puede guardar", async () => {
+    const { container, onGuardar } = renderForm({ defaultValues: { ...makeOCInput(), producto_tarifa: null } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "Total de spots")).toBeDisabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables")).toBeDisabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Precio unitario")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    expect(await screen.findByText("Selecciona un producto.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("ADR-168: al elegir un producto, Total de spots/Spots bonificables/Precio unitario se habilitan", async () => {
+    const { container } = renderForm({ defaultValues: { ...makeOCInput(), producto_tarifa: null } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "Total de spots")).toBeEnabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables")).toBeEnabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Precio unitario")).toBeEnabled();
   });
 });

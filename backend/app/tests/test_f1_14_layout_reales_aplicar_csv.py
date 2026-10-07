@@ -223,6 +223,7 @@ def _oc_payload(cat: dict[str, uuid.UUID]) -> OrdenClienteCreate:
         producto="Pan Bimbo Integral 680g",
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=90),
+        producto_tarifa="spot",
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,

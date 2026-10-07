@@ -1,4 +1,4 @@
-/** Pantalla del catálogo Duración de Spots (menú "Operación"): lista + panel de detalle
+/** Pantalla del catálogo Producto Duración (menú "Operación"): lista + panel de detalle
  * (patrón F0).
  *
  * ADR-159 (petición del usuario): catálogo NUEVO, fuera de la spec BD v2 y desconectado
@@ -10,7 +10,6 @@
 
 import { useState } from "react";
 
-import { PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
 import type { ListParams } from "@/shared/types";
@@ -24,11 +23,7 @@ import {
 
 import { DuracionSpotForm } from "../components/DuracionSpotForm";
 import { useDuracionesSpot } from "../hooks";
-import type {
-  DuracionSpotCatalogo,
-  DuracionSpotCatalogoCreate,
-  ProductoTarifa,
-} from "../types";
+import type { DuracionSpotCatalogo, DuracionSpotCatalogoCreate } from "../types";
 
 type Filtro = "todos" | "activos" | "inactivos";
 type Modo = "view" | "new" | "edit";
@@ -41,9 +36,6 @@ const FILTROS: { key: Filtro; label: string }[] = [
 
 const activoDeFiltro = (f: Filtro): boolean | undefined =>
   f === "activos" ? true : f === "inactivos" ? false : undefined;
-
-const productoLabel = (v: ProductoTarifa) =>
-  PRODUCTO_OPCIONES.find((o) => o.value === v)?.label ?? v;
 
 export function DuracionSpotCatalogPage() {
   const canWrite = currentUser.area === "admin";
@@ -152,7 +144,7 @@ export function DuracionSpotCatalogPage() {
               <div className="dh-name">{selected.descripcion_duracion}</div>
               <div className="dh-sub">
                 <StatusBadge activo={selected.activo} />
-                <span className="badge b-blue">{productoLabel(selected.producto)}</span>
+                <span className="badge b-blue">{selected.producto}</span>
               </div>
             </div>
             {canWrite && (
@@ -203,7 +195,7 @@ export function DuracionSpotCatalogPage() {
               }
               onClick={() => seleccionar(d)}
             >
-              <td className="td-main">{productoLabel(d.producto)}</td>
+              <td className="td-main">{d.producto}</td>
               <td className="td-2">{d.descripcion_duracion}</td>
               <td className="td-center">
                 <StatusBadge activo={d.activo} />
@@ -235,10 +227,10 @@ export function DuracionSpotCatalogPage() {
     <>
       <div className="cat-header">
         <div>
-          <div className="cat-title">Duración de Spots</div>
+          <div className="cat-title">Producto Duración</div>
           <div className="cat-sub">
-            Catálogo de duraciones administrables por producto (spot/mención/control
-            remoto/patrocinio). Aún no se usa en otras pantallas.
+            Catálogo de duraciones administrables por producto (producto y duración de
+            captura libre). Aún no se usa en otras pantallas.
           </div>
         </div>
         {canWrite && (

@@ -238,6 +238,7 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
         # Relativas a hoy (no fijas): OrdenClienteCreate rechaza fecha_inicio_campania pasada.
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=57),
+        producto_tarifa="spot",  # ADR-168: obligatorio desde ahora
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,
@@ -262,6 +263,45 @@ def test_crear_oc_calcula_totales_y_folio(
     assert oc.total_dias_campania == 28
     assert oc.estatus_orden == EstatusOrden.CAPTURADA  # ADR-100: sin Vo.Bo., directo aquí
     assert oc.folio_orden == "OC-2026-0041"
+
+
+# ── ADR-167/168: producto_tarifa/duracion_spot texto libre ───────────────────────
+def test_crear_oc_sin_producto_tarifa_rechazado(
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-168 (petición del usuario): `producto_tarifa` es OBLIGATORIO al crear —
+    a diferencia de `duracion_spot`, que sí se puede omitir por completo (p.ej. un
+    producto como Mención, cuyo catálogo solo tiene "sin resultado")."""
+    with pytest.raises(ValidationError):
+        _oc_payload(cat, producto_tarifa=None)
+
+
+def test_crear_oc_sin_duracion_spot(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat, duracion_spot=None), VENTAS)
+    assert oc.duracion_spot is None
+
+
+def test_crear_oc_acepta_producto_tarifa_y_duracion_texto_libre(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(
+        _oc_payload(cat, producto_tarifa="Jingle promocional", duracion_spot="15"), VENTAS
+    )
+    assert oc.producto_tarifa == "Jingle promocional"
+    assert oc.duracion_spot == "15"
+
+
+def test_crear_oc_acepta_duracion_sin_resultado(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia de Tarifa (que la rechaza, ADR-166), OrdenCliente SÍ acepta el
+    literal "sin resultado" como `duracion_spot` — aquí nunca se bloquea el guardado."""
+    oc = oc_svc.create(
+        _oc_payload(cat, producto_tarifa="Mención", duracion_spot="sin resultado"), VENTAS
+    )
+    assert oc.duracion_spot == "sin resultado"
 
 
 def test_crear_oc_folio_correlativo(oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]) -> None:
@@ -913,6 +953,77 @@ def test_crear_oe_sin_tarifa_en_catalogo_no_exige_motivo_ni_audita(
     assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
 
 
+# ── ADR-169: producto_tarifa/duracion_spot texto libre (catálogo Producto Duración) ──
+def test_crear_oe_sin_duracion_spot_no_truena_ni_sugiere_tarifa(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-169: si el producto elegido no tiene ninguna duración real en el catálogo
+    (p.ej. Mención), `duracion_spot` puede quedar sin capturar — sigue sin exigir motivo
+    ni bloquear nada, precio_spot 100% libre (igual que sin ninguna tarifa en catálogo)."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(cat, oc.orden_id, duracion_spot=None, precio_spot=Decimal("999.00")),
+        VENTAS,
+    )
+    assert oe.duracion_spot is None
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_producto_y_duracion_texto_libre_coincide_con_tarifa_sembrada(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-169 (petición del usuario): "si selecciono Spot y 20 y ese valor ya fue
+    configurado en Tarifas debe traerme el valor de la tarifa" — con valores de texto
+    libre más allá del enum anterior, la sugerencia de tarifa sigue funcionando igual:
+    coincidir con `tarifa_neta` no audita ni exige motivo."""
+    _seed_tarifa(
+        db, cat, tarifa_bruta=Decimal("450.00"), producto="Jingle promocional", duracion_spot="15"
+    )
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(
+        _oe_payload(
+            cat,
+            oc.orden_id,
+            producto_tarifa="Jingle promocional",
+            duracion_spot="15",
+            precio_spot=Decimal("450.00"),
+        ),
+        VENTAS,
+    )
+    assert oe.producto_tarifa == "Jingle promocional"
+    assert oe.duracion_spot == "15"
+    assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
+
+
+def test_crear_oe_producto_y_duracion_texto_libre_precio_distinto_exige_motivo(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    _seed_tarifa(
+        db, cat, tarifa_bruta=Decimal("450.00"), producto="Jingle promocional", duracion_spot="15"
+    )
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    with pytest.raises(DomainError):
+        oe_svc.create(
+            _oe_payload(
+                cat,
+                oc.orden_id,
+                producto_tarifa="Jingle promocional",
+                duracion_spot="15",
+                precio_spot=Decimal("600.00"),
+            ),
+            VENTAS,
+        )
+
+
 def test_crear_oe_precio_igual_a_tarifa_sugerida_no_exige_motivo_ni_audita(
     db: Session,
     oc_svc: OrdenClienteService,
@@ -1079,6 +1190,84 @@ def test_editar_oe_precio_distinto_a_tarifa_sugerida_con_motivo_audita(
     )
     assert log.valor_anterior == "800.00"
     assert log.valor_nuevo == "700.00"
+
+
+def test_editar_oe_sin_cambiar_precio_no_vuelve_a_exigir_motivo_ni_audita(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-162: una vez auditado un `precio_spot` que se aparta del catálogo, volver a
+    guardar la OE SIN tocar el precio (p.ej. solo cambiando observaciones) no debe
+    volver a exigir `motivo_cambio_tarifa` ni generar un segundo registro en
+    `LogCambioParametro` — la divergencia ya quedó justificada la primera vez."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 800.00, coincide
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            precio_spot=Decimal("700.00"), motivo_cambio_tarifa="Ajuste por baja demanda"
+        ),
+        VENTAS,
+    )
+
+    # Mismo precio (700.00), SIN motivo — no debe lanzar ni auditar de nuevo.
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(precio_spot=Decimal("700.00"), observaciones_estacion="Sin cambios"),
+        VENTAS,
+    )
+
+    logs = (
+        db.query(LogCambioParametro)
+        .filter_by(entidad="OrdenEstacion", entidad_id=str(oe.orden_estacion_id))
+        .all()
+    )
+    assert len(logs) == 1
+
+
+def test_editar_oe_cambia_precio_de_nuevo_exige_motivo_y_audita_otra_vez(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-162: un cambio REAL de `precio_spot` (distinto al ya guardado) sigue
+    exigiendo motivo y generando un nuevo registro de auditoría, aunque ya hubiera uno
+    previo por una divergencia anterior."""
+    _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"))
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)  # 800.00, coincide
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            precio_spot=Decimal("700.00"), motivo_cambio_tarifa="Ajuste por baja demanda"
+        ),
+        VENTAS,
+    )
+
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("650.00")), VENTAS
+        )
+
+    oe_svc.update(
+        oe.orden_estacion_id,
+        OrdenEstacionUpdate(
+            precio_spot=Decimal("650.00"), motivo_cambio_tarifa="Segundo ajuste"
+        ),
+        VENTAS,
+    )
+    logs = (
+        db.query(LogCambioParametro)
+        .filter_by(entidad="OrdenEstacion", entidad_id=str(oe.orden_estacion_id))
+        .order_by(LogCambioParametro.fecha_cambio)
+        .all()
+    )
+    assert len(logs) == 2
+    assert logs[1].valor_nuevo == "650.00"
 
 
 # ── Programados / Reales / cascada de estatus ─────────────────────────────────
@@ -1422,6 +1611,7 @@ def test_http_nominas_no_puede_crear_orden(client: TestClient, cat: dict[str, uu
             "anunciante_id": str(cat["anunciante"]),
             "fecha_inicio_campania": str(date.today() + timedelta(days=30)),
             "fecha_fin_campania": str(date.today() + timedelta(days=57)),
+            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,
@@ -1447,6 +1637,7 @@ def test_http_direccion_no_puede_crear_pero_si_editar_comisiones(
             "anunciante_id": str(cat["anunciante"]),
             "fecha_inicio_campania": fecha_inicio,
             "fecha_fin_campania": fecha_fin,
+            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,
@@ -1465,6 +1656,7 @@ def test_http_direccion_no_puede_crear_pero_si_editar_comisiones(
             "anunciante_id": str(cat["anunciante"]),
             "fecha_inicio_campania": fecha_inicio,
             "fecha_fin_campania": fecha_fin,
+            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,

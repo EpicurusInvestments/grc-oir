@@ -31,7 +31,6 @@ from app.modules.catalogos.afiliado import Afiliado
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.tarifa import (
-    ProductoTarifa,
     TarifaPlaza,
     TarifaPlazaCreate,
     TarifaPlazaRead,
@@ -41,7 +40,6 @@ from app.modules.catalogos.tarifa import (
     calcular_tarifa_neta,
 )
 from app.shared.base_repository import BaseRepository
-from app.shared.enums import DuracionSpot
 from app.shared.schemas import ListParams
 
 USUARIO = CurrentUser(username="tester", area=Area.ADMIN, ip="127.0.0.1")
@@ -137,8 +135,8 @@ def _tarifa(
     return svc.create(
         TarifaPlazaCreate(
             estacion_id=estacion_id,
-            duracion_spot=DuracionSpot(dur),
-            producto=ProductoTarifa(producto),
+            duracion_spot=dur,
+            producto=producto,
             tarifa_bruta=Decimal(bruta),
             descuento_pct=Decimal(desc),
             notas=notas,
@@ -371,35 +369,99 @@ def test_estacion_inexistente_rechazada(contexto: tuple[TarifaService, Estacion]
         _tarifa(svc, uuid.uuid4())
 
 
-# ── ENUMs ─────────────────────────────────────────────────────────────────────
+# ── Texto libre (ADR-166) ──────────────────────────────────────────────────────
 # ADR-158: `tipo_senal` se retiró por completo de `TarifaPlazaCreate` — ya no hay un
 # test de ENUM inválido para él (ese chequeo ahora vive solo en `Estacion`, F0-01).
-def test_duracion_spot_invalida_rechazada() -> None:
+# ADR-166: `duracion_spot`/`producto` dejaron de ser los CHECK/enum `DuracionSpot`/
+# `ProductoTarifa` — ya no hay "valor inválido" por fuera de una lista cerrada, solo
+# obligatorios (min_length=1) y acotados en longitud (max_length=60).
+def test_duracion_spot_y_producto_aceptan_texto_libre(
+    contexto: tuple[TarifaService, Estacion],
+) -> None:
+    svc, estacion = contexto
+    t = svc.create(
+        TarifaPlazaCreate(
+            estacion_id=estacion.estacion_id,
+            duracion_spot="15",
+            producto="Jingle promocional",
+            tarifa_bruta=Decimal("100"),
+        ),
+        USUARIO,
+    )
+    assert t.duracion_spot == "15"
+    assert t.producto == "Jingle promocional"
+
+
+def test_duracion_spot_vacia_rechazada() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            duracion_spot="45s",
-            producto=ProductoTarifa.SPOT,
+            duracion_spot="",
+            producto="spot",
             tarifa_bruta=Decimal("100"),
         )
 
 
-def test_producto_invalido_rechazado() -> None:
+def test_producto_vacio_rechazado() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            duracion_spot=DuracionSpot.S30,
-            producto="jingle",
+            duracion_spot="30s",
+            producto="",
             tarifa_bruta=Decimal("100"),
         )
+
+
+def test_duracion_sin_resultado_rechazada_al_crear(
+    contexto: tuple[TarifaService, Estacion],
+) -> None:
+    """ADR-166 (petición del usuario): "sin resultado" (el default del catálogo
+    `DuracionSpotCatalogo` cuando no se captura una duración real, ADR-165) NO es una
+    duración válida para Tarifa — hay que ir a dar de alta una duración real ahí."""
+    svc, estacion = contexto
+    with pytest.raises(DomainError):
+        svc.create(
+            TarifaPlazaCreate(
+                estacion_id=estacion.estacion_id,
+                duracion_spot="sin resultado",
+                producto="mencion",
+                tarifa_bruta=Decimal("100"),
+            ),
+            USUARIO,
+        )
+
+
+def test_duracion_sin_resultado_rechazada_case_insensitive(
+    contexto: tuple[TarifaService, Estacion],
+) -> None:
+    svc, estacion = contexto
+    with pytest.raises(DomainError):
+        svc.create(
+            TarifaPlazaCreate(
+                estacion_id=estacion.estacion_id,
+                duracion_spot="Sin Resultado",
+                producto="mencion",
+                tarifa_bruta=Decimal("100"),
+            ),
+            USUARIO,
+        )
+
+
+def test_duracion_sin_resultado_rechazada_al_editar(
+    contexto: tuple[TarifaService, Estacion],
+) -> None:
+    svc, estacion = contexto
+    t = _tarifa(svc, estacion.estacion_id, dur="30s", producto="spot")
+    with pytest.raises(DomainError):
+        svc.update(t.tarifa_plaza_id, TarifaPlazaUpdate(duracion_spot="sin resultado"), USUARIO)
 
 
 def test_descuento_fuera_de_rango_rechazado() -> None:
     with pytest.raises(ValidationError):
         TarifaPlazaCreate(
             estacion_id=uuid.uuid4(),
-            duracion_spot=DuracionSpot.S30,
-            producto=ProductoTarifa.SPOT,
+            duracion_spot="30s",
+            producto="spot",
             tarifa_bruta=Decimal("100"),
             descuento_pct=Decimal("120"),
         )

@@ -9,8 +9,6 @@
  * nunca hay nada que mostrar antes de que lleguen los datos reales.
  */
 
-import type { ProductoTarifa } from "../types";
-
 export interface AgenciaRef {
   id: string;
   nombre_agencia: string;
@@ -126,8 +124,9 @@ export interface EstacionRef {
 export interface TarifaRef {
   id: string;
   estacion_id: string;
+  // ADR-166/169: texto libre (catálogo Producto Duración), ya no el enum ProductoTarifa.
   duracion_spot: string;
-  producto: ProductoTarifa;
+  producto: string;
   tarifa_bruta: number;
   descuento_pct: number;
   /** Calculado por el backend: `tarifa_bruta * (1 - descuento_pct / 100)`. */
@@ -194,7 +193,7 @@ export function findPlaza(id: string): PlazaRef | undefined {
 export function tarifaReferencia(
   estacionId: string,
   duracionSpot: string,
-  producto?: ProductoTarifa,
+  producto?: string,
 ): TarifaRef | undefined {
   return tarifas.find(
     (t) =>

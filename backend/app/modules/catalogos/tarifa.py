@@ -24,6 +24,20 @@ combinación de unicidad pasa de (estación+tipo_senal+duracion_spot+producto) a
 (estación+duracion_spot+producto). En el formulario, la etiqueta "Duración del spot"
 pasa a ser simplemente "Duración".
 
+**ADR-166 (petición del usuario):** `producto` y `duracion_spot` dejan de ser los
+CHECK/enum cerrados `ProductoTarifa`/`DuracionSpot` y pasan a TEXTO LIBRE — se conectan
+al catálogo `DuracionSpotCatalogo` ("Producto Duración", ADR-159/164/165): el formulario
+ahora elige "Producto" y "Duración" de ese catálogo en vez de un selector fijo. Regla de
+negocio propia de Tarifa (NO del catálogo): el literal `SIN_RESULTADO` ("sin resultado",
+el default del catálogo cuando no se captura una duración real) NO es una duración
+válida aquí — el servicio lo rechaza con un error de dominio claro, tanto en alta como en
+edición, para que no se pueda guardar una tarifa sin una duración real capturada en el
+catálogo. Los valores ya existentes (el enum anterior) siguen siendo válidos, solo dejan
+de ser los únicos posibles. Pendiente, a propósito, para una petición futura: conectar
+también Órdenes (`OrdenEstacionForm.tsx` sigue con su propio selector fijo por ahora) —
+mientras tanto, cualquier producto/duración NUEVO capturado solo aquí no será "sugerido"
+en Órdenes hasta que esa pantalla también se conecte al catálogo.
+
 **ADR-097 (petición del usuario, reemplaza el diseño original de F0-02/ADR-015):**
 - Se elimina `plaza_id` → se reemplaza por `estacion_id` (FK a `Estacion`, ADR-094): la
   pantalla ya no captura "Plaza", captura "Nombre de la emisora". Junto con este cambio,
@@ -60,7 +74,6 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
-from enum import StrEnum
 from math import ceil
 from typing import Any
 from uuid import uuid4
@@ -72,21 +85,14 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, DomainError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
+from app.modules.catalogos.duracion_spot_catalogo import SIN_RESULTADO
 from app.modules.catalogos.estacion import Estacion
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.crud_router import build_crud_router
-from app.shared.enums import DuracionSpot
 from app.shared.schemas import CatalogoReadBase, ListParams, Page
-
-
-class ProductoTarifa(StrEnum):
-    SPOT = "spot"
-    MENCION = "mencion"
-    CONTROL_REMOTO = "control_remoto"
-    PATROCINIO = "patrocinio"
 
 
 CENTAVOS = Decimal("0.01")
@@ -107,14 +113,6 @@ class TarifaPlaza(Base):
     __tablename__ = "tarifa_plaza"
     __table_args__ = (
         CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s')",
-            name="ck_tarifa_plaza_duracion_spot",
-        ),
-        CheckConstraint(
-            "producto IN ('spot', 'mencion', 'control_remoto', 'patrocinio')",
-            name="ck_tarifa_plaza_producto",
-        ),
-        CheckConstraint(
             "descuento_pct >= 0 AND descuento_pct <= 100",
             name="ck_tarifa_plaza_descuento_pct",
         ),
@@ -126,8 +124,11 @@ class TarifaPlaza(Base):
     estacion_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("estacion.estacion_id"), index=True
     )
-    duracion_spot: Mapped[str] = mapped_column(Unicode(10))
-    producto: Mapped[str] = mapped_column(Unicode(20))
+    # ADR-166 (petición del usuario): texto libre — ya NO los CHECK/enum
+    # `DuracionSpot`/`ProductoTarifa`; se capturan eligiendo del catálogo
+    # `DuracionSpotCatalogo` ("Producto Duración"). Mismo ancho que ese catálogo (60).
+    duracion_spot: Mapped[str] = mapped_column(Unicode(60))
+    producto: Mapped[str] = mapped_column(Unicode(60))
     tarifa_bruta: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     descuento_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
     # Calculado por el servicio (no se acepta del cliente) y persistido.
@@ -145,8 +146,8 @@ class TarifaPlaza(Base):
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class TarifaPlazaCreate(BaseModel):
     estacion_id: uuid.UUID
-    duracion_spot: DuracionSpot
-    producto: ProductoTarifa
+    duracion_spot: str = Field(min_length=1, max_length=60)
+    producto: str = Field(min_length=1, max_length=60)
     tarifa_bruta: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     descuento_pct: Decimal = Field(
         default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2
@@ -156,8 +157,8 @@ class TarifaPlazaCreate(BaseModel):
 
 class TarifaPlazaUpdate(BaseModel):
     estacion_id: uuid.UUID | None = None
-    duracion_spot: DuracionSpot | None = None
-    producto: ProductoTarifa | None = None
+    duracion_spot: str | None = Field(default=None, min_length=1, max_length=60)
+    producto: str | None = Field(default=None, min_length=1, max_length=60)
     tarifa_bruta: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     descuento_pct: Decimal | None = Field(
         default=None, ge=0, le=100, max_digits=5, decimal_places=2
@@ -174,8 +175,8 @@ class TarifaListParams(ListParams):
     asignar una estación."""
 
     estacion_id: uuid.UUID | None = None
-    duracion_spot: DuracionSpot | None = None
-    producto: ProductoTarifa | None = None
+    duracion_spot: str | None = None
+    producto: str | None = None
 
 
 class TarifaPlazaRead(CatalogoReadBase):
@@ -183,8 +184,8 @@ class TarifaPlazaRead(CatalogoReadBase):
 
     tarifa_plaza_id: uuid.UUID
     estacion_id: uuid.UUID
-    duracion_spot: DuracionSpot
-    producto: ProductoTarifa
+    duracion_spot: str
+    producto: str
     tarifa_bruta: Decimal
     descuento_pct: Decimal
     tarifa_neta: Decimal  # Calculado por el servicio (solo lectura)
@@ -295,6 +296,7 @@ class TarifaService(
 
     # ── reglas de negocio ────────────────────────────────────────────────────────
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        self._verificar_duracion_no_sin_resultado(payload["duracion_spot"])
         self._verificar_estacion(payload["estacion_id"])
         payload["tarifa_neta"] = calcular_tarifa_neta(
             payload["tarifa_bruta"], payload["descuento_pct"]
@@ -325,6 +327,8 @@ class TarifaService(
     def _pre_update(self, obj: TarifaPlaza, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
 
+        if "duracion_spot" in payload:
+            self._verificar_duracion_no_sin_resultado(payload["duracion_spot"])
         if "estacion_id" in payload:
             self._verificar_estacion(payload["estacion_id"])
 
@@ -378,6 +382,18 @@ class TarifaService(
         return self._to_read(self.repo.set_activo(obj, activo))
 
     # ── helpers ──────────────────────────────────────────────────────────────────
+    def _verificar_duracion_no_sin_resultado(self, duracion_spot: str) -> None:
+        """ADR-166 (petición del usuario): a diferencia del catálogo `DuracionSpotCatalogo`
+        (donde SIN_RESULTADO es un default válido, ADR-165), aquí es obligatorio elegir una
+        duración REAL — el usuario debe ir al catálogo "Producto Duración" a darla de alta."""
+        if duracion_spot.strip().lower() == SIN_RESULTADO:
+            raise DomainError(
+                "No se puede guardar la tarifa con la duración «sin resultado». Ve al "
+                "catálogo Producto Duración y da de alta una duración real para este "
+                "producto antes de continuar.",
+                detalles={"duracion_spot": duracion_spot},
+            )
+
     def _verificar_estacion(self, estacion_id: uuid.UUID) -> None:
         if self._estacion_repo.get(estacion_id) is None:
             raise NotFoundError(
@@ -444,8 +460,8 @@ def listar_tarifas(
     activo: bool | None = Query(None, description="None=todas, true=activas, false=inactivas"),
     q: str | None = Query(None, description="Búsqueda por nombre/siglas de estación o notas"),
     estacion_id: uuid.UUID | None = Query(None, description="Filtra por estación"),
-    duracion_spot: DuracionSpot | None = Query(None, description="Filtra por duración de spot"),
-    producto: ProductoTarifa | None = Query(None, description="Filtra por producto"),
+    duracion_spot: str | None = Query(None, description="Filtra por duración de spot"),
+    producto: str | None = Query(None, description="Filtra por producto"),
     usuario: CurrentUser = Depends(requiere_permiso("catalogos:leer")),
     svc: TarifaService = Depends(get_tarifa_service),
 ) -> Page[TarifaPlazaRead]:

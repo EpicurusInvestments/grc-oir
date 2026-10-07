@@ -5,10 +5,7 @@
  *
  * ADR-097 (petición del usuario): ya NO hay vigencia (`vigencia_desde`/`vigencia_hasta`
  * se eliminaron por completo) ni `plaza_id` — la tarifa ahora referencia una Estación
- * ("Nombre de la emisora") y agrega `producto` (spot/mención/control remoto/patrocinio).
- *
- * ADR-098 (petición del usuario): `DuracionSpot` perdió el valor `mencion` — ahora
- * "Mención" solo vive en `ProductoTarifa` (tenerlo también como duración era redundante).
+ * ("Nombre de la emisora") y agrega `producto`.
  *
  * ADR-099 (petición del usuario): `tarifa_bruta`/`descuento_pct` son PARÁMETROS
  * SENSIBLES — cada cambio se audita (`HistorialCambio`, mismo mecanismo que
@@ -20,20 +17,25 @@
  * aquí duplicada permitía capturar un tipo de señal distinto al de la estación
  * seleccionada, sin ningún beneficio (la unicidad/sugerencia ya filtran por
  * `estacion_id`, que determina el tipo de señal por sí solo).
+ *
+ * ADR-166 (petición del usuario): `duracion_spot`/`producto` dejan de ser los
+ * CHECK/enum cerrados y pasan a TEXTO LIBRE — se capturan eligiendo del catálogo
+ * `DuracionSpotCatalogo` ("Producto Duración", módulo `catalogos/duracionSpot/`) en vez
+ * de un selector fijo. Los tipos/constantes `DuracionSpot`/`ProductoTarifa`/
+ * `DURACION_SPOT_OPCIONES`/`PRODUCTO_OPCIONES` que vivían aquí se retiraron (ADR-171):
+ * desde ADR-166/169, ninguna pantalla los usa ya (Tarifa, OrdenCliente y OrdenEstacion
+ * ya están conectadas al catálogo).
  */
 
 import type { CatalogoBase, HistorialCambio } from "@/shared/types";
 
 export type { HistorialCambio };
 
-export type DuracionSpot = "20s" | "30s" | "60s";
-export type ProductoTarifa = "spot" | "mencion" | "control_remoto" | "patrocinio";
-
 export interface TarifaPlaza extends CatalogoBase {
   tarifa_plaza_id: string;
   estacion_id: string;
-  duracion_spot: DuracionSpot;
-  producto: ProductoTarifa;
+  duracion_spot: string;
+  producto: string;
   tarifa_bruta: string; // Decimal como string
   descuento_pct: string; // Decimal como string
   tarifa_neta: string; // Calculado por el servidor (solo lectura)
@@ -45,8 +47,8 @@ export interface TarifaPlaza extends CatalogoBase {
 
 export interface TarifaPlazaCreate {
   estacion_id: string;
-  duracion_spot: DuracionSpot;
-  producto: ProductoTarifa;
+  duracion_spot: string;
+  producto: string;
   tarifa_bruta: string; // se envía como string para preservar Decimal
   descuento_pct: string;
   notas?: string | null;
@@ -57,16 +59,3 @@ export interface TarifaPlazaUpdate extends Partial<TarifaPlazaCreate> {
   /** Transitorio (no persiste): requerido si `tarifa_bruta`/`descuento_pct` cambian. */
   motivo_cambio?: string | null;
 }
-
-export const DURACION_SPOT_OPCIONES: { value: DuracionSpot; label: string }[] = [
-  { value: "20s", label: "20 segundos" },
-  { value: "30s", label: "30 segundos" },
-  { value: "60s", label: "60 segundos" },
-];
-
-export const PRODUCTO_OPCIONES: { value: ProductoTarifa; label: string }[] = [
-  { value: "spot", label: "Spot" },
-  { value: "mencion", label: "Mención" },
-  { value: "control_remoto", label: "Control remoto" },
-  { value: "patrocinio", label: "Patrocinio" },
-];

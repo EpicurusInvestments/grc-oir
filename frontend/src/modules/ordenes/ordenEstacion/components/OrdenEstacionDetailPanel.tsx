@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 
 import { contactoAfiliadoApi } from "@/modules/catalogos/afiliado/api";
 import { contactoAnuncianteApi } from "@/modules/catalogos/anunciante/api";
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "@/modules/catalogos/tarifa/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 
 import type { HistorialCambio } from "@/shared/types";
@@ -63,9 +62,12 @@ export function OrdenEstacionDetailPanel({
 
   // ADR-106: la duración es propia de la OE, ya no heredada de la OC.
   // ADR-158: ya no filtra por tipo de señal — se retiró de TarifaPlaza.
-  const tarRef = estacion
-    ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined)
-    : undefined;
+  // ADR-169: sin duración capturada (producto sin duración real en el catálogo) no hay
+  // nada que buscar, igual que el backend (`_tarifa_sugerida`).
+  const tarRef =
+    estacion && oe.duracion_spot
+      ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined)
+      : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;
 
@@ -264,11 +266,11 @@ export function OrdenEstacionDetailPanel({
         <div className="r2">
           <div>
             <div className="fl">Producto</div>
-            <div className="fv">{oe.producto_tarifa ? etiquetaProducto(oe.producto_tarifa) : "—"}</div>
+            <div className="fv">{oe.producto_tarifa ?? "—"}</div>
           </div>
           <div>
             <div className="fl">Duración</div>
-            <div className="fv">{etiquetaDuracion(oe.duracion_spot)}</div>
+            <div className="fv">{oe.duracion_spot ?? "—"}</div>
           </div>
         </div>
         <div className="r2">
@@ -538,14 +540,6 @@ function FilaPdf({
 function fmtFechaHora(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function etiquetaProducto(valor: string): string {
-  return PRODUCTO_OPCIONES.find((p) => p.value === valor)?.label ?? valor;
-}
-
-function etiquetaDuracion(valor: string): string {
-  return DURACION_SPOT_OPCIONES.find((d) => d.value === valor)?.label ?? valor;
 }
 
 function Linea({ label, valor, fuerte }: { label: string; valor: number; fuerte?: boolean }) {

@@ -301,15 +301,19 @@ el patrón CRUD estándar (escritura solo **admin** en F0). Depende de Estación
 **ADR-097 (petición del usuario):** el diseño original de F0-02 era por **plaza** y con
 **vigencia** — ambos se eliminaron; ver ADR-097 en `docs/arquitectura.md`. **ADR-158
 (petición del usuario):** ya NO tiene `tipo_senal` — es propiedad de la Estación
-referenciada (`Estacion.tipo_senal`), no de la tarifa.
+referenciada (`Estacion.tipo_senal`), no de la tarifa. **ADR-166 (petición del
+usuario):** `duracion_spot`/`producto` dejan de ser los CHECK/enum cerrados y pasan a
+texto libre, elegidos del catálogo Producto Duración (F0-06).
 
 **`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `estacion_id` (req., FK),
-`duracion_spot` (`20s|30s|60s`, CHECK — **ya sin `mencion`**, ver ADR-098),
-`producto` (`spot|mencion|control_remoto|patrocinio`, CHECK, **campo nuevo** ADR-097,
-fuera de la spec BD v2), **`tarifa_bruta` (req., ≥0, PARÁMETRO SENSIBLE, ADR-099)**,
-**`descuento_pct` (req., 0–100, PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta`
-(Calculado)**, `notas`, `activo`, `created_at`, `created_by`, `updated_at`. **Ya NO
-tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097) ni `tipo_senal` (ADR-158).
+`duracion_spot` (req., 1–60 caracteres, **texto libre desde ADR-166** — antes CHECK
+`20s|30s|60s`; el literal "sin resultado" del catálogo Producto Duración está
+EXPLÍCITAMENTE PROHIBIDO aquí, 400 `error_dominio`), `producto` (req., 1–60 caracteres,
+**texto libre desde ADR-166** — antes CHECK `spot|mencion|control_remoto|patrocinio`),
+**`tarifa_bruta` (req., ≥0, PARÁMETRO SENSIBLE, ADR-099)**, **`descuento_pct` (req.,
+0–100, PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`,
+`created_at`, `created_by`, `updated_at`. **Ya NO tiene** `vigencia_desde`/
+`vigencia_hasta` (ADR-097) ni `tipo_senal` (ADR-158).
 - **Montos como string:** `tarifa_bruta`, `descuento_pct` y `tarifa_neta` viajan como
   **string** en el JSON (entrada y salida) para preservar la precisión `Decimal` (E-4). El
   servidor acepta también número, pero devuelve string.
@@ -346,10 +350,15 @@ ordenado del **más reciente al más antiguo**. Mismo shape de respuesta que Age
 Ejemplo alta de tarifa (sin `tarifa_neta`):
 ```json
 {
-  "estacion_id": "1a...", "duracion_spot": "30s", "producto": "spot",
+  "estacion_id": "1a...", "duracion_spot": "30", "producto": "Spot",
   "tarifa_bruta": "9000.00", "descuento_pct": "10",
   "notas": "Tarifa general FM CDMX"
 }
+```
+Ejemplo de rechazo por "sin resultado" (400 `error_dominio`):
+```json
+{ "estacion_id": "1a...", "duracion_spot": "sin resultado", "producto": "Mención", "tarifa_bruta": "500.00" }
+→ { "error": { "codigo": "error_dominio", "mensaje": "No se puede guardar la tarifa con la duración «sin resultado». Ve al catálogo Producto Duración y da de alta una duración real para este producto antes de continuar.", ... } }
 ```
 Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivado):
 ```json
@@ -364,29 +373,43 @@ Ejemplo edición del monto (requiere `motivo_cambio`):
 { "tarifa_bruta": "9500.00", "motivo_cambio": "Ajuste de temporada" }
 ```
 
-### Duración de Spots (F0-06) — DuracionSpotCatalogo
+### Producto Duración (F0-06) — DuracionSpotCatalogo
 
 **ADR-159 (petición del usuario):** catálogo NUEVO, fuera de la spec BD v2, agregado
-DESPUÉS de que F0 ya se diera por completa (ver `f0-00-indice.md`). Desconectado del
-enum `DuracionSpot` que ya usan Tarifa/Órdenes — ese enum no se toca. Por ahora NINGUNA
-otra pantalla/módulo lo consume ("solo crea el catálogo... solo quiero ver el CRUD
-completo").
+DESPUÉS de que F0 ya se diera por completa (ver `f0-00-indice.md`). En su origen estaba
+desconectado del enum `DuracionSpot` que usaban Tarifa/Órdenes. **ADR-166: Tarifa
+(F0-02) lo consume** para sus selects de Producto/Duración (ahí Duración SÍ es
+obligatoria). **ADR-167/168: "Orden de Servicio" (OrdenCliente, F1) también** — ahí
+`producto_tarifa` es obligatorio pero `duracion_spot` no, y "sin resultado" no está
+prohibido como valor. **ADR-169: "Orden de Transmisión" (OrdenEstacion, F1) también** —
+mismo criterio que OrdenCliente (`producto_tarifa` obligatorio, `duracion_spot`
+opcional, sin bloquear nada). **ADR-171: con las 3 pantallas conectadas al catálogo,
+los enums `DuracionSpot`/`ProductoTarifa` quedaron sin ningún uso real y se eliminaron**
+(backend `app/shared/enums.py`, `ProductoTarifa` de `tarifa.py`; frontend los tipos y
+constantes `DURACION_SPOT_OPCIONES`/`PRODUCTO_OPCIONES` de `tarifa/types.ts`).
 
 **`/catalogos/duraciones-spot`** — campos: `duracion_spot_catalogo_id`, `producto`
-(`spot|mencion|control_remoto|patrocinio`, CHECK — reusa el enum `ProductoTarifa` ya
-existente de Tarifa, no se duplica), `descripcion_duracion` (req., 1–60 caracteres,
-**texto libre, sin CHECK** — a propósito, para poder agregar valores nuevos sin
-migración), `activo`, `created_at`, `updated_at`.
+(req., 1–60 caracteres, **texto libre, sin CHECK** — ADR-164: antes reusaba el CHECK
+`spot|mencion|control_remoto|patrocinio` de `ProductoTarifa`, ya no),
+`descripcion_duracion` (**opcional desde ADR-165**, ≤60 caracteres, **texto libre, sin
+CHECK** — a propósito, para poder agregar valores nuevos sin migración; si se deja
+vacía/omitida, el servidor la guarda como el literal `"sin resultado"`, equivale a
+nulo), `activo`, `created_at`, `updated_at`.
 - **Sin duplicado activo (409 `conflicto`):** para la misma combinación `producto` +
-  `descripcion_duracion` (comparación case-insensitive), no puede existir otro registro
-  activo. Dos productos DISTINTOS sí pueden compartir la misma descripción (p. ej. "sin
-  duración" para `control_remoto` y para `patrocinio`).
+  `descripcion_duracion` (AMBOS comparados case-insensitive, ADR-164), no puede existir
+  otro registro activo. Dos productos DISTINTOS sí pueden compartir la misma descripción
+  (p. ej. "sin duración" para "control remoto" y para "patrocinio").
 - **Filtros de lista:** `?activo`, `?q` (busca en `descripcion_duracion`).
 - Patrón CRUD estándar (escritura solo **admin** en F0), igual que `Categoria`.
 
 Ejemplo alta:
 ```json
 { "producto": "spot", "descripcion_duracion": "20" }
+```
+Ejemplo alta sin duración (se guarda como "sin resultado"):
+```json
+{ "producto": "mencion" }
+→ { "producto": "mencion", "descripcion_duracion": "sin resultado", ... }
 ```
 
 ### Parámetros sensibles y auditoría (F0-03) — mecanismo transversal
@@ -798,6 +821,14 @@ que `contrato_id`/`marca_id` (si vienen) pertenezcan al `anunciante_id` de la or
 **ADR-100:** nace DIRECTO en `capturada` — no hay checklist ni paso intermedio (`recibida`
 sigue en el enum por la spec, pero queda inalcanzable por este flujo). Los 3 % de
 comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría con motivo.
+**ADR-167/168:** `producto_tarifa` (**req.**, 1–60 caracteres, **NUEVO** — no confundir
+con `producto`, la "Campaña" en texto libre; ADR-168: obligatorio al crear, igual que
+`OrdenEstacion.producto_tarifa`, ADR-106) y `duracion_spot` (opcional, ≤60 caracteres,
+**texto libre desde ADR-167** — antes CHECK `20s|30s|60s` y obligatorio) se eligen del
+catálogo Producto Duración (F0-06), mismo origen que Tarifa (ADR-166) pero SIN ninguna
+validación que rechace "sin resultado" en `duracion_spot` — a diferencia de Tarifa, es un
+valor tan válido como cualquier otro aquí (y, de cualquier forma, nunca aparece como
+opción seleccionable en el formulario).
 - **`PUT /ordenes/clientes/{id}`** (`ordenes:editar`) — edición normal. **409** si la
   orden está en un estado congelado (`orden_cerrada`/`facturada`/`cobrada`). Recalcula
   totales si cambian `total_spots`/`precio_unitario` o las fechas de campaña. **No**
@@ -821,10 +852,14 @@ comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría
 (OrdenEstacion). Hereda de la OC (`anunciante_id`, `vendedor_id`, `agencia_id`,
 `categoria_id`, `producto`, `contrato_id`) y de la `Estacion` (`plaza_id`) — ninguno se
 acepta del cliente. Body: `orden_id`, `estacion_id`,
-`producto_tarifa` (req. — `spot|mencion|control_remoto|patrocinio`, ADR-102: **NO** es el
-`producto` heredado de la OC, es el producto del catálogo Tarifa, elegido por estación),
-`duracion_spot` (req. — `20s|30s|60s`; **ADR-106:** capturada POR ESTACIÓN, ya **no** se
-hereda de `OrdenCliente.duracion_spot` — corrige el alcance original de ADR-102),
+`producto_tarifa` (req., 1–60 caracteres, **texto libre desde ADR-169** — antes CHECK
+`spot|mencion|control_remoto|patrocinio`; ADR-102: **NO** es el `producto` heredado de la
+OC, se elige por estación del catálogo Producto Duración, F0-06),
+`duracion_spot` (opcional desde ADR-169, ≤60 caracteres, **texto libre** — antes CHECK
+NOT NULL `20s|30s|60s`; **ADR-106:** capturada POR ESTACIÓN, ya **no** se hereda de
+`OrdenCliente.duracion_spot` — corrige el alcance original de ADR-102; puede quedar sin
+capturar si el producto no tiene ninguna duración real en el catálogo, sin bloquear
+nada),
 `precio_spot`, `observaciones_estacion`, `dias` (mín. 1: `fecha_transmision`,
 `hora_inicio`, `hora_fin`, `spots_asignados`, `spots_solicitados` opcional),
 `motivo_cambio_tarifa` (opcional, transitorio), `reporte_programados_ref` (opcional —

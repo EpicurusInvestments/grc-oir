@@ -67,6 +67,7 @@ export function ordenClienteFromApi(dto: OrdenClienteApiDTO): OrdenCliente {
     afiliado_factura_directo_al_cliente: dto.afiliado_factura_directo_al_cliente,
     fecha_inicio_campania: dto.fecha_inicio_campania,
     fecha_fin_campania: dto.fecha_fin_campania,
+    producto_tarifa: dto.producto_tarifa,
     duracion_spot: dto.duracion_spot,
     total_spots: dto.total_spots,
     cantidad_spots_bonificables: dto.cantidad_spots_bonificables,

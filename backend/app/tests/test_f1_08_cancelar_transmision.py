@@ -204,6 +204,7 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
         producto="Producto de prueba",
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=57),
+        producto_tarifa="spot",
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,

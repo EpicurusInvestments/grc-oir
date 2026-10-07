@@ -82,7 +82,7 @@ export const catalogRegistry: CatalogEntry[] = [
   },
   {
     key: "duracion_spot_catalogo",
-    label: "Duración de Spots",
+    label: "Producto Duración",
     group: "Operación",
     render: () => <DuracionSpotCatalogPage />,
   },

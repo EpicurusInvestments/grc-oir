@@ -6243,3 +6243,498 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   final de ADR-159 arriba): con el código de ADR-158/159 ya presente en esta rama,
   `alembic upgrade head` vuelve a ubicar la migración y la base queda sincronizada sin
   necesidad de tocarla a mano.
+
+### ADR-162 — El historial de cambios de tarifa duplicaba registros: pedía motivo en CADA edición, aunque el precio no hubiera cambiado
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F1, petición del usuario, con captura de
+  pantalla del panel "Historial de cambios de tarifa" de ADR-161 mostrando varias
+  entradas idénticas: "cuando editamos una orden de transmisión si se modificó la
+  tarifa te pide el motivo pero cada vez que la editas te está pidiendo poner el motivo
+  aunque ya lo hayas hecho previamente por eso ya hay varios logs").
+- **Contexto:** `_auditar_precio_spot_si_difiere` (ADR-102) comparaba `precio_spot`
+  ÚNICAMENTE contra la tarifa sugerida del catálogo (`tarifa.tarifa_neta`), nunca contra
+  el `precio_spot` que la OE ya tenía guardado. Así, una OE cuyo precio se apartó del
+  catálogo A PROPÓSITO (con su motivo ya capturado y auditado una vez) volvía a exigir
+  motivo y a generar un registro nuevo en `LogCambioParametro` en CUALQUIER guardado
+  posterior, aunque el usuario solo estuviera corrigiendo días/observaciones sin tocar
+  el precio. El frontend (`OrdenEstacionForm.tsx`) tenía el mismo problema: `tarifaDivergente`
+  también comparaba solo contra el catálogo.
+- **Decisión:** se agrega el parámetro `precio_spot_anterior` a
+  `_auditar_precio_spot_si_difiere` — el valor de `obj.precio_spot` ya persistido,
+  capturado ANTES de sobrescribirlo en `update()` (`None` en `create()`, donde no aplica).
+  Si `precio_spot == precio_spot_anterior` (sin cambio real desde el último guardado), la
+  función regresa de inmediato: no pide motivo ni audita, sin importar si sigue sin
+  coincidir con el catálogo — esa divergencia ya quedó justificada antes. En el
+  frontend, `tarifaDivergente` ahora exige `(!isEdit || precio !== oe.precio_spot)`
+  además de diferir del catálogo, con el mismo criterio.
+- **Consecuencia:** ninguna negativa — un cambio REAL de `precio_spot` (a cualquier otro
+  valor, incluso si también diverge del catálogo) sigue exigiendo motivo y generando su
+  propio registro de auditoría, como debe ser. Los registros duplicados que ya existan
+  en bases previas NO se borran (la bitácora de auditoría no se edita retroactivamente)
+  — solo se evita que se sigan generando hacia adelante.
+- **Verificado:** backend, 2 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (`test_editar_oe_sin_cambiar_precio_no_vuelve_a_exigir_motivo_ni_audita`,
+  `test_editar_oe_cambia_precio_de_nuevo_exige_motivo_y_audita_otra_vez`) — suite
+  completa 695/695 en verde. Frontend, 2 pruebas nuevas en `OrdenEstacionForm.test.tsx`
+  (ADR-162) — 27/27 en verde en ese archivo; `tsc`/`eslint` limpios en todo el repo.
+
+### ADR-163 — El catálogo "DuracionSpotCatalogo" (F0-06) se renombra a "Producto Duración" en pantalla
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F0, petición del usuario: "vamos a
+  corregir el nuevo catalogo que hicimos Duración de Spots ahora renómbralo como
+  Producto Duración").
+- **Contexto:** solo cambia el texto visible al usuario (entrada de menú y título de la
+  pantalla); el catálogo sigue siendo NUEVO y aislado (ADR-159), sin usarse todavía en
+  ninguna otra pantalla.
+- **Decisión:** se renombran las 2 cadenas visibles — `catalogRegistry.tsx` (`label:
+  "Duración de Spots"` → `"Producto Duración"`) y el `cat-title` de
+  `DuracionSpotCatalogPage.tsx`. Se deja SIN TOCAR el nombre técnico interno
+  (`DuracionSpotCatalogo`/`duracion_spot_catalogo`: clase, tabla, módulo, rutas de
+  archivo, endpoint `/catalogos/duraciones-spot`) — es un identificador interno, no
+  texto de usuario, y renombrarlo implicaría una migración de Alembic (rename de tabla)
+  sin ningún beneficio real.
+- **Consecuencia:** ninguna negativa — cambio puramente cosmético, sin tocar backend,
+  esquema ni rutas.
+- **Verificado:** `tsc`/`eslint` limpios; no hay pruebas (de frontend ni backend) que
+  dependieran del texto anterior "Duración de Spots" (confirmado por búsqueda global).
+
+### ADR-164 — El campo "Producto" del catálogo "Producto Duración" deja de ser un selector fijo y pasa a texto libre
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F0, petición del usuario: "vamos a
+  modificar el catalogo ahora ya va ser diferente... el campo producto ya no es un
+  selector ahora deberá permitir darlo de alta como un input").
+- **Contexto:** `producto` reusaba el CHECK/enum `ProductoTarifa` de `tarifa.py`
+  (`spot`/`mencion`/`control_remoto`/`patrocinio`, ADR-159) — el mismo catálogo cuyo
+  propósito explícito era poder "ir agregando más" sin migración quedaba, en los hechos,
+  tan cerrado como el enum de duración que lo originó. El usuario pidió soltar también
+  esta restricción.
+- **Decisión:**
+  - Backend (`duracion_spot_catalogo.py`): se quita el `CheckConstraint` de `producto` y
+    el import de `ProductoTarifa`; la columna pasa de `Unicode(20)` a `Unicode(60)`
+    (mismo ancho que `descripcion_duracion`) y los 3 schemas (`Create`/`Update`/`Read`)
+    cambian de `producto: ProductoTarifa` a `producto: str` (`min_length=1,
+    max_length=60`). Migración `d4cf0a32e875` (dialecto SQLite vía `batch_alter_table`,
+    SQL Server vía `op.drop_constraint`/`op.alter_column`, con `downgrade` simétrico que
+    recrea el CHECK original) — probada con roundtrip `upgrade → downgrade → upgrade`
+    sobre la BD compartida de desarrollo.
+  - El criterio "sin duplicado" (`_verificar_sin_duplicado`) ahora compara `producto`
+    case-insensitive también (antes solo `descripcion_duracion` lo era — `producto` no
+    lo necesitaba porque el enum ya fijaba la forma exacta). Se normaliza (`_normaliza_texto`,
+    renombrada de `_normaliza_descripcion`) en ambos campos antes de guardar.
+  - Frontend (`DuracionSpotForm.tsx`): el `<select>` de Producto con `PRODUCTO_OPCIONES`
+    se reemplaza por un `<input>` de texto libre; Zod cambia de
+    `z.enum([...])` a `z.string().trim().min(1).max(60)`. `types.ts` cambia
+    `producto: ProductoTarifa` a `producto: string` en los 3 tipos.
+    `DuracionSpotCatalogPage.tsx` quita `productoLabel()`/`PRODUCTO_OPCIONES` (ya
+    innecesarios) y muestra `producto` tal cual se capturó, tanto en la tabla como en el
+    panel de detalle.
+- **Consecuencia:** ninguna negativa — el catálogo sigue sin conectarse a ninguna otra
+  pantalla (ADR-159); cualquier valor de `producto` ya capturado con el enum anterior
+  (`spot`/`mencion`/`control_remoto`/`patrocinio`) sigue siendo válido, solo deja de ser
+  la única opción.
+- **Verificado:** backend, pruebas actualizadas en `test_f0_06_duracion_spot_catalogo.py`
+  — se reemplaza `test_producto_invalido_rechazado` (ya no aplica: cualquier texto es
+  válido) por `test_producto_es_texto_libre_acepta_valor_nuevo`,
+  `test_producto_vacio_rechazado` y `test_producto_mismo_con_distinta_capitalizacion_si_duplica`
+  (13/13 en ese archivo); suite completa en verde. `tsc`/`eslint` limpios.
+
+### ADR-165 — "Descripción de la duración" del catálogo "Producto Duración" pasa a ser opcional (default "sin resultado")
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F0, petición del usuario: "para los
+  productos como Mención y los Otros... podemos definirle el valor sin resultado...
+  debes permitirme que si solo se captura el producto y no capturo su descripción que
+  automáticamente le ponga por default sin resultado eso equivaldría a nulo").
+- **Contexto:** hasta ahora `descripcion_duracion` era obligatoria (`min_length=1`). El
+  usuario quiere poder dar de alta un producto SIN una duración real asociada (p.ej.
+  Mención, donde no siempre aplica una duración) sin tener que escribir algo a mano cada
+  vez — y que ese "vacío" se reconozca de forma consistente en toda la app.
+- **Decisión:** `descripcion_duracion` pasa a opcional en `Create` (`default=""`) y se
+  relaja en `Update` (ya no `min_length=1`, puede limpiarse a `""`). En el servicio, tras
+  normalizar espacios, una descripción vacía se reemplaza por el literal `SIN_RESULTADO`
+  (constante `"sin resultado"`, exportada desde `duracion_spot_catalogo.py` para que otros
+  módulos la puedan importar y compararla sin repetir el literal a mano). Aplica igual en
+  alta y en edición. El frontend (`DuracionSpotForm.tsx`) deja de exigir el campo y
+  muestra una nota explicando el default.
+- **Consecuencia:** ninguna negativa — "sin resultado" es, para este catálogo, un valor
+  tan válido como cualquier otro (participa igual en la regla de "sin duplicado" por
+  producto+descripción). Su único efecto especial vive FUERA de este catálogo: ver
+  ADR-166 (Tarifa lo rechaza como duración válida).
+- **Verificado:** backend, 3 pruebas nuevas en `test_f0_06_duracion_spot_catalogo.py`
+  (`test_descripcion_vacia_default_sin_resultado`,
+  `test_descripcion_omitida_tambien_default_sin_resultado`,
+  `test_update_limpia_descripcion_a_sin_resultado`) — 15/15 en ese archivo.
+
+### ADR-166 — La pantalla de Tarifas conecta "Producto" y "Duración" al catálogo "Producto Duración" (en vez de un selector fijo)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F0, petición del usuario: "vamos a
+  trabajar de aquí en adelante con ese catálogo y lo vamos a ir agregando en donde usemos
+  la parte de spots... comencemos con la pantalla de tarifas... aquí se va a pintar el
+  valor de Producto de nuestro Catálogo de Productos Duración. cuando seleccione el
+  usuario el Producto deberá actualizar el otro combo Duración... para el catálogo de
+  tarifa si el usuario seleccionó el producto y solo viene como valor en la duración sin
+  resultado que mande un mensaje... y no debe permitir guardar la tarifa").
+- **Contexto:** `TarifaPlaza.producto`/`duracion_spot` eran los CHECK/enum cerrados
+  `ProductoTarifa`/`DuracionSpot` (`spot|mencion|control_remoto|patrocinio` /
+  `20s|30s|60s`). El usuario quiere que Tarifa capture estos dos campos eligiéndolos del
+  catálogo nuevo (ADR-159/164/165) en vez de una lista fija — así se puede dar de alta
+  "Producto Duración" nuevos sin tocar código, y Tarifa los aprovecha de inmediato.
+  Explícito: Órdenes (`OrdenEstacionForm.tsx`) se queda con su selector fijo por ahora, es
+  una petición futura separada.
+- **Decisión:**
+  - Backend (`tarifa.py`): se quitan los `CheckConstraint` de `duracion_spot`/`producto`
+    y ambas columnas se ensanchan de `Unicode(10)`/`Unicode(20)` a `Unicode(60)` (mismo
+    ancho que el catálogo) — migración `f4c9c5db55eb` (SQLite vía `batch_alter_table`
+    recomponiendo también el índice `ix_tarifa_plaza_combo`, SQL Server vía
+    `op.drop_constraint`/`op.alter_column`; `downgrade` simétrico). Los schemas
+    (`Create`/`Update`/`Read`/`TarifaListParams`, + los query params del router) cambian
+    de los enums a `str`. La clase `ProductoTarifa` (`StrEnum`) NO se borra — sigue
+    viviendo en `tarifa.py` porque `orden_estacion.py` la sigue usando para su propio
+    schema (`producto_tarifa`), sin cambios ahí.
+  - Nueva regla propia de Tarifa (no del catálogo): `_verificar_duracion_no_sin_resultado`
+    rechaza (`DomainError`) un `duracion_spot` igual a `SIN_RESULTADO` (case-insensitive),
+    tanto en alta como en edición — el mensaje le dice al usuario que vaya al catálogo
+    Producto Duración a dar de alta una duración real. Se importa `SIN_RESULTADO` desde
+    `duracion_spot_catalogo.py` (mismo literal, una sola fuente de verdad).
+  - Frontend (`TarifaForm.tsx`): el select de Producto se llena con los `producto`
+    distintos y activos del catálogo (`useDuracionesSpot().useList(...)`); al elegir uno
+    (`onChange` limpia `duracion_spot`), el select de Duración se llena con las
+    `descripcion_duracion` de ESE producto, EXCLUYENDO "sin resultado" — nunca aparece
+    como opción seleccionable ahí. Si la lista resultante queda vacía, se reemplaza el
+    select por un banner de error y se bloquea el envío (`submit` regresa temprano, mismo
+    patrón que la validación de motivo de ADR-099). Respaldo: al editar una tarifa cuya
+    combinación todavía no esté en el catálogo, su valor original se agrega igual como
+    opción (para no romper la edición de datos previos a esta conexión).
+- **Consecuencia:** conocida y aceptada por el usuario — mientras Órdenes no se conecte
+  también a este catálogo (petición futura), cualquier producto/duración NUEVO capturado
+  solo en Tarifa no será "sugerido" ahí (`_tarifa_sugerida`, `orden_estacion.py` sigue
+  comparando contra los valores que su propio selector fijo puede producir). Ninguna
+  tarifa ya existente se ve afectada: sus valores (el enum anterior) siguen siendo
+  cadenas válidas.
+- **Verificado:** backend — `test_f0_02_tarifas.py` actualizado: se reemplazan
+  `test_duracion_spot_invalida_rechazada`/`test_producto_invalido_rechazado` (ya no
+  aplican, no hay "valor inválido" con texto libre) por
+  `test_duracion_spot_y_producto_aceptan_texto_libre`,
+  `test_duracion_spot_vacia_rechazada`, `test_producto_vacio_rechazado` y 3 pruebas
+  nuevas de "sin resultado" (alta, case-insensitive, edición) — 36/36 en ese archivo;
+  suite completa 703/703. Frontend: `tsc`/`eslint` limpios (0 errores); suite de
+  `ordenes`+`catalogos` 210/210 (mismo ruido de red preexistente sin relación).
+
+### ADR-167 — "Orden de Servicio" (OrdenCliente) conecta "Producto" y "Duración" al catálogo "Producto Duración" — SIN obligar a capturar una duración real
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F1, petición del usuario: "ese mismo
+  catálogo Producto Duración lo vamos a ocupar en algunas pantallas más comenzando con la
+  pantalla de Orden de Servicio... en la sección Campaña y Montos... debemos agregar como
+  primer filtro el Producto una vez seleccionado el Producto deberá habilitar el combo de
+  Duración... en esta fase no estamos obligados a seleccionar una duración... si el
+  usuario selecciona Producto = Mención se habilita la Duración... como Mención no tiene
+  un horario debe quedar el componente como seleccione... y debe permitir seguir
+  capturando la información").
+- **Contexto:** `OrdenCliente.duracion_spot` (36 campos de la spec BD v2 + extensiones
+  aditivas) era CHECK/enum cerrado (`20s|30s|60s`) y obligatorio — no existía ningún
+  campo "Producto" (spot/mención/etc.) a nivel de OrdenCliente, solo `producto` (la
+  "Campaña", texto libre de la descripción de la campaña — nombre YA ocupado, sin
+  relación con este concepto). El usuario pidió el mismo patrón Producto→Duración de
+  Tarifa (ADR-166), pero con una diferencia clave: en Tarifa es obligatorio tener una
+  duración real; aquí NO — un producto como Mención puede quedarse sin ninguna duración
+  capturada, y eso no debe impedir seguir llenando el resto del formulario.
+- **Decisión:**
+  - Nombre del campo nuevo: `producto_tarifa` (decisión tomada con el usuario — mismo
+    nombre que ya usa `OrdenEstacion` para este concepto, ADR-102; evita el choque con
+    `OrdenCliente.producto`).
+  - Backend (`orden_cliente.py`): se quita el `CheckConstraint` `ck_orden_cliente_duracion_spot`;
+    `duracion_spot` pasa de `Unicode(10)` NOT NULL a `Unicode(60)` NULLABLE (decisión
+    tomada con el usuario: columna nullable de verdad, no un literal `SIN_RESULTADO`
+    fuera de su catálogo de origen); se agrega `producto_tarifa` (`Unicode(60)`
+    NULLABLE, nuevo — fuera de la spec BD v2, mismo criterio que `TarifaPlaza.producto`,
+    ADR-097). Migración `94ad93d7c96d` (SQLite vía `batch_alter_table`, SQL Server vía
+    `op.drop_constraint`/`op.alter_column`/`op.add_column`; `downgrade` simétrico) —
+    probada con roundtrip upgrade→downgrade→upgrade. Ninguna validación de dominio
+    bloquea "sin resultado" aquí (a diferencia de Tarifa, ADR-166) — es un valor tan
+    válido como cualquier otro para `duracion_spot`.
+  - Frontend (`OrdenClienteForm.tsx`): mismo patrón de `TarifaForm.tsx` — el select de
+    Producto se llena con los `producto` distintos y activos del catálogo
+    `DuracionSpotCatalogo`; al elegir uno (`onChange` limpia Duración), el select de
+    Duración se llena con las `descripcion_duracion` de ESE producto, EXCLUYENDO
+    siempre "sin resultado" (nunca aparece como opción, igual que en Tarifa). A
+    diferencia de Tarifa: si la lista de duraciones reales queda vacía, el select
+    simplemente se deshabilita con el texto "Sin duración capturada para este
+    producto" — NO hay banner de error ni bloqueo del envío; ambos campos son
+    opcionales en el schema de Zod. Layout (petición del usuario): Producto y Duración
+    en una sola fila (`r2`), y Total de spots/Spots bonificables/Precio unitario en su
+    propia fila (`r3`) — antes los 4 campos (Duración + esos 3) vivían en una sola fila
+    de 4 columnas (`r4`).
+- **Consecuencia:** ninguna negativa — mismo impacto conocido que ADR-166: mientras
+  `OrdenEstacionForm.tsx` no se conecte también al catálogo (petición futura), un
+  producto/duración nuevo capturado solo aquí no tiene ningún efecto aguas abajo (ADR-106
+  ya desconectó la herencia de `duracion_spot` de OrdenCliente a OrdenEstacion, así que
+  esta columna es puramente informativa a nivel de campaña — no hay ningún cálculo ni
+  `_tarifa_sugerida` que dependa de ella).
+- **Verificado:** backend, 3 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oc_acepta_producto_tarifa_y_duracion_texto_libre`,
+  `test_crear_oc_acepta_duracion_sin_resultado`, y una de `producto_tarifa` opcional —
+  **renombrada/ajustada en ADR-168**, ver ahí) — suite completa 706/706 en su momento.
+  Frontend, 3 pruebas nuevas en `OrdenClienteForm.test.tsx` (mock del catálogo con un
+  producto con duraciones reales y uno solo con "sin resultado") — 37/37 en ese archivo;
+  `tsc`/`eslint` limpios; suite de `ordenes`+`catalogos` 213/213 (mismo ruido de red
+  preexistente).
+
+### ADR-168 — "Producto" pasa a ser obligatorio en "Orden de Servicio": habilita Total de spots/Spots bonificables/Precio unitario y bloquea el guardado sin él
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F1, petición del usuario, probando en vivo
+  la pantalla recién conectada de ADR-167: "para poder capturar Duración (este campo se
+  habilitará solo si el producto tiene capturado descripción si no tiene... que se quede
+  inhabilitado solo con el valor seleccione pero nosotros sabemos que viene nulo),
+  entonces Total de Spots, Spots Bonificables, Precio Unitario se deben ir habilitando
+  hasta que se seleccione un producto si no no debe dejar guardar la orden de servicio").
+- **Contexto:** ADR-167 dejó `producto_tarifa` y `duracion_spot` ambos opcionales, sin
+  ningún campo que dependiera de la elección del producto. El usuario, al probarlo,
+  confirmó que el comportamiento de Duración (deshabilitada, "Selecciona…", `null` por
+  dentro, cuando el producto solo tiene "sin resultado" en el catálogo) es el correcto —
+  pero pidió una regla nueva: Producto en sí SÍ debe ser obligatorio, y debe gatear el
+  resto de "Campaña y montos" (Total de spots, Spots bonificables, Precio unitario), que
+  antes se podían capturar sin haber elegido nada.
+- **Decisión:**
+  - Backend (`orden_cliente.py`): `OrdenClienteCreate.producto_tarifa` pasa de opcional
+    (`str | None`) a obligatorio (`str`, `min_length=1`) — mismo criterio "requerido solo
+    al CREAR, opcional en Update" que ya usa `OrdenEstacion.producto_tarifa` (ADR-106).
+    `duracion_spot` sigue sin cambios (opcional, puede quedar `None`). La columna de BD
+    (`producto_tarifa`, nullable desde ADR-167) NO se vuelve `NOT NULL` — forzarlo habría
+    exigido decidir un valor de relleno (backfill) para filas ya existentes con el campo
+    vacío (p.ej. la propia orden de prueba de ADR-167), algo que no corresponde inventar;
+    la obligatoriedad vive solo en el schema de alta (capa de aplicación).
+  - Frontend (`OrdenClienteForm.tsx`): el campo Zod `producto_tarifa` pasa de
+    `.optional()` a `.min(1, "Selecciona un producto.")`; su etiqueta se marca
+    `fl-required`. Los 3 campos (`total_spots`, `cantidad_spots_bonificables`,
+    `precio_unitario`) se deshabilitan (`disabled`) mientras `producto_tarifa` esté vacío
+    — se habilitan en cuanto se elige cualquier producto del catálogo.
+- **Consecuencia:** ninguna negativa — las pruebas de fixtures compartidas
+  (`_oc_payload` en 9 archivos de prueba de backend, `makeOC`/`makeOCInput` en frontend)
+  necesitaron un `producto_tarifa="spot"` explícito en su base, igual que ya tenían
+  `duracion_spot="30s"` — ningún comportamiento de negocio distinto al descrito aquí.
+- **Verificado:** backend — `test_crear_oc_sin_producto_tarifa_rechazado` (nueva,
+  `ValidationError` si se omite) y `test_crear_oc_sin_duracion_spot` (nueva, confirma que
+  SOLO `duracion_spot` se puede omitir) reemplazan la prueba de ADR-167 que aceptaba
+  omitir ambos; suite completa 707/707 (707 por los ajustes de fixtures en los 9 archivos
+  afectados, sin pruebas de más ni de menos en términos netos de este ADR). Frontend, 2
+  pruebas nuevas en `OrdenClienteForm.test.tsx` (campos deshabilitados sin producto +
+  bloqueo de Guardar con el mensaje exacto; habilitados al elegir uno) — 39/39 en ese
+  archivo; `tsc`/`eslint` limpios.
+
+### ADR-169 — "Orden de Transmisión" (OrdenEstacion) conecta "Producto" y "Duración" al catálogo "Producto Duración"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-06 (F1, petición del usuario, tras probar
+  ADR-167/168 en "Orden de Servicio": "ahora vamos a aplicar la misma funcionalidad en la
+  pantalla Orden de Transmisión. Primero debe seleccionar el Producto para que se
+  habilite Duración siempre y cuando haya valores, en caso de que no haya (sin
+  resultados) se queda inhabilitado... pero sí me debe dejar meter tarifa y llenar los
+  otros campos. Ojo si selecciono por ejemplo Spot y 20 y ese valor ya fue configurado en
+  Tarifas debe traerme el valor de la tarifa, esa lógica debe seguir funcionando igual").
+- **Contexto:** `OrdenEstacion.producto_tarifa`/`duracion_spot` (ADR-102/106) eran los
+  mismos CHECK/enum cerrados de Tarifa (`spot|mencion|control_remoto|patrocinio` /
+  `20s|30s|60s`) — `producto_tarifa` ya era NULLABLE y obligatorio solo al crear;
+  `duracion_spot` era NOT NULL y también obligatorio al crear. El usuario pidió el mismo
+  patrón Producto→Duración ya usado en Tarifa (ADR-166) y OrdenCliente (ADR-167), con la
+  regla de OrdenCliente para Duración (opcional, no bloquea) pero SIN relajar
+  `producto_tarifa` (ya era obligatorio al crear, sigue siéndolo) — y, crítico, sin tocar
+  en nada la lógica de sugerencia de tarifa ya existente (`_tarifa_sugerida`/
+  `tarifaReferencia`).
+- **Decisión:**
+  - Backend (`orden_estacion.py`): se quitan los `CheckConstraint`
+    `ck_orden_estacion_duracion_spot` y `ck_orden_estacion_producto_tarifa`; ambas
+    columnas se ensanchan a `Unicode(60)` y `duracion_spot` se vuelve NULLABLE (antes NOT
+    NULL) — migración `1531edf8c6dc` (SQLite vía `batch_alter_table`, SQL Server vía
+    `op.drop_constraint`/`op.alter_column`; `downgrade` simétrico), probada con roundtrip
+    upgrade→downgrade→upgrade. `OrdenEstacionCreate.producto_tarifa` sigue `str`
+    obligatorio (sin cambio); `duracion_spot` pasa de `DuracionSpot` (enum, obligatorio) a
+    `str | None` (opcional). `_tarifa_sugerida()` ahora acepta `duracion_spot: str | None`
+    y regresa `None` de inmediato si viene vacío (mismo criterio que ya tenía para
+    `producto_tarifa is None`) — sin tarifa sugerida, `precio_spot` sigue siendo 100%
+    libre, igual que siempre. La búsqueda en sí (`existe_duplicado_activo`, comparación de
+    texto exacta contra `TarifaPlaza`) NO cambia: ya funcionaba con cualquier string desde
+    ADR-166, así que un producto/duración MÁS ALLÁ del enum anterior (p.ej. "Jingle
+    promocional"/"15") encuentra su tarifa sembrada exactamente igual que "spot"/"20s".
+  - Frontend (`OrdenEstacionForm.tsx`): mismo patrón ya usado en `TarifaForm.tsx`/
+    `OrdenClienteForm.tsx` — el select de Producto se llena con los valores distintos y
+    activos del catálogo `DuracionSpotCatalogo`; al elegir uno (`onChange` limpia
+    Duración), el select de Duración se llena con las `descripcion_duracion` de ESE
+    producto, excluyendo siempre "sin resultado". Si la lista de duraciones reales queda
+    vacía, el select de Duración se deshabilita con el mismo texto ya usado en
+    OrdenCliente ("Sin duración capturada para este producto") — SIN bloquear nada: la
+    sección "Tarifa por spot" (antes gateada por `isEdit || duracionSpot`) ahora se
+    habilita con `isEdit || productoTarifa`, así que basta elegir el Producto para poder
+    teclear la tarifa y seguir llenando el resto del formulario. Se quitó la validación
+    `if (!isEdit && !duracionSpot) errores.push("Selecciona la duración.")` — Duración ya
+    no es obligatoria, ni siquiera al crear. `tarifaReferencia()`
+    (`state/catalogosCache.ts`) y `TarifaRef.producto` se ensanchan de `ProductoTarifa` a
+    `string` (ya hacía falta desde ADR-166, no se había ajustado la firma todavía). Los
+    tipos `ProductoTarifa`/`DuracionSpot` de `ordenes/types.ts` se eliminan por completo
+    (quedaron sin ningún uso real en el módulo).
+- **Consecuencia:** ninguna negativa — la sugerencia de tarifa activa para una
+  combinación YA existente (p.ej. "spot"/"30s" sembrada antes de este ADR) sigue
+  funcionando exactamente igual; el único cambio de comportamiento es que ahora también
+  funciona para combinaciones nuevas más allá del enum anterior, y que Duración dejó de
+  ser obligatoria.
+- **Verificado:** backend, 3 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oe_sin_duracion_spot_no_truena_ni_sugiere_tarifa`,
+  `test_crear_oe_producto_y_duracion_texto_libre_coincide_con_tarifa_sembrada`,
+  `test_crear_oe_producto_y_duracion_texto_libre_precio_distinto_exige_motivo`) — suite
+  completa 710/710. Frontend, 2 pruebas nuevas en `OrdenEstacionForm.test.tsx` (producto
+  con solo "sin resultado" no bloquea captura/guardado; producto/duración texto libre
+  coincide con una tarifa sembrada y autocarga igual que antes) — 29/29 en ese archivo;
+  se agregó `QueryClientProvider` a los `render()` de `OrdenEstacionForm.test.tsx` y
+  `OrdenEstacionListPage.test.tsx` (el formulario ahora usa react-query para el catálogo,
+  antes no lo necesitaba) y un mock del catálogo en ambos; `tsc`/`eslint` limpios; suite
+  de `ordenes`+`catalogos` 217/217.
+
+### ADR-170 — Cambiar de Producto o Duración en "Orden de Transmisión" ahora SIEMPRE limpia la tarifa (reemplaza el criterio de ADR-115 para este flujo)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-07 (F1, petición del usuario: "cuando
+  selecciono el producto ejemplo Spot y me carga la duración ej. 20 me trae su tarifa
+  pero si edito la tarifa y luego cambio de duración a ej. 30 no está limpiando el campo
+  tarifa, permite que se quede lo que coloqué y me ponga la tarifa que se trae si tiene...
+  lo mismo cuando cambio de producto: cada vez que cambie que limpie el campo tarifa y si
+  tiene tarifa configurada que la coloque").
+- **Contexto:** ADR-115 había fijado el criterio opuesto para un caso distinto: "un
+  precio ya tecleado a mano NO se borra al cambiar a una duración sin tarifa" — pensado
+  para no perder una captura manual legítima al simplemente explorar otra duración sin
+  querer. Probado en vivo, el usuario encontró que ese criterio es exactamente el
+  problema: al cambiar de Producto o Duración DESPUÉS de haber editado la tarifa a mano,
+  el campo se quedaba con el valor editado en vez de limpiarse y, si aplica, recargar la
+  tarifa de la NUEVA combinación — confuso, porque parece que esa tarifa vieja sigue
+  aplicando a la combinación nueva.
+- **Decisión:** los `onChange` de los selects de Producto y Duración
+  (`OrdenEstacionForm.tsx`) ahora llaman `setPrecioSpot("")` explícitamente, ADEMÁS de
+  actualizar el producto/duración elegidos (Producto además limpia Duración, como ya
+  hacía). Esto ocurre ANTES de que corra el efecto que autocarga la tarifa sugerida
+  (`tarifaSugerida`, sin cambios) — como el campo ya está vacío para cuando ese efecto
+  corre, su propia lógica de "no pisar un valor no vacío" simplemente carga la tarifa de
+  la nueva combinación (o deja el campo vacío si no hay ninguna), sin importar si el
+  valor anterior era tecleado a mano o una sugerencia previa. El efecto en sí NO cambió —
+  sigue siendo necesario para el caso de editar una OE existente (no pisar
+  `oe.precio_spot` ya guardado al montar el formulario).
+- **Consecuencia:** el criterio de ADR-115 (preservar un precio tecleado a mano al
+  cambiar de combinación) queda SUPERADO específicamente para los cambios de Producto/
+  Duración — ya no aplica ahí. Sigue aplicando tal cual para cualquier otro caso donde
+  `tarifaSugerida` no cambie por una acción directa del usuario sobre esos dos selects
+  (p.ej. el precio ya guardado de una OE al editar, que no se pisa al montar el
+  formulario).
+- **Verificado:** frontend — se reemplaza
+  `test_... un precio tecleado a mano NO se borra al cambiar a una duración sin tarifa`
+  (ADR-115, ya no aplica) por dos pruebas nuevas en `OrdenEstacionForm.test.tsx`: cambiar
+  de Duración limpia un precio tecleado a mano y recarga la tarifa de la nueva duración
+  si existe; cambiar de Producto limpia un precio tecleado a mano. 30/30 en ese archivo;
+  `tsc`/`eslint` limpios; suite de `ordenes`+`catalogos` 218/218.
+
+### ADR-171 — Se eliminan los enums `DuracionSpot`/`ProductoTarifa` y sus equivalentes en frontend (sin uso real tras ADR-166/167/168/169)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-07 (F0/F1, petición del usuario: "si los
+  ENUMS YA NO SE OCUPAN EN NINGUN LADO QUITALOS NO DEBERIA DAR ERRORES EN NINGUN LADO").
+- **Contexto:** antes de ADR-166/167/168/169, el enum `DuracionSpot` (`app/shared/
+  enums.py`) y el enum `ProductoTarifa` (`app/modules/catalogos/tarifa.py`) eran la
+  fuente cerrada de valores para Producto/Duración en Tarifa, OrdenCliente y
+  OrdenEstacion. Con las 3 pantallas conectadas al catálogo `DuracionSpotCatalogo`
+  (texto libre), los campos `producto`/`duracion_spot`/`producto_tarifa` ya viajan como
+  `str` de punta a punta — los enums y sus listas de opciones fijas en frontend quedaron
+  sin ningún consumidor real, solo mencionados en comentarios/docstrings históricos.
+  Auditoría previa (research, petición del usuario: "revisa en qué otras pantallas
+  manejan duración de spot") confirmó que ninguna pantalla de producción seguía
+  usándolos.
+- **Decisión:** se confirma por grep cero usos reales (imports/referencias fuera de
+  comentarios) antes de borrar, y se elimina:
+  - Backend: `app/shared/enums.py` (archivo completo, solo contenía `DuracionSpot`) y la
+    clase `ProductoTarifa` + el import `from enum import StrEnum` de
+    `app/modules/catalogos/tarifa.py`. Único consumidor real (`test_f0_02_tarifas.py`)
+    se ajusta a strings planos (`producto="spot"`, `duracion_spot="30s"`, etc.) en vez de
+    `ProductoTarifa.SPOT`/`DuracionSpot.S30`.
+  - Frontend: en `catalogos/tarifa/types.ts` se eliminan los tipos `DuracionSpot`/
+    `ProductoTarifa` y las constantes `DURACION_SPOT_OPCIONES`/`PRODUCTO_OPCIONES`
+    (`TarifaPlaza`/`Create`/`Update` ya eran `string` desde ADR-166, sin cambio). Sus 2
+    consumidores de solo lectura se simplifican para mostrar el valor crudo en vez de
+    buscar su label: `TarifaCatalogPage.tsx` (quita `duracionLabel`/`productoLabel`) y
+    `OrdenEstacionDetailPanel.tsx` (quita `etiquetaProducto`/`etiquetaDuracion`). No
+    hubo que tocar `OrdenEstacionForm.tsx`/`OrdenClienteForm.tsx`/`ordenes/types.ts`: ya
+    habían dejado de importar estas constantes desde ADR-167/168/169.
+  - Los comentarios/docstrings de ADRs anteriores que mencionan `DuracionSpot`/
+    `ProductoTarifa` por nombre (ADR-097, ADR-159, ADR-163, ADR-166...) se dejan
+    intactos: documentan lo que EXISTÍA en ese momento, son historia, no código vivo.
+- **Consecuencia:** ninguna negativa — los 3 formularios y las 2 pantallas de solo
+  lectura siguen mostrando exactamente los mismos valores (ahora como `string` crudo en
+  vez de via label-lookup, que de cualquier forma ya eran los mismos textos del
+  catálogo). Menos código muerto que mantener sincronizado con el catálogo.
+- **Verificado:** backend, suite completa 710/710 (antes 707, +3 de ADR-169/170),
+  `py_compile` limpio en los 2 archivos tocados. Frontend, `tsc --noEmit` limpio,
+  `eslint` 0 errores (mismas 3 advertencias preexistentes de siempre), suite
+  `ordenes`+`catalogos` 218/218 (15 archivos).
+
+### ADR-172 — Editar "producto" en Producto Duración ahora renombra en cascada a todos los registros que lo compartían (antes solo cambiaba el registro editado)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-07 (F0, reporte de bug del usuario: "en el
+  Catálogo de Producto Duración cuando se editan los registros y editas el producto por
+  ejemplo tenía mención y quise modificarlo por mensión con s a la hora de guardar el
+  registro te duplica el dato... eso está mal, debería dejarme modificar el registro").
+- **Contexto:** `producto` (`DuracionSpotCatalogo`, F0-06) es texto libre repetido en
+  cada renglón — un mismo producto (p.ej. "Mención") típicamente tiene varios renglones,
+  uno por cada duración (`mención`/`1`, `mención`/`2`, `mención`/`sin resultado`...). El
+  servicio ya actualizaba correctamente el renglón editado (no había ningún duplicado
+  real en la base), pero al corregir el `producto` de UN SOLO renglón, los demás
+  renglones del mismo producto se quedaban con la ortografía vieja — el catálogo
+  terminaba con el producto "partido" en dos grafías distintas (`mención` y `mensión`
+  coexistiendo), que es justo lo que el usuario reportó como "se duplica el dato".
+  Confirmado con el usuario (pregunta directa) que el comportamiento esperado es
+  renombrar en cascada automáticamente, sin pedir confirmación aparte.
+- **Decisión:** en `DuracionSpotCatalogoService._pre_update`
+  (`duracion_spot_catalogo.py`), si el payload trae `producto` y el valor normalizado
+  difiere (case-insensitive) del `producto` actual del registro, se buscan con el nuevo
+  `DuracionSpotCatalogoRepository.listar_por_producto(...)` todos los demás registros
+  (activos o no) que comparten el valor ANTERIOR; para cada uno se valida primero que el
+  renombre no choque con un registro ya existente para el producto nuevo (mismo
+  `_verificar_sin_duplicado` de siempre, excluyendo al propio hermano) — si cualquiera
+  chocara, se lanza `ConflictError` ANTES de tocar nada, para no dejar el renombre a
+  medias; si todos pasan, se actualiza el `producto` de cada hermano vía
+  `self.repo.update(...)`. El registro editado directamente sigue su flujo normal (su
+  propio chequeo de duplicado + `repo.update` en `BaseService.update`), sin cambios.
+- **Consecuencia:** ninguna negativa — corregir un typo en Producto ahora se ve
+  reflejado de inmediato en todos los renglones de ese producto, que es el
+  comportamiento intuitivo que esperaba el usuario. Si dos productos distintos
+  coexistían legítimamente (p.ej. "control_remoto" y "patrocinio"), renombrar uno NUNCA
+  toca al otro (el filtro es por el valor exacto anterior, case-insensitive).
+- **Verificado:** backend, 4 pruebas nuevas en `test_f0_06_duracion_spot_catalogo.py`
+  (renombra en cascada a hermanos; no afecta otros productos; re-guardar sin cambio real
+  no toca hermanos; rechazo si el renombre chocaría con un registro existente). Suite
+  completa del archivo 19/19; suite completa de backend sin regresiones.
+
+### ADR-173 — Al crear una Orden de Transmisión ya amarrada a su Orden de Servicio, Producto/Duración se precargan con los de esta última
+
+- **Estado:** aceptada · **Fecha:** 2026-10-07 (F1, petición del usuario: "cuando se
+  guarde la orden de servicio y se pase a la pantalla de Nueva orden de transmisión,
+  cuando seleccione la estación el usuario que llene el combo de producto, duración si
+  selecciono una duración en la orden de servicio, en caso de que no que se inhabilite
+  como actualmente lo tenemos y que llene la tarifa si existe el dato... quiero que la
+  funcionalidad de la pantalla siga estando como actualmente, solo es precargar esos
+  campos").
+- **Contexto:** desde ADR-167/168/169, tanto "Orden de Servicio" (OrdenCliente) como
+  "Orden de Transmisión" (OrdenEstacion) capturan Producto/Duración del mismo catálogo
+  `DuracionSpotCatalogo`, pero de forma totalmente independiente — al crear una OE desde
+  el botón "+ Asignar estaciones" de una OC, los selects de Producto/Duración de la OE
+  arrancaban siempre vacíos, obligando a elegir de nuevo algo que ya se había elegido en
+  la OC apenas unos segundos antes.
+- **Decisión:** en `OrdenEstacionForm.tsx`, cuando el formulario llega con `ocIdFijo` (el
+  flujo normal de creación amarrada a una OC) y NO es edición, los `useState` de
+  `productoTarifa`/`duracionSpot` arrancan con `oc.producto_tarifa`/`oc.duracion_spot` en
+  vez de `""`. Si la OC no capturó Duración (quedó `null` o es el literal "sin
+  resultado"), arranca vacía. Los `useMemo` `productosDuracion`/`duracionesDelProducto`
+  (su "respaldo" para un valor que no esté en el catálogo) se generalizaron para usar el
+  valor ACTUAL de `productoTarifa`/`duracionSpot` en vez de solo el de `oe` (edición) —
+  así el mismo mecanismo ya existente cubre también el precargado desde la OC, sin
+  duplicar lógica. Nada más cambia: el gateo de Duración (deshabilitada si el producto no
+  tiene duraciones reales en el catálogo), la sugerencia de tarifa (`tarifaReferencia`) y
+  su autocarga, y todas las validaciones siguen exactamente igual — el usuario puede
+  cambiar cualquiera de los dos campos precargados como si los hubiera elegido él mismo.
+- **Consecuencia:** ninguna negativa — los campos siguen siendo 100% editables; si la
+  combinación precargada (estación + producto + duración) tiene una tarifa sembrada en el
+  catálogo, se autocarga sola igual que si el usuario la hubiera elegido a mano.
+- **Verificado:** frontend, 4 pruebas nuevas en `OrdenEstacionForm.test.tsx` (precarga y
+  autocarga de tarifa; el usuario puede cambiar los valores precargados; Duración vacía
+  si la OC no capturó ninguna; Duración vacía si la OC guardó "sin resultado"). `tsc
+  --noEmit` limpio, `eslint` 0 errores (mismas 3 advertencias preexistentes), suite
+  `ordenes`+`catalogos` 222/222 (15 archivos).

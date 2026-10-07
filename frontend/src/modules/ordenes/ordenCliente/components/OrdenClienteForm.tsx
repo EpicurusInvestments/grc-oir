@@ -6,13 +6,29 @@
  * anunciante no tuviera ninguno. Agencia y dirección de facturación se SUGIEREN desde el
  * anunciante (se prellenan solo si el campo está vacío) sin forzar la relación, igual que
  * en el prototipo aprobado.
+ *
+ * ADR-167 (petición del usuario): "Producto" y "Duración" (sección "Campaña y montos") se
+ * llenan desde el catálogo `DuracionSpotCatalogo` ("Producto Duración", F0-06) — mismo
+ * patrón Producto→Duración que ya usa Tarifa (ADR-166): el select de Producto lista los
+ * valores distintos y activos del catálogo; al elegir uno, el select de Duración lista las
+ * `descripcion_duracion` de ESE producto, excluyendo siempre el literal "sin resultado"
+ * (nunca se muestra como opción). A DIFERENCIA de Tarifa, Duración NO es obligatoria: si
+ * el producto elegido (p.ej. Mención) no tiene ninguna duración real en el catálogo, el
+ * combo simplemente queda vacío/deshabilitado ("Selecciona…", pero internamente `null`) y
+ * la captura continúa sin bloquear nada.
+ *
+ * ADR-168 (petición del usuario, probado en vivo): "Producto" SÍ es obligatorio — Total
+ * de spots/Spots bonificables/Precio unitario quedan deshabilitados hasta elegir uno, y
+ * no se puede guardar la orden sin él.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
+import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { FieldTag, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
@@ -33,9 +49,7 @@ import {
 import { esComisionOverride } from "../../state/selectors";
 import type { EstadoOC, OrdenClienteInput } from "../../types";
 
-/** El backend real (`DuracionSpot`) solo acepta estos 3 valores (ADR-098: se retiró
- * "mencion" — ahora vive solo como `producto` de TarifaPlaza, F0-02). */
-const OPCIONES_DURACION = ["20s", "30s", "60s"] as const;
+const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
 
 const numeroOpcionalPct = () =>
   z
@@ -66,7 +80,12 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     afiliado_factura_directo_al_cliente: z.boolean(),
     fecha_inicio_campania: z.string().min(1, "La fecha de inicio es obligatoria."),
     fecha_fin_campania: z.string().min(1, "La fecha de fin es obligatoria."),
-    duracion_spot: z.string().min(1),
+    // ADR-168 (petición del usuario): Producto SÍ es obligatorio — habilita el resto de
+    // "Campaña y montos" y es requisito para poder guardar. Duración sigue opcional
+    // (ADR-167): a diferencia de Tarifa, aquí no se obliga a capturar una duración real
+    // (p.ej. Mención puede quedarse sin ninguna, "sin resultado" nunca es seleccionable).
+    producto_tarifa: z.string().trim().min(1, "Selecciona un producto.").max(60),
+    duracion_spot: z.string().optional(),
     total_spots: z
       .string()
       .trim()
@@ -194,7 +213,8 @@ export function OrdenClienteForm({
       afiliado_factura_directo_al_cliente: defaultValues?.afiliado_factura_directo_al_cliente ?? false,
       fecha_inicio_campania: defaultValues?.fecha_inicio_campania ?? "",
       fecha_fin_campania: defaultValues?.fecha_fin_campania ?? "",
-      duracion_spot: defaultValues?.duracion_spot ?? "30s",
+      producto_tarifa: defaultValues?.producto_tarifa ?? "",
+      duracion_spot: defaultValues?.duracion_spot ?? "",
       total_spots: vacio(defaultValues?.total_spots),
       cantidad_spots_bonificables: vacio(defaultValues?.cantidad_spots_bonificables ?? 0),
       precio_unitario: vacio(defaultValues?.precio_unitario),
@@ -257,6 +277,47 @@ export function OrdenClienteForm({
     const agencia = findAgencia(id);
     setValue("porcentaje_comision_agencia_snap", agencia ? String(agencia.porcentaje_comision_agencia_default) : "");
   };
+
+  // ── Producto/Duración desde el catálogo "Producto Duración" (ADR-167) ─────────
+  const catalogoDuraciones = useDuracionesSpot().useList({ activo: true, size: 100 });
+  const entradasDuracion = useMemo(
+    () => catalogoDuraciones.data?.items ?? [],
+    [catalogoDuraciones.data],
+  );
+  const productoTarifaActual = watch("producto_tarifa") ?? "";
+
+  const productosDuracion = useMemo(() => {
+    const vistos = new Map<string, string>();
+    for (const e of entradasDuracion) vistos.set(e.producto.trim().toLowerCase(), e.producto);
+    if (
+      defaultValues?.producto_tarifa &&
+      !vistos.has(defaultValues.producto_tarifa.trim().toLowerCase())
+    ) {
+      vistos.set(defaultValues.producto_tarifa.trim().toLowerCase(), defaultValues.producto_tarifa);
+    }
+    return [...vistos.values()].sort((a, b) => a.localeCompare(b, "es"));
+  }, [entradasDuracion, defaultValues?.producto_tarifa]);
+
+  const duracionesDelProducto = useMemo(() => {
+    const delProducto = entradasDuracion.filter(
+      (e) => e.producto.trim().toLowerCase() === productoTarifaActual.trim().toLowerCase(),
+    );
+    const vistos = new Map<string, string>();
+    for (const e of delProducto) {
+      if (esSinResultado(e.descripcion_duracion)) continue;
+      vistos.set(e.descripcion_duracion.trim().toLowerCase(), e.descripcion_duracion);
+    }
+    if (
+      defaultValues?.duracion_spot &&
+      !esSinResultado(defaultValues.duracion_spot) &&
+      productoTarifaActual.trim().toLowerCase() ===
+        (defaultValues?.producto_tarifa ?? "").trim().toLowerCase() &&
+      !vistos.has(defaultValues.duracion_spot.trim().toLowerCase())
+    ) {
+      vistos.set(defaultValues.duracion_spot.trim().toLowerCase(), defaultValues.duracion_spot);
+    }
+    return [...vistos.values()];
+  }, [entradasDuracion, productoTarifaActual, defaultValues?.producto_tarifa, defaultValues?.duracion_spot]);
 
   // ── cálculos en vivo ────────────────────────────────────────────────────────
   const fechaVenta = watch("fecha_venta");
@@ -323,7 +384,8 @@ export function OrdenClienteForm({
       afiliado_factura_directo_al_cliente: data.afiliado_factura_directo_al_cliente,
       fecha_inicio_campania: data.fecha_inicio_campania,
       fecha_fin_campania: data.fecha_fin_campania,
-      duracion_spot: data.duracion_spot,
+      producto_tarifa: data.producto_tarifa?.trim() || null,
+      duracion_spot: data.duracion_spot || null,
       total_spots: Number(data.total_spots),
       cantidad_spots_bonificables: Number(data.cantidad_spots_bonificables) || 0,
       precio_unitario: Number(data.precio_unitario),
@@ -552,26 +614,61 @@ export function OrdenClienteForm({
                 <div className="fv mono">{dias != null && dias > 0 ? `${dias} días` : "—"}</div>
               </div>
             </div>
-            <div className="r4">
+            <div className="r2">
+              <div>
+                <div className="fl fl-required">
+                  Producto{" "}
+                  <FieldTag origin="catalogo" />{" "}
+                  <span style={{ color: "var(--text3)", fontWeight: 400 }}>
+                    (catálogo Producto Duración)
+                  </span>
+                </div>
+                <select
+                  className="fsel"
+                  disabled={congelado || catalogoDuraciones.isLoading}
+                  {...register("producto_tarifa", { onChange: () => setValue("duracion_spot", "") })}
+                >
+                  <option value="">{catalogoDuraciones.isLoading ? "Cargando…" : "Selecciona…"}</option>
+                  {productosDuracion.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <div className="fe">{errors.producto_tarifa?.message}</div>
+              </div>
               <div>
                 <div className="fl">
                   Duración <FieldTag origin="catalogo" />
                 </div>
-                <select className="fsel" disabled={congelado} {...register("duracion_spot")}>
-                  {OPCIONES_DURACION.map((d) => (
+                <select
+                  className="fsel"
+                  disabled={congelado || !productoTarifaActual || duracionesDelProducto.length === 0}
+                  {...register("duracion_spot")}
+                >
+                  <option value="">
+                    {!productoTarifaActual
+                      ? "Elige un producto primero"
+                      : duracionesDelProducto.length === 0
+                        ? "Sin duración capturada para este producto"
+                        : "Selecciona…"}
+                  </option>
+                  {duracionesDelProducto.map((d) => (
                     <option key={d} value={d}>
                       {d}
                     </option>
                   ))}
                 </select>
               </div>
+            </div>
+            <div className="r3">
               <div>
                 <div className="fl fl-required">Total de spots</div>
                 <input
                   className="fi"
                   style={{ fontFamily: "var(--mono)" }}
                   inputMode="numeric"
-                  disabled={congelado}
+                  disabled={congelado || !productoTarifaActual}
                   {...register("total_spots")}
                 />
                 <div className="fe">{errors.total_spots?.message}</div>
@@ -582,7 +679,7 @@ export function OrdenClienteForm({
                   className="fi"
                   style={{ fontFamily: "var(--mono)" }}
                   inputMode="numeric"
-                  disabled={congelado}
+                  disabled={congelado || !productoTarifaActual}
                   {...register("cantidad_spots_bonificables")}
                 />
                 <div className="fe">{errors.cantidad_spots_bonificables?.message}</div>
@@ -597,7 +694,7 @@ export function OrdenClienteForm({
                       value={field.value}
                       onChange={field.onChange}
                       onBlur={field.onBlur}
-                      disabled={congelado}
+                      disabled={congelado || !productoTarifaActual}
                     />
                   )}
                 />

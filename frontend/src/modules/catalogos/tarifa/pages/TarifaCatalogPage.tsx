@@ -29,8 +29,7 @@ import {
 import { TarifaForm, type TarifaFormOutput } from "../components/TarifaForm";
 import { fmtMoneda } from "../format";
 import { useHistorialTarifa, useTarifas } from "../hooks";
-import type { DuracionSpot, ProductoTarifa, TarifaPlaza } from "../types";
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "../types";
+import type { TarifaPlaza } from "../types";
 
 type Filtro = "todas" | "activas" | "inactivas";
 type Modo = "view" | "new" | "edit";
@@ -43,11 +42,6 @@ const FILTROS: { key: Filtro; label: string }[] = [
 
 const activoDeFiltro = (f: Filtro): boolean | undefined =>
   f === "activas" ? true : f === "inactivas" ? false : undefined;
-
-const duracionLabel = (v: DuracionSpot) =>
-  DURACION_SPOT_OPCIONES.find((o) => o.value === v)?.label ?? v;
-const productoLabel = (v: ProductoTarifa) =>
-  PRODUCTO_OPCIONES.find((o) => o.value === v)?.label ?? v;
 
 const oGuion = (v: string | null): string => (v && v.trim() ? v : "—");
 const fmtFechaHora = (iso: string): string =>
@@ -176,11 +170,11 @@ export function TarifaCatalogPage() {
           <div className="dh-row">
             <div>
               <div className="dh-name">
-                {selected.estacion_nombre ?? "—"} · {duracionLabel(selected.duracion_spot)}
+                {selected.estacion_nombre ?? "—"} · {selected.duracion_spot}
               </div>
               <div className="dh-sub">
                 <StatusBadge activo={selected.activo} />
-                <span className="badge b-blue">{productoLabel(selected.producto)}</span>
+                <span className="badge b-blue">{selected.producto}</span>
               </div>
             </div>
             {canWrite && (
@@ -299,7 +293,7 @@ export function TarifaCatalogPage() {
               onClick={() => seleccionar(t)}
             >
               <td className="td-main">{t.estacion_nombre ?? "—"}</td>
-              <td className="td-2">{productoLabel(t.producto)}</td>
+              <td className="td-2">{t.producto}</td>
               <td className="td-2">{t.duracion_spot}</td>
               <td className="td-right td-mono">{fmtMoneda(t.tarifa_bruta)}</td>
               <td className="td-center td-mono">{t.descuento_pct}%</td>
