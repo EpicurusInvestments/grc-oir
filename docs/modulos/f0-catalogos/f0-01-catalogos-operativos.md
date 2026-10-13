@@ -28,10 +28,10 @@ Gestionar dónde y a través de quién se transmite: plazas geográficas, afilia
 `plaza_id` (PK, `UNIQUEIDENTIFIER`), `nombre_plaza` (NOT NULL), `estado`, `activo`,
 `created_at`, `updated_at`.
 
-### Afiliado (sin `plaza_id` — ADR-096)
+### Afiliado (sin `plaza_id` — ADR-096; sin contacto legado — ADR-174)
 `afiliado_id` (PK), `nombre_afiliado` (NOT NULL), `razon_social_afiliado` (NOT NULL),
-`rfc_afiliado` (NOT NULL, **único**), `contacto_nombre`, `contacto_email`,
-`contacto_telefono`, `activo`, `created_at`, `updated_at`. No accede al sistema.
+`rfc_afiliado` (NOT NULL, **único**), `activo`, `created_at`, `updated_at`. No accede al
+sistema.
 - **Sin plaza propia (ADR-096, petición del usuario):** el Afiliado tenía `plaza_id`
   (FK NOT NULL, decisión histórica E-1) hasta 2026-09-21. Se eliminó por completo — la
   plaza es una propiedad de la **Estación**, no del Afiliado, que puede operar estaciones
@@ -39,9 +39,10 @@ Gestionar dónde y a través de quién se transmite: plazas geográficas, afilia
 - **RFC:** se valida el formato oficial mexicano de **12-13 caracteres** (12 = persona
   moral, que es el caso típico de un afiliado; 13 = física), no exactamente 13. Se
   normaliza a mayúsculas. La columna es `NVARCHAR(13)` con índice UNIQUE.
-- `contacto_nombre`/`contacto_email`/`contacto_telefono` quedan como **LEGADO** desde
-  ADR-094: ya no se capturan en el formulario, se muestran de solo lectura en el
-  detalle solo si una fila vieja los trae. El reemplazo es `ContactoAfiliado` (abajo).
+- **ADR-174 (petición del usuario, reporte de bug):** el contacto único legado
+  (`contacto_nombre`/`contacto_email`/`contacto_telefono`) se ELIMINÓ por completo —
+  ADR-094 lo había dejado de solo lectura, pero convivía de forma confusa junto a
+  `ContactoAfiliado` (abajo), su reemplazo definitivo.
 
 ### ContactoAfiliado (entidad NUEVA, fuera de la spec BD v2 — ADR-094)
 `contacto_afiliado_id` (PK), `afiliado_id` (FK NOT NULL), `nombre_contacto` (NOT NULL),

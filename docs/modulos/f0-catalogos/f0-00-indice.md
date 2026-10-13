@@ -50,3 +50,13 @@ siempre primero.
   un afiliado opera en una sola plaza por ahora. Ver F0-01 y ADR-005.
 - **Campo `venta_directa_carmen_aristegui_cdmx`:** se **omite** deliberadamente respecto
   a la spec BD v2. Registrado como desviación en `docs/arquitectura.md` (ADR-006).
+
+## Módulo adicional, fuera del bloque original (post-Entrega 1)
+
+- **`f0-06-duracion-spot.md` — DuracionSpotCatalogo:** catálogo NUEVO (ADR-159, petición
+  del usuario, 2026-10-05), fuera de la spec BD v2 y agregado DESPUÉS de que F0 ya se
+  dio por completa con los 6 módulos de arriba. No sustituye ni modifica el enum
+  `DuracionSpot` (`app/shared/enums.py`) que usan Tarifa/Órdenes — es un catálogo
+  administrable independiente (duración en texto libre, por producto), que por ahora
+  NINGUNA otra pantalla consume. Mismo criterio que `producto` en `f0-02-tarifas.md`
+  (extensión fuera de spec, documentada donde se introduce).

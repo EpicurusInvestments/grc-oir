@@ -10,9 +10,18 @@ export interface Agencia extends CatalogoBase {
   agencia_id: string;
   nombre_agencia: string;
   rfc_agencia: string;
-  contacto_nombre: string | null;
-  contacto_email: string | null;
-  contacto_telefono: string | null;
+  /** Domicilio ESTRUCTURADO (ADR-175, mismo mecanismo que ADR-059 en Anunciante):
+   * autocompletado por código postal contra `asentamiento_postal`. */
+  calle: string | null;
+  numero_exterior: string | null;
+  numero_interior: string | null;
+  colonia: string | null;
+  localidad: string | null;
+  referencia_domicilio: string | null;
+  municipio: string | null;
+  estado: string | null;
+  pais: string | null;
+  codigo_postal: string | null;
   /** Clave SAT (c_RegimenFiscal) cuando la agencia es RECEPTORA (trato vía agencia),
    * sugerida desde ConstantesSistema; sin FK. */
   regimen_fiscal: string | null;
@@ -37,9 +46,16 @@ export type { HistorialCambio } from "@/shared/types";
 export interface AgenciaCreate {
   nombre_agencia: string;
   rfc_agencia: string;
-  contacto_nombre?: string | null;
-  contacto_email?: string | null;
-  contacto_telefono?: string | null;
+  calle?: string | null;
+  numero_exterior?: string | null;
+  numero_interior?: string | null;
+  colonia?: string | null;
+  localidad?: string | null;
+  referencia_domicilio?: string | null;
+  municipio?: string | null;
+  estado?: string | null;
+  pais?: string | null;
+  codigo_postal?: string | null;
   regimen_fiscal?: string | null;
   porcentaje_comision_agencia_default: string;
 }
@@ -50,9 +66,9 @@ export interface AgenciaUpdate extends Partial<AgenciaCreate> {
 }
 
 // ── ContactoAgencia (anidado en Agencia — entidad nueva) ───────────────────────────
-// La Agencia ya trae un solo contacto plano (`contacto_nombre`/`contacto_email`/
-// `contacto_telefono`, arriba) — queda como LEGADO, sin tocar. Este es el nuevo
-// "varios contactos", mismo patrón anidado que `ContactoAnunciante`.
+// ADR-174: el contacto único legado (`contacto_nombre`/`contacto_email`/
+// `contacto_telefono`) se eliminó por completo. Este es el "varios contactos", mismo
+// patrón anidado que `ContactoAnunciante`.
 export interface ContactoAgencia extends CatalogoBase {
   contacto_agencia_id: string;
   agencia_id: string;

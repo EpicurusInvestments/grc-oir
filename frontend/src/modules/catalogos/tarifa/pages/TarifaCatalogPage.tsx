@@ -9,10 +9,16 @@
  * ADR-158 (petición del usuario): se quita la columna "Señal" de la lista y la señal
  * del encabezado del detalle — `tipo_senal` se eliminó de `TarifaPlaza` (es propiedad
  * de la Estación, no de la tarifa).
+ *
+ * ADR-177 (petición del usuario): se agrega "Anunciante" (selector, primer campo del
+ * formulario y primera columna de la lista) — la llave de la tarifa pasa a Anunciante +
+ * Emisora + Producto + Duración; la lista se ordena en ese mismo orden (lo hace el
+ * backend, `get_tarifa_service().default_order_by`).
  */
 
 import { useState } from "react";
 
+import { useAnunciantes } from "@/modules/catalogos/anunciante/hooks";
 import { useEstaciones } from "@/modules/catalogos/estacion/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
@@ -29,8 +35,7 @@ import {
 import { TarifaForm, type TarifaFormOutput } from "../components/TarifaForm";
 import { fmtMoneda } from "../format";
 import { useHistorialTarifa, useTarifas } from "../hooks";
-import type { DuracionSpot, ProductoTarifa, TarifaPlaza } from "../types";
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES } from "../types";
+import type { TarifaPlaza } from "../types";
 
 type Filtro = "todas" | "activas" | "inactivas";
 type Modo = "view" | "new" | "edit";
@@ -43,11 +48,6 @@ const FILTROS: { key: Filtro; label: string }[] = [
 
 const activoDeFiltro = (f: Filtro): boolean | undefined =>
   f === "activas" ? true : f === "inactivas" ? false : undefined;
-
-const duracionLabel = (v: DuracionSpot) =>
-  DURACION_SPOT_OPCIONES.find((o) => o.value === v)?.label ?? v;
-const productoLabel = (v: ProductoTarifa) =>
-  PRODUCTO_OPCIONES.find((o) => o.value === v)?.label ?? v;
 
 const oGuion = (v: string | null): string => (v && v.trim() ? v : "—");
 const fmtFechaHora = (iso: string): string =>
@@ -76,9 +76,11 @@ export function TarifaCatalogPage() {
   const actualizar = useUpdate();
   const setEstado = useSetEstado();
 
-  // Estaciones activas para el select del formulario.
+  // Estaciones y anunciantes activos para los selects del formulario.
   const estacionesQuery = useEstaciones().useList({ activo: true, size: 100 });
   const estaciones = estacionesQuery.data?.items ?? [];
+  const anunciantesQuery = useAnunciantes().useList({ activo: true, size: 100 });
+  const anunciantes = anunciantesQuery.data?.items ?? [];
 
   // Historial de auditoría de tarifa_bruta/descuento_pct (parámetros sensibles, ADR-099).
   const historial = useHistorialTarifa(selected?.tarifa_plaza_id ?? null);
@@ -139,6 +141,7 @@ export function TarifaCatalogPage() {
     detail = (
       <TarifaForm
         title="Nueva tarifa"
+        anunciantes={anunciantes}
         estaciones={estaciones}
         submitting={crear.isPending}
         submitError={errorMsg}
@@ -150,9 +153,11 @@ export function TarifaCatalogPage() {
     detail = (
       <TarifaForm
         title="Editar tarifa"
+        anunciantes={anunciantes}
         estaciones={estaciones}
         isEdit
         defaultValues={{
+          anunciante_id: selected.anunciante_id ?? "",
           estacion_id: selected.estacion_id,
           duracion_spot: selected.duracion_spot,
           producto: selected.producto,
@@ -176,11 +181,12 @@ export function TarifaCatalogPage() {
           <div className="dh-row">
             <div>
               <div className="dh-name">
-                {selected.estacion_nombre ?? "—"} · {duracionLabel(selected.duracion_spot)}
+                {selected.anunciante_nombre ?? "—"} · {selected.estacion_nombre ?? "—"} ·{" "}
+                {selected.duracion_spot}
               </div>
               <div className="dh-sub">
                 <StatusBadge activo={selected.activo} />
-                <span className="badge b-blue">{productoLabel(selected.producto)}</span>
+                <span className="badge b-blue">{selected.producto}</span>
               </div>
             </div>
             {canWrite && (
@@ -274,6 +280,7 @@ export function TarifaCatalogPage() {
       <table className="cat-table">
         <thead>
           <tr>
+            <th>Anunciante</th>
             <th>Emisora</th>
             <th style={{ width: 110 }}>Producto</th>
             <th style={{ width: 90 }}>Duración</th>
@@ -298,8 +305,9 @@ export function TarifaCatalogPage() {
               className={selected?.tarifa_plaza_id === t.tarifa_plaza_id ? "sel" : ""}
               onClick={() => seleccionar(t)}
             >
-              <td className="td-main">{t.estacion_nombre ?? "—"}</td>
-              <td className="td-2">{productoLabel(t.producto)}</td>
+              <td className="td-main">{t.anunciante_nombre ?? "—"}</td>
+              <td className="td-2">{t.estacion_nombre ?? "—"}</td>
+              <td className="td-2">{t.producto}</td>
               <td className="td-2">{t.duracion_spot}</td>
               <td className="td-right td-mono">{fmtMoneda(t.tarifa_bruta)}</td>
               <td className="td-center td-mono">{t.descuento_pct}%</td>
@@ -365,7 +373,7 @@ export function TarifaCatalogPage() {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar por emisora o notas…"
+        searchPlaceholder="Buscar por anunciante, emisora o notas…"
         filters={FILTROS}
         activeFilter={filtro}
         onFilter={(k) => {

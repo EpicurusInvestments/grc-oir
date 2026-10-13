@@ -223,6 +223,7 @@ def _oc_payload(cat: dict[str, uuid.UUID]) -> OrdenClienteCreate:
         producto="Pan Bimbo Integral 680g",
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=90),
+        producto_tarifa="spot",
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,
@@ -587,6 +588,167 @@ def test_dia_cancelado_no_se_marca_como_faltante(
     assert claves == {(_DIA_1, time(7, 0)), (_DIA_2, time(7, 0))}
 
 
+# ══════════════════════════════════════════════════════════════════════════════════
+# ADR-174b (petición del usuario): emparejamiento por FECHA (ya no por fecha+hora
+# exacta), cronológico — confirmado con `AskUserQuestion` tras una corrección en vivo.
+# ══════════════════════════════════════════════════════════════════════════════════
+def test_hora_distinta_misma_fecha_marca_cambio_horario_sin_tocar_spots(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """DIA_2 solo tiene 1 horario programado (07:00, 8 spots). El archivo trae esa
+    MISMA fecha a las 09:00 con los MISMOS 8 spots — se empareja con el único
+    programado de esa fecha (único candidato), y como la hora difiere se marca
+    `cambio_horario`, sin afectar el conteo de spots (quedan iguales)."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(
+        f"Radio Disney,{_DIA_1},07:00,10",
+        f"Radio Disney,{_DIA_1},20:00,5",
+        f"Radio Disney,{_DIA_2},09:00,8",
+    )
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+
+    assert resultado.errores == []
+    assert resultado.nuevos == []
+    dia2 = next(a for a in resultado.aplicados if a.fecha_transmision == _DIA_2)
+    assert dia2.hora_inicio == time(7, 0)  # la programada, sin cambio (identidad del día)
+    assert dia2.spots == 8
+    assert dia2.cambio_horario is True
+    assert dia2.hora_real == time(9, 0)
+
+    # Los de DIA_1 (match exacto) no se ven afectados.
+    dia1_am = next(
+        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
+    )
+    assert dia1_am.cambio_horario is False
+
+
+def test_hora_y_spots_distintos_generan_las_dos_incidencias_al_avanzar(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """Confirmado con el usuario: si un registro cambia de hora Y ADEMÁS trae más o
+    menos spots, se generan LAS DOS incidencias (cambio_horario y excedente/faltante),
+    nunca solo una."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(f"Radio Disney,{_DIA_2},09:00,11")  # programado: 07:00, 8 spots
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    dia2 = next(a for a in resultado.aplicados if a.fecha_transmision == _DIA_2)
+    assert dia2.cambio_horario is True
+    assert dia2.spots == 11
+
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    orden_estacion_dia_id=a.orden_estacion_dia_id,
+                    spots_verificados=a.spots,
+                    hora_real=a.hora_real,
+                )
+                for a in resultado.aplicados
+            ],
+        ),
+        VENTAS,
+    )
+
+    verificacion = db.scalar(
+        select(Verificacion).where(Verificacion.orden_estacion_dia_id == dia2.orden_estacion_dia_id)
+    )
+    incidencias = db.scalars(
+        select(Incidencia).where(Incidencia.verificacion_id == verificacion.verificacion_id)
+    ).all()
+    tipos = {i.tipo_incidencia for i in incidencias}
+    assert tipos == {"excedente", "cambio_horario"}
+    excedente = next(i for i in incidencias if i.tipo_incidencia == "excedente")
+    assert excedente.diferencia_spots == 3  # 11 - 8
+    cambio = next(i for i in incidencias if i.tipo_incidencia == "cambio_horario")
+    assert cambio.diferencia_spots == 0
+    assert cambio.monto_ajuste is None
+
+
+def test_emparejamiento_cronologico_entre_varios_horarios_de_la_misma_fecha(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """DIA_1 tiene 2 horarios programados: 07:00 (10 spots) y 20:00 (5 spots). El
+    archivo trae, para esa misma fecha, 09:00 (10 spots) y 20:00 (5 spots) — se
+    emparejan EN ORDEN cronológico: el 1º programado (07:00) con el 1º del archivo
+    (09:00, cambio de horario, spots iguales); el 2º programado (20:00) con el 2º del
+    archivo (20:00, sin ningún cambio)."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(
+        f"Radio Disney,{_DIA_1},09:00,10",
+        f"Radio Disney,{_DIA_1},20:00,5",
+        f"Radio Disney,{_DIA_2},07:00,8",
+    )
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    assert resultado.nuevos == []
+    primero = next(
+        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
+    )
+    segundo = next(
+        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
+    )
+    assert primero.cambio_horario is True
+    assert primero.hora_real == time(9, 0)
+    assert primero.spots == 10
+    assert segundo.cambio_horario is False
+    assert segundo.spots == 5
+
+
+def test_mas_registros_que_programados_en_la_misma_fecha_el_extra_es_dia_nuevo(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """DIA_2 solo tiene 1 horario programado (07:00). El archivo trae 2 registros para
+    esa fecha — el 1º empareja con el programado (sin cambio), el 2º (sobrante) se
+    ofrece como día NUEVO, no como "cambio de horario" de nada."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(
+        f"Radio Disney,{_DIA_1},07:00,10",
+        f"Radio Disney,{_DIA_1},20:00,5",
+        f"Radio Disney,{_DIA_2},07:00,8",
+        f"Radio Disney,{_DIA_2},15:00,3",
+    )
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    assert resultado.errores == []
+    dia2_match = next(
+        a for a in resultado.aplicados if a.fecha_transmision == _DIA_2 and a.hora_inicio == time(7, 0)
+    )
+    assert dia2_match.cambio_horario is False
+    assert dia2_match.spots == 8
+    assert len(resultado.nuevos) == 1
+    assert resultado.nuevos[0].fecha_transmision == _DIA_2
+    assert resultado.nuevos[0].hora_inicio == time(15, 0)
+    assert resultado.nuevos[0].spots == 3
+
+
+def test_menos_registros_que_programados_en_la_misma_fecha_marca_faltante(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """DIA_1 tiene 2 horarios programados (07:00 y 20:00). El archivo solo trae 1
+    registro para esa fecha — el programado que sobra se marca como faltante
+    (spots=0), igual que si el archivo no hubiera mencionado esa fecha en absoluto."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(
+        f"Radio Disney,{_DIA_1},07:00,10",
+        f"Radio Disney,{_DIA_2},07:00,8",
+    )
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    faltante = next(
+        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
+    )
+    assert faltante.spots == 0
+    assert faltante.cambio_horario is False
+
+
 def test_xlsx_se_rechaza_por_no_estar_en_la_lista_blanca(
     db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
 ) -> None:
@@ -652,9 +814,12 @@ def test_http_post_layout_devuelve_archivo_aplicados_y_errores(
 # ══════════════════════════════════════════════════════════════════════════════════
 # ADR-149: avanzar_reales con `dias_nuevos` (días que el layout propuso crear)
 # ══════════════════════════════════════════════════════════════════════════════════
-def test_avanzar_reales_crea_dia_nuevo_sin_incidencia(
+def test_avanzar_reales_crea_dia_nuevo_genera_incidencia_de_bonificacion(
     db: Session, oe_svc: OrdenEstacionService, oe
 ) -> None:
+    """ADR-174b (reemplaza el criterio de ADR-149 para este caso, petición del
+    usuario): un día nuevo del layout nace con `spots_programados=0` — SIEMPRE genera
+    su Incidencia de excedente/bonificación por el total de sus spots."""
     otra_fecha = _DIA_1 + timedelta(days=10)  # dentro de la campaña (hoy+30..hoy+90)
     resultado = oe_svc.avanzar_reales(
         oe.orden_estacion_id,
@@ -680,7 +845,7 @@ def test_avanzar_reales_crea_dia_nuevo_sin_incidencia(
     assert nuevo_dia is not None
     assert nuevo_dia.spots_solicitados == 5
     assert nuevo_dia.spots_asignados == 5
-    assert nuevo_dia.spots_programados is None
+    assert nuevo_dia.spots_programados == 0
 
     verificacion = db.scalar(
         select(Verificacion).where(
@@ -690,11 +855,14 @@ def test_avanzar_reales_crea_dia_nuevo_sin_incidencia(
     assert verificacion is not None
     assert verificacion.spots_verificados == 5
 
-    # spots_asignados == spots_verificados por construcción → nunca hay Incidencia.
     incidencia = db.scalar(
         select(Incidencia).where(Incidencia.verificacion_id == verificacion.verificacion_id)
     )
-    assert incidencia is None
+    assert incidencia is not None
+    assert incidencia.tipo_incidencia == "excedente"
+    assert incidencia.spots_ordenados == 0
+    assert incidencia.spots_ejecutados == 5
+    assert incidencia.diferencia_spots == 5
 
 
 def test_avanzar_reales_dia_nuevo_fuera_de_campania_400(

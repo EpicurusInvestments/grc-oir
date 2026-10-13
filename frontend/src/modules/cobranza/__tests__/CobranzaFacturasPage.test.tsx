@@ -12,6 +12,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CobranzaFacturasPage } from "../cobranzaFactura/pages/CobranzaFacturasPage";
 import type { CobranzaFactura } from "../types";
 
+// ADR-174: "Contacto cobranza" ahora consulta ContactoAnunciante (ya no los campos
+// legado planos) — se mockea para no pegarle a la red real desde jsdom.
+vi.mock("@/modules/catalogos/anunciante/api", () => ({
+  contactoAnuncianteApi: {
+    listPorAnunciante: vi.fn().mockResolvedValue({
+      items: [
+        {
+          contacto_anunciante_id: "ca-1",
+          anunciante_id: "an-1",
+          nombre_contacto: "Carlos Méndez",
+          puesto_contacto: "Finanzas",
+          telefono_contacto: "55 8765 4321",
+          email_contacto: "c.mendez@bimbo.com.mx",
+          activo: true,
+          created_at: "2026-01-01T00:00:00",
+          updated_at: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 1,
+      pages: 1,
+    }),
+  },
+}));
+
 const listMock = vi.fn();
 const getMock = vi.fn();
 const updateMock = vi.fn();
@@ -35,9 +61,6 @@ vi.mock("../api", () => ({
       anunciante_id: "an-1",
       nombre_comercial: "Grupo Bimbo",
       rfc_anunciante: "GBI971120AB3",
-      contacto_nombre: "Carlos Méndez",
-      contacto_email: "c.mendez@bimbo.com.mx",
-      contacto_telefono: "55 8765 4321",
       dias_credito_default: 60,
     },
   ]),

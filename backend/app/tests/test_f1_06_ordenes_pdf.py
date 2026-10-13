@@ -213,6 +213,7 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
         producto="Pan Bimbo Integral 680g",
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=57),
+        producto_tarifa="spot",
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,
@@ -316,11 +317,7 @@ def test_pdf_programados_se_genera_tras_avanzar(
     oe_svc.avanzar_programados(
         oe.orden_estacion_id,
         OrdenEstacionProgramadosIn(
-            dias=[
-                OrdenEstacionDiaProgramadoIn(
-                    orden_estacion_dia_id=dia_id, spots_programados=5
-                )
-            ],
+            dias=[OrdenEstacionDiaProgramadoIn(orden_estacion_dia_id=dia_id, spots_programados=5)],
             reporte_programados_ref="ordenes/prog/x_reporte.pdf",
         ),
         VENTAS,
@@ -366,12 +363,16 @@ def test_pdf_programados_se_genera_con_audios_y_override_por_dia(
 
 
 # ── ADR-118: "Material a Transmitir" en la tabla del PDF de programados ──────────
-def test_nombre_material_sin_audios_devuelve_guion() -> None:
+# ADR-196 (corrige un bug real): `_nombre_material` ya NO tiene un "default compartido"
+# (ADR-187 lo eliminó: 1 material por spot, asignado explícitamente por posición al
+# generar/editar) — sin `orden_estacion_audio_id` propio, regresa `None` (nada que
+# mostrar para ESE spot en particular), no un fallback a `audios[0]`.
+def test_nombre_material_sin_audios_devuelve_none() -> None:
     dia = OrdenEstacionDia(orden_estacion_audio_id=None)
-    assert _nombre_material(dia, []) == "—"
+    assert _nombre_material(dia, []) is None
 
 
-def test_nombre_material_sin_override_usa_el_primero_subido() -> None:
+def test_nombre_material_sin_override_propio_devuelve_none() -> None:
     uno = OrdenEstacionAudio(
         orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="uno.mp3", orden=0
     )
@@ -379,7 +380,7 @@ def test_nombre_material_sin_override_usa_el_primero_subido() -> None:
         orden_estacion_audio_id=uuid.uuid4(), nombre_archivo="dos.mp3", orden=1
     )
     dia = OrdenEstacionDia(orden_estacion_audio_id=None)
-    assert _nombre_material(dia, [uno, dos]) == "uno.mp3"
+    assert _nombre_material(dia, [uno, dos]) is None
 
 
 def test_nombre_material_con_override_usa_el_del_dia() -> None:
@@ -411,11 +412,7 @@ def test_pdf_reales_se_genera_tras_cerrar(
     oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
-            dias=[
-                OrdenEstacionDiaRealIn(
-                    orden_estacion_dia_id=dia_id, spots_verificados=4
-                )
-            ],
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
             reporte_reales_ref="ordenes/reales/x_reporte.pdf",
         ),
         VENTAS,
@@ -445,13 +442,207 @@ def test_pdf_reales_no_truena_con_descripcion_larga(
     oe_svc.avanzar_reales(
         oe.orden_estacion_id,
         OrdenEstacionRealesIn(
-            dias=[
-                OrdenEstacionDiaRealIn(
-                    orden_estacion_dia_id=dia_id, spots_verificados=4
-                )
-            ],
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
         ),
         VENTAS,
     )
     pdf = generar_pdf_reales(db, oe.orden_estacion_id)
     assert pdf.startswith(b"%PDF")
+
+
+# ── ADR-192 (corrige un bug real): los 3 PDFs habían sido consolidados (ADR-118/155/156)
+# a un solo horario, asumiendo que `hora_inicio == hora_fin` siempre (ADR-108) — supuesto
+# inválido desde ADR-184 en adelante (la captura web volvió a un rango real). Vuelven a
+# mostrar AMBOS — se extrae el texto real del PDF (no solo "no truena") para probarlo. ──
+def _texto_pdf(pdf_bytes: bytes) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def test_pdf_servicio_muestra_hora_inicio_y_hora_fin(db: Session, oe_asignada) -> None:
+    _, oe = oe_asignada
+    texto = _texto_pdf(generar_pdf_servicio(db, oe.orden_estacion_id))
+    assert "Hora Inicio" in texto
+    assert "Hora Fin" in texto
+    assert "08:00:00" in texto
+    assert "10:00:00" in texto
+
+
+def test_pdf_programados_muestra_rango_de_horario(db: Session, oe_asignada) -> None:
+    _, oe = oe_asignada
+    # El salto de línea dentro de la columna angosta puede partir "10:00 am" entre 2
+    # renglones al extraer texto (word-wrap de reportlab) — se normalizan espacios en
+    # blanco/saltos de línea a un solo espacio antes de comparar.
+    texto = " ".join(_texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id)).lower().split())
+    assert "8:00 am a 10:00 am" in texto
+
+
+# ADR-196 (corrige un bug real de ADR-192, petición del usuario): "HORA" en el PDF de
+# Reales vuelve a mostrar UN SOLO horario (el punto real de ese spot, `hora_inicio`) —
+# NO el rango `inicio - fin` que ADR-192 había restaurado por error (desde ADR-186,
+# `hora_fin` es el fin de rango COMPARTIDO entre todos los spots del día, no algo propio
+# de un renglón individual — mostrarlo como rango ahí confundía más de lo que aclaraba).
+def test_pdf_reales_muestra_un_solo_horario_no_un_rango(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
+        ),
+        VENTAS,
+    )
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id))
+    assert "08:00" in texto
+    assert "08:00 - 10:00" not in texto
+
+
+# ── ADR-193 (petición del usuario): "Marca" y "Producto" (`oe.producto_tarifa`, catálogo
+# F0-06) no aparecían en NINGÚN PDF — "Producto"/"Campaña" eran, de hecho, el MISMO campo
+# (`oc.producto`, texto libre) mal etiquetado como "Producto". Ahora son 3 campos
+# distintos en los 3 PDFs: Marca (`ctx.marca.nombre_marca`), Campaña (`oc.producto`,
+# "Pan Bimbo Integral 680g" en el fixture) y Producto (`oe.producto_tarifa`, "spot"). ──
+def test_pdf_servicio_muestra_marca_y_producto_del_catalogo(db: Session, oe_asignada) -> None:
+    _, oe = oe_asignada
+    texto = _texto_pdf(generar_pdf_servicio(db, oe.orden_estacion_id))
+    assert "Marca Uno" in texto
+    assert "Campaña" in texto  # "Producto" (oc.producto) se relabeled a "Campaña"
+    # "Producto" (oe.producto_tarifa) y "Campaña" (oc.producto) comparten el mismo
+    # valor de prueba ("spot" NO es el caso — ver fixture: producto_tarifa="spot",
+    # producto="Pan Bimbo Integral 680g" — así que ambos textos deben verse, distintos.
+    assert "Pan Bimbo Integral 680g" in texto
+    assert "spot" in texto.lower()
+
+
+def test_pdf_programados_muestra_marca_y_producto_del_catalogo(db: Session, oe_asignada) -> None:
+    _, oe = oe_asignada
+    texto = _texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id))
+    assert "MARCA" in texto
+    assert "MARCA UNO" in texto.upper()
+    assert "PRODUCTO" in texto
+    assert "SPOT" in texto.upper()
+
+
+def test_pdf_reales_muestra_marca_y_producto_del_catalogo(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
+        ),
+        VENTAS,
+    )
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id)).upper()
+    assert "MARCA UNO" in texto
+    assert "PRODUCTO" in texto
+
+
+# ── ADR-196 (corrige un bug real, petición del usuario): Servicio y Programados vuelven
+# a mostrar UN SOLO renglón por FECHA (como la grid de captura, ADR-185) — antes
+# mostraban 1 renglón por SPOT (varias filas reales de la misma fecha, ADR-127), con
+# horarios distintos repitiendo la misma fecha varias veces. "Capturar reales"/el PDF de
+# Reales NO se agrupan, siguen siendo 1 renglón por spot (confirmado aparte, arriba). ──
+def test_pdf_servicio_agrupa_varias_filas_reales_de_la_misma_fecha_en_un_solo_renglon(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    fecha = date.today() + timedelta(days=32)
+    dias = [
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(8, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(9, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha,
+            hora_inicio=time(10, 0),
+            hora_fin=time(18, 0),
+            spots_asignados=1,
+        ),
+    ]
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, dias=dias), VENTAS)
+
+    texto = _texto_pdf(generar_pdf_servicio(db, oe.orden_estacion_id))
+    # 1 SOLO renglón para esa fecha: Hora Inicio = la más temprana (08:00:00), Hora Fin =
+    # el fin de rango compartido (18:00:00), Spots = la suma (3) — no 3 renglones sueltos
+    # con 09:00:00/10:00:00 viéndose cada uno por separado.
+    assert texto.count(fecha.strftime("%d/%m/%Y")) == 1
+    assert "08:00:00" in texto
+    assert "18:00:00" in texto
+    assert "09:00:00" not in texto
+    assert "10:00:00" not in texto
+
+
+def test_pdf_programados_agrupa_por_fecha_y_lista_los_materiales_distintos_separados_por_coma(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+    tmp_path,
+) -> None:
+    from app.integrations.almacenamiento.adapter_local import AlmacenamientoLocal
+
+    class _ArchivoFalso:
+        def __init__(self, filename: str, contenido: bytes) -> None:
+            self.filename = filename
+            self.file = io.BytesIO(contenido)
+
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    fecha = date.today() + timedelta(days=32)
+    dias = [
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(8, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(9, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha,
+            hora_inicio=time(10, 0),
+            hora_fin=time(18, 0),
+            spots_asignados=1,
+        ),
+    ]
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, dias=dias), VENTAS)
+
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = b"ID3" + b"\x00" * 40
+    uno = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("uno.mp3", contenido), VENTAS, almacenamiento
+    )
+    dos = oe_svc.agregar_audio(
+        oe.orden_estacion_id, _ArchivoFalso("dos.mp3", contenido), VENTAS, almacenamiento
+    )
+    dias_reales = oe_svc.dias(oe.orden_estacion_id)
+    dia_8 = next(d for d in dias_reales if d.hora_inicio == time(8, 0))
+    dia_9 = next(d for d in dias_reales if d.hora_inicio == time(9, 0))
+    # dia_10 (hora_inicio=10:00) se queda SIN override — no aporta un 3er nombre.
+    oe_svc.asignar_audio_dia(
+        oe.orden_estacion_id,
+        dia_8.orden_estacion_dia_id,
+        OrdenEstacionDiaAudioIn(orden_estacion_audio_id=uno.orden_estacion_audio_id),
+        VENTAS,
+    )
+    oe_svc.asignar_audio_dia(
+        oe.orden_estacion_id,
+        dia_9.orden_estacion_dia_id,
+        OrdenEstacionDiaAudioIn(orden_estacion_audio_id=dos.orden_estacion_audio_id),
+        VENTAS,
+    )
+
+    texto = " ".join(_texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id)).split())
+    assert texto.count("Material a Transmitir") == 1  # 1 SOLO renglón para esa fecha
+    assert "uno.mp3, dos.mp3" in texto

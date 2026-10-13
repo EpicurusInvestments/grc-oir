@@ -22,22 +22,61 @@
  * la estación seleccionada (`Estacion.tipo_senal`), capturarla aquí también permitía
  * una inconsistencia sin ningún beneficio. "Duración del spot" se renombra a solo
  * "Duración".
+ *
+ * ADR-166 (petición del usuario): "Producto" y "Duración" dejan de ser selectores fijos
+ * y se llenan desde el catálogo `DuracionSpotCatalogo` ("Producto Duración"): el select
+ * de Producto lista los valores distintos y activos del catálogo; al elegir uno, el
+ * select de Duración lista las `descripcion_duracion` de ESE producto — EXCLUYENDO el
+ * literal "sin resultado" (ADR-165), que aquí NUNCA es una duración seleccionable. Si
+ * para el producto elegido no queda ninguna duración real, se bloquea Guardar con un
+ * mensaje para ir a dar de alta una en ese catálogo. Al editar una tarifa ya existente
+ * cuya combinación no esté (todavía) en el catálogo, se conserva como opción de
+ * respaldo para no romper la edición de datos previos a esta conexión.
+ *
+ * ADR-177 (petición del usuario): se agrega "Anunciante" (selector) como PRIMER campo
+ * del formulario, antes de "Nombre de la emisora" — la llave de la tarifa pasa de
+ * (Emisora+Producto+Duración) a (Anunciante+Emisora+Producto+Duración).
+ *
+ * ADR-179 (petición del usuario): "Motivo del cambio" deja de ser texto libre y pasa a
+ * un select con las Descripciones del catálogo Constantes del Sistema, grupo
+ * `MotivoCambio`, clave `CambioTarifa` (ADR-178: `CambioTarifa_1`, `CambioTarifa_2`...) —
+ * el valor que se envía al backend sigue siendo la Descripción elegida (texto), igual
+ * que antes. Si el catálogo no tiene ninguna opción activa (vacío o error de carga), cae
+ * de regreso al input de texto libre para no bloquear la edición. El campo (select o
+ * input) se deshabilita mientras `tarifa_bruta`/`descuento_pct` NO difieran de su valor
+ * original — solo se habilita al modificar alguno de los dos, mismo criterio que ya
+ * exigía el motivo (`algunSensibleCambio`).
  */
+
+import { useMemo } from "react";
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import type { Anunciante } from "@/modules/catalogos/anunciante/types";
+import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
+import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
+import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import type { Estacion } from "@/modules/catalogos/estacion/types";
 import { FieldTag, MoneyInput, SavingOverlay } from "@/shared/ui";
 
 import { calcularNetaPreview, fmtMoneda } from "../format";
-import { DURACION_SPOT_OPCIONES, PRODUCTO_OPCIONES, type TarifaPlazaCreate } from "../types";
+import type { TarifaPlazaCreate } from "../types";
+
+const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
+
+// ADR-179: clave base (sin sufijo) del grupo MotivoCambio reservada para Tarifa.
+const CLAVE_BASE_MOTIVO_TARIFA = "cambiotarifa";
 
 const schema = z.object({
+  anunciante_id: z.string().min(1, "Selecciona un anunciante."),
   estacion_id: z.string().min(1, "Selecciona una emisora."),
-  duracion_spot: z.enum(["20s", "30s", "60s"]),
-  producto: z.enum(["spot", "mencion", "control_remoto", "patrocinio"]),
+  duracion_spot: z
+    .string()
+    .min(1, "Selecciona una duración.")
+    .refine((v) => !esSinResultado(v), 'No se puede usar "sin resultado" como duración.'),
+  producto: z.string().min(1, "Selecciona un producto."),
   tarifa_bruta: z
     .string()
     .trim()
@@ -63,6 +102,7 @@ export type TarifaFormOutput = TarifaPlazaCreate & { motivo_cambio?: string | nu
 
 interface TarifaFormProps {
   title: string;
+  anunciantes: Anunciante[];
   estaciones: Estacion[];
   defaultValues?: Partial<TarifaFormValues>;
   isEdit?: boolean;
@@ -74,6 +114,7 @@ interface TarifaFormProps {
 
 export function TarifaForm({
   title,
+  anunciantes,
   estaciones,
   defaultValues,
   isEdit = false,
@@ -87,14 +128,16 @@ export function TarifaForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     setError,
     formState: { errors },
   } = useForm<TarifaFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
+      anunciante_id: "",
       estacion_id: "",
-      duracion_spot: "30s",
-      producto: "spot",
+      duracion_spot: "",
+      producto: "",
       tarifa_bruta: "",
       descuento_pct: "0",
       notas: "",
@@ -102,6 +145,60 @@ export function TarifaForm({
       ...defaultValues,
     },
   });
+
+  // ADR-166: Producto/Duración salen del catálogo "Producto Duración", no de un enum fijo.
+  const catalogo = useDuracionesSpot().useList({ activo: true, size: 100 });
+  const entradas = useMemo(() => catalogo.data?.items ?? [], [catalogo.data]);
+
+  const productoActual = watch("producto");
+
+  const productos = useMemo(() => {
+    const vistos = new Map<string, string>(); // key lower -> forma original
+    for (const e of entradas) vistos.set(e.producto.trim().toLowerCase(), e.producto);
+    // Respaldo: una tarifa ya existente cuyo producto no esté (todavía) en el catálogo
+    // no debe perder su valor al editar.
+    if (defaultValues?.producto && !vistos.has(defaultValues.producto.trim().toLowerCase())) {
+      vistos.set(defaultValues.producto.trim().toLowerCase(), defaultValues.producto);
+    }
+    return [...vistos.values()].sort((a, b) => a.localeCompare(b, "es"));
+  }, [entradas, defaultValues?.producto]);
+
+  const duraciones = useMemo(() => {
+    const delProducto = entradas.filter(
+      (e) => e.producto.trim().toLowerCase() === productoActual.trim().toLowerCase(),
+    );
+    const vistos = new Map<string, string>();
+    for (const e of delProducto) {
+      if (esSinResultado(e.descripcion_duracion)) continue;
+      vistos.set(e.descripcion_duracion.trim().toLowerCase(), e.descripcion_duracion);
+    }
+    // Mismo respaldo que arriba, pero solo mientras el producto elegido siga siendo el
+    // original de esta tarifa (si el usuario lo cambia, el respaldo ya no aplica).
+    if (
+      defaultValues?.duracion_spot &&
+      productoActual.trim().toLowerCase() === (defaultValues.producto ?? "").trim().toLowerCase() &&
+      !vistos.has(defaultValues.duracion_spot.trim().toLowerCase())
+    ) {
+      vistos.set(defaultValues.duracion_spot.trim().toLowerCase(), defaultValues.duracion_spot);
+    }
+    return [...vistos.values()];
+  }, [entradas, productoActual, defaultValues?.producto, defaultValues?.duracion_spot]);
+
+  const sinDuracionDisponible = productoActual.trim() !== "" && duraciones.length === 0;
+
+  // ADR-179: Descripciones del catálogo Constantes del Sistema (grupo MotivoCambio,
+  // clave CambioTarifa/CambioTarifa_N) para el select de "Motivo del cambio".
+  const motivosQuery = useConstantes().useList({ grupo: "MotivoCambio", activo: true, size: 100 });
+  const motivosCambioTarifa = useMemo(() => {
+    const items = motivosQuery.data?.items ?? [];
+    return items.filter((c) => {
+      const clave = c.clave.trim().toLowerCase();
+      return clave === CLAVE_BASE_MOTIVO_TARIFA || clave.startsWith(`${CLAVE_BASE_MOTIVO_TARIFA}_`);
+    });
+  }, [motivosQuery.data]);
+  // Si el catálogo aún no tiene ninguna opción (vacío o falló la carga), se cae al input
+  // de texto libre para no bloquear la edición de la tarifa por eso.
+  const motivoComoTexto = !motivosQuery.isLoading && motivosCambioTarifa.length === 0;
 
   const netaPreview = calcularNetaPreview(watch("tarifa_bruta"), watch("descuento_pct"));
   const netaTexto = Number.isFinite(netaPreview) ? fmtMoneda(netaPreview) : "—";
@@ -117,6 +214,7 @@ export function TarifaForm({
   const algunSensibleCambio = brutaCambiada || descuentoCambiado;
 
   const submit = handleSubmit((data) => {
+    if (sinDuracionDisponible) return; // bloqueado: el banner ya explica por qué.
     const motivo = data.motivo_cambio?.trim();
     if (algunSensibleCambio && !motivo) {
       setError("motivo_cambio", {
@@ -126,6 +224,7 @@ export function TarifaForm({
       return;
     }
     onSubmit({
+      anunciante_id: data.anunciante_id,
       estacion_id: data.estacion_id,
       duracion_spot: data.duracion_spot,
       producto: data.producto,
@@ -145,8 +244,19 @@ export function TarifaForm({
       <div className="db">
         <div className="sec">Clasificación</div>
 
+        <div className="fl fl-required">Anunciante</div>
+        <select className="fsel" autoFocus {...register("anunciante_id")}>
+          <option value="">Selecciona…</option>
+          {anunciantes.map((a) => (
+            <option key={a.anunciante_id} value={a.anunciante_id}>
+              {a.nombre_comercial}
+            </option>
+          ))}
+        </select>
+        <div className="fe">{errors.anunciante_id?.message}</div>
+
         <div className="fl fl-required">Nombre de la emisora</div>
-        <select className="fsel" autoFocus {...register("estacion_id")}>
+        <select className="fsel" {...register("estacion_id")}>
           <option value="">Selecciona…</option>
           {estaciones.map((e) => (
             <option key={e.estacion_id} value={e.estacion_id}>
@@ -157,24 +267,43 @@ export function TarifaForm({
         </select>
         <div className="fe">{errors.estacion_id?.message}</div>
 
-        <div className="fl fl-required">Producto</div>
-        <select className="fsel" {...register("producto")}>
-          {PRODUCTO_OPCIONES.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
+        <div className="fl fl-required">
+          Producto{" "}
+          <span style={{ color: "var(--text3)", fontWeight: 400 }}>
+            (catálogo Producto Duración)
+          </span>
+        </div>
+        <select
+          className="fsel"
+          {...register("producto", { onChange: () => setValue("duracion_spot", "") })}
+          disabled={catalogo.isLoading}
+        >
+          <option value="">{catalogo.isLoading ? "Cargando…" : "Selecciona…"}</option>
+          {productos.map((p) => (
+            <option key={p} value={p}>
+              {p}
             </option>
           ))}
         </select>
         <div className="fe">{errors.producto?.message}</div>
 
         <div className="fl fl-required">Duración</div>
-        <select className="fsel" {...register("duracion_spot")}>
-          {DURACION_SPOT_OPCIONES.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        {sinDuracionDisponible ? (
+          <div className="state-msg error" style={{ textAlign: "left", margin: 0 }}>
+            El producto «{productoActual}» no tiene ninguna duración capturada en el
+            catálogo Producto Duración. Ve a Catálogos → Producto Duración y da de alta
+            una duración real para este producto antes de continuar.
+          </div>
+        ) : (
+          <select className="fsel" {...register("duracion_spot")} disabled={!productoActual}>
+            <option value="">{productoActual ? "Selecciona…" : "Elige un producto primero"}</option>
+            {duraciones.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="fe">{errors.duracion_spot?.message}</div>
 
         <div className="sec">Tarifa</div>
@@ -217,11 +346,29 @@ export function TarifaForm({
                 (si modificas la tarifa bruta o el descuento)
               </span>
             </div>
-            <input
-              className="fi"
-              placeholder="Requerido al modificar el valor…"
-              {...register("motivo_cambio")}
-            />
+            {motivoComoTexto ? (
+              <input
+                className="fi"
+                placeholder="Requerido al modificar el valor…"
+                disabled={!algunSensibleCambio}
+                {...register("motivo_cambio")}
+              />
+            ) : (
+              <select
+                className="fsel"
+                disabled={motivosQuery.isLoading || !algunSensibleCambio}
+                {...register("motivo_cambio")}
+              >
+                <option value="">
+                  {motivosQuery.isLoading ? "Cargando…" : "Selecciona…"}
+                </option>
+                {motivosCambioTarifa.map((m) => (
+                  <option key={m.constante_sistema_id} value={m.descripcion}>
+                    {m.descripcion}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="fe">{errors.motivo_cambio?.message}</div>
           </>
         )}

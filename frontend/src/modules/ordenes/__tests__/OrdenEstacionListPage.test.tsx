@@ -3,7 +3,9 @@
  * resaltarla entre todas — el buscador arranca con su folio.
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionListPage } from "../ordenEstacion/pages/OrdenEstacionListPage";
@@ -11,6 +13,29 @@ import { OrdenesProvider } from "../state/OrdenesContext";
 import { estaciones } from "../state/catalogosCache";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE, makeRow } from "./fixtures";
+
+// ADR-169: "Producto"/"Duración" (alta de OrdenEstacion) se llenan desde el catálogo
+// "Producto Duración" vía react-query — mock del catálogo (sin pegarle a la red real).
+vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
+  duracionSpotCatalogoApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { duracion_spot_catalogo_id: "d1", producto: "spot", descripcion_duracion: "30s", activo: true },
+      ],
+      total: 1,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
+/** Envuelve con el `QueryClientProvider` que ahora necesita `OrdenEstacionForm` (ADR-169)
+ *  para leer el catálogo "Producto Duración" — una instancia nueva por test. */
+function conQueryClient(children: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
 
 // ADR-113 (fix): tras "Guardar" en el alta, la pantalla se queda en el mismo formulario
 // (ADR-103, ahora en modo edición de la OE recién creada) — se mockean las llamadas reales
@@ -49,9 +74,11 @@ function renderPage(oeIdPreseleccionada?: string) {
   const oe1 = makeOE({ id: "oe-1", folio_orden_interna: "OE-2026-0054A", orden_id: oc.id });
   const oe2 = makeOE({ id: "oe-2", folio_orden_interna: "OE-2026-0054B", orden_id: oc.id });
   const utils = render(
-    <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [oe1, oe2], incidencias: [], historialComisiones: [] }}>
-      <OrdenEstacionListPage oeIdPreseleccionada={oeIdPreseleccionada} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-    </OrdenesProvider>,
+    conQueryClient(
+      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [oe1, oe2], incidencias: [], historialComisiones: [] }}>
+        <OrdenEstacionListPage oeIdPreseleccionada={oeIdPreseleccionada} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+      </OrdenesProvider>,
+    ),
   );
   const tabla = utils.container.querySelector("table") as HTMLTableElement;
   return { ...utils, tabla };
@@ -99,9 +126,11 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     const vieja = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0041A", orden_id: oc.id, created_at: "2026-01-01" });
     const nueva = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0050A", orden_id: oc.id, created_at: "2026-06-15" });
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [vieja, nueva], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [vieja, nueva], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
 
@@ -122,9 +151,11 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     const recienCreada = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0060A", orden_id: oc.id, created_at: "2026-09-11" });
     const yaExistia = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0059A", orden_id: oc.id, created_at: "2026-09-11" });
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [recienCreada, yaExistia], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [recienCreada, yaExistia], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
     const filas = within(tabla).getAllByRole("row").slice(1);
@@ -137,6 +168,11 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
 // guardar (Estación/Producto/Duración/Tarifa + un audio + un día con spots).
 async function capturarOEMinima(container: HTMLElement) {
   fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+  // ADR-169: "Producto" se llena desde el catálogo "Producto Duración" vía react-query —
+  // hay que esperar a que la opción exista antes de poder seleccionarla.
+  await waitFor(() =>
+    expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+  );
   fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
   fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
   fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -157,9 +193,11 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
   it("al guardar aparece el modal de confirmación (no pasa directo a edición, ADR-103 ya no aplica)", async () => {
     const oc = makeOC({ id: "oc-1" });
     render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
     const container = document.body;
     await capturarOEMinima(container);
@@ -176,9 +214,11 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
   it("'Sí, generar otra' limpia el formulario (no arrastra los datos de la OE anterior)", async () => {
     const oc = makeOC({ id: "oc-1" });
     render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
     const container = document.body;
     await capturarOEMinima(container);
@@ -197,9 +237,11 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
   it("'No, ir a la lista' regresa a la lista con la OE recién creada seleccionada", async () => {
     const oc = makeOC({ id: "oc-1" });
     render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
     const container = document.body;
     await capturarOEMinima(container);
@@ -219,9 +261,11 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
     const oc = makeOC({ id: "oc-1" });
     const onVerOC = vi.fn();
     render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={onVerOC} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage ocIdParaNueva={oc.id} onVerOC={onVerOC} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));

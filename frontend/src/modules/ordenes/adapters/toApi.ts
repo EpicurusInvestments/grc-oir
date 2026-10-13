@@ -33,7 +33,9 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput) {
     archivo_orden_original_path: input.odc_pdf_ref || null,
     fecha_inicio_campania: input.fecha_inicio_campania,
     fecha_fin_campania: input.fecha_fin_campania,
-    duracion_spot: input.duracion_spot,
+    // ADR-167: ambos opcionales — "" (combo sin elegir) se manda como null.
+    producto_tarifa: input.producto_tarifa || null,
+    duracion_spot: input.duracion_spot || null,
     precio_unitario: input.precio_unitario,
     total_spots: input.total_spots,
     cantidad_spots_bonificables: input.cantidad_spots_bonificables,
@@ -67,6 +69,7 @@ const CAMPOS_ACTUALIZABLES = [
   "afiliado_factura_directo_al_cliente",
   "fecha_inicio_campania",
   "fecha_fin_campania",
+  "producto_tarifa",
   "duracion_spot",
   "precio_unitario",
   "total_spots",
@@ -75,12 +78,17 @@ const CAMPOS_ACTUALIZABLES = [
   "observaciones_libres",
 ] as const satisfies readonly (keyof OrdenCliente)[];
 
-export function ordenClienteUpdateToApi(patch: Partial<OrdenCliente>): Record<string, unknown> {
+export function ordenClienteUpdateToApi(
+  patch: Partial<OrdenCliente> & { motivo_cambio_fecha?: string },
+): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const campo of CAMPOS_ACTUALIZABLES) {
     if (campo in patch) body[campo] = patch[campo];
   }
   if ("odc_pdf_ref" in patch) body.archivo_orden_original_path = patch.odc_pdf_ref;
+  // ADR-180: transitorio — el backend solo lo exige si fecha_inicio/fin_campania
+  // de verdad cambiaron respecto al valor guardado.
+  if ("motivo_cambio_fecha" in patch) body.motivo_cambio_fecha = patch.motivo_cambio_fecha || null;
   return body;
 }
 
@@ -153,6 +161,9 @@ export function realesToApi(input: AvanzarARealesInput) {
     dias: input.horariosReales.map((row) => ({
       orden_estacion_dia_id: row.orden_estacion_dia_id,
       spots_verificados: row.spots_diarios,
+      // ADR-174b: hora real reportada por el layout, si difiere de la programada — el
+      // backend genera la Incidencia de cambio de horario cuando corresponde.
+      hora_real: row.hora_real ?? null,
     })),
     // ADR-149: días propuestos por el layout que no existían — el backend los crea
     // (spots_solicitados = spots_asignados = spots_verificados = spots) solo aquí, al

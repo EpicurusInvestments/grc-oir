@@ -17,16 +17,20 @@ agencia** (`agencia_id` con FK) o **directo** (`agencia_id` NULL). Reglas propia
 propia), igual que Estación dentro de Afiliado. Expone su CRUD completo + la ruta
 `GET /catalogos/marcas/anunciante/{anunciante_id}` para el panel anidado.
 
-**ContactoAnunciante** (entidad NUEVA, fuera de la spec BD v2 — ADR, petición del
+**ContactoAnunciante** (entidad NUEVA, fuera de la spec BD v2 — ADR-091, petición del
 usuario): el Anunciante ya traía un solo contacto plano (`contacto_nombre`/
-`contacto_email`/`contacto_telefono`, arriba). El usuario pidió poder guardar VARIOS
+`contacto_email`/`contacto_telefono`). El usuario pidió poder guardar VARIOS
 contactos. Mismo patrón que Marca (anidada, mirror línea por línea: CRUD completo +
 `GET /catalogos/contactos-anunciante/anunciante/{anunciante_id}`), en tabla propia
 (no comparte tabla con `ContactoAgencia` — sin discriminador ni FK polimórfica, cada
-una con su FK simple al padre). Los 3 campos planos existentes quedan como LEGADO, sin
-tocar: se dejan de capturar desde el formulario pero se siguen mostrando de solo
-lectura en el detalle si una fila vieja los trae (mismo criterio que
-`archivo_nombre`/`archivo_path` en Facturas).
+una con su FK simple al padre).
+
+**ADR-174 (petición del usuario, reporte de bug):** los 3 campos planos legado
+(`contacto_nombre`/`contacto_email`/`contacto_telefono`) se ELIMINAN por completo —
+ADR-091 los había dejado de solo lectura ("Legado") en el detalle, pero convivían de
+forma confusa junto a "Contactos" (varios) y el usuario pidió quitarlos. Único
+consumidor real detectado: `CobranzaFacturasPage.tsx` ("Contacto cobranza"), migrado a
+leer el primer `ContactoAnunciante` ACTIVO en vez de estos campos.
 
 Portabilidad SQL Server (ADR-014): el filtro Directo usa `agencia_id IS NULL`
 (`.is_(None)`, válido para NULL); los conteos usan `activo == True` (→ `activo = 1`).
@@ -115,9 +119,6 @@ class Anunciante(Base):
     # esta columna solo sugiere). `AGREGADOS.UsoCFDI` del layout del PAC.
     uso_cfdi_default: Mapped[str | None] = mapped_column(Unicode(5), default=None)
     referencia_anunciante: Mapped[str | None] = mapped_column(Unicode(250), default=None)
-    contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
     # PARÁMETRO SENSIBLE (spec): días de crédito por defecto.
     dias_credito_default: Mapped[int] = mapped_column(default=0)
     activo: Mapped[bool] = mapped_column(default=True)
@@ -146,9 +147,6 @@ class AnuncianteCreate(BaseModel):
     regimen_fiscal: str | None = Field(default=None, max_length=4)
     uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
     dias_credito_default: int = Field(default=0, ge=0)
 
     @field_validator("rfc_anunciante")
@@ -176,9 +174,6 @@ class AnuncianteUpdate(BaseModel):
     regimen_fiscal: str | None = Field(default=None, max_length=4)
     uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
     dias_credito_default: int | None = Field(default=None, ge=0)
     # Transitorio (NO es columna): requerido si se modifica `dias_credito_default`.
     motivo_cambio: str | None = Field(default=None, max_length=500)
@@ -211,9 +206,6 @@ class AnuncianteRead(CatalogoReadBase):
     regimen_fiscal: str | None = None
     uso_cfdi_default: str | None = None
     referencia_anunciante: str | None = None
-    contacto_nombre: str | None = None
-    contacto_email: str | None = None
-    contacto_telefono: str | None = None
     dias_credito_default: int
     # Derivados (solo lectura; NO se aceptan en Create/Update):
     agencia_nombre: str | None = None  # nombre_agencia de la agencia (None si es directo)

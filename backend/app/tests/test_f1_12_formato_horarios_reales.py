@@ -219,6 +219,7 @@ def _oc_payload(cat: dict[str, uuid.UUID], **overrides: object) -> OrdenClienteC
         producto="Pan Bimbo Integral 680g",
         fecha_inicio_campania=date.today() + timedelta(days=30),
         fecha_fin_campania=date.today() + timedelta(days=57),
+        producto_tarifa="spot",
         duracion_spot="30s",
         precio_unitario=Decimal("1000.00"),
         total_spots=100,
@@ -412,6 +413,7 @@ def _crear_oc_oe_http(client: TestClient, cat: dict[str, uuid.UUID]) -> str:
             "anunciante_id": str(cat["anunciante"]),
             "fecha_inicio_campania": str(date.today() + timedelta(days=1)),
             "fecha_fin_campania": str(date.today() + timedelta(days=30)),
+            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_unitario": "1000.00",
             "total_spots": 10,
@@ -426,6 +428,7 @@ def _crear_oc_oe_http(client: TestClient, cat: dict[str, uuid.UUID]) -> str:
         json={
             "orden_id": orden_id,
             "estacion_id": str(cat["estacion"]),
+            "producto_tarifa": "spot",
             "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_spot": "800.00",

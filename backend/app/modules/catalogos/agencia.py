@@ -13,14 +13,23 @@ Nota de dependientes: la baja de una agencia con anunciantes activos se bloquear
 `_pre_desactivar` cuando exista la entidad Anunciante (F0-03, tanda 2). En esta tanda la
 tabla `anunciante` aún no existe, por lo que la baja lógica no valida dependientes todavía.
 
-**ContactoAgencia** (entidad NUEVA, fuera de la spec BD v2 — petición del usuario): la
-Agencia ya traía un solo contacto plano (`contacto_nombre`/`contacto_email`/
-`contacto_telefono`, arriba). El usuario pidió poder guardar VARIOS contactos, mismo
-alcance que `ContactoAnunciante` (`app/modules/catalogos/anunciante.py`) — mirror línea
-por línea de esa entidad, tabla propia (no comparte tabla con `ContactoAnunciante`,
-misma razón: FKs simples en vez de una polimórfica). Los 3 campos planos existentes
-quedan como LEGADO, sin tocar: se dejan de capturar desde el formulario pero se siguen
-mostrando de solo lectura en el detalle si una fila vieja los trae.
+**ContactoAgencia** (entidad NUEVA, fuera de la spec BD v2 — ADR-091, petición del
+usuario): la Agencia ya traía un solo contacto plano (`contacto_nombre`/
+`contacto_email`/`contacto_telefono`). El usuario pidió poder guardar VARIOS contactos,
+mismo alcance que `ContactoAnunciante` (`app/modules/catalogos/anunciante.py`) — mirror
+línea por línea de esa entidad, tabla propia (no comparte tabla con `ContactoAnunciante`,
+misma razón: FKs simples en vez de una polimórfica).
+
+**ADR-174 (petición del usuario, reporte de bug):** los 3 campos planos legado se
+ELIMINAN por completo — ver la nota completa en `anunciante.py` (mismo ADR, aplicado a
+los 3 catálogos con contacto legado).
+
+**ADR-175 (petición del usuario):** domicilio ESTRUCTURADO (10 campos, autocompletado
+por código postal contra `asentamiento_postal`), mismo mecanismo que ADR-059 agregó a
+Anunciante/EmpresaFacturadora — ADR-060 había dejado explícitamente pendiente a Agencia
+("Agencia TODAVÍA no tiene domicilio estructurado"). Agencia no tenía ningún campo de
+domicilio antes (ni siquiera uno legado tipo `localizacion`), así que aquí no hay nada
+que preservar — son 10 columnas nuevas, nullable.
 
 Portabilidad SQL Server (ADR-014): comparaciones booleanas con `== True`; la unicidad
 case-insensitive se resuelve con `func.lower(...)`, portable a SQL Server y SQLite.
@@ -84,9 +93,18 @@ class Agencia(Base):
     agencia_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     nombre_agencia: Mapped[str] = mapped_column(Unicode(200), unique=True, index=True)
     rfc_agencia: Mapped[str] = mapped_column(Unicode(13), index=True)
-    contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
+    # Domicilio ESTRUCTURADO (ADR-175, mismo mecanismo que ADR-059 en Anunciante/
+    # EmpresaFacturadora): autocompletado por código postal contra `asentamiento_postal`.
+    calle: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    numero_exterior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    numero_interior: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    colonia: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    localidad: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    referencia_domicilio: Mapped[str | None] = mapped_column(Unicode(250), default=None)
+    municipio: Mapped[str | None] = mapped_column(Unicode(150), default=None)
+    estado: Mapped[str | None] = mapped_column(Unicode(100), default=None)
+    pais: Mapped[str | None] = mapped_column(Unicode(3), default="MEX")
+    codigo_postal: Mapped[str | None] = mapped_column(Unicode(5), default=None)
     # Clave SAT (catálogo c_RegimenFiscal), sugerida desde `ConstantesSistema` grupo
     # RegimenFiscal — sin FK formal (mismo patrón que `metodo_pago_clave` en F2). Es el
     # régimen de la agencia cuando actúa como RECEPTOR de la factura (trato vía agencia):
@@ -107,9 +125,16 @@ class Agencia(Base):
 class AgenciaCreate(BaseModel):
     nombre_agencia: str = Field(min_length=1, max_length=200)
     rfc_agencia: str = Field(min_length=12, max_length=13)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default="MEX", max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
     regimen_fiscal: str | None = Field(default=None, max_length=4)
     porcentaje_comision_agencia_default: Decimal = Field(
         default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2
@@ -124,9 +149,16 @@ class AgenciaCreate(BaseModel):
 class AgenciaUpdate(BaseModel):
     nombre_agencia: str | None = Field(default=None, min_length=1, max_length=200)
     rfc_agencia: str | None = Field(default=None, min_length=12, max_length=13)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
+    calle: str | None = Field(default=None, max_length=150)
+    numero_exterior: str | None = Field(default=None, max_length=20)
+    numero_interior: str | None = Field(default=None, max_length=20)
+    colonia: str | None = Field(default=None, max_length=150)
+    localidad: str | None = Field(default=None, max_length=150)
+    referencia_domicilio: str | None = Field(default=None, max_length=250)
+    municipio: str | None = Field(default=None, max_length=150)
+    estado: str | None = Field(default=None, max_length=100)
+    pais: str | None = Field(default=None, max_length=3)
+    codigo_postal: str | None = Field(default=None, max_length=5)
     regimen_fiscal: str | None = Field(default=None, max_length=4)
     porcentaje_comision_agencia_default: Decimal | None = Field(
         default=None, ge=0, le=100, max_digits=5, decimal_places=2
@@ -147,9 +179,16 @@ class AgenciaRead(CatalogoReadBase):
     agencia_id: uuid.UUID
     nombre_agencia: str
     rfc_agencia: str
-    contacto_nombre: str | None = None
-    contacto_email: str | None = None
-    contacto_telefono: str | None = None
+    calle: str | None = None
+    numero_exterior: str | None = None
+    numero_interior: str | None = None
+    colonia: str | None = None
+    localidad: str | None = None
+    referencia_domicilio: str | None = None
+    municipio: str | None = None
+    estado: str | None = None
+    pais: str | None = None
+    codigo_postal: str | None = None
     regimen_fiscal: str | None = None
     porcentaje_comision_agencia_default: Decimal
     # Derivado (solo lectura; NO se acepta en Create/Update):

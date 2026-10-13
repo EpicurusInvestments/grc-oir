@@ -3,6 +3,10 @@
  * En ALTA se capturan grupo (select), clave, descripción y valor. En EDICIÓN, grupo y clave
  * son la identidad natural del registro (el backend no los deja cambiar): se muestran de solo
  * lectura y solo se editan descripción y valor. Errores de negocio llegan por `submitError`.
+ *
+ * ADR-178 (petición del usuario): al elegir el grupo `MotivoCambio` en ALTA, un aviso bajo
+ * Clave explica que el backend le agrega un sufijo numérico automático (`_1`, `_2`...) —
+ * ahí la Clave agrupa varias Descripciones seleccionables, no identifica un único registro.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -45,6 +49,7 @@ export function ConstanteForm({
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<ConstanteFormValues>({
     resolver: zodResolver(schema),
@@ -56,6 +61,8 @@ export function ConstanteForm({
       ...defaultValues,
     },
   });
+
+  const esMotivoCambio = !isEdit && watch("grupo") === "MotivoCambio";
 
   const submit = handleSubmit((data) => {
     onSubmit({
@@ -92,6 +99,13 @@ export function ConstanteForm({
 
         <div className="fl fl-required">Clave</div>
         <input className="fi mono" readOnly={isEdit} {...register("clave")} />
+        {esMotivoCambio && (
+          <div className="fv muted" style={{ marginTop: 2 }}>
+            El sistema agrega un sufijo numérico automático (p.ej. «CambioFecha» →
+            «CambioFecha_1», «CambioFecha_2»…) — captura la misma Clave para agrupar varias
+            Descripciones de una misma pantalla/sección.
+          </div>
+        )}
         <div className="fe">{errors.clave?.message}</div>
 
         <div className="fl fl-required">Descripción</div>

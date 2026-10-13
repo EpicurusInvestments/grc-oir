@@ -3,6 +3,7 @@
 export { AppHeader } from "./AppHeader";
 export { AppNavDrawer } from "./AppNavDrawer";
 export { CatalogToolbar, type FilterPill } from "./CatalogToolbar";
+export { CheckboxMultiSelect } from "./CheckboxMultiSelect";
 export { ConfirmDialog } from "./ConfirmDialog";
 export { DomicilioPostalInput, type DomicilioPostalValues } from "./DomicilioPostalInput";
 export { ExplorerLayout } from "./ExplorerLayout";

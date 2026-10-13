@@ -871,6 +871,57 @@ body {
 .msel-chip-remove:hover {
   opacity: 1;
 }
+/* CheckboxMultiSelect (ADR-187): campo cerrado (resumen de lo elegido) + panel de
+ * casillas (buscador + "Selecciona todos" + lista con scroll). */
+.cmsel-campo {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmsel-campo:disabled {
+  cursor: not-allowed;
+}
+.cmsel-placeholder {
+  color: var(--text3);
+}
+.cmsel-panel {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-med);
+  border-radius: var(--r);
+  box-shadow: 0 10px 24px rgba(24, 24, 22, 0.12);
+}
+.cmsel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.cmsel-item:has(input:disabled) {
+  color: var(--text3);
+  cursor: not-allowed;
+}
+.cmsel-todas {
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-med);
+  margin-top: 6px;
+}
+.cmsel-lista {
+  max-height: 220px;
+  overflow-y: auto;
+}
 .money-wrap {
   position: relative;
 }
@@ -1804,6 +1855,19 @@ body {
   border-radius: var(--rl);
   padding: 18px;
   margin-bottom: 14px;
+}
+
+/* Calendario de "Generar días desde calendario" (ADR-184/186) — tarjeta propia dentro del
+ * `.form-card` que lo contiene, con el acento teal de F1 en vez del azul default de
+ * react-day-picker (`--rdp-accent-color`). */
+.rdp-wrapper {
+  --rdp-accent-color: var(--teal);
+  --rdp-accent-background-color: var(--teal-bg);
+  --rdp-today-color: var(--teal-text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  padding: 12px;
 }
 .form-card-title {
   font-size: 13px;

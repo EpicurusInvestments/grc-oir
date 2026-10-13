@@ -18,6 +18,8 @@ facturadora tenga la OrdenCliente de origen.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
 from io import BytesIO
@@ -39,7 +41,7 @@ from app.core.db import get_db
 from app.core.errors import DomainError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.agencia import Agencia
-from app.modules.catalogos.anunciante import Anunciante
+from app.modules.catalogos.anunciante import Anunciante, Marca
 from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
@@ -193,6 +195,7 @@ class _Contexto:
         empresa: EmpresaFacturadora,
         dias: list[OrdenEstacionDia],
         audios: list[OrdenEstacionAudio],
+        marca: Marca | None,
     ) -> None:
         self.oe = oe
         self.oc = oc
@@ -203,6 +206,9 @@ class _Contexto:
         self.empresa = empresa
         self.dias = dias
         self.audios = audios
+        # ADR-193 (petición del usuario): la Marca no se cargaba en el contexto de los
+        # PDFs — `None` si la OC no capturó marca (campo opcional, `oc.marca_id`).
+        self.marca = marca
 
 
 def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
@@ -217,6 +223,7 @@ def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
     anunciante = db.get(Anunciante, oe.anunciante_id)
     agencia = db.get(Agencia, oe.agencia_id) if oe.agencia_id else None
     empresa = db.get(EmpresaFacturadora, oc.empresa_facturadora_id) if oc else None
+    marca = db.get(Marca, oc.marca_id) if oc and oc.marca_id else None
     if oc is None or estacion is None or plaza is None or anunciante is None or empresa is None:
         raise NotFoundError("Faltan datos relacionados de la OrdenEstacion para generar el PDF.")
     dias = list(
@@ -233,7 +240,7 @@ def _cargar_contexto(db: Session, orden_estacion_id: uuid.UUID) -> _Contexto:
             .order_by(OrdenEstacionAudio.orden)
         )
     )
-    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias, audios)
+    return _Contexto(oe, oc, estacion, plaza, anunciante, agencia, empresa, dias, audios, marca)
 
 
 def _rango_campania(oc: OrdenCliente) -> str:
@@ -321,8 +328,9 @@ _CAMPO_LINEA = ParagraphStyle(
 )
 _CAMPO_LINEA_DER = ParagraphStyle("campo_linea_der", parent=_CAMPO_LINEA, alignment=TA_RIGHT)
 
-# Campos de "Horarios reales" (2.3): etiqueta Y valor en negritas (a diferencia de
-# `_campo()`, que deja la etiqueta en gris) — igual al PDF de referencia.
+# Campos de "Horarios reales" (2.3): etiqueta en negritas, valor SIN negritas (ADR-194,
+# petición del usuario — antes el valor también iba en negritas, igual al PDF de
+# referencia original; a diferencia de `_campo()`, la etiqueta aquí va en negro, no gris).
 _CAMPO_NEGRITA = ParagraphStyle(
     "campo_negrita", parent=_STYLES["Normal"], fontSize=9.5, textColor=colors.black, spaceAfter=4
 )
@@ -331,7 +339,7 @@ _CAMPO_NEGRITA = ParagraphStyle(
 def _campo_negrita(etiqueta: str, valor: str) -> list:
     return [
         Paragraph(f"<b>{etiqueta}:</b>", _CAMPO_NEGRITA),
-        Paragraph(f"<b>{valor}</b>", _CAMPO_NEGRITA),
+        Paragraph(valor, _CAMPO_NEGRITA),
     ]
 
 
@@ -343,7 +351,7 @@ _CAMPO_NEGRITA_DER = ParagraphStyle("campo_negrita_der", parent=_CAMPO_NEGRITA, 
 def _campo_negrita_der(etiqueta: str, valor: str) -> list:
     return [
         Paragraph(f"<b>{etiqueta}:</b>", _CAMPO_NEGRITA),
-        Paragraph(f"<b>{valor}</b>", _CAMPO_NEGRITA_DER),
+        Paragraph(valor, _CAMPO_NEGRITA_DER),
     ]
 
 
@@ -367,33 +375,91 @@ _TABLA_SIN_MARCO = TableStyle(
 _FILA_REALES = ParagraphStyle("fila_reales", parent=_STYLES["Normal"], fontSize=9, leading=11)
 
 
-def _nombre_material(dia: OrdenEstacionDia, audios: list[OrdenEstacionAudio]) -> str:
-    """Mismo criterio que `nombreMaterial()` del frontend (`PeriodoTransmisionGrid.tsx`):
-    el override propio del día si tiene uno asignado, si no el default (`audios[0]`, el
-    primero subido). Sin ningún audio subido, no hay nada que mostrar."""
-    if not audios:
-        return "—"
+def _nombre_material(dia: OrdenEstacionDia, audios: list[OrdenEstacionAudio]) -> str | None:
+    """Nombre del material asignado a ESTE spot (ADR-187: 1 material por spot, ya no un
+    solo default compartido para todo el día) — `None` si este día no tiene ningún
+    `orden_estacion_audio_id` propio (p.ej. datos sembrados antes de ADR-187) o el audio
+    referenciado ya no existe."""
     if dia.orden_estacion_audio_id:
         coincidencia = next(
             (a for a in audios if a.orden_estacion_audio_id == dia.orden_estacion_audio_id), None
         )
         if coincidencia:
             return coincidencia.nombre_archivo
-    return audios[0].nombre_archivo
+    return None
 
 
-def _fila_dia_programado(dia: OrdenEstacionDia, nombre_material: str) -> list:
+@dataclass
+class _GrupoFechaDia:
+    """ADR-196 (corrige un bug real): agrupado de TODAS las filas reales de una misma
+    fecha (1 por spot, ADR-127) — mismo criterio que `agruparPorFecha` del frontend
+    (`PeriodoTransmisionGrid.tsx`, ADR-185): Hora Inicio = la más temprana del grupo,
+    Hora Fin = la más tardía, Spots = la suma. `dias` conserva las filas reales (para
+    resolver los materiales del día en el PDF de Programados). Usado por los PDFs de
+    Servicio y Programados — "Capturar reales" y el PDF de Reales NO se agrupan, siguen
+    mostrando 1 renglón por spot como siempre."""
+
+    fecha: date
+    hora_inicio: time
+    hora_fin: time
+    spots: int
+    dias: list[OrdenEstacionDia]
+    cancelada: bool
+
+
+def _agrupar_dias_por_fecha(dias: Sequence[OrdenEstacionDia]) -> list[_GrupoFechaDia]:
+    por_fecha: dict[date, list[OrdenEstacionDia]] = {}
+    for d in dias:
+        por_fecha.setdefault(d.fecha_transmision, []).append(d)
+    grupos: list[_GrupoFechaDia] = []
+    for fecha, filas in por_fecha.items():
+        cancelada = all(f.cancelada for f in filas)
+        # Si TODAS están canceladas no hay "activas" que agregar — se usan todas para no
+        # quedarse sin horario/spots que mostrar (mismo criterio que el frontend).
+        base = filas if cancelada else [f for f in filas if not f.cancelada]
+        grupos.append(
+            _GrupoFechaDia(
+                fecha=fecha,
+                hora_inicio=min(f.hora_inicio for f in base),
+                hora_fin=max(f.hora_fin for f in base),
+                spots=sum(f.spots_asignados for f in base),
+                dias=filas,
+                cancelada=cancelada,
+            )
+        )
+    return sorted(grupos, key=lambda g: g.fecha)
+
+
+def _materiales_grupo(grupo: _GrupoFechaDia, audios: list[OrdenEstacionAudio]) -> str:
+    """ADR-196 (petición del usuario): "Material a Transmitir" lista TODOS los
+    materiales distintos usados ese día (1 por spot, ADR-187), separados por coma, en el
+    orden en que le tocó a cada spot (por `hora_inicio`) — ya no un solo nombre."""
+    if not audios:
+        return "—"
+    filas_ordenadas = sorted(grupo.dias, key=lambda d: d.hora_inicio)
+    nombres: list[str] = []
+    for dia in filas_ordenadas:
+        nombre = _nombre_material(dia, audios)
+        if nombre and nombre not in nombres:
+            nombres.append(nombre)
+    return ", ".join(nombres) if nombres else "—"
+
+
+def _fila_dia_programado(grupo: _GrupoFechaDia, nombre_material: str) -> list:
     fecha_txt = (
-        f"{_dia_semana(dia.fecha_transmision).capitalize()} {dia.fecha_transmision.day} "
-        f"{MESES_ES[dia.fecha_transmision.month - 1]}, {dia.fecha_transmision.year}"
+        f"{_dia_semana(grupo.fecha).capitalize()} {grupo.fecha.day} "
+        f"{MESES_ES[grupo.fecha.month - 1]}, {grupo.fecha.year}"
     )
-    # ADR-118 (petición del usuario): "Horario" pasa a un solo valor (ya no rango
-    # Inicio/Término — coherente con ADR-108, que consolidó lo mismo en la captura web:
-    # `hora_inicio`/`hora_fin` se capturan siempre iguales desde entonces); "Pedidos"/
-    # "Asignados" se quitan y se agrega "Material a Transmitir".
+    # ADR-192 (petición del usuario, corrige un bug real): ADR-118 había colapsado
+    # "Horario" a un solo valor, asumiendo `hora_inicio == hora_fin` siempre (ADR-108) —
+    # supuesto inválido desde ADR-184 en adelante. Vuelve a mostrar el rango completo.
+    # ADR-196: `grupo` reemplaza la fila real suelta — ya viene agrupada por fecha.
     return [
         Paragraph(f"<b>{fecha_txt}</b>", _FILA_PROGRAMADO),
-        Paragraph(f"Horario: <i>{_hora_12h(dia.hora_inicio)}</i>", _FILA_PROGRAMADO),
+        Paragraph(
+            f"Horario: <i>{_hora_12h(grupo.hora_inicio)} A {_hora_12h(grupo.hora_fin)}</i>",
+            _FILA_PROGRAMADO,
+        ),
         Paragraph(f"Material a Transmitir: <i>{nombre_material}</i>", _FILA_PROGRAMADO),
     ]
 
@@ -449,7 +515,11 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
 
     iva = (oe.importe_estacion * IVA_RATE).quantize(CENTAVOS)
     total = oe.importe_estacion + iva
-    total_spots = sum(d.spots_asignados for d in ctx.dias)
+    # ADR-196 (corrige un bug real): la tabla de días se agrupa por fecha — "Total de
+    # Spots"/"Total de Días" se derivan del mismo agrupado (no de `ctx.dias` crudo, 1
+    # fila por spot) para que el pie coincida con la suma de los renglones que se ven.
+    grupos_dias = _agrupar_dias_por_fecha(ctx.dias)
+    total_spots = sum(g.spots for g in grupos_dias)
 
     tabla_estacion_plaza = Table(
         [[f"{estacion.nombre_estacion} ({estacion.frecuencia or '—'})", plaza.nombre_plaza]],
@@ -470,6 +540,10 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             ]
         ),
     )
+    # ADR-193 (petición del usuario): se agregan "Marca" y "Producto" — antes "Producto"
+    # en realidad mostraba `oc.producto` (texto libre, la CAMPAÑA), y el Producto de
+    # verdad (`oe.producto_tarifa`, del catálogo F0-06, conectado por ADR-166/169) no
+    # aparecía en ningún PDF. "Producto"/"Campaña" quedan como 2 campos DISTINTOS.
     tabla_campos = Table(
         [
             _campo("Solicitud Orden", oc.numero_orden_cliente)
@@ -478,33 +552,37 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             + _campo_der("Total de Spots", str(total_spots)),
             _campo("Anunciante", ctx.anunciante.nombre_comercial)
             + _campo_der("Precio Unitario", _moneda(oe.precio_spot)),
-            _campo("Producto", oc.producto or "—")
-            + _campo_der("Total de Días", str(len(ctx.dias))),
-            ["", ""] + _campo_der("Importe", _moneda(oe.importe_estacion)),
-            ["", ""] + _campo_der("I.V.A.", _moneda(iva)),
+            _campo("Campaña", oc.producto or "—")
+            + _campo_der("Total de Días", str(len(grupos_dias))),
+            _campo("Marca", ctx.marca.nombre_marca if ctx.marca else "—")
+            + _campo_der("Importe", _moneda(oe.importe_estacion)),
+            _campo("Producto", oe.producto_tarifa or "—") + _campo_der("I.V.A.", _moneda(iva)),
             ["", ""] + _campo_der("Total", _moneda(total)),
         ],
         colWidths=_proporciones(_ANCHO_MARCO_INTERNO, [3, 5, 3.5, 4.5]),
     )
 
-    # ADR-155 (petición del usuario): "Inicio"/"Término" se consolidan en una sola
-    # columna "Horario de Transmisión" — mismo criterio que ADR-108/ADR-118, que ya
-    # hicieron lo mismo en la captura web y en el PDF de programados: `hora_inicio`/
-    # `hora_fin` se capturan siempre iguales, así que mostrar las 2 por separado solo
-    # repetía el mismo valor.
-    filas = [["Día", "Fecha", "Horario de Transmisión", "Spots Diarios", "Importe"]]
-    for dia in ctx.dias:
+    # ADR-192 (petición del usuario, corrige un bug real): ADR-155 había consolidado
+    # "Inicio"/"Término" en una sola columna "Horario de Transmisión", asumiendo que
+    # `hora_inicio`/`hora_fin` se capturaban siempre iguales (ADR-108/118) — ese supuesto
+    # dejó de valer desde ADR-184 en adelante (la captura web volvió a un rango real).
+    # Vuelve a ser 2 columnas, "Hora Inicio"/"Hora Fin".
+    # ADR-196 (corrige un bug real): 1 renglón por FECHA (`grupos_dias`), no 1 por spot —
+    # mismo criterio que la grid de captura (ADR-185).
+    filas = [["Día", "Fecha", "Hora Inicio", "Hora Fin", "Spots Diarios", "Importe"]]
+    for grupo in grupos_dias:
         filas.append(
             [
-                _dia_semana(dia.fecha_transmision).upper(),
-                _fecha_corta(dia.fecha_transmision),
-                dia.hora_inicio.strftime("%H:%M:%S"),
-                str(dia.spots_asignados),
-                _moneda((Decimal(dia.spots_asignados) * oe.precio_spot).quantize(CENTAVOS)),
+                _dia_semana(grupo.fecha).upper(),
+                _fecha_corta(grupo.fecha),
+                grupo.hora_inicio.strftime("%H:%M:%S"),
+                grupo.hora_fin.strftime("%H:%M:%S"),
+                str(grupo.spots),
+                _moneda((Decimal(grupo.spots) * oe.precio_spot).quantize(CENTAVOS)),
             ]
         )
     tabla_dias = Table(
-        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 4.6 * cm, 3 * cm, 3 * cm]
+        filas, style=_GRID, colWidths=[2.5 * cm, 2.5 * cm, 2.3 * cm, 2.3 * cm, 3 * cm, 3 * cm]
     )
 
     # ADR-131 (corrige un bug real): `tabla_dias` YA NO va anidada dentro de la celda de
@@ -535,7 +613,10 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         tabla_dias,
     ]
 
-    horarios = {(d.hora_inicio, d.hora_fin) for d in ctx.dias}
+    # ADR-196: compara los GRUPOS por fecha, no las filas reales sueltas — con éstas,
+    # el mismo día ya trae varios `hora_inicio` distintos (1 por spot, ADR-127) y este
+    # resumen casi nunca hubiera coincidido, aunque todos los días compartan rango.
+    horarios = {(g.hora_inicio, g.hora_fin) for g in grupos_dias}
     if len(horarios) == 1:
         ini, fin = next(iter(horarios))
         elementos.append(Spacer(1, 8))
@@ -590,6 +671,14 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Spacer(1, 10),
         Paragraph(f"<b>CLIENTE :</b> {ctx.anunciante.nombre_comercial.upper()}", _CAMPO_LINEA),
         Paragraph(f"<b>CAMPAÑA :</b> {(oc.producto or '—').upper()}", _CAMPO_LINEA),
+        # ADR-193 (petición del usuario): "MARCA"/"PRODUCTO" no aparecían en ningún PDF —
+        # "PRODUCTO" aquí es `oe.producto_tarifa` (catálogo F0-06), DISTINTO de "CAMPAÑA"
+        # (`oc.producto`, texto libre) de la línea anterior.
+        Paragraph(
+            f"<b>MARCA :</b> {(ctx.marca.nombre_marca if ctx.marca else '—').upper()} &nbsp;&nbsp; "
+            f"<b>PRODUCTO :</b> {(oe.producto_tarifa or '—').upper()}",
+            _CAMPO_LINEA,
+        ),
         Paragraph(
             f"<b>No. DE ORDEN :</b> {oc.numero_orden_cliente}/{letra} &nbsp;&nbsp; "
             f"<b>DURACION:</b> {oe.duracion_spot} &nbsp;/&nbsp; "
@@ -613,7 +702,8 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     ]
 
     filas = [
-        _fila_dia_programado(dia, _nombre_material(dia, ctx.audios)) for dia in ctx.dias
+        _fila_dia_programado(grupo, _materiales_grupo(grupo, ctx.audios))
+        for grupo in _agrupar_dias_por_fecha(ctx.dias)
     ]
     elementos.append(
         Table(
@@ -678,9 +768,16 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 + _campo_negrita_der("PERIODO", f"DEL {_rango_campania(oc)}"),
                 _campo_negrita("CAMPAÑA", (oc.producto or "—").upper())
                 + _campo_negrita_der("TIPO DE MEDIO", _tipo_medio(estacion)),
-                _campo_negrita("DURACION", oe.duracion_spot) + ["", ""],
+                # ADR-193 (petición del usuario): "MARCA"/"PRODUCTO" no aparecían — ambos
+                # campos distintos de "CAMPAÑA" (de arriba, `oc.producto` libre): MARCA
+                # es `ctx.marca`, PRODUCTO es `oe.producto_tarifa` (catálogo F0-06).
+                _campo_negrita("DURACION", oe.duracion_spot)
+                + _campo_negrita_der(
+                    "MARCA", (ctx.marca.nombre_marca if ctx.marca else "—").upper()
+                ),
                 _campo_negrita("EMISORA", f"{estacion.nombre_estacion} / {plaza.nombre_plaza}".upper())
                 + _campo_negrita_der("TOTAL SPOTS REALES", str(total_real)),
+                _campo_negrita("PRODUCTO", (oe.producto_tarifa or "—").upper()) + ["", ""],
             ],
             colWidths=_proporciones(_ANCHO_DISPONIBLE, [3, 6, 3.5, 3.5]),
             style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]),
@@ -688,9 +785,12 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Spacer(1, 12),
     ]
 
-    # ADR-155 (petición del usuario): igual que en el PDF de servicio, "HORA" deja de
-    # mostrar un rango `inicio - fin` (siempre el mismo valor repetido, ADR-108) — un
-    # solo horario.
+    # ADR-196 (corrige un bug real de ADR-192, petición del usuario): "HORA" vuelve a
+    # mostrar UN SOLO horario — `hora_inicio`, el punto real de ESE spot — no un rango
+    # `inicio - fin`. Desde ADR-186, `hora_fin` es el fin de rango COMPARTIDO entre todos
+    # los spots del mismo día (no algo propio de este renglón en particular), así que
+    # mostrarlo aquí como rango confundía más de lo que aclaraba — "Capturar reales"
+    # sigue siendo por spot, SIN agrupar (a diferencia de Servicio/Programados, ADR-196).
     filas = [["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]]
     for i, dia in enumerate(ctx.dias, start=1):
         verificacion = verificaciones.get(dia.orden_estacion_dia_id)

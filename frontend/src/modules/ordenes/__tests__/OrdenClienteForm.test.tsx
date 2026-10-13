@@ -4,6 +4,7 @@
  * el catálogo como parámetro) no tienen nada que filtrar hasta que se siembra aquí abajo.
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -13,10 +14,57 @@ import { agencias, anunciantes, contratos, marcas, vendedores } from "../state/c
 import { fieldByLabelText } from "./domHelpers";
 import { makeOCInput } from "./fixtures";
 
+// ADR-167: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" —
+// mock del catálogo (sin pegarle a la red real desde jsdom), 2 productos: uno con
+// duraciones reales (Spot) y uno cuyo único registro es "sin resultado" (Mención).
+vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
+  duracionSpotCatalogoApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { duracion_spot_catalogo_id: "d1", producto: "Spot", descripcion_duracion: "20", activo: true },
+        { duracion_spot_catalogo_id: "d2", producto: "Spot", descripcion_duracion: "30", activo: true },
+        { duracion_spot_catalogo_id: "d3", producto: "Mención", descripcion_duracion: "sin resultado", activo: true },
+      ],
+      total: 3,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
+// ADR-180: catálogo Constantes del Sistema (grupo MotivoCambio, clave CambioFecha) para
+// el select de "Motivo del cambio" de inicio/fin de campaña.
+vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
+  constanteApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { constante_sistema_id: "mc1", grupo: "MotivoCambio", clave: "CambioFecha_1", descripcion: "Se cancelaron spots", valor: null, activo: true },
+        { constante_sistema_id: "mc2", grupo: "MotivoCambio", clave: "CambioFecha_2", descripcion: "Se redujo el periodo", valor: null, activo: true },
+      ],
+      total: 2,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
 // Sembrado una sola vez, a nivel de módulo: an1/an3 sugieren ag1, an2 sugiere ag2 — cubre la
 // cascada anunciante→agencia/contrato/marca y los defaults de comisión de vendedor/agencia.
 agencias.push(
-  { id: "ag1", nombre_agencia: "Agencia Uno", rfc_agencia: "AG1010101XX1", porcentaje_comision_agencia_default: 10 },
+  // ADR-181: ag1 trae domicilio estructurado (usado por las pruebas de autocompletado);
+  // ag2/ag3 se quedan SIN domicilio a propósito (cubren el caso "no lo tiene capturado").
+  {
+    id: "ag1",
+    nombre_agencia: "Agencia Uno",
+    rfc_agencia: "AG1010101XX1",
+    porcentaje_comision_agencia_default: 10,
+    calle: "Calle Agencia 123",
+    colonia: "Col. Centro",
+    municipio: "CDMX",
+    codigo_postal: "06000",
+  },
   { id: "ag2", nombre_agencia: "Agencia Dos", rfc_agencia: "AG2020202XX2", porcentaje_comision_agencia_default: 12 },
   { id: "ag3", nombre_agencia: "Agencia Tres", rfc_agencia: "AG3030303XX3", porcentaje_comision_agencia_default: 8 },
 );
@@ -84,28 +132,72 @@ vendedores.push({ id: "ve-inactivo", nombre_vendedor: "Vendedor Dado de Baja", p
 function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}) {
   const onGuardar = vi.fn();
   const onCancelar = vi.fn();
+  // ADR-167: el formulario ahora lee el catálogo "Producto Duración" vía react-query.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <OrdenClienteForm title="Nueva orden" onGuardar={onGuardar} onCancelar={onCancelar} {...props} />,
+    <QueryClientProvider client={qc}>
+      <OrdenClienteForm title="Nueva orden" onGuardar={onGuardar} onCancelar={onCancelar} {...props} />
+    </QueryClientProvider>,
   );
   return { ...utils, onGuardar, onCancelar };
 }
 
-describe("ADR-141: 'Facturación directa'/'Afiliado factura' es un radio group mutuamente excluyente", () => {
+describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radio group mutuamente excluyente", () => {
   it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", () => {
     renderForm();
 
+    // ADR-181: la etiqueta visible cambió a "Facturación a la Agencia" — el campo real
+    // (`afiliado_factura_directo_al_cliente`) sigue siendo el mismo.
     const directa = screen.getByLabelText(/Facturación directa al cliente/) as HTMLInputElement;
-    const afiliado = screen.getByLabelText(/Afiliado factura directo al cliente/) as HTMLInputElement;
+    const agencia = screen.getByLabelText(/Facturación a la Agencia/) as HTMLInputElement;
     expect(directa.checked).toBe(true);
-    expect(afiliado.checked).toBe(false);
+    expect(agencia.checked).toBe(false);
 
-    fireEvent.click(afiliado);
-    expect(afiliado.checked).toBe(true);
+    fireEvent.click(agencia);
+    expect(agencia.checked).toBe(true);
     expect(directa.checked).toBe(false);
 
     fireEvent.click(directa);
     expect(directa.checked).toBe(true);
-    expect(afiliado.checked).toBe(false);
+    expect(agencia.checked).toBe(false);
+  });
+});
+
+describe("ADR-181: 'Facturación a la Agencia' autocompleta la dirección con el domicilio de la Agencia", () => {
+  it("al elegir 'Facturación a la Agencia', usa el domicilio de la agencia ya ligada a la OC", () => {
+    const defaultValues = makeOCInput({ anunciante_id: "an1", agencia_id: "ag1" });
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    fireEvent.click(screen.getByLabelText(/Facturación a la Agencia/));
+
+    expect(fieldByLabelText<HTMLTextAreaElement>(container, "Dirección de facturación").value).toBe(
+      "Calle Agencia 123, Col. Centro, CDMX, C.P. 06000",
+    );
+  });
+
+  it("al volver a 'Facturación directa al cliente', regresa a los datos del anunciante", () => {
+    const defaultValues = makeOCInput({ anunciante_id: "an1", agencia_id: "ag1" });
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    fireEvent.click(screen.getByLabelText(/Facturación a la Agencia/));
+    fireEvent.click(screen.getByLabelText(/Facturación directa al cliente/));
+
+    expect(fieldByLabelText<HTMLTextAreaElement>(container, "Dirección de facturación").value).toBe(
+      "Televisa Publicidad SA de CV · RFC TPU900101XX1",
+    );
+  });
+
+  it("si la agencia no tiene domicilio capturado, VACÍA el campo para capturarlo a mano", () => {
+    const defaultValues = makeOCInput({
+      anunciante_id: "an1",
+      agencia_id: "ag3",
+      direccion_facturacion: "Dirección capturada a mano",
+    });
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    fireEvent.click(screen.getByLabelText(/Facturación a la Agencia/));
+
+    expect(fieldByLabelText<HTMLTextAreaElement>(container, "Dirección de facturación").value).toBe("");
   });
 });
 
@@ -223,9 +315,11 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(screen.getByText(/sobrescrito \(cat: 5%\)/)).toBeInTheDocument();
   });
 
-  it("fix: el campo 'Motivo del cambio' es UNO SOLO, compartido entre los 3 % (antes solo existía junto al de agencia)", () => {
+  it("fix: el campo 'Motivo del cambio' de comisión es UNO SOLO, compartido entre los 3 % (antes solo existía junto al de agencia)", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna" });
-    expect(screen.getAllByText("Motivo del cambio")).toHaveLength(1);
+    // ADR-180: ahora hay 2 — el de comisión (uno solo para los 3 %, lo que prueba este
+    // caso) y el nuevo de fechas de campaña (uno solo para inicio/fin) — nunca 3 ni más.
+    expect(screen.getAllByText("Motivo del cambio")).toHaveLength(2);
   });
 
   it("fix: cambiar un % de comisión sin capturar el motivo YA NO se guarda — bloquea el envío y marca el campo como obligatorio", async () => {
@@ -252,6 +346,71 @@ describe("Snapshots de comisión — 1.8", () => {
     await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
     const [, opts] = onGuardar.mock.calls[0];
     expect(opts.motivoComision).toBe("Ajuste autorizado por dirección");
+  });
+});
+
+describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
+  it("el select de motivo arranca deshabilitado y se habilita solo al tocar una fecha", async () => {
+    const defaultValues = makeOCInput();
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    // "Motivo del cambio" de fecha es el PRIMERO en el DOM (sección "Campaña y montos",
+    // antes que "Equipo comercial y comisiones") — por eso `fieldByLabelText` (toma el
+    // primer match) ya apunta al correcto sin necesitar desambiguar.
+    await screen.findByText("Se cancelaron spots");
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio");
+    expect(motivoSelect.disabled).toBe(true);
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), { target: { value: "2026-11-01" } });
+    expect(motivoSelect.disabled).toBe(false);
+  });
+
+  it("cambiar una fecha sin elegir motivo bloquea el envío y marca el campo obligatorio", async () => {
+    const defaultValues = makeOCInput();
+    const { container, onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    await screen.findByText("Se cancelaron spots");
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fin de campaña"), { target: { value: "2026-12-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("El motivo es obligatorio al cambiar la fecha de inicio o fin de campaña."),
+      ).toBeInTheDocument(),
+    );
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("al elegir un motivo del catálogo, se guarda y se manda en el input", async () => {
+    const defaultValues = makeOCInput();
+    const { container, onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    await screen.findByText("Se cancelaron spots");
+
+    // Hay que mover también Fin de campaña: el default (2025-06-30) quedaría antes que
+    // el nuevo Inicio, lo que violaría "fin >= inicio" y bloquearía el envío por esa
+    // razón (no por el motivo, que es lo que esta prueba quiere aislar).
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fin de campaña"), { target: { value: "2026-12-15" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), { target: { value: "2026-11-01" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio"), {
+      target: { value: "Se redujo el periodo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
+    const [input] = onGuardar.mock.calls[0];
+    expect(input.motivo_cambio_fecha).toBe("Se redujo el periodo");
+  });
+
+  it("guardar sin tocar las fechas no manda motivo_cambio_fecha", async () => {
+    const defaultValues = makeOCInput();
+    const { onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    await screen.findByText("Se cancelaron spots");
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
+    const [input] = onGuardar.mock.calls[0];
+    expect(input.motivo_cambio_fecha).toBeUndefined();
   });
 });
 
@@ -450,5 +609,84 @@ describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edició
     expect(within(selectPrincipal).queryByText("Vendedor Dado de Baja")).toBeNull();
     expect(within(selectSecundario).getByText("Renata Aguilar")).toBeInTheDocument();
     expect(within(selectSecundario).queryByText("Vendedor Dado de Baja")).toBeNull();
+  });
+});
+
+describe("Producto/Duración desde el catálogo Producto Duración — ADR-167/168", () => {
+  it("al elegir un producto con duraciones reales, el combo de Duración se llena (sin 'sin resultado')", async () => {
+    const { container } = renderForm();
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(within(selectDuracion).getByText("20")).toBeInTheDocument();
+    expect(within(selectDuracion).getByText("30")).toBeInTheDocument();
+    expect(within(selectDuracion).queryByText("sin resultado")).toBeNull();
+  });
+
+  it("al elegir un producto cuyo único registro es 'sin resultado', Duración queda vacía/deshabilitada y NO bloquea el guardado", async () => {
+    // El resto de campos obligatorios ya viene prellenado (makeOCInput) — así se aísla la
+    // prueba al comportamiento de Producto/Duración, que es lo que importa aquí.
+    const { container, onGuardar } = renderForm({ defaultValues: makeOCInput() });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Mención")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Mención" } });
+
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(selectDuracion).toBeDisabled();
+    expect(within(selectDuracion).queryByText("sin resultado")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+    const [input] = onGuardar.mock.calls[0];
+    expect(input.producto_tarifa).toBe("Mención");
+    expect(input.duracion_spot).toBeNull();
+  });
+
+  it("cambiar de producto limpia la duración ya elegida", async () => {
+    const { container } = renderForm();
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30" } });
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("30");
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Mención" } });
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("");
+  });
+
+  it("ADR-168: sin elegir Producto, Total de spots/Spots bonificables/Precio unitario quedan deshabilitados y no se puede guardar", async () => {
+    const { container, onGuardar } = renderForm({ defaultValues: { ...makeOCInput(), producto_tarifa: null } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "Total de spots")).toBeDisabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables")).toBeDisabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Precio unitario")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    expect(await screen.findByText("Selecciona un producto.")).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("ADR-168: al elegir un producto, Total de spots/Spots bonificables/Precio unitario se habilitan", async () => {
+    const { container } = renderForm({ defaultValues: { ...makeOCInput(), producto_tarifa: null } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo")).getByText("Spot")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto Catálogo"), { target: { value: "Spot" } });
+
+    expect(fieldByLabelText<HTMLInputElement>(container, "Total de spots")).toBeEnabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables")).toBeEnabled();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Precio unitario")).toBeEnabled();
   });
 });

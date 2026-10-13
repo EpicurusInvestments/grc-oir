@@ -1008,9 +1008,10 @@ class FacturaClienteService(
         return claves[0] if len(claves) == 1 else None
 
     def _domicilio_de(self, entidad: Any) -> DomicilioFiscal | None:
-        """Domicilio estructurado (ADR-059) de un `Anunciante`/`EmpresaFacturadora`, o
-        `None` si el registro no lo tiene capturado así todavía (registro viejo, o el
-        objeto no existe) — el llamador cae al texto libre legacy en ese caso."""
+        """Domicilio estructurado de un `Anunciante`/`EmpresaFacturadora` (ADR-059) o
+        `Agencia` (ADR-175) — las 3 entidades exponen los mismos 10 atributos. `None`
+        si el registro no lo tiene capturado así todavía (registro viejo, o el objeto
+        no existe) — el llamador cae al texto libre legacy en ese caso."""
         if entidad is None:
             return None
         return DomicilioFiscal(
@@ -1050,8 +1051,10 @@ class FacturaClienteService(
 
         # El receptor de ESTA factura puede ser el Anunciante (directo) o la Agencia —
         # mismo criterio que `create()` para elegir razón social/RFC. El domicilio
-        # estructurado (ADR-059) solo existe hoy en Anunciante/EmpresaFacturadora, NO en
-        # Agencia: si el receptor es la agencia, cae al texto libre de `direccion_facturacion`.
+        # estructurado existe en las 3 entidades desde ADR-175 (Agencia; Anunciante/
+        # EmpresaFacturadora ya lo tenían desde ADR-059) — si el receptor es un registro
+        # viejo sin domicilio capturado así, `_domicilio_de` regresa `None` y se cae al
+        # texto libre de `direccion_facturacion`, sin caso especial aquí.
         # `regimen_fiscal` sí existe en las 3 entidades: cada una captura el suyo, y aquí se
         # toma el de quien sea el receptor REAL de esta factura (bug real corregido: antes
         # salía de un catálogo global ambiguo, sin distinguir emisor/receptor).
@@ -1064,6 +1067,7 @@ class FacturaClienteService(
                 regimen_fiscal_receptor = anunciante_receptor.regimen_fiscal
         elif obj.agencia_id is not None:
             agencia_receptora = db.get(Agencia, obj.agencia_id)
+            receptor_domicilio = self._domicilio_de(agencia_receptora)
             if agencia_receptora is not None:
                 regimen_fiscal_receptor = agencia_receptora.regimen_fiscal
 

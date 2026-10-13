@@ -15,6 +15,32 @@
 > sin ningún beneficio (la unicidad/sugerencia ya filtraban también por `estacion_id`).
 > "Duración del spot" pasa a llamarse solo "Duración" en el formulario. Ver ADR-158 en
 > `docs/arquitectura.md`.
+>
+> **ADR-166 (petición del usuario, 2026-10-06):** `producto`/`duracion_spot` dejan de ser
+> los ENUMs cerrados de esta ficha y pasan a TEXTO LIBRE — se capturan eligiendo del
+> catálogo F0-06 "Producto Duración" (`DuracionSpotCatalogo`) en vez de un selector fijo.
+> El literal "sin resultado" de ese catálogo (ADR-165, su default cuando no se captura una
+> duración) NO es una duración válida aquí — Tarifa lo rechaza y pide ir a dar de alta una
+> real. Ver ADR-166 en `docs/arquitectura.md`.
+>
+> **ADR-179 (petición del usuario, 2026-10-09):** el campo "Motivo del cambio" (al editar
+> `tarifa_bruta`/`descuento_pct`) deja de ser texto libre y pasa a un `<select>` con las
+> Descripciones del catálogo Constantes del Sistema (F0-05), grupo `MotivoCambio`, clave
+> `CambioTarifa`/`CambioTarifa_N` (ADR-178). El valor enviado al backend sigue siendo la
+> Descripción elegida, como texto — la API no cambia. Si ese catálogo no tiene ninguna
+> opción activa, el campo cae de regreso al input de texto libre. Ver ADR-179 en
+> `docs/arquitectura.md`.
+>
+> **ADR-177 (petición del usuario, 2026-10-09):** se agrega `anunciante_id` (FK a
+> `Anunciante`, selector "Anunciante", PRIMER campo del formulario) — la llave de la
+> tarifa pasa de (Emisora+Producto+Duración) a (**Anunciante**+Emisora+Producto+
+> Duración). La columna es NULLABLE a nivel BD (las tarifas ya existentes no se pudieron
+> backfillear con un anunciante real) pero OBLIGATORIA en `TarifaPlazaCreate` — toda
+> tarifa nueva siempre lo trae; `null` queda reservado para las tarifas capturadas ANTES
+> de este cambio, que la migración desactivó (`activo = 0`) y que no pueden reactivarse
+> sin antes editarlas para asignarles un Anunciante. La lista se ordena por Anunciante →
+> Emisora → Producto → Duración (antes: Emisora → Producto → Duración) y la búsqueda `q`
+> ahora también abarca el nombre del anunciante. Ver ADR-177 en `docs/arquitectura.md`.
 
 ## Propósito
 
@@ -23,16 +49,22 @@ sugerido al capturar órdenes (F1).
 
 ## Entidad (post-ADR-097/ADR-158 — YA NO coincide con la spec BD v2 original)
 
-### TarifaPlaza (11 campos)
-`tarifa_plaza_id` (PK), `estacion_id` (FK NOT NULL a `Estacion`),
-`duracion_spot` (ENUM: 20s│30s│60s — **sin `mencion`**, ADR-098),
-**`producto`** (ENUM NUEVO, fuera de la spec: spot│mencion│control_remoto│patrocinio),
-**`tarifa_bruta` (PARÁMETRO SENSIBLE, ADR-099)**, **`descuento_pct` (PARÁMETRO SENSIBLE,
-ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `created_by`.
-- **`duracion_spot` ya NO acepta `mencion` (ADR-098):** ese valor solo vive en
-  `producto` desde ADR-097 — tenerlo también aquí era conceptualmente redundante (una
-  "mención" no dura 20/30/60 segundos). El mismo cambio aplica a `OrdenCliente`/
-  `OrdenEstacion` (F1), que comparten el enum `DuracionSpot` (ADR-032).
+### TarifaPlaza (12 campos)
+`tarifa_plaza_id` (PK), **`anunciante_id` (FK NULLABLE a `Anunciante`, OBLIGATORIO en
+`TarifaPlazaCreate` — ADR-177)**, `estacion_id` (FK NOT NULL a `Estacion`),
+`duracion_spot` (NVARCHAR(60), TEXTO LIBRE desde ADR-166 — antes ENUM 20s│30s│60s),
+**`producto`** (NVARCHAR(60), TEXTO LIBRE desde ADR-166 — antes ENUM fuera de la spec:
+spot│mencion│control_remoto│patrocinio), **`tarifa_bruta` (PARÁMETRO SENSIBLE,
+ADR-099)**, **`descuento_pct` (PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta`
+(Calculado)**, `notas`, `activo`, `created_at`, `created_by`.
+- **`producto`/`duracion_spot` son TEXTO LIBRE (ADR-166):** se capturan eligiendo del
+  catálogo F0-06 "Producto Duración" (`DuracionSpotCatalogo`), no de un selector fijo —
+  así se pueden dar de alta valores nuevos sin migración. El literal "sin resultado" de
+  ese catálogo (ADR-165) está explícitamente PROHIBIDO como `duracion_spot` aquí (ver
+  regla de negocio abajo). Antes de ADR-166, `duracion_spot` tampoco aceptaba `mencion`
+  (ADR-098, redundante con `producto`) — eso sigue siendo cierto en la práctica (el
+  catálogo no suele tener una entrada "mención" bajo `duracion_spot`), solo que ya no hay
+  un CHECK que lo imponga.
 
 - **Campo calculado (fórmula de la spec, sin cambio):**
   `tarifa_neta = tarifa_bruta * (1 - descuento_pct / 100)`.
@@ -50,11 +82,18 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 ## Estados
 - Solo `activo`. Ya NO hay filtro Vigentes/Expiradas (eliminado junto con la vigencia).
 
-## Pantallas (de la pantalla F0, ajustada por ADR-097/ADR-158)
+## Pantallas (de la pantalla F0, ajustada por ADR-097/ADR-158/ADR-166/ADR-177)
 - Lista + detalle con filtros (Todas / Activas / Inactivas) y paginación por página.
-- Formulario: Nombre de la emisora (select de Estación), Producto (select), Duración
-  (ADR-158: ya no "Duración del spot"), Tarifa bruta, Descuento, Tarifa neta (Calc,
-  solo lectura).
+  Columnas: **Anunciante** (primera, ADR-177) · Emisora · Producto · Duración · Tarifa
+  bruta · Desc · Tarifa neta · Estatus. Orden: Anunciante → Emisora → Producto →
+  Duración.
+- Formulario: **Anunciante (select, PRIMER campo — ADR-177)**, Nombre de la emisora
+  (select de Estación), Producto (select poblado desde el catálogo Producto Duración,
+  ADR-166 — al elegir uno, limpia Duración), Duración (select poblado con las
+  descripciones de ESE producto en el catálogo, excluyendo "sin resultado"; si no queda
+  ninguna real, un banner bloquea Guardar), Tarifa bruta, Descuento, **Motivo del cambio
+  (select con el catálogo MotivoCambio/CambioTarifa — ADR-179; cae a texto libre si el
+  catálogo está vacío)**, Tarifa neta (Calc, solo lectura).
 
 ## Roles / permisos
 - **Captura: solo Admin (IT)** por ahora (edita catálogos y fija tarifas). Lectura: demás.
@@ -65,22 +104,37 @@ ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `cre
 ## Reglas de negocio clave
 - `tarifa_neta` nunca se acepta como entrada (es calculado por el servicio).
 - **Sin duplicado activo (ADR-097, reemplaza la validación de solapamiento por
-  vigencia; combinación simplificada por ADR-158):** al crear/editar/reactivar una
-  tarifa, el servicio valida que, para la misma combinación **estación +
+  vigencia; combinación ajustada por ADR-158/ADR-177):** al crear/editar/reactivar una
+  tarifa, el servicio valida que, para la misma combinación **anunciante + estación +
   duracion_spot + producto**, no exista otra tarifa **activa**. Si existe, rechaza con
   409 `conflicto` indicando la tarifa en conflicto.
+- **`anunciante_id` obligatorio al crear, y requisito para reactivar (ADR-177):** el
+  servicio verifica que el Anunciante exista; una tarifa **legada** (capturada antes de
+  ADR-177, con `anunciante_id = NULL`, desactivada por la migración) no puede
+  reactivarse directamente — el servicio lo rechaza con un error de dominio hasta que
+  se edite y se le asigne un Anunciante.
 - **`tarifa_bruta`/`descuento_pct` como parámetros sensibles (ADR-099):** el alta audita
   ambos campos con `anterior=None` (sin exigir motivo — es la captura inicial); la
   edición exige `motivo_cambio` (transitorio, no es columna) SOLO si el valor
   efectivamente cambió, y audita cada campo que cambió por separado. Los dos campos
   comparten un único "Motivo del cambio" en la pantalla (mismo criterio que los 3 % de
   comisión de `OrdenCliente`, F1) — no uno por campo.
+- **`duracion_spot` nunca puede ser "sin resultado" (ADR-166):** aunque el catálogo
+  Producto Duración SÍ permite ese literal (equivale a nulo ahí, ADR-165), Tarifa
+  requiere una duración real capturada — el servicio lo rechaza con un error de dominio
+  (tanto en alta como en edición) que indica ir a dar de alta una duración en el
+  catálogo.
 
 ## Integraciones
 - Ninguna.
 
 ## Dependencias
-- F0-00 (fundamentos) y F0-01 (Estación debe existir — ADR-094).
+- F0-00 (fundamentos), F0-01 (Estación debe existir — ADR-094), desde ADR-166, F0-06
+  (catálogo `DuracionSpotCatalogo`/"Producto Duración" — de ahí salen las opciones de
+  Producto y Duración del formulario), desde ADR-177, F0-03 (Anunciante debe existir) y,
+  desde ADR-179, F0-05 (catálogo `ConstantesSistema`, grupo `MotivoCambio` — de ahí salen
+  las opciones del select "Motivo del cambio"; dependencia solo de UI, el backend sigue
+  aceptando cualquier texto en `motivo_cambio`).
 
 ## Estado de implementación (F0-02 entregada, restructurada por ADR-097)
 
@@ -88,13 +142,19 @@ Implementado sobre la base de F0-00 (`BaseRepository`/`BaseService`/`build_crud_
 Modelo, schemas, repositorio y servicio en `backend/app/modules/catalogos/tarifa.py`;
 migraciones `20260708_1200-b73f13de1b80_f0_02_tarifas.py` (original, por plaza + vigencia),
 `20260921_1500-96798afba3cc_f0_02_tarifa_por_estacion.py` (ADR-097: por estación +
-producto, sin vigencia) y `20261005_1248-ec3a357e7c0a_f0_tarifa_sin_tipo_senal.py`
-(ADR-158: quita `tipo_senal`). **Sin migración propia para ADR-099** (parámetros
+producto, sin vigencia), `20261005_1248-ec3a357e7c0a_f0_tarifa_sin_tipo_senal.py`
+(ADR-158: quita `tipo_senal`) y
+`20261006_1445-f4c9c5db55eb_f0_tarifa_producto_duracion_texto_libre.py` (ADR-166: quita
+los CHECK de `producto`/`duracion_spot`, ensancha a `Unicode(60)`) y
+`20261009_1943-3bef064c9917_f0_tarifa_anunciante_id.py` (ADR-177: agrega `anunciante_id`
+NULLABLE + FK + índice, recompone el índice combinado, y desactiva —`activo = 0`— todas
+las tarifas preexistentes). **Sin migración propia para ADR-099** (parámetros
 sensibles): no agrega columnas — reutiliza la tabla `log_cambio_parametro` ya existente
 (ADR-016). Pantalla en `frontend/src/modules/catalogos/tarifa/`. Endpoints en
 `docs/API-CONTRACT.md` (sección Tarifas). Detalles de diseño original en **ADR-015**; la
 restructuración de Plaza→Estación en **ADR-097**; los parámetros sensibles en
-**ADR-099**; el retiro de `tipo_senal` en **ADR-158**.
+**ADR-099**; el retiro de `tipo_senal` en **ADR-158**; la conexión al catálogo Producto
+Duración en **ADR-166**; `anunciante_id` como parte de la llave en **ADR-177**.
 
 **Decisiones tomadas al implementar originalmente (E-1..E-5, superadas por ADR-097 donde
 se indica):**
@@ -118,20 +178,26 @@ se indica):**
   combinación estación+duracion_spot+producto, solo contra tarifas activas, excluyendo
   la propia al editar); se valida al crear, editar y **reactivar** → 409 `conflicto`.
 
-**Búsqueda (`q`):** abarca **nombre de estación, siglas de estación y notas** (parcial,
-case-insensitive, coincide en cualquiera). Como nombre/siglas están en `estacion`, se
-resuelve con un **único JOIN** a `estacion` en `TarifaRepository._apply_filters` (sin N+1,
-no duplica filas por ser N:1); `ilike` es portable a SQL Server (`lower() LIKE lower()`).
+**Búsqueda (`q`):** abarca **nombre de estación, siglas de estación, notas y (ADR-177)
+nombre comercial del anunciante** (parcial, case-insensitive, coincide en cualquiera).
+Se resuelve con un JOIN a `estacion` y un `outerjoin` a `anunciante` (outer porque las
+tarifas legadas tienen `anunciante_id = NULL` y no deben excluirse de la lista) en
+`TarifaRepository._apply_filters` (sin N+1, no duplica filas por ser N:1); `ilike` es
+portable a SQL Server (`lower() LIKE lower()`).
 
 **Portabilidad SQL Server:** comparaciones `activo == True` (→ `activo = 1`, ADR-014);
-tests compilan el filtro de duplicado y el JOIN de búsqueda con el dialecto mssql. Pruebas
-de backend en `app/tests/test_f0_02_tarifas.py` (32 casos: neta/redondeo, ausencia de
+tests compilan el filtro de duplicado y los JOIN de búsqueda con el dialecto mssql. Pruebas
+de backend en `app/tests/test_f0_02_tarifas.py` (48 casos: neta/redondeo, ausencia de
 vigencia, duplicado activo y reactivación, dependencia de Estación, enums —incl.
 `producto`, ya sin el de `tipo_senal` que retiró ADR-158—, búsqueda por nombre/siglas/
-notas, enriquecimiento, y 10 de auditoría de `tarifa_bruta`/`descuento_pct` — alta con
+notas, enriquecimiento, 10 de auditoría de `tarifa_bruta`/`descuento_pct` — alta con
 `anterior=None`, edición con/sin motivo, permiso no-Admin rechazado, mismo valor no
 audita, campo no sensible no audita, un solo motivo audita los dos campos,
-`motivo_cambio` no es columna, historial completo, historial 404).
+`motivo_cambio` no es columna, historial completo, historial 404 — y 8 de ADR-177:
+`anunciante_id` obligatorio, distinto anunciante no duplica, anunciante inexistente
+rechazado, reactivar tarifa legada sin anunciante rechazada, enriquecimiento con/sin
+anunciante, búsqueda por nombre de anunciante, orden de lista Anunciante→Emisora→
+Producto→Duración).
 
 **Historial de auditoría:** `GET /catalogos/tarifas/{id}/historial` (ADR-021, mismo
 endpoint que los demás catálogos con campos sensibles) — panel "Historial de cambios" en
@@ -152,7 +218,11 @@ Ajuste de temporada` (mismo formato que Agencia/Vendedor/Contrato).
   tarifa de referencia (`tarifaReferencia` en `state/catalogosCache.ts`) busca por
   `estacion_id` (no `plaza_id`, desde ADR-097) + `duracion_spot` + `producto` — ya NO
   recibe/filtra por tipo de señal (ADR-158): `estacion_id` por sí solo ya determina el
-  tipo de señal real de la emisora.
+  tipo de señal real de la emisora. **Desde ADR-177** también filtra por
+  `anunciante_id` (en el form, heredado de la Orden de Servicio — `oc.anunciante_id`; en
+  el panel de detalle, el `anunciante_id` ya denormalizado en la propia OE —
+  `oe.anunciante_id`) — mismo criterio "sin duplicado activo" que usa el backend en
+  `_tarifa_sugerida()` (`orden_estacion.py`).
 
 ## Pendientes / dudas
 - (Resuelto, histórico) La tarifa era por **plaza + señal + duración** (no por estación).
@@ -165,3 +235,6 @@ Ajuste de temporada` (mismo formato que Agencia/Vendedor/Contrato).
 - (Resuelto ADR-158) `tipo_senal` se eliminó de `TarifaPlaza` por completo — es
   propiedad de la Estación, no de la tarifa. "Duración del spot" pasa a llamarse solo
   "Duración" en el formulario.
+- (Resuelto ADR-177) La tarifa agrega **Anunciante** como parte de la llave (Anunciante +
+  Emisora + Producto + Duración); las tarifas preexistentes quedaron desactivadas por la
+  migración (sin anunciante) y no pueden reactivarse sin antes asignarles uno.

@@ -26,6 +26,13 @@ transición previa `recibida → capturada` gateada por un checklist de 10 ítem
 `capturada`: no hay checklist, no hay paso intermedio. `recibida` sigue existiendo en el
 enum (la spec la define) pero queda **inalcanzable** por el flujo normal — mismo tipo de
 hueco ya documentado para `cancelada` (ADR-035).
+
+**ADR-180 (petición del usuario):** editar `fecha_inicio_campania`/`fecha_fin_campania`
+en `OrdenClienteUpdate` (el `PUT` normal) ahora exige `motivo_cambio_fecha` (transitorio,
+un solo motivo para ambas) y las audita en `LogCambioParametro` — mismo patrón que
+`TarifaPlazaUpdate.motivo_cambio` (ADR-099), pero SIN pasar por
+`field_permissions.verificar` (bloquearía a Ventas): se audita con
+`audit.log_cambio_parametro` directo, igual que las comisiones en el alta.
 """
 
 from __future__ import annotations
@@ -65,7 +72,6 @@ from app.modules.catalogos.vendedor import Vendedor
 from app.modules.usuarios.lookup import resolver_usuario_id
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
-from app.shared.enums import DuracionSpot
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
@@ -123,10 +129,6 @@ class OrdenCliente(Base):
         CheckConstraint(
             "estatus_pago_agencia IN ('pendiente', 'en_revision', 'pagado')",
             name="ck_orden_cliente_estatus_pago_agencia",
-        ),
-        CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s')",
-            name="ck_orden_cliente_duracion_spot",
         ),
         CheckConstraint(
             "fecha_fin_campania >= fecha_inicio_campania",
@@ -245,7 +247,12 @@ class OrdenCliente(Base):
     # Calculado (spec): = DATEDIFF(fin, inicio) + 1. Persistido por el servicio.
     total_dias_campania: Mapped[int] = mapped_column()
 
-    duracion_spot: Mapped[str] = mapped_column(Unicode(10))
+    # ADR-167 (petición del usuario): texto libre y OPCIONAL (antes CHECK NOT NULL
+    # `20s|30s|60s`) — se capturan eligiendo del catálogo `DuracionSpotCatalogo`
+    # ("Producto Duración", F0-06), igual que Tarifa (ADR-166), pero aquí SÍ se permite
+    # dejarlos sin capturar (p.ej. Mención, cuyo catálogo solo tiene "sin resultado").
+    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(60), default=None)
+    duracion_spot: Mapped[str | None] = mapped_column(Unicode(60), default=None)
     precio_unitario: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     total_spots: Mapped[int] = mapped_column()
     # Extensión aditiva (ADR-067): spots que se transmiten normalmente (siguen contando
@@ -336,7 +343,8 @@ class OrdenClienteRead(BaseModel):
     fecha_inicio_campania: date
     fecha_fin_campania: date
     total_dias_campania: int
-    duracion_spot: str
+    producto_tarifa: str | None = None
+    duracion_spot: str | None = None
     precio_unitario: Decimal
     total_spots: int
     cantidad_spots_bonificables: int
@@ -414,7 +422,12 @@ class OrdenClienteCreate(BaseModel):
     archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date
     fecha_fin_campania: date
-    duracion_spot: DuracionSpot
+    # ADR-167/168: ambos se eligen del catálogo Producto Duración (F0-06). `producto_tarifa`
+    # es OBLIGATORIO al crear (ADR-168, petición del usuario: habilita el resto de "Campaña
+    # y montos" en pantalla) — `duracion_spot` sigue opcional, a diferencia de Tarifa
+    # (ADR-166) aquí SÍ se puede dejar sin capturar una duración real.
+    producto_tarifa: str = Field(min_length=1, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_unitario: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     total_spots: int = Field(gt=0)
     # Extensión aditiva (ADR-067): se valida contra `total_spots` en el servicio, no
@@ -449,7 +462,16 @@ class OrdenClienteUpdate(BaseModel):
     """Edición normal (Ventas, `ordenes:editar`) — 409 si la orden está congelada
     (`FROZEN_STATES_OC`). Los 3 % de comisión NO viven aquí (ver Hallazgo 2 del plan de
     la Tanda 5): `extra="forbid"` para RECHAZAR explícitamente si alguien los manda por
-    error, en vez de ignorarlos en silencio."""
+    error, en vez de ignorarlos en silencio.
+
+    ADR-180 (petición del usuario): `motivo_cambio_fecha` es TRANSITORIO (nunca llega a
+    la BD, se descarta en `_pre_update`) — requerido solo si `fecha_inicio_campania`/
+    `fecha_fin_campania` de verdad cambian respecto al valor guardado (un solo motivo
+    cubre ambos, mismo criterio que `TarifaPlazaUpdate.motivo_cambio`, ADR-099). A
+    diferencia de los % de comisión, NO pasa por `field_permissions.verificar` (que
+    bloquearía a Ventas, única área que captura/edita Órdenes de Servicio) — se audita
+    con `audit.log_cambio_parametro` directo, mismo criterio que las comisiones en el
+    ALTA (ver comentario en `create()`)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -470,12 +492,14 @@ class OrdenClienteUpdate(BaseModel):
     archivo_orden_original_path: str | None = Field(default=None, max_length=500)
     fecha_inicio_campania: date | None = None
     fecha_fin_campania: date | None = None
-    duracion_spot: DuracionSpot | None = None
+    producto_tarifa: str | None = Field(default=None, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_unitario: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     total_spots: int | None = Field(default=None, gt=0)
     cantidad_spots_bonificables: int | None = Field(default=None, ge=0)
     observaciones_predefinidas: str | None = Field(default=None, max_length=1000)
     observaciones_libres: str | None = Field(default=None, max_length=1000)
+    motivo_cambio_fecha: str | None = Field(default=None, max_length=500)
 
 
 class OrdenClienteComisionesUpdate(BaseModel):
@@ -550,8 +574,13 @@ class OrdenClienteService(
         self._repo = repo
 
     def historial_comisiones(self, orden_id: uuid.UUID) -> Sequence[audit.LogCambioParametroRead]:
-        """Historial de cambios a los % de comisión snapshot (ADR-029), más reciente
-        primero — mismo mecanismo de `LogCambioParametro` que usan los catálogos."""
+        """Historial de cambios a parámetros sensibles de la OC, más reciente primero —
+        mismo mecanismo de `LogCambioParametro` que usan los catálogos. A pesar del
+        nombre (histórico, de cuando solo auditaba comisiones — ADR-029), desde ADR-180
+        también incluye `fecha_inicio_campania`/`fecha_fin_campania`: `listar_historial`
+        filtra solo por (entidad, entidad_id), no por campo, así que ambos tipos de
+        cambio comparten el mismo balde. El panel de detalle los muestra juntos bajo
+        "Historial de cambios" (ya no "... de comisión")."""
         return self.historial(orden_id)
 
     # ── helpers de validación ────────────────────────────────────────────────────
@@ -702,6 +731,7 @@ class OrdenClienteService(
 
     # ── edición normal ────────────────────────────────────────────────────────────
     def _pre_update(self, obj: OrdenCliente, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        motivo_fecha = payload.pop("motivo_cambio_fecha", None)  # transitorio: nunca llega a la BD
         if obj.estatus_orden in FROZEN_STATES_OC:
             raise StateTransitionError(
                 f"No se puede editar una orden en estado '{obj.estatus_orden}'. Los % de "
@@ -765,6 +795,40 @@ class OrdenClienteService(
                     )
 
             payload["total_dias_campania"] = (f_fin - f_ini).days + 1
+
+            # ADR-180 (petición del usuario): si de verdad cambió alguna de las dos
+            # fechas, exige un motivo (compartido entre ambas, mismo criterio que
+            # `TarifaPlazaUpdate.motivo_cambio`) y audita cada campo que cambió por
+            # separado. `log_cambio_parametro` directo (no `registrar_cambio_sensible`):
+            # esa función exige `field_permissions.verificar`, hoy hardcodeado a "solo
+            # Admin", que bloquearía a Ventas — única área que captura/edita OC.
+            cambios_fecha = [
+                (campo, anterior, nuevo)
+                for campo, anterior, nuevo in (
+                    ("fecha_inicio_campania", obj.fecha_inicio_campania, f_ini),
+                    ("fecha_fin_campania", obj.fecha_fin_campania, f_fin),
+                )
+                if anterior != nuevo
+            ]
+            if cambios_fecha:
+                motivo = (motivo_fecha or "").strip()
+                if not motivo:
+                    raise DomainError(
+                        "Se requiere 'motivo_cambio_fecha' para modificar fecha_inicio_campania "
+                        "o fecha_fin_campania.",
+                        detalles={"campos": [c for c, _, _ in cambios_fecha]},
+                    )
+                for campo, anterior, nuevo in cambios_fecha:
+                    audit.log_cambio_parametro(
+                        db=db,
+                        entidad=self.entidad,
+                        entidad_id=obj.orden_id,
+                        campo=campo,
+                        anterior=anterior,
+                        nuevo=nuevo,
+                        usuario=usuario,
+                        motivo=motivo,
+                    )
 
         if "fecha_venta" in payload:
             payload["anio_venta"] = payload["fecha_venta"].year

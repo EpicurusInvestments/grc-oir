@@ -8,12 +8,13 @@
  * `crearOC`/`crearOE` (que en Tanda 5b llaman al backend real vía HTTP).
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionForm } from "../ordenEstacion/components/OrdenEstacionForm";
 import { OrdenesProvider } from "../state/OrdenesContext";
-import { estaciones, tarifas } from "../state/catalogosCache";
+import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE } from "./fixtures";
@@ -32,11 +33,64 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => {
   };
 });
 
+// ADR-169: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" — mock
+// del catálogo (sin pegarle a la red real desde jsdom), con 2 productos: uno con
+// duraciones reales (Spot) y uno cuyo único registro es "sin resultado" (Mención).
+vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
+  duracionSpotCatalogoApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { duracion_spot_catalogo_id: "d1", producto: "spot", descripcion_duracion: "30s", activo: true },
+        { duracion_spot_catalogo_id: "d2", producto: "spot", descripcion_duracion: "60s", activo: true },
+        { duracion_spot_catalogo_id: "d3", producto: "mencion", descripcion_duracion: "sin resultado", activo: true },
+        { duracion_spot_catalogo_id: "d4", producto: "Jingle promocional", descripcion_duracion: "15", activo: true },
+      ],
+      total: 4,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
+// ADR-183: catálogo Constantes del Sistema (grupo MotivoCambio, clave CambioTarifa) para
+// el select de "Motivo del cambio de tarifa".
+vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
+  constanteApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { constante_sistema_id: "mc1", grupo: "MotivoCambio", clave: "CambioTarifa_1", descripcion: "Por oferta de la emisora", valor: null, activo: true },
+        { constante_sistema_id: "mc2", grupo: "MotivoCambio", clave: "CambioTarifa_2", descripcion: "Por incremento de tarifa", valor: null, activo: true },
+      ],
+      total: 2,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
+// ADR-182: "an1" es el `anunciante_id` default de `makeOC()` (fixtures.ts) — se siembra
+// para probar que la tarjeta "Orden de Servicio de origen" muestra su nombre.
+anunciantes.push({
+  id: "an1",
+  agencia_id: null,
+  nombre_comercial: "Televisa Publicidad",
+  nombre_fiscal: "Televisa Publicidad SA de CV",
+  rfc_anunciante: "TPU900101XX1",
+  dias_credito_default: 30,
+  categoria_id: "",
+});
+
 // `es1` (plaza pl2): la estación que usan las pruebas de este archivo — el formulario la
 // resuelve contra `state/catalogosCache.ts`, que nace vacío.
-estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900 AM", tipo_senal: "am" });
+// ADR-191: `frecuencia` ya NO lleva el tipo de señal embebido como texto libre (el
+// catálogo real lo captura aparte, en `tipo_senal`) — el selector de Orden de
+// Transmisión arma "Siglas Frecuencia TIPO Plaza Nombre" concatenando ambos campos por
+// separado; con `frecuencia: "900 AM"` (viejo) saldría "900 AM AM" duplicado.
+estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900", tipo_senal: "am" });
 // Fix: una estación dada de baja no debe aparecer en el select de "Estación".
-estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1 FM", tipo_senal: "fm", activo: false });
+estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1", tipo_senal: "fm", activo: false });
 
 function renderForm(
   opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[]; oe?: Partial<OrdenEstacion> } = {},
@@ -47,10 +101,13 @@ function renderForm(
   const oesPrevias = (opts.oesPrevias ?? []).map((oe) => makeOE({ ...oe, orden_id: oc.id }));
   const oe = opts.oe ? makeOE({ ...opts.oe, orden_id: oc.id }) : undefined;
   const ordenesEstacion = oe ? [...oesPrevias, oe] : oesPrevias;
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion, incidencias: [], historialComisiones: [] }}>
-      <OrdenEstacionForm ocIdFijo={oc.id} oe={oe} onGuardar={onGuardar} onCancelar={onCancelar} />
-    </OrdenesProvider>,
+    <QueryClientProvider client={qc}>
+      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion, incidencias: [], historialComisiones: [] }}>
+        <OrdenEstacionForm ocIdFijo={oc.id} oe={oe} onGuardar={onGuardar} onCancelar={onCancelar} />
+      </OrdenesProvider>
+    </QueryClientProvider>,
   );
   return { ...utils, onGuardar, onCancelar, oc, oe };
 }
@@ -79,6 +136,42 @@ async function agregarDia(container: HTMLElement, spots: number) {
   const ultimo = spotsInputs[spotsInputs.length - 1] as HTMLInputElement;
   fireEvent.change(ultimo, { target: { value: String(spots) } });
 }
+
+describe("ADR-182: la tarjeta 'Orden de Servicio de origen' muestra el Anunciante heredado", () => {
+  it("muestra el nombre comercial del anunciante de la OC junto al folio", () => {
+    renderForm({ oc: { anunciante_id: "an1" } });
+    expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+  });
+
+  it("si el anunciante no está en el catálogo cargado, muestra un guion en vez de romperse", () => {
+    renderForm({ oc: { anunciante_id: "an-no-existe" } });
+    const card = screen.getByText("Orden de Servicio de origen").closest(".form-card") as HTMLElement;
+    expect(within(card).getByText("—")).toBeInTheDocument();
+  });
+
+  it("fix: en el alta SUELTA (sin ocIdFijo), al elegir una OC del selector también aparece el Anunciante", () => {
+    const oc = makeOC({ anunciante_id: "an1" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <OrdenesProvider
+          initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}
+        >
+          <OrdenEstacionForm onGuardar={vi.fn()} onCancelar={vi.fn()} />
+        </OrdenesProvider>
+      </QueryClientProvider>,
+    );
+
+    // Antes de elegir una OC, sin Anunciante que mostrar.
+    expect(screen.queryByText("Televisa Publicidad")).toBeNull();
+
+    const combo = fieldByLabelText<HTMLInputElement>(container, "Orden de Servicio de origen");
+    fireEvent.focus(combo);
+    fireEvent.mouseDown(screen.getByText(`${oc.folio_orden} — ${oc.numero_orden_cliente}`));
+
+    expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+  });
+});
 
 describe("Balance de spots en vivo — 1.2", () => {
   it("agregar días refleja 'faltan N por asignar', luego 100%, luego sobre-asignación", async () => {
@@ -113,6 +206,9 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
     const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
 
@@ -135,6 +231,9 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1500" } }); // > tarifa cliente (1000)
@@ -152,6 +251,9 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
       oc: { total_spots: 120, precio_unitario: 1000, fecha_inicio_campania: "2025-06-01", fecha_fin_campania: "2025-06-30" },
     });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -168,6 +270,9 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -190,6 +295,9 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
   it("el Importe se calcula sobre spots facturables (asignados − bonificables), no sobre el total asignado", async () => {
     const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -204,6 +312,9 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
   it("spots bonificables mayores a los asignados de esta OI muestran error y bloquean Guardar", async () => {
     const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -217,6 +328,9 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
   it("'Guardar' llama a onGuardar con cantidad_spots_bonificables capturado", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -243,6 +357,7 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
 // tarifa sembrada) para no interferir con ellas.
 tarifas.push({
   id: "ta-am-60-spot",
+  anunciante_id: "an1",
   estacion_id: "es1",
   duracion_spot: "60s",
   producto: "spot",
@@ -250,15 +365,31 @@ tarifas.push({
   descuento_pct: 0,
   tarifa_neta: 1000,
 });
+// ADR-169: tarifa con producto/duración TEXTO LIBRE (más allá del enum anterior) — para
+// confirmar que la sugerencia de tarifa del catálogo sigue funcionando igual.
+tarifas.push({
+  id: "ta-am-15-jingle",
+  anunciante_id: "an1",
+  estacion_id: "es1",
+  duracion_spot: "15",
+  producto: "Jingle promocional",
+  tarifa_bruta: 450,
+  descuento_pct: 0,
+  tarifa_neta: 450,
+});
 
 describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-106)", () => {
   it("precio_spot coincide con la tarifa sugerida: no pide motivo y no bloquea Guardar por eso", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
 
-    // La tarifa se autocarga a 1000 (coincide con `ta-am-30-spot`) — no aparece "Motivo".
+    // La tarifa se autocarga a 1000 (coincide con `ta-am-30-spot`) — no hay divergencia,
+    // así que el campo "Motivo" ni siquiera se muestra (ADR-183b).
     expect(screen.getByText(/Tarifa del catálogo: \$1,000\.00/)).toBeInTheDocument();
     expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
 
@@ -272,31 +403,68 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
   it("precio_spot diverge de la tarifa sugerida: exige motivo, bloquea Guardar sin él, y lo manda al backend con él", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
     // Se aparta de la tarifa sugerida (1000) a propósito.
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1500" } });
     await agregarDia(container, 10);
 
-    expect(screen.getByText("Motivo del cambio de tarifa")).toBeInTheDocument();
     expect(
       screen.getByText(/El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio\./),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeDisabled();
 
-    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa"), {
-      target: { value: "Negociación especial con el afiliado" },
-    });
+    // ADR-183/183b: "Motivo del cambio de tarifa" es un select con las Descripciones
+    // del catálogo MotivoCambio/CambioTarifa — se espera a que cargue (mock); se MUESTRA
+    // (siempre habilitado) porque lo último que se tocó fue la tarifa misma.
+    await screen.findByText("Por oferta de la emisora");
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    expect(motivoSelect).toBeEnabled();
+    fireEvent.change(motivoSelect, { target: { value: "Por incremento de tarifa" } });
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
     const [, input] = onGuardar.mock.calls[0];
-    expect(input.motivo_cambio_tarifa).toBe("Negociación especial con el afiliado");
+    expect(input.motivo_cambio_tarifa).toBe("Por incremento de tarifa");
+  });
+
+  it("ADR-183b (petición del usuario): tocar Spots bonificables DESPUÉS de divergir la tarifa oculta el motivo y ya no lo exige", async () => {
+    const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1500" } });
+    await screen.findByText("Motivo del cambio de tarifa");
+
+    // Toca "Spots bonificables del afiliado" después de divergir — el precio SIGUE
+    // siendo 1500 (sigue divergiendo numéricamente), pero el motivo ya no es lo último
+    // que se tocó: el campo debe ocultarse y dejar de bloquear Guardar.
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables del afiliado"), {
+      target: { value: "5" },
+    });
+    expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
+
+    await agregarDia(container, 10);
+    expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.precio_spot).toBe(1500);
+    expect(input.motivo_cambio_tarifa).toBeUndefined();
   });
 
   it("ADR-115 (fix): al cambiar a una duración SIN tarifa en el catálogo, el campo se limpia para capturarla a mano", async () => {
     const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
 
@@ -313,17 +481,196 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     expect(tarifaInput.value).toBe("1,000.00");
   });
 
-  it("ADR-115 (fix): un precio tecleado a mano NO se borra al cambiar a una duración sin tarifa", async () => {
+  it("ADR-170 (petición del usuario, reemplaza ADR-115): cambiar de Duración SIEMPRE limpia un precio tecleado a mano", async () => {
     const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
 
     const tarifaInput = fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot");
     fireEvent.change(tarifaInput, { target: { value: "1234" } });
 
+    // "30s" no tiene tarifa sembrada para es1/spot — antes (ADR-115) se preservaba el
+    // valor tecleado a mano; ahora (ADR-170) se limpia siempre al cambiar de Duración.
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
-    expect(tarifaInput.value).toBe("1,234.00");
+    expect(tarifaInput.value).toBe("");
+
+    // Volver a "60s" (que SÍ tiene tarifa) recarga su tarifa del catálogo, no el valor
+    // editado a mano que ya se perdió al cambiar de Duración.
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
+    expect(tarifaInput.value).toBe("1,000.00");
+  });
+
+  it("ADR-170 (petición del usuario): cambiar de Producto SIEMPRE limpia un precio tecleado a mano", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
+
+    const tarifaInput = fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot");
+    fireEvent.change(tarifaInput, { target: { value: "9999" } });
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "mencion" } });
+    expect(tarifaInput.value).toBe("");
+  });
+
+  it("ADR-162 (fix): al editar una OE cuyo precio ya diverge del catálogo, SIN cambiarlo, no vuelve a pedir motivo", async () => {
+    const { onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      oe: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "60s", precio_spot: 1500 },
+    });
+
+    // El precio (1500) ya diverge de la tarifa del catálogo (1000), pero no se tocó en
+    // esta edición — no debe aparecer el campo de motivo (ADR-183b) ni bloquear Guardar.
+    expect(screen.getByText(/Tarifa del catálogo: \$1,000\.00/)).toBeInTheDocument();
+    expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.precio_spot).toBe(1500);
+    expect(input.motivo_cambio_tarifa).toBeUndefined();
+  });
+
+  it("ADR-162 (fix): al editar y cambiar el precio a otro valor que también diverge, vuelve a pedir motivo", async () => {
+    const { container, onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      oe: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "60s", precio_spot: 1500 },
+    });
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1600" } });
+
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
+
+    await screen.findByText("Por oferta de la emisora");
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    expect(motivoSelect).toBeEnabled();
+    fireEvent.change(motivoSelect, { target: { value: "Por oferta de la emisora" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.precio_spot).toBe(1600);
+    expect(input.motivo_cambio_tarifa).toBe("Por oferta de la emisora");
+  });
+
+  it("ADR-169: producto con solo 'sin resultado' en el catálogo deja Duración deshabilitada, pero SÍ permite capturar tarifa y guardar", async () => {
+    const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("mencion")).toBeInTheDocument(),
+    );
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "mencion" } });
+
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(selectDuracion).toBeDisabled();
+    expect(within(selectDuracion).queryByText("sin resultado")).toBeNull();
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "300" } });
+    await agregarDia(container, 10);
+
+    expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.producto_tarifa).toBe("mencion");
+    expect(input.duracion_spot).toBeUndefined();
+    expect(input.precio_spot).toBe(300);
+  });
+
+  it("ADR-169 (petición del usuario): producto/duración texto libre coinciden con una tarifa ya sembrada y la autocargan igual que antes", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(
+        within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("Jingle promocional"),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), {
+      target: { value: "Jingle promocional" },
+    });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "15" } });
+
+    expect(screen.getByText(/Tarifa del catálogo: \$450\.00/)).toBeInTheDocument();
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("450.00");
+    expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
+  });
+});
+
+describe("ADR-173 (petición del usuario): Producto/Duración se precargan desde la OC de origen al CREAR", () => {
+  it("al elegir la estación, Producto y Duración ya vienen seleccionados con los de la OC y autocargan su tarifa", async () => {
+    const { container, onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000, producto_tarifa: "spot", duracion_spot: "60s" },
+    });
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+
+    // Sin tocar los selects de Producto/Duración, ya vienen con el valor de la OC...
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Producto").value).toBe("spot");
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("60s");
+    // ...y la tarifa sembrada para es1/60s/spot (1000) se autocarga sola, igual que si el
+    // usuario los hubiera elegido a mano.
+    await waitFor(() =>
+      expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("1,000.00"),
+    );
+    expect(screen.getByText(/Tarifa del catálogo: \$1,000\.00/)).toBeInTheDocument();
+
+    await agregarDia(container, 10);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.producto_tarifa).toBe("spot");
+    expect(input.duracion_spot).toBe("60s");
+  });
+
+  it("el usuario sigue pudiendo cambiar el Producto/Duración precargados", async () => {
+    const { container, onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000, producto_tarifa: "spot", duracion_spot: "60s" },
+    });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Duración")).getByText("30s")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("");
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "900" } });
+    await agregarDia(container, 10);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.duracion_spot).toBe("30s");
+    expect(input.precio_spot).toBe(900);
+  });
+
+  it("si la OC no capturó Duración, el select de Duración arranca vacío (deshabilitado si el producto no tiene duraciones reales, igual que siempre)", async () => {
+    const { container } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000, producto_tarifa: "mencion", duracion_spot: null },
+    });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("mencion")).toBeInTheDocument(),
+    );
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Producto").value).toBe("mencion");
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(selectDuracion.value).toBe("");
+    expect(selectDuracion).toBeDisabled();
+  });
+
+  it("si la OC capturó 'sin resultado' como duración, el select de Duración arranca vacío (no lo muestra como opción)", async () => {
+    const { container } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000, producto_tarifa: "mencion", duracion_spot: "sin resultado" },
+    });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("mencion")).toBeInTheDocument(),
+    );
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("");
   });
 });
 
@@ -342,7 +689,7 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     elegirArchivo(container);
 
     await waitFor(() => expect(screen.getByText("uno.mp3")).toBeInTheDocument());
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("#1")).toBeInTheDocument();
 
     // También aparece como material por default en la tabla de días (aunque el día
     // todavía no tenga `orden_estacion_dia_id` real).
@@ -358,6 +705,9 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     await waitFor(() => expect(screen.getByText("uno.mp3")).toBeInTheDocument());
 
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
@@ -379,7 +729,7 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     expect(screen.getByText("Sin audios elegidos todavía.")).toBeInTheDocument();
   });
 
-  it("ADR-111: con 2+ audios subidos, 'Sustitución de Material' permite elegir otro para un día ya generado", async () => {
+  it("ADR-111/ADR-187: con 2+ audios subidos, un día de 1 solo renglón (sin rango) asigna por posición y permite reasignar a otro material", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
     elegirArchivo(container, "uno.mp3");
@@ -388,18 +738,26 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     await waitFor(() => expect(screen.getByText("dos.wav")).toBeInTheDocument());
 
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
     await agregarDia(container, 50);
 
-    // Por default se pinta el primero subido (aparece tanto en la lista de audios como
-    // en la tabla de días).
+    // "+ Agregar día" genera UN solo renglón (sin rango, `hora_inicio === hora_termino`)
+    // con `spots_diarios = 50` — por dentro sigue siendo 1 sola fila real, así que solo
+    // puede llevar 1 material (el tope del multi-select es `grupo.filas.length`, no los
+    // spots): le toca el primero por posición (ADR-187).
     expect(screen.getAllByText("uno.mp3").length).toBeGreaterThanOrEqual(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Sustitución de Material" }));
-    const selectSustitucion = container.querySelector("table.cat-table select") as HTMLSelectElement;
-    fireEvent.change(selectSustitucion, { target: { value: "orden_estacion/audios/abc_dos.wav" } });
+    // Para reasignar: abrir el panel, desmarcar "uno.mp3" (ya está al tope de 1) y
+    // marcar "dos.wav".
+    const tabla = container.querySelector("table.cat-table") as HTMLElement;
+    fireEvent.click(within(tabla).getByRole("button", { name: "uno.mp3" }));
+    fireEvent.click(within(tabla).getByLabelText("uno.mp3"));
+    fireEvent.click(within(tabla).getByLabelText("dos.wav"));
 
     await waitFor(() => expect(screen.queryByText("Sin audios elegidos todavía.")).toBeNull());
     expect(screen.getAllByText("dos.wav").length).toBeGreaterThanOrEqual(2);
@@ -416,10 +774,13 @@ describe("Selector de OC de origen con filtro de búsqueda — abierta suelta (s
     const oc2 = makeOC({ folio_orden: "OC-2026-0043", numero_orden_cliente: "PO-CLIENTE-V02", estatus_orden: "orden_interna" });
     const onGuardar = vi.fn();
     const onCancelar = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc1, oc2], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionForm onGuardar={onGuardar} onCancelar={onCancelar} />
-      </OrdenesProvider>,
+      <QueryClientProvider client={qc}>
+        <OrdenesProvider initialState={{ ordenesCliente: [oc1, oc2], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionForm onGuardar={onGuardar} onCancelar={onCancelar} />
+        </OrdenesProvider>
+      </QueryClientProvider>,
     );
     return { ...utils, oc1, oc2 };
   }
@@ -490,9 +851,28 @@ describe("Fix: estaciones inactivas no aparecen en el select", () => {
   it("la estación activa aparece en el select, la dada de baja no", async () => {
     const { container } = renderForm({ oc: { total_spots: 120 } });
     const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
-    // ADR-136: el combo muestra "Estación-Siglas-Frecuencia" — sin siglas capturadas
-    // en el fixture, cae al guion.
-    expect(within(select).getByText("XEW-AM-—-900 AM")).toBeInTheDocument();
+    // ADR-191: el combo muestra "Siglas Frecuencia TIPO Plaza Nombre" — sin siglas
+    // capturadas ni plaza registrada en este fixture (`findPlaza("pl2")` no existe en
+    // esta suite), ambas partes se OMITEN (no un "—" ni un espacio de más).
+    expect(within(select).getByText("900 AM XEW-AM")).toBeInTheDocument();
     expect(within(select).queryByText(/XEW-FM \(baja\)/)).toBeNull();
+  });
+});
+
+describe("ADR-191 (petición del usuario): el combo de Estación muestra 'Siglas Frecuencia TIPO Nombre' (sin Plaza)", () => {
+  it("con todos los datos capturados (siglas), arma las 4 partes en ese orden, separadas por un solo espacio", async () => {
+    estaciones.push({
+      id: "es-completa",
+      afiliado_id: "af1",
+      plaza_id: "pl2",
+      nombre_estacion: "Multimedios Estrellas de Oro",
+      siglas: "XHMT",
+      frecuencia: "90.1",
+      tipo_senal: "fm",
+    });
+
+    const { container } = renderForm({ oc: { total_spots: 120 } });
+    const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
+    expect(within(select).getByText("XHMT 90.1 FM Multimedios Estrellas de Oro")).toBeInTheDocument();
   });
 });

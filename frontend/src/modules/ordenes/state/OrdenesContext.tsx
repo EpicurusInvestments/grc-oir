@@ -136,7 +136,7 @@ interface OrdenesContextValue {
    * tocarlos (canal dedicado de comisiones, Dirección/Admin) y registra el motivo. */
   actualizarOC: (
     id: string,
-    patch: Partial<OrdenCliente>,
+    patch: Partial<OrdenCliente> & { motivo_cambio_fecha?: string },
     opts?: { auditoria?: { motivo: string } },
   ) => Promise<void>;
   /** Crea una OrdenEstacion nueva colgada de `ocId`. */

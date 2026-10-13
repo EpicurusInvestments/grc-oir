@@ -209,15 +209,12 @@ export interface OpcionCatalogo {
   etiqueta: string;
 }
 
-/** Subconjunto de `Anunciante` (F0) para el bloque "Contacto de cobranza" y los días de
- *  crédito heredados. */
+/** Subconjunto de `Anunciante` (F0) para los días de crédito heredados. ADR-174: el
+ *  "Contacto cobranza" ya no sale de aquí — consulta `ContactoAnunciante` aparte. */
 export interface AnuncianteInfo {
   anunciante_id: string;
   nombre_comercial: string;
   rfc_anunciante: string;
-  contacto_nombre: string | null;
-  contacto_email: string | null;
-  contacto_telefono: string | null;
   dias_credito_default: number;
 }
 

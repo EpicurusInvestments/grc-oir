@@ -1,11 +1,12 @@
-/** Panel de detalle del Anunciante: identificación fiscal + contacto legado + condiciones
- * (días de crédito, sensible) + Marcas y Contactos ANIDADOS (add/edit/desactivar inline,
- * patrón Estación-en-Afiliado) + Contratos (lectura) + Historial de cambios.
+/** Panel de detalle del Anunciante: identificación fiscal + condiciones (días de
+ * crédito, sensible) + Marcas y Contactos ANIDADOS (add/edit/desactivar inline, patrón
+ * Estación-en-Afiliado) + Contratos (lectura) + Historial de cambios.
  *
- * "Contacto comercial" (`contacto_nombre`/`contacto_email`/`contacto_telefono`) es el
- * único contacto plano de la spec original — queda como LEGADO, de solo lectura aquí (ya
- * no se captura desde el formulario). "Contactos" es la lista nueva (varios), entidad
- * fuera de la spec BD v2, mismo patrón anidado que Marca.
+ * ADR-174 (petición del usuario, reporte de bug): el contacto único legado
+ * (`contacto_nombre`/`contacto_email`/`contacto_telefono`, el único contacto plano de la
+ * spec original, ADR-091) se ELIMINÓ POR COMPLETO (campos y columnas) — el usuario lo
+ * veía como "la vieja funcionalidad" coexistiendo de forma confusa junto a la sección
+ * "Contactos" nueva (varios, entidad fuera de la spec BD v2).
  */
 
 import { useState } from "react";
@@ -134,21 +135,8 @@ export function AnuncianteDetailPanel({
         <div className="fl">Referencia interna</div>
         <div className="fv mono">{oGuion(anunciante.referencia_anunciante)}</div>
 
-        {(anunciante.contacto_nombre || anunciante.contacto_email || anunciante.contacto_telefono) && (
-          <>
-            <div className="sec">
-              Contacto comercial <FieldTag origin="derivado" text="Legado" />
-            </div>
-            <div className="fl">Nombre</div>
-            <div className="fv">{oGuion(anunciante.contacto_nombre)}</div>
-            <div className="fl">Correo</div>
-            <div className="fv link">{oGuion(anunciante.contacto_email)}</div>
-            <div className="fl">Teléfono</div>
-            <div className="fv">{oGuion(anunciante.contacto_telefono)}</div>
-          </>
-        )}
-
-        {/* ── Contactos anidados (entidad nueva, reemplaza al contacto único de arriba) ── */}
+        {/* ── Contactos anidados (entidad nueva, ADR-174: reemplaza por completo al
+            contacto único legado — ya no se muestra, ver docstring arriba) ── */}
         <ContactosSection
           anuncianteId={anunciante.anunciante_id}
           canWrite={canWrite}

@@ -62,6 +62,21 @@ catálogo sugerida + auditada:**
   no hay ninguna tarifa activa para la combinación, no hay nada contra qué comparar y no
   se audita nada (mismo comportamiento 100% libre de antes de esta fase).
 
+**ADR-169 (petición del usuario) — Producto/Duración conectados al catálogo "Producto
+Duración":** `producto_tarifa` y `duracion_spot` dejan de ser los CHECK/enum cerrados
+(`ProductoTarifa`/`DuracionSpot`) y pasan a texto libre — se eligen del catálogo
+`DuracionSpotCatalogo` (F0-06), mismo patrón ya usado en Tarifa (ADR-166) y OrdenCliente
+(ADR-167/168). `producto_tarifa` sigue siendo obligatorio al crear (como ya lo era);
+`duracion_spot` se vuelve NULLABLE (antes CHECK NOT NULL `20s|30s|60s`) — si el producto
+elegido no tiene ninguna duración real en el catálogo (p.ej. Mención, solo "sin
+resultado"), queda sin capturar y NO bloquea nada: el usuario sigue pudiendo teclear
+`precio_spot` a mano y llenar el resto del formulario, igual que ya permitía
+OrdenCliente. `_tarifa_sugerida()` simplemente no encuentra nada que sugerir cuando
+`duracion_spot` es `None` (mismo criterio que ya tenía para `producto_tarifa is None`) —
+la lógica de sugerencia de tarifa activa para (estación, duración, producto) NO cambia
+cuando SÍ hay ambos valores: sigue siendo una comparación de texto exacta contra
+`TarifaPlaza`, que desde ADR-166 también es texto libre.
+
 **ADR-103 (petición del usuario) — Fase 3 del rediseño: "Material a Transmitir"
 (audios):** tabla hija nueva `OrdenEstacionAudio` (uno o más archivos de audio por OE,
 subidos vía endpoints DEDICADOS `POST`/`GET`/`DELETE .../{id}/audios`, NO por el
@@ -120,11 +135,10 @@ from app.integrations.almacenamiento.documentos import (
 )
 from app.integrations.almacenamiento.port import AlmacenamientoPort
 from app.modules.catalogos.estacion import Estacion
-from app.modules.catalogos.tarifa import ProductoTarifa, TarifaPlaza, TarifaRepository
+from app.modules.catalogos.tarifa import TarifaPlaza, TarifaRepository
 from app.modules.usuarios.lookup import resolver_usuario_id
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
-from app.shared.enums import DuracionSpot  # noqa: F401 — reexportado para quien importe desde aquí
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
@@ -163,17 +177,6 @@ class OrdenEstacion(Base):
             "estatus IN ('borrador', 'asignada', 'en_transmision', 'en_revision', "
             "'cerrada', 'cancelada')",
             name="ck_orden_estacion_estatus",
-        ),
-        CheckConstraint(
-            "duracion_spot IN ('20s', '30s', '60s')",
-            name="ck_orden_estacion_duracion_spot",
-        ),
-        # ADR-102: nullable (filas viejas, sembradas antes de esta fase, no lo tienen);
-        # `OrdenEstacionCreate` sí lo exige para las capturas nuevas.
-        CheckConstraint(
-            "producto_tarifa IS NULL OR producto_tarifa IN "
-            "('spot', 'mencion', 'control_remoto', 'patrocinio')",
-            name="ck_orden_estacion_producto_tarifa",
         ),
         # ADR-101 (petición del usuario): se quitó el candado que impedía que
         # `precio_spot` superara `OrdenCliente.precio_unitario` — ahora el margen OIR
@@ -276,10 +279,10 @@ class OrdenEstacion(Base):
         default=None,
     )
     producto: Mapped[str | None] = mapped_column(Unicode(200), default=None)
-    # ADR-102: producto de TARIFA (spot/mención/control remoto/patrocinio), elegido por
-    # estación — NO confundir con `producto` de arriba ("Campaña", texto libre heredado
-    # de la OC). Nullable: filas sembradas antes de esta fase no lo tienen.
-    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    # ADR-102/169: producto elegido por estación, del catálogo Producto Duración (F0-06)
+    # desde ADR-169 — NO confundir con `producto` de arriba ("Campaña", texto libre
+    # heredado de la OC). Nullable: filas sembradas antes de ADR-102 no lo tienen.
+    producto_tarifa: Mapped[str | None] = mapped_column(Unicode(60), default=None)
 
     estacion_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("estacion.estacion_id", name="fk_orden_estacion_estacion", ondelete="NO ACTION"),
@@ -292,8 +295,11 @@ class OrdenEstacion(Base):
     )
 
     # ADR-106: capturada POR ESTACIÓN (ya no heredada de OrdenCliente.duracion_spot —
-    # ver docstring del módulo).
-    duracion_spot: Mapped[str] = mapped_column(Unicode(10))
+    # ver docstring del módulo). ADR-169: texto libre y NULLABLE (antes CHECK NOT NULL
+    # 20s|30s|60s) — se elige del catálogo Producto Duración (F0-06), igual que Tarifa
+    # (ADR-166) y OrdenCliente (ADR-167); si el producto no tiene duración real en el
+    # catálogo, queda `None` y NO bloquea nada (mismo criterio que OrdenCliente).
+    duracion_spot: Mapped[str | None] = mapped_column(Unicode(60), default=None)
     precio_spot: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     # Spots bonificables de esta OI (ADR-067/ADR-068): se transmiten y cuentan para el
     # balance de spots de la OC igual que cualquier otro, pero no se cobran a la
@@ -589,10 +595,10 @@ class OrdenEstacionRead(BaseModel):
     agencia_id: uuid.UUID | None = None
     categoria_id: uuid.UUID | None = None
     producto: str | None = None
-    producto_tarifa: ProductoTarifa | None = None
+    producto_tarifa: str | None = None
     estacion_id: uuid.UUID
     plaza_id: uuid.UUID
-    duracion_spot: str
+    duracion_spot: str | None = None
     precio_spot: Decimal
     cantidad_spots_bonificables: int
     importe_estacion: Decimal
@@ -687,15 +693,20 @@ class OrdenEstacionLayoutRealRead(BaseModel):
 
 
 class LayoutRealAplicadoRead(BaseModel):
-    """ADR-147/ADR-149: una fecha+hora del CSV que sí hizo match con un día real de esta
-    OE — el frontend usa esto para reemplazar el override de "reales" de ese día.
+    """ADR-147/ADR-149/ADR-174b: una fecha del CSV que sí hizo match con un día real de
+    esta OE — el frontend usa esto para reemplazar el override de "reales" de ese día.
     `spots` ya viene SUMADO si 2+ filas del archivo compartían la misma fecha+hora
-    (petición del usuario)."""
+    (petición del usuario). `hora_inicio` sigue siendo la hora PROGRAMADA de este día
+    (su identidad, sin cambio); si el archivo trajo una hora distinta para la misma
+    fecha (ADR-174b: el emparejamiento ahora es por fecha, cronológico), `cambio_horario`
+    viene en `True` y `hora_real` trae la hora que de verdad reportó el archivo."""
 
     orden_estacion_dia_id: uuid.UUID
     fecha_transmision: date
     hora_inicio: time
     spots: int
+    cambio_horario: bool = False
+    hora_real: time | None = None
 
 
 class LayoutRealNuevoRead(BaseModel):
@@ -815,9 +826,12 @@ class OrdenEstacionAudioStagedIn(BaseModel):
 class OrdenEstacionCreate(BaseModel):
     orden_id: uuid.UUID
     estacion_id: uuid.UUID
-    producto_tarifa: ProductoTarifa
+    # ADR-169: texto libre, del catálogo Producto Duración — `producto_tarifa` sigue
+    # obligatorio al crear (mismo criterio que `OrdenCliente`, ADR-168); `duracion_spot`
+    # es opcional (puede quedar sin capturar si el producto no tiene duración real).
+    producto_tarifa: str = Field(min_length=1, max_length=60)
     # ADR-106: capturada por estación (ya no heredada de OrdenCliente.duracion_spot).
-    duracion_spot: DuracionSpot
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_spot: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     # ADR-068: se valida contra los spots asignados de esta OI en el servicio (esa suma
     # no se conoce a nivel de schema, depende de `dias`).
@@ -846,8 +860,8 @@ class OrdenEstacionUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    producto_tarifa: ProductoTarifa | None = None
-    duracion_spot: DuracionSpot | None = None
+    producto_tarifa: str | None = Field(default=None, max_length=60)
+    duracion_spot: str | None = Field(default=None, max_length=60)
     precio_spot: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     cantidad_spots_bonificables: int | None = Field(default=None, ge=0)
     observaciones_estacion: str | None = Field(default=None, max_length=2000)
@@ -896,16 +910,26 @@ class OrdenEstacionDiaRealIn(BaseModel):
     # motivo (varios spots/horarios por fecha).
     orden_estacion_dia_id: uuid.UUID
     spots_verificados: int = Field(ge=0)
+    # ADR-174b (petición del usuario): hora en la que REALMENTE se transmitió este día,
+    # si difiere de `OrdenEstacionDia.hora_inicio` (la programada, que no se toca) —
+    # `None` si no aplica (no viene del layout, o coincide con la programada). El
+    # servicio compara contra la hora programada y genera una `Incidencia` de tipo
+    # `cambio_horario` cuando difieren, ADEMÁS de la de spots si también difieren.
+    hora_real: time | None = Field(default=None)
 
 
 class OrdenEstacionDiaNuevoIn(BaseModel):
     """ADR-149 (petición del usuario): un día que NO existía en esta OE antes de avanzar
-    a 2.3 — lo trae "Carga de Órdenes Reales Desde Layout" cuando una fila del CSV no
-    hace match con ningún día ya asignado (mismo criterio que crear una OE nueva: una
-    hora distinta, aunque sea por 1 minuto, es un día nuevo). Nace con
-    `spots_solicitados = spots_asignados = spots_verificados = spots` (no hay otro dato
-    del que tomarlos) — por eso no genera ninguna `Incidencia` al crearse (verificado
-    == programado, sin diferencia)."""
+    a 2.3 — lo trae "Carga de Órdenes Reales Desde Layout" cuando el archivo trae más
+    registros para una fecha de los que había programados, o una fecha que no estaba
+    programada en absoluto (ADR-174b: el emparejamiento ahora es por fecha, no por
+    fecha+hora exacta — ver `_parsear_layout_reales_csv`).
+
+    ADR-174b (petición del usuario, reemplaza el criterio de ADR-149 para este caso):
+    nace con `spots_solicitados = spots_asignados = spots`, pero `spots_programados = 0`
+    (nada estaba programado para este registro extra) — por construcción SIEMPRE genera
+    su `Incidencia` de excedente/bonificación por el total de sus spots, con el mismo
+    mecanismo genérico que cualquier otro día (sin caso especial)."""
 
     fecha_transmision: date
     hora_inicio: time
@@ -1033,17 +1057,33 @@ def _parsear_layout_reales_csv(
     - `Fecha`/`Hora` deben venir bien formateadas; `Spots` opcional (vacío = 1), entero
       ≥ 0 si se captura.
 
-    Las filas que SÍ pasan esa validación se agrupan por fecha+hora exactas (únicas por
-    OE, `uq_orden_estacion_dia_oe_fecha_hora` — una hora distinta, aunque sea por 1
-    minuto, es otro grupo) y sus `Spots` se SUMAN dentro de cada grupo (petición del
-    usuario: 2+ filas con la misma fecha+hora no "pisan" la anterior, se acumulan). Cada
-    grupo resultante:
-    - Si la fecha+hora coincide con un día YA existente de esta OE → `aplicados`
-      (reemplaza el override de reales de ese día con la suma).
-    - Si NO coincide con ningún día existente → `nuevos`, con la suma como propuesta de
-      día nuevo a crear al avanzar a 2.3 (mismo criterio que asignar una OE: una hora
-      distinta es un día distinto) — salvo que la suma dé 0, caso en el que no se puede
-      crear un día nuevo sin spots y se reporta como error en su lugar.
+    Las filas que SÍ pasan esa validación se agrupan por fecha+hora exactas y sus
+    `Spots` se SUMAN dentro de cada grupo (petición del usuario: 2+ filas con la misma
+    fecha+hora no "pisan" la anterior, se acumulan) — esto no cambia.
+
+    ADR-174b (petición del usuario, reemplaza el criterio de ADR-147/149/157 de
+    emparejar por fecha+hora EXACTA): el emparejamiento contra los días YA programados
+    de esta OE ahora es por FECHA solamente, cronológico. Por cada fecha (unión de las
+    fechas programadas y las del archivo):
+    - Los días programados de esa fecha (no cancelados, ordenados por hora) se
+      emparejan 1 a 1, EN ORDEN, con los grupos (hora, spots) de esa fecha en el
+      archivo (también ordenados por hora) — el 1º programado con el 1º del archivo, el
+      2º con el 2º, etc. (confirmado con el usuario, `AskUserQuestion`: "por orden
+      cronológico").
+    - Un par cuya hora coincide se comporta exactamente como antes (`aplicados`, con la
+      suma de spots de ese grupo).
+    - Un par cuya hora NO coincide se marca `cambio_horario=True` con `hora_real` = la
+      hora que trajo el archivo — el día programado sigue siendo el mismo registro
+      (mismo `orden_estacion_dia_id`, su `hora_inicio` programada no cambia), pero
+      `avanzar_reales` generará además la `Incidencia` de cambio de horario (confirmado:
+      si ADEMÁS difieren los spots, se generan LAS DOS incidencias).
+    - Programados de esa fecha que sobran (el archivo trajo menos registros para esa
+      fecha de los que había programados) → `aplicados` con `spots=0` (mismo mecanismo
+      de "faltante" que ya existía, ver ADR-157 abajo).
+    - Grupos del archivo que sobran (trajo MÁS registros para esa fecha de los que había
+      programados, o una fecha que no tenía NINGÚN día programado) → `nuevos`, igual que
+      antes salvo que ahora SIEMPRE generan su incidencia de bonificación al crearse
+      (ver `OrdenEstacionDiaNuevoIn`) — confirmado con el usuario.
 
     Una fila inválida (estación distinta, valor no parseable) se IGNORA y se reporta en
     `errores` — nunca tumba el resto del archivo. Devuelve `([], [], [error único])` si
@@ -1051,12 +1091,10 @@ def _parsear_layout_reales_csv(
     que procesar.
 
     ADR-157 (petición del usuario): además de lo anterior, CONCILIA contra lo ya
-    programado — cualquier día de `dias` (no cancelado) cuya fecha+hora NO aparezca en
-    ninguna fila válida del archivo se agrega también a `aplicados`, con `spots=0` (se
-    trata exactamente como si el usuario lo hubiera editado a mano a 0 — mismo mecanismo
-    de incidencia que cualquier otro override, sin caso especial en `avanzar_reales`).
-    Antes (ADR-151) un día así simplemente dejaba de mostrarse; ahora el archivo debe
-    reflejar TODA la realidad de la OE, no solo lo que trae.
+    programado — un día programado sin ningún grupo del archivo en su fecha (ver
+    "sobran" arriba) se agrega también a `aplicados`, con `spots=0` (se trata
+    exactamente como si el usuario lo hubiera editado a mano a 0 — mismo mecanismo de
+    incidencia que cualquier otro override, sin caso especial en `avanzar_reales`).
     """
     try:
         texto = contenido.decode("utf-8-sig")
@@ -1083,7 +1121,6 @@ def _parsear_layout_reales_csv(
         ]
 
     nombre_estacion_norm = _normalizar_texto_layout(nombre_estacion)
-    dias_por_clave = {(d.fecha_transmision, d.hora_inicio): d for d in dias}
 
     # (fecha, hora) -> suma de spots de todas las filas válidas de ese grupo, más la
     # primera fila que aportó (para poder señalar algo útil si termina en error).
@@ -1146,48 +1183,53 @@ def _parsear_layout_reales_csv(
         grupos[clave] = grupos.get(clave, 0) + spots
         primera_fila_de.setdefault(clave, i)
 
+    # ADR-174b: el emparejamiento ya no es por (fecha, hora) exacta — se reagrupa cada
+    # grupo válido del archivo por FECHA solamente, y por separado los días YA
+    # programados (no cancelados) también por fecha, ambos ordenados por hora, para
+    # emparejarlos cronológicamente dentro de cada fecha.
+    reales_por_fecha: dict[date, list[time]] = {}
+    for fecha, hora in grupos:
+        reales_por_fecha.setdefault(fecha, []).append(hora)
+    for horas in reales_por_fecha.values():
+        horas.sort()
+
+    programados_por_fecha: dict[date, list[OrdenEstacionDia]] = {}
+    for dia in dias:
+        if dia.cancelada:
+            continue
+        programados_por_fecha.setdefault(dia.fecha_transmision, []).append(dia)
+    for dias_de_fecha in programados_por_fecha.values():
+        dias_de_fecha.sort(key=lambda d: d.hora_inicio)
+
     aplicados: list[LayoutRealAplicadoRead] = []
     nuevos: list[LayoutRealNuevoRead] = []
-    for (fecha, hora), spots_total in grupos.items():
-        dia = dias_por_clave.get((fecha, hora))
-        if dia is not None:
+    todas_las_fechas = set(reales_por_fecha) | set(programados_por_fecha)
+    for fecha in todas_las_fechas:
+        programados = programados_por_fecha.get(fecha, [])
+        horas_reales = reales_por_fecha.get(fecha, [])
+        n = min(len(programados), len(horas_reales))
+
+        # Emparejados cronológicamente (1º con 1º, 2º con 2º...) — confirmado con el
+        # usuario (`AskUserQuestion`, "por orden cronológico").
+        for i in range(n):
+            dia = programados[i]
+            hora_real = horas_reales[i]
+            spots_total = grupos[(fecha, hora_real)]
+            cambia_horario = hora_real != dia.hora_inicio
             aplicados.append(
                 LayoutRealAplicadoRead(
                     orden_estacion_dia_id=dia.orden_estacion_dia_id,
                     fecha_transmision=dia.fecha_transmision,
                     hora_inicio=dia.hora_inicio,
                     spots=spots_total,
-                )
-            )
-        elif spots_total > 0:
-            nuevos.append(
-                LayoutRealNuevoRead(fecha_transmision=fecha, hora_inicio=hora, spots=spots_total)
-            )
-        else:
-            errores.append(
-                LayoutRealErrorRead(
-                    fila=primera_fila_de[(fecha, hora)],
-                    motivo=(
-                        f"{fecha} {hora.strftime('%H:%M')} no existe en esta orden y no se "
-                        "puede crear como día nuevo con 0 spots."
-                    ),
+                    cambio_horario=cambia_horario,
+                    hora_real=hora_real if cambia_horario else None,
                 )
             )
 
-    # ADR-157 (petición del usuario): un día YA programado que el archivo NO menciona
-    # para nada ya no se "esconde" de la tabla (ADR-151) — se concilia contra lo
-    # programado, igual que si el usuario lo editara a mano a 0 spots: se agrega a
-    # `aplicados` con `spots=0`, así el front lo sigue mostrando (con su badge de
-    # descuento) y `avanzar_reales` genera su `Incidencia` normalmente (incidencia =
-    # verificado(0) - programado_efectivo, mismo mecanismo que cualquier otro override,
-    # sin lógica especial). Un día YA cancelado se excluye: ya tiene su propia
-    # `Verificacion` creada al cancelar (ADR-104), una segunda violaría
-    # `uq_verificacion_orden_estacion_dia`.
-    tocados = set(grupos)
-    for dia in dias:
-        if dia.cancelada:
-            continue
-        if (dia.fecha_transmision, dia.hora_inicio) not in tocados:
+        # Programados de esta fecha que sobran (el archivo trajo MENOS registros para
+        # esta fecha de los que había programados) → faltante, spots=0 (ADR-157).
+        for dia in programados[n:]:
             aplicados.append(
                 LayoutRealAplicadoRead(
                     orden_estacion_dia_id=dia.orden_estacion_dia_id,
@@ -1196,7 +1238,31 @@ def _parsear_layout_reales_csv(
                     spots=0,
                 )
             )
+
+        # Grupos del archivo que sobran (trajo MÁS registros para esta fecha de los que
+        # había programados, o la fecha no tenía NINGÚN día programado) → propuesta de
+        # día nuevo — ADR-174b: siempre genera su incidencia de bonificación al crearse.
+        for hora_real in horas_reales[n:]:
+            spots_total = grupos[(fecha, hora_real)]
+            if spots_total > 0:
+                nuevos.append(
+                    LayoutRealNuevoRead(
+                        fecha_transmision=fecha, hora_inicio=hora_real, spots=spots_total
+                    )
+                )
+            else:
+                errores.append(
+                    LayoutRealErrorRead(
+                        fila=primera_fila_de[(fecha, hora_real)],
+                        motivo=(
+                            f"{fecha} {hora_real.strftime('%H:%M')} no tiene con qué emparejarse "
+                            "y no se puede crear como día nuevo con 0 spots."
+                        ),
+                    )
+                )
+
     aplicados.sort(key=lambda a: (a.fecha_transmision, a.hora_inicio))
+    nuevos.sort(key=lambda n: (n.fecha_transmision, n.hora_inicio))
 
     return aplicados, nuevos, errores
 
@@ -1793,14 +1859,23 @@ class OrdenEstacionService(
 
     # ── ADR-102: tarifa sugerida del catálogo + auditoría condicional ────────────────
     def _tarifa_sugerida(
-        self, db: Session, *, estacion: Estacion, duracion_spot: str, producto_tarifa: str | None
+        self,
+        db: Session,
+        *,
+        anunciante_id: uuid.UUID,
+        estacion: Estacion,
+        duracion_spot: str | None,
+        producto_tarifa: str | None,
     ) -> TarifaPlaza | None:
-        """Tarifa ACTIVA para (estación, duración, producto), o `None` si no hay ninguna
-        capturada — en ese caso no hay nada contra qué comparar/auditar."""
-        if producto_tarifa is None:
+        """Tarifa ACTIVA para (ANUNCIANTE + estación + duración + producto, ADR-177),
+        o `None` si no hay ninguna capturada — en ese caso no hay nada contra qué
+        comparar/auditar. ADR-169: `duracion_spot` puede venir `None` (producto sin
+        duración real en el catálogo) — sin duración no hay nada que buscar."""
+        if producto_tarifa is None or duracion_spot is None:
             return None
         tarifa_repo = TarifaRepository(db, TarifaPlaza)
         return tarifa_repo.existe_duplicado_activo(
+            anunciante_id=anunciante_id,
             estacion_id=estacion.estacion_id,
             duracion_spot=duracion_spot,
             producto=producto_tarifa,
@@ -1813,6 +1888,7 @@ class OrdenEstacionService(
         orden_estacion_id: uuid.UUID,
         tarifa: TarifaPlaza | None,
         precio_spot: Decimal,
+        precio_spot_anterior: Decimal | None,
         motivo: str | None,
         usuario: CurrentUser,
     ) -> None:
@@ -1820,7 +1896,14 @@ class OrdenEstacionService(
         parámetro sensible de `TarifaPlaza` (ADR-099, solo Admin), aquí NO hay candado de
         permiso. Se audita en `LogCambioParametro` solo cuando el valor final no coincide
         con la tarifa sugerida, exigiendo `motivo_cambio_tarifa` en ese caso — mismo
-        criterio (sin `field_permissions`) que `OrdenClienteService.actualizar_comisiones`."""
+        criterio (sin `field_permissions`) que `OrdenClienteService.actualizar_comisiones`.
+
+        ADR-162: `precio_spot_anterior` (el valor YA persistido antes de este `update`,
+        `None` en `create`) evita re-pedir motivo y re-auditar en cada edición: si el
+        precio no cambió respecto a lo ya guardado, la divergencia con el catálogo ya se
+        auditó antes — no es un cambio nuevo."""
+        if precio_spot_anterior is not None and precio_spot == precio_spot_anterior:
+            return
         if tarifa is None or precio_spot == tarifa.tarifa_neta:
             return
         if not (motivo and motivo.strip()):
@@ -1954,6 +2037,7 @@ class OrdenEstacionService(
         orden_estacion_id = uuid4()
         tarifa = self._tarifa_sugerida(
             db,
+            anunciante_id=oc.anunciante_id,
             estacion=estacion,
             duracion_spot=data.duracion_spot,
             producto_tarifa=data.producto_tarifa,
@@ -1963,6 +2047,7 @@ class OrdenEstacionService(
             orden_estacion_id=orden_estacion_id,
             tarifa=tarifa,
             precio_spot=data.precio_spot,
+            precio_spot_anterior=None,
             motivo=data.motivo_cambio_tarifa,
             usuario=usuario,
         )
@@ -2180,7 +2265,9 @@ class OrdenEstacionService(
         iva_emisora = (importe_emisora * IVA_RATE).quantize(CENTAVOS)
 
         # ADR-102: tarifa sugerida del catálogo — auditoría condicional (sin candado de
-        # permiso) si el `precio_spot` efectivo no coincide.
+        # permiso) si el `precio_spot` efectivo no coincide. ADR-162: se le pasa también
+        # el `precio_spot` YA persistido (antes de sobrescribirlo abajo) para no volver a
+        # pedir motivo/auditar si no cambió desde el último guardado.
         producto_tarifa = (
             data.producto_tarifa if "producto_tarifa" in campos else obj.producto_tarifa
         )
@@ -2188,6 +2275,7 @@ class OrdenEstacionService(
         estacion = db.get(Estacion, obj.estacion_id)
         tarifa = self._tarifa_sugerida(
             db,
+            anunciante_id=obj.anunciante_id,
             estacion=estacion,
             duracion_spot=duracion_spot,
             producto_tarifa=producto_tarifa,
@@ -2197,6 +2285,7 @@ class OrdenEstacionService(
             orden_estacion_id=obj.orden_estacion_id,
             tarifa=tarifa,
             precio_spot=precio_spot,
+            precio_spot_anterior=obj.precio_spot,
             motivo=data.motivo_cambio_tarifa,
             usuario=usuario,
         )
@@ -2301,15 +2390,26 @@ class OrdenEstacionService(
             )
         db = self._repo.db
         overrides = {d.orden_estacion_dia_id: d.spots_verificados for d in input_.dias}
+        # ADR-174b (petición del usuario): hora REAL de transmisión, si el layout la
+        # reportó distinta a la programada (`OrdenEstacionDia.hora_inicio`, que no
+        # cambia). Dispara una `Incidencia` de cambio de horario ADEMÁS de la de spots
+        # (si también difieren) — nunca la reemplaza.
+        horas_reales = {
+            d.orden_estacion_dia_id: d.hora_real for d in input_.dias if d.hora_real is not None
+        }
         dias = list(self._repo.listar_dias(orden_estacion_id))
         usuario_id = resolver_usuario_id(db, usuario.username)
         hoy = date.today()
 
-        # ADR-149: crea primero los días NUEVOS del layout (si los hay) — ANTES del
-        # bucle de abajo, para que ESE MISMO bucle (que genera Verificacion/Incidencia)
-        # los trate exactamente igual que cualquier día ya asignado. Se agrega su propio
-        # `spots` a `overrides` para que `verificado == programado_efectivo` (ambos
-        # valen `spots`) y no se dispare ninguna Incidencia por un día recién creado.
+        # ADR-149/ADR-174b: crea primero los días NUEVOS del layout (si los hay) — ANTES
+        # del bucle de abajo, para que ESE MISMO bucle (que genera Verificacion/
+        # Incidencia) los trate exactamente igual que cualquier día ya asignado. Se
+        # agrega su propio `spots` a `overrides`; ADR-174b (reemplaza el criterio de
+        # ADR-149): `spots_programados` se fija explícitamente en 0 (nada estaba
+        # programado para este registro extra) en vez de dejarlo `None` — el bucle de
+        # abajo calcula `programado_efectivo = spots_programados` = 0, así que
+        # `diferencia = verificado(spots) - 0 = spots` SIEMPRE genera su `Incidencia` de
+        # excedente/bonificación (confirmado con el usuario), sin ningún caso especial.
         if input_.dias_nuevos:
             oc_para_dias_nuevos = db.get(OrdenCliente, obj.orden_id)
             if oc_para_dias_nuevos is None:
@@ -2383,6 +2483,7 @@ class OrdenEstacionService(
                     hora_fin=dia_nuevo.hora_inicio,
                     spots_solicitados=dia_nuevo.spots,
                     spots_asignados=dia_nuevo.spots,
+                    spots_programados=0,
                 )
                 db.add(creado)
                 db.flush()
@@ -2436,6 +2537,34 @@ class OrdenEstacionService(
                         fecha_incidencia=dia.fecha_transmision,
                         resolucion=ResolucionIncidencia.PENDIENTE.value,
                         monto_ajuste=(Decimal(diferencia) * obj.precio_spot).quantize(CENTAVOS),
+                    )
+                )
+
+            # ADR-174b (petición del usuario): el layout reportó este día con una hora
+            # distinta a la programada — se genera su propia `Incidencia` de cambio de
+            # horario, SEPARADA de la de spots de arriba (confirmado: si ambas cosas
+            # difieren, se generan las DOS). Puramente informativa: `diferencia_spots=0`
+            # y sin `monto_ajuste` — el impacto monetario de la diferencia de spots (si
+            # la hay) ya quedó cubierto por la Incidencia de arriba; esto no la duplica.
+            hora_real = horas_reales.get(dia.orden_estacion_dia_id)
+            if hora_real is not None and hora_real != dia.hora_inicio:
+                db.add(
+                    Incidencia(
+                        incidencia_id=uuid4(),
+                        verificacion_id=verificacion.verificacion_id,
+                        orden_estacion_id=obj.orden_estacion_id,
+                        tipo_incidencia=TipoIncidencia.CAMBIO_HORARIO.value,
+                        spots_ordenados=programado_efectivo,
+                        spots_ejecutados=verificado,
+                        diferencia_spots=0,
+                        descripcion_incidencia=(
+                            f"Horario programado {dia.hora_inicio.strftime('%H:%M')} -> "
+                            f"horario real {hora_real.strftime('%H:%M')}."
+                            + (f" {input_.notas_transmision}" if input_.notas_transmision else "")
+                        ),
+                        fecha_incidencia=dia.fecha_transmision,
+                        resolucion=ResolucionIncidencia.PENDIENTE.value,
+                        monto_ajuste=None,
                     )
                 )
 

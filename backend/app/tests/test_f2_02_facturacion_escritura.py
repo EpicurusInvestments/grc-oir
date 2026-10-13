@@ -801,9 +801,9 @@ def test_domicilio_del_emisor_desglosado_si_empresa_facturadora_lo_tiene(
 def test_domicilio_del_receptor_desglosado_solo_si_es_directa(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """El receptor de esta OC es la AGENCIA (fixture `cat` estándar) — `Agencia` todavía
-    no tiene domicilio estructurado (ADR-059 solo cubrió Anunciante/EmpresaFacturadora),
-    así que el receptor NO sale desglosado aunque el Anunciante sí tenga uno capturado."""
+    """El receptor de esta OC es la AGENCIA (fixture `cat` estándar, sin domicilio
+    capturado) — el domicilio del Anunciante (que no es el receptor real de esta
+    factura) nunca debe salir desglosado, tenga o no domicilio capturado."""
     anunciante = db.get(Anunciante, cat["anunciante_id"])
     anunciante.calle = "Insurgentes Sur"
     anunciante.colonia = "Del Valle"
@@ -819,6 +819,32 @@ def test_domicilio_del_receptor_desglosado_solo_si_es_directa(
     texto = r.content.decode("cp1252")
     assert "Insurgentes Sur" not in texto  # el receptor es la agencia, no el anunciante
     assert "RFCRecep         AGU900101AB1" in texto  # sigue siendo la agencia
+
+
+def test_domicilio_del_receptor_desglosado_si_es_via_agencia_y_la_agencia_lo_tiene(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-175: `Agencia` ya tiene domicilio estructurado — si el receptor de esta
+    factura es la Agencia (trato vía agencia, fixture `cat` estándar) y ella SÍ lo
+    capturó, ahora sale desglosado en `ExReceptorDomFiscal` (antes de ADR-175 nunca
+    salía, sin importar qué tuviera capturado)."""
+    agencia = db.get(Agencia, cat["agencia_id"])
+    agencia.calle = "Reforma"
+    agencia.numero_exterior = "222"
+    agencia.colonia = "Juárez"
+    agencia.municipio = "Cuauhtémoc"
+    agencia.estado = "Ciudad de México"
+    agencia.codigo_postal = "06600"
+    db.commit()
+
+    factura_id, _ = _crear_factura(client, db, cat)
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    assert "Reforma" in texto
+    assert "CodigoPostal     06600" in texto
+    assert "domicilio del receptor" not in r.headers["x-campos-faltantes"]
 
 
 def test_domicilio_del_receptor_desglosado_si_es_directa_y_anunciante_lo_tiene(

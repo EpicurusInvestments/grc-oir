@@ -34,9 +34,6 @@ export interface Anunciante extends CatalogoBase {
    * editable por factura. */
   uso_cfdi_default: string | null;
   referencia_anunciante: string | null;
-  contacto_nombre: string | null;
-  contacto_email: string | null;
-  contacto_telefono: string | null;
   dias_credito_default: number;
   // Derivados (solo lectura):
   agencia_nombre: string | null; // nombre_agencia (null si es directo)
@@ -62,9 +59,6 @@ export interface AnuncianteCreate {
   regimen_fiscal?: string | null;
   uso_cfdi_default?: string | null;
   referencia_anunciante?: string | null;
-  contacto_nombre?: string | null;
-  contacto_email?: string | null;
-  contacto_telefono?: string | null;
   dias_credito_default: number;
 }
 
@@ -93,9 +87,9 @@ export type MarcaUpdate = Partial<Omit<MarcaCreate, "anunciante_id">> & {
 };
 
 // ── ContactoAnunciante (anidado en Anunciante — entidad nueva) ────────────────────
-// El Anunciante ya trae un solo contacto plano (`contacto_nombre`/`contacto_email`/
-// `contacto_telefono`, arriba) — queda como LEGADO, sin tocar. Este es el nuevo
-// "varios contactos", mismo patrón anidado que `Marca`.
+// ADR-174: el contacto único legado (`contacto_nombre`/`contacto_email`/
+// `contacto_telefono`) se eliminó por completo. Este es el "varios contactos", mismo
+// patrón anidado que `Marca`.
 export interface ContactoAnunciante extends CatalogoBase {
   contacto_anunciante_id: string;
   anunciante_id: string;

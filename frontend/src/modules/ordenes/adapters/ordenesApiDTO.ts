@@ -28,7 +28,10 @@ export interface OrdenClienteApiDTO {
   fecha_inicio_campania: string;
   fecha_fin_campania: string;
   total_dias_campania: number;
-  duracion_spot: string;
+  /** ADR-167: ambos opcionales (a diferencia de `OrdenEstacion.producto_tarifa`/
+   *  `duracion_spot`, que siguen con su propio enum fijo por ahora). */
+  producto_tarifa: string | null;
+  duracion_spot: string | null;
   precio_unitario: string;
   total_spots: number;
   /** ADR-067. `subtotal_spots_bonificables` viaja aquí por paridad con el schema del
@@ -165,6 +168,8 @@ export interface LayoutRealAplicadoApiDTO {
   fecha_transmision: string;
   hora_inicio: string;
   spots: number;
+  cambio_horario: boolean;
+  hora_real: string | null;
 }
 
 /** ADR-149: una fecha+hora del CSV que NO existe en la OE — se ofrece como día nuevo a
