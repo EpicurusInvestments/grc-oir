@@ -462,7 +462,11 @@ def test_editar_oc_permite_cambiar_fecha_inicio_a_futura(
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
     nueva_fecha = date.today() + timedelta(days=45)
     editada = oc_svc.update(
-        oc.orden_id, OrdenClienteUpdate(fecha_inicio_campania=nueva_fecha), VENTAS
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=nueva_fecha, motivo_cambio_fecha="Se redujo el periodo"
+        ),
+        VENTAS,
     )
     assert editada.fecha_inicio_campania == nueva_fecha
 
@@ -482,6 +486,7 @@ def test_editar_oc_amplia_rango_libremente_aunque_haya_dias_de_oe(
         OrdenClienteUpdate(
             fecha_inicio_campania=date.today() + timedelta(days=20),
             fecha_fin_campania=date.today() + timedelta(days=70),
+            motivo_cambio_fecha="Se redujo el periodo",
         ),
         VENTAS,
     )
@@ -502,6 +507,7 @@ def test_editar_oc_angosta_rango_sin_tocar_dias_de_oe_se_permite(
         OrdenClienteUpdate(
             fecha_inicio_campania=date.today() + timedelta(days=31),
             fecha_fin_campania=date.today() + timedelta(days=45),
+            motivo_cambio_fecha="Se cancelaron spots",
         ),
         VENTAS,
     )
@@ -540,6 +546,105 @@ def test_editar_oc_angosta_fecha_inicio_dejando_fuera_un_dia_de_oe_400(
             OrdenClienteUpdate(fecha_inicio_campania=date.today() + timedelta(days=33)),
             VENTAS,
         )
+
+
+# ── ADR-180 — motivo obligatorio + auditoría al cambiar fechas de campaña ────────
+def test_editar_oc_cambia_fecha_sin_motivo_rechazada(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            OrdenClienteUpdate(fecha_inicio_campania=date.today() + timedelta(days=45)),
+            VENTAS,
+        )
+
+
+def test_editar_oc_mismas_fechas_no_exige_motivo_ni_audita(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """El front siempre reenvía las fechas tal cual (aunque no las toque) — si el valor
+    no cambia de verdad, no debe pedir motivo ni dejar rastro en la bitácora."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    editada = oc_svc.update(
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=oc.fecha_inicio_campania,
+            fecha_fin_campania=oc.fecha_fin_campania,
+        ),
+        VENTAS,
+    )
+    assert editada.fecha_inicio_campania == oc.fecha_inicio_campania
+    logs = db.scalars(
+        select(LogCambioParametro).where(
+            LogCambioParametro.entidad == "OrdenCliente",
+            LogCambioParametro.entidad_id == str(oc.orden_id),
+            LogCambioParametro.campo.in_(["fecha_inicio_campania", "fecha_fin_campania"]),
+        )
+    ).all()
+    assert logs == []
+
+
+def test_editar_oc_cambia_una_fecha_con_motivo_audita_solo_esa(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    nueva_fecha = date.today() + timedelta(days=45)
+    oc_svc.update(
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=nueva_fecha,
+            motivo_cambio_fecha="Se cancelaron spots",
+        ),
+        VENTAS,
+    )
+    logs = db.scalars(
+        select(LogCambioParametro).where(
+            LogCambioParametro.entidad == "OrdenCliente",
+            LogCambioParametro.entidad_id == str(oc.orden_id),
+            LogCambioParametro.campo.in_(["fecha_inicio_campania", "fecha_fin_campania"]),
+        )
+    ).all()
+    assert len(logs) == 1
+    assert logs[0].campo == "fecha_inicio_campania"
+    assert logs[0].valor_anterior == str(oc.fecha_inicio_campania)
+    assert logs[0].valor_nuevo == str(nueva_fecha)
+    assert logs[0].motivo_cambio == "Se cancelaron spots"
+
+
+def test_editar_oc_cambia_ambas_fechas_con_motivo_audita_las_dos(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    nueva_inicio = date.today() + timedelta(days=20)
+    nueva_fin = date.today() + timedelta(days=70)
+    oc_svc.update(
+        oc.orden_id,
+        OrdenClienteUpdate(
+            fecha_inicio_campania=nueva_inicio,
+            fecha_fin_campania=nueva_fin,
+            motivo_cambio_fecha="Se redujo el periodo",
+        ),
+        VENTAS,
+    )
+    logs = db.scalars(
+        select(LogCambioParametro).where(
+            LogCambioParametro.entidad == "OrdenCliente",
+            LogCambioParametro.entidad_id == str(oc.orden_id),
+            LogCambioParametro.campo.in_(["fecha_inicio_campania", "fecha_fin_campania"]),
+        )
+    ).all()
+    assert {log.campo for log in logs} == {"fecha_inicio_campania", "fecha_fin_campania"}
+    assert all(log.motivo_cambio == "Se redujo el periodo" for log in logs)
+
+
+def test_editar_oc_sin_tocar_fechas_no_exige_motivo(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    editada = oc_svc.update(oc.orden_id, OrdenClienteUpdate(total_spots=75), VENTAS)
+    assert editada.total_spots == 75
 
 
 def test_editar_oc_congelada_409(
@@ -928,6 +1033,10 @@ def _seed_tarifa(
     db.add(
         TarifaPlaza(
             tarifa_plaza_id=uuid.uuid4(),
+            # ADR-177: Anunciante ahora es parte de la llave que busca
+            # `_tarifa_sugerida` — sin este campo, la tarifa sembrada aquí ya no
+            # coincide con el anunciante de la OC de `_oc_payload` y deja de sugerirse.
+            anunciante_id=cat["anunciante"],
             estacion_id=cat["estacion"],
             duracion_spot=duracion_spot,
             producto=producto,

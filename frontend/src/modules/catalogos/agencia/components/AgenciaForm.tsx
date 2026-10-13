@@ -6,6 +6,10 @@
  * en EDICIÓN, exige "Motivo del cambio" SOLO si el valor cambia (el backend lo requiere y
  * responde 400 si falta). Los errores de negocio (409 nombre duplicado, 422 RFC) llegan
  * por `submitError`.
+ *
+ * ADR-175 (petición del usuario): domicilio ESTRUCTURADO vía `DomicilioPostalInput`
+ * (mismo componente compartido que ya usan Anunciante/EmpresaFacturadora, ADR-059) —
+ * autocompleta Colonia/Municipio/Estado/País al capturar el código postal.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,7 +17,12 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { SavingOverlay, SensitiveField } from "@/shared/ui";
+import {
+  DomicilioPostalInput,
+  type DomicilioPostalValues,
+  SavingOverlay,
+  SensitiveField,
+} from "@/shared/ui";
 
 import { useConstantes } from "../../constantesSistema/hooks";
 import type { AgenciaCreate } from "../types";
@@ -40,6 +49,16 @@ function buildSchema(isEdit: boolean, comisionOriginal?: string) {
           RFC_REGEX,
           "RFC inválido: 3-4 letras + 6 dígitos (fecha AAMMDD) + 3 alfanuméricos (homoclave).",
         ),
+      calle: z.string().trim().max(150).optional(),
+      numero_exterior: z.string().trim().max(20).optional(),
+      numero_interior: z.string().trim().max(20).optional(),
+      colonia: z.string().trim().max(150).optional(),
+      localidad: z.string().trim().max(150).optional(),
+      referencia_domicilio: z.string().trim().max(250).optional(),
+      municipio: z.string().trim().max(150).optional(),
+      estado: z.string().trim().max(100).optional(),
+      pais: z.string().trim().max(3).optional(),
+      codigo_postal: z.string().trim().max(5).optional(),
       // Clave SAT (c_RegimenFiscal), sugerida desde ConstantesSistema, sin FK formal.
       regimen_fiscal: z.string().trim().max(4).optional(),
       porcentaje_comision_agencia_default: z
@@ -105,12 +124,23 @@ export function AgenciaForm({
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<AgenciaFormValues>({
     resolver: zodResolver(buildSchema(isEdit, comisionOriginal)),
     defaultValues: {
       nombre_agencia: "",
       rfc_agencia: "",
+      calle: "",
+      numero_exterior: "",
+      numero_interior: "",
+      colonia: "",
+      localidad: "",
+      referencia_domicilio: "",
+      municipio: "",
+      estado: "",
+      pais: "MEX",
+      codigo_postal: "",
       regimen_fiscal: "",
       porcentaje_comision_agencia_default: "0",
       motivo_cambio: "",
@@ -120,6 +150,24 @@ export function AgenciaForm({
 
   const { useList } = useConstantes();
   const regimenes = useList({ grupo: "RegimenFiscal", activo: true, size: 100 });
+
+  const domicilio: DomicilioPostalValues = {
+    calle: watch("calle") ?? "",
+    numero_exterior: watch("numero_exterior") ?? "",
+    numero_interior: watch("numero_interior") ?? "",
+    colonia: watch("colonia") ?? "",
+    localidad: watch("localidad") ?? "",
+    referencia_domicilio: watch("referencia_domicilio") ?? "",
+    municipio: watch("municipio") ?? "",
+    estado: watch("estado") ?? "",
+    pais: watch("pais") ?? "",
+    codigo_postal: watch("codigo_postal") ?? "",
+  };
+  const onDomicilioChange = (patch: Partial<DomicilioPostalValues>) => {
+    for (const [campo, valor] of Object.entries(patch)) {
+      setValue(campo as keyof DomicilioPostalValues, valor, { shouldDirty: true });
+    }
+  };
 
   // El "Motivo del cambio" solo aparece (y es obligatorio) al MODIFICAR el % en edición.
   const comisionCambiada =
@@ -133,6 +181,16 @@ export function AgenciaForm({
       {
         nombre_agencia: data.nombre_agencia.trim(),
         rfc_agencia: data.rfc_agencia.toUpperCase(),
+        calle: data.calle?.trim() || null,
+        numero_exterior: data.numero_exterior?.trim() || null,
+        numero_interior: data.numero_interior?.trim() || null,
+        colonia: data.colonia?.trim() || null,
+        localidad: data.localidad?.trim() || null,
+        referencia_domicilio: data.referencia_domicilio?.trim() || null,
+        municipio: data.municipio?.trim() || null,
+        estado: data.estado?.trim() || null,
+        pais: data.pais?.trim() || null,
+        codigo_postal: data.codigo_postal?.trim() || null,
         regimen_fiscal: data.regimen_fiscal?.trim() || null,
         porcentaje_comision_agencia_default: data.porcentaje_comision_agencia_default.trim(),
         ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
@@ -174,6 +232,9 @@ export function AgenciaForm({
           ))}
         </select>
         <div className="fe">{errors.regimen_fiscal?.message}</div>
+
+        <div className="sec">Domicilio</div>
+        <DomicilioPostalInput values={domicilio} onChange={onDomicilioChange} disabled={submitting} />
 
         <div className="sec">Comisión</div>
         <SensitiveField

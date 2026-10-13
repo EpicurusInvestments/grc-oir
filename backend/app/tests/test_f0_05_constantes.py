@@ -133,9 +133,89 @@ def test_const_conteos_incluye_todos_los_grupos(const_svc: ConstanteSistemaServi
     _const(const_svc, grupo=GrupoConstante.USO_CFDI, clave="G03", descripcion="Gastos")
 
     conteos = {c.grupo: c.total for c in const_svc.conteos(solo_activos=True)}
-    assert len(conteos) == len(GrupoConstante)  # los 9 grupos, aunque tengan 0
+    assert len(conteos) == len(GrupoConstante)  # los 10 grupos, aunque tengan 0
     assert conteos[GrupoConstante.USO_CFDI] == 2
     assert conteos[GrupoConstante.SERIE] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-178 — grupo MotivoCambio: Clave NO única, se autogenera un sufijo secuencial
+# ══════════════════════════════════════════════════════════════════════════════
+def test_const_motivo_cambio_autogenera_sufijo(const_svc: ConstanteSistemaService) -> None:
+    c1 = _const(
+        const_svc,
+        grupo=GrupoConstante.MOTIVO_CAMBIO,
+        clave="CambioFecha",
+        descripcion="Se cancelaron spots",
+    )
+    c2 = _const(
+        const_svc,
+        grupo=GrupoConstante.MOTIVO_CAMBIO,
+        clave="CambioFecha",
+        descripcion="Se redujo el periodo",
+    )
+    assert c1.clave == "CambioFecha_1"
+    assert c2.clave == "CambioFecha_2"
+    assert c1.descripcion == "Se cancelaron spots"
+    assert c2.descripcion == "Se redujo el periodo"
+
+
+def test_const_motivo_cambio_sufijo_independiente_por_clave_base(
+    const_svc: ConstanteSistemaService,
+) -> None:
+    a1 = _const(const_svc, grupo=GrupoConstante.MOTIVO_CAMBIO, clave="CambioFecha", descripcion="A")
+    b1 = _const(
+        const_svc, grupo=GrupoConstante.MOTIVO_CAMBIO, clave="CancelarTransmision", descripcion="B"
+    )
+    a2 = _const(const_svc, grupo=GrupoConstante.MOTIVO_CAMBIO, clave="CambioFecha", descripcion="C")
+    assert a1.clave == "CambioFecha_1"
+    assert b1.clave == "CancelarTransmision_1"  # no se contamina con la secuencia de CambioFecha
+    assert a2.clave == "CambioFecha_2"
+
+
+def test_const_motivo_cambio_sufijo_case_insensitive(const_svc: ConstanteSistemaService) -> None:
+    c1 = _const(
+        const_svc, grupo=GrupoConstante.MOTIVO_CAMBIO, clave="CambioTarifa", descripcion="A"
+    )
+    c2 = _const(
+        const_svc, grupo=GrupoConstante.MOTIVO_CAMBIO, clave="cambiotarifa", descripcion="B"
+    )
+    assert c1.clave == "CambioTarifa_1"
+    assert c2.clave == "cambiotarifa_2"  # conserva el case tecleado, pero sigue la secuencia
+
+
+def test_const_otros_grupos_siguen_rechazando_clave_duplicada(
+    const_svc: ConstanteSistemaService,
+) -> None:
+    # Regresión: el auto-sufijo es EXCLUSIVO de MotivoCambio — UsoCFDI (y los demás grupos
+    # SAT/timbrador) se quedan tal cual, rechazando con 409 como antes de ADR-178.
+    _const(const_svc, grupo=GrupoConstante.USO_CFDI, clave="G03")
+    with pytest.raises(ConflictError):
+        _const(const_svc, grupo=GrupoConstante.USO_CFDI, clave="G03", descripcion="Otra")
+
+
+def test_http_motivo_cambio_autogenera_sufijo(client: TestClient) -> None:
+    r1 = client.post(
+        "/api/v1/catalogos/constantes",
+        json={
+            "grupo": "MotivoCambio",
+            "clave": "CambioTarifa",
+            "descripcion": "Por oferta de la emisora",
+        },
+        headers=_hdr("admin"),
+    )
+    r2 = client.post(
+        "/api/v1/catalogos/constantes",
+        json={
+            "grupo": "MotivoCambio",
+            "clave": "CambioTarifa",
+            "descripcion": "Por incremento de tarifa",
+        },
+        headers=_hdr("admin"),
+    )
+    assert r1.status_code == 201 and r2.status_code == 201
+    assert r1.json()["clave"] == "CambioTarifa_1"
+    assert r2.json()["clave"] == "CambioTarifa_2"
 
 
 def test_const_update_solo_descripcion_y_valor(const_svc: ConstanteSistemaService) -> None:
@@ -301,7 +381,7 @@ def test_const_unicidad_usa_lower_portable() -> None:
     assert "lower(" in sql.lower()
 
 
-def test_check_grupo_incluye_los_9_grupos() -> None:
+def test_check_grupo_incluye_los_10_grupos() -> None:
     tabla: Any = ConstanteSistema.__table__
     checks = [
         c

@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { useContactosAnunciante } from "@/modules/catalogos/anunciante/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
@@ -137,6 +138,16 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
 
   const resumenFactura = useFacturaClienteResumen(selected?.factura_id);
   const anuncianteSel = selected ? anuncianteMap.get(selected.anunciante_id) : undefined;
+  // ADR-174 (petición del usuario): "Contacto cobranza" dejó de leer los campos legado
+  // planos del Anunciante (`contacto_nombre`/`contacto_email`/`contacto_telefono`, ya
+  // retirados) — ahora consulta el primer contacto ACTIVO de la lista de Contactos
+  // nueva (`ContactoAnunciante`, orden alfabético por nombre, mismo criterio que el
+  // resto del backend).
+  const contactoCobranza = useContactosAnunciante().useListPorAnunciante(
+    anuncianteSel?.anunciante_id ?? null,
+    { activo: true, size: 1 },
+  );
+  const contactoCobranzaSel = contactoCobranza.data?.items[0];
   const metodosPago = useMetodosDePago();
   const pagos = usePagosCliente(selected?.cobranza_id ?? null);
 
@@ -386,12 +397,20 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           {modo !== "editar" && (
             <>
               <div className="sec">Contacto cobranza</div>
-              <div className="fl">Nombre</div>
-              <div className="fv">{oGuion(anuncianteSel?.contacto_nombre)}</div>
-              <div className="fl">Correo</div>
-              <div className="fv link">{oGuion(anuncianteSel?.contacto_email)}</div>
-              <div className="fl">Teléfono</div>
-              <div className="fv">{oGuion(anuncianteSel?.contacto_telefono)}</div>
+              {contactoCobranza.isLoading && <div className="state-msg">Cargando contacto…</div>}
+              {!contactoCobranza.isLoading && !contactoCobranzaSel && (
+                <div className="fv muted">Sin contactos activos registrados para este anunciante.</div>
+              )}
+              {contactoCobranzaSel && (
+                <>
+                  <div className="fl">Nombre</div>
+                  <div className="fv">{contactoCobranzaSel.nombre_contacto}</div>
+                  <div className="fl">Correo</div>
+                  <div className="fv link">{oGuion(contactoCobranzaSel.email_contacto)}</div>
+                  <div className="fl">Teléfono</div>
+                  <div className="fv">{oGuion(contactoCobranzaSel.telefono_contacto)}</div>
+                </>
+              )}
 
               <div className="sec">
                 Pagos recibidos ({listaPagos.length})

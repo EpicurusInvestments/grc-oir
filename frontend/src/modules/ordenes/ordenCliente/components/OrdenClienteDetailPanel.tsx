@@ -28,11 +28,15 @@ import { balanceSpotsOC, oesDeOC, oiImporte, oiPeriodoTexto, totalesOC } from ".
 import type { OrdenCliente, OrdenEstacion, Incidencia } from "../../types";
 
 /** Mismo patrón que `CAMPO_LABEL` en `ContratoDetailPanel.tsx` (F0): nombres de campo
- * legibles para el historial de auditoría. */
+ * legibles para el historial de auditoría. ADR-180: `fecha_inicio_campania`/
+ * `fecha_fin_campania` se suman aquí — comparten el mismo endpoint/balde que las
+ * comisiones (`historial-comisiones` filtra por `entidad_id`, no por campo). */
 const CAMPO_LABEL: Record<string, string> = {
   porcentaje_comision_vendedor_principal_snap: "% comisión vendedor principal",
   porcentaje_comision_vendedor_secundario_snap: "% comisión vendedor secundario",
   porcentaje_comision_agencia_snap: "% comisión agencia",
+  fecha_inicio_campania: "Inicio de campaña",
+  fecha_fin_campania: "Fin de campaña",
 };
 const labelCampo = (c: string) => CAMPO_LABEL[c] ?? c;
 
@@ -186,8 +190,10 @@ export function OrdenClienteDetailPanel({
 
         {/* Mismo patrón que "Historial de cambios" en ContratoDetailPanel.tsx (F0): el
             reducer ya audita cada cambio de % de comisión en `historialComisiones`, pero
-            hasta ahora ninguna pantalla lo mostraba (hallazgo #12 de la revisión). */}
-        <div className="sec">Historial de cambios de comisión</div>
+            hasta ahora ninguna pantalla lo mostraba (hallazgo #12 de la revisión).
+            ADR-180: el mismo balde ahora también trae cambios de fecha de campaña — ya
+            no es solo "de comisión". */}
+        <div className="sec">Historial de cambios</div>
         {historialDeLaOC.length === 0 ? (
           <div className="fv muted">Sin cambios registrados.</div>
         ) : (

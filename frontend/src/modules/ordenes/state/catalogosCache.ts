@@ -14,6 +14,19 @@ export interface AgenciaRef {
   nombre_agencia: string;
   rfc_agencia: string;
   porcentaje_comision_agencia_default: number;
+  /** Domicilio estructurado (ADR-175) — ADR-181 lo usa para autocompletar "Dirección de
+   * facturación" al elegir "Facturación a la Agencia". `null`/`undefined` si la agencia
+   * no lo tiene capturado (no bloquea nada: `formatDomicilio` regresa `null` y el campo
+   * de la OC simplemente no se toca). */
+  calle?: string | null;
+  numero_exterior?: string | null;
+  numero_interior?: string | null;
+  colonia?: string | null;
+  localidad?: string | null;
+  municipio?: string | null;
+  estado?: string | null;
+  pais?: string | null;
+  codigo_postal?: string | null;
   /** Opcional para no obligar a los fixtures de prueba a declararlo: `undefined` se
    * trata como activo (ver `esActivo()` más abajo) — solo `false` explícito excluye del
    * `<select>` del formulario de alta/edición. */
@@ -98,8 +111,6 @@ export interface AfiliadoRef {
   id: string;
   nombre_afiliado: string;
   porcentaje_participacion_oir_default: number;
-  /** Contacto de correo legado del catálogo de Afiliados (F0). `null` si no se capturó. */
-  contacto_email: string | null;
 }
 
 export type TipoSenal = "fm" | "am" | "tv";
@@ -109,9 +120,12 @@ export interface EstacionRef {
   afiliado_id: string;
   plaza_id: string;
   nombre_estacion: string;
-  /** ADR-136 (petición del usuario): el combo de Estación de la Orden de Transmisión
-   * muestra "Estación-Siglas-Frecuencia". Opcional por el mismo motivo que `activo`
-   * (no obligar a los fixtures de prueba a declararla) — sin ella se muestra "—". */
+  /** ADR-136 (petición del usuario, formato original): el combo de Estación de la Orden
+   * de Transmisión mostraba "Estación-Siglas-Frecuencia". **REVERTIDO en ADR-191**: ahora
+   * es "Siglas Frecuencia TIPO_SEÑAL Nombre" (sin Plaza), separados por espacios —
+   * cualquier parte vacía (siglas/frecuencia faltantes) se OMITE en vez de mostrar un
+   * "—". Opcional por el mismo motivo que `activo` (no obligar a los fixtures de prueba a
+   * declararla). */
   siglas?: string | null;
   frecuencia: string;
   tipo_senal: TipoSenal;
@@ -123,6 +137,8 @@ export interface EstacionRef {
 
 export interface TarifaRef {
   id: string;
+  // ADR-177: `null` solo en tarifas capturadas antes de este campo (legado).
+  anunciante_id: string | null;
   estacion_id: string;
   // ADR-166/169: texto libre (catálogo Producto Duración), ya no el enum ProductoTarifa.
   duracion_spot: string;
@@ -189,16 +205,22 @@ export function findPlaza(id: string): PlazaRef | undefined {
  * estación+duración, mismo criterio "sin duplicado activo" que el backend.
  *
  * ADR-158 (petición del usuario): ya NO recibe/filtra por `tipoSenal` — se retiró de
- * `TarifaPlaza` (es propiedad de la Estación, ya implícita en `estacionId`). */
+ * `TarifaPlaza` (es propiedad de la Estación, ya implícita en `estacionId`).
+ *
+ * ADR-177 (petición del usuario): se agrega `anuncianteId` — la llave de la tarifa pasa
+ * a incluir Anunciante. Igual que `producto`, es opcional (sin él no filtra) para no
+ * romper el único otro criterio de ambigüedad que ya existía. */
 export function tarifaReferencia(
   estacionId: string,
   duracionSpot: string,
   producto?: string,
+  anuncianteId?: string | null,
 ): TarifaRef | undefined {
   return tarifas.find(
     (t) =>
       t.estacion_id === estacionId &&
       t.duracion_spot === duracionSpot &&
-      (producto == null || t.producto === producto),
+      (producto == null || t.producto === producto) &&
+      (anuncianteId == null || t.anunciante_id === anuncianteId),
   );
 }

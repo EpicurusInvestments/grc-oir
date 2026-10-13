@@ -94,8 +94,9 @@ class DatosTimbrado:
     receptor_rfc: str = ""
     #: Igual que `emisor_direccion`: texto libre, respaldo de `receptor_domicilio`.
     receptor_direccion: str | None = None
-    #: Domicilio desglosado (ADR-059). Solo se resuelve cuando el receptor de ESTA
-    #: factura es el Anunciante (`Agencia` todavía no tiene domicilio estructurado).
+    #: Domicilio desglosado (ADR-059/ADR-175) de quien sea el receptor REAL de esta
+    #: factura — Anunciante (directa) o Agencia (vía agencia, ambas lo capturan desde
+    #: ADR-175). `None` si ese registro todavía no lo tiene capturado así (viejo).
     receptor_domicilio: DomicilioFiscal | None = None
 
     # ── Referencias comerciales (OrdenCliente) ─────────────────────────────────

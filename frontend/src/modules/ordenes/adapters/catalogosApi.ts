@@ -91,6 +91,17 @@ export async function cargarCatalogosReales(): Promise<void> {
       nombre_agencia: a.nombre_agencia,
       rfc_agencia: a.rfc_agencia,
       porcentaje_comision_agencia_default: Number(a.porcentaje_comision_agencia_default),
+      // ADR-181: domicilio estructurado (ADR-175), para autocompletar "Dirección de
+      // facturación" al elegir "Facturación a la Agencia".
+      calle: a.calle,
+      numero_exterior: a.numero_exterior,
+      numero_interior: a.numero_interior,
+      colonia: a.colonia,
+      localidad: a.localidad,
+      municipio: a.municipio,
+      estado: a.estado,
+      pais: a.pais,
+      codigo_postal: a.codigo_postal,
       activo: a.activo,
     })),
   );
@@ -175,7 +186,6 @@ export async function cargarCatalogosReales(): Promise<void> {
       // La spec no tiene un % de participación OIR por AFILIADO (es por OrdenEstacion,
       // por venta); nadie lo lee desde AfiliadoRef — placeholder inerte.
       porcentaje_participacion_oir_default: 0,
-      contacto_email: a.contacto_email ?? null,
     })),
   );
 
@@ -197,6 +207,7 @@ export async function cargarCatalogosReales(): Promise<void> {
     tarifas,
     tarifasReales.map((t) => ({
       id: t.tarifa_plaza_id,
+      anunciante_id: t.anunciante_id,
       estacion_id: t.estacion_id,
       duracion_spot: t.duracion_spot,
       producto: t.producto,

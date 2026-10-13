@@ -1,6 +1,8 @@
 /** Corrección del hallazgo #12: el historial de cambios de comisión se auditaba en memoria
- * pero ninguna pantalla lo mostraba. Cubre el nuevo bloque "Historial de cambios de
- * comisión" en `OrdenClienteDetailPanel.tsx` (mismo patrón que `ContratoDetailPanel` en F0).
+ * pero ninguna pantalla lo mostraba. Cubre el bloque "Historial de cambios" en
+ * `OrdenClienteDetailPanel.tsx` (mismo patrón que `ContratoDetailPanel` en F0) — desde
+ * ADR-180 el título ya no dice "... de comisión" porque el mismo bloque también muestra
+ * los cambios de fecha de campaña (comparten `entidad_id`, no se pueden separar).
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -31,7 +33,7 @@ function renderPanel(oc: ReturnType<typeof makeOC>, historialComisiones: Histori
   );
 }
 
-describe("Historial de cambios de comisión (fix del hallazgo #12)", () => {
+describe("Historial de cambios — comisión (fix del hallazgo #12) + fecha (ADR-180)", () => {
   it("sin cambios registrados, muestra el estado vacío explícito", () => {
     renderPanel(makeOC());
     expect(screen.getByText("Sin cambios registrados.")).toBeInTheDocument();
@@ -75,6 +77,28 @@ describe("Historial de cambios de comisión (fix del hallazgo #12)", () => {
 
     // El de la otra OC no debe aparecer.
     expect(screen.queryByText(/alguien\.mas/)).toBeNull();
+  });
+
+  it("ADR-180: un cambio de fecha de campaña aparece en el mismo bloque, con su propia etiqueta", () => {
+    const oc = makeOC();
+    const historial: HistorialComision[] = [
+      {
+        log_cambio_parametro_id: "h3",
+        entidad: "OrdenCliente",
+        entidad_id: oc.id,
+        campo: "fecha_inicio_campania",
+        valor_anterior: "2026-06-01",
+        valor_nuevo: "2026-07-01",
+        usuario: "dev.ventas",
+        ip: null,
+        motivo_cambio: "Se redujo el periodo",
+        fecha_cambio: "2026-10-09T09:45:00",
+      },
+    ];
+    renderPanel(oc, historial);
+
+    expect(screen.getByText(/Inicio de campaña/)).toBeInTheDocument();
+    expect(screen.getByText(/Se redujo el periodo/)).toBeInTheDocument();
   });
 });
 

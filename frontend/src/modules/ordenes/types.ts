@@ -41,6 +41,12 @@ export interface PeriodoTransmisionRow {
   /** ADR-104: `true` = este día ya se canceló ("Cancelar transmisión") — de solo
    *  lectura en la grid, no se vuelve a editar. */
   cancelada?: boolean;
+  /** ADR-174b (petición del usuario): hora REAL de transmisión que reportó el layout
+   *  de "Capturar Reales", si difiere de la programada (`hora_inicio`, que no cambia
+   *  aquí) — el backend la compara contra `OrdenEstacionDia.hora_inicio` y genera la
+   *  `Incidencia` de cambio de horario cuando difieren. `null`/`undefined` = no aplica
+   *  (no vino del layout, o coincide con la programada). */
+  hora_real?: string | null;
 }
 
 export interface OrdenCliente {
@@ -126,12 +132,16 @@ export interface OrdenEstacionLayoutReal {
   nombre_archivo: string;
 }
 
-/** ADR-147/ADR-149: una fecha+hora del layout CSV que sí hizo match con un día real de
- *  la OE — trae el `spots` (ya sumado si 2+ filas compartían la misma fecha+hora) a
- *  aplicar como override de ese día. */
+/** ADR-147/ADR-149/ADR-174b: una fecha del layout CSV que sí hizo match (por fecha,
+ *  cronológico — ADR-174b) con un día real de la OE — trae el `spots` (ya sumado si
+ *  2+ filas compartían la misma fecha+hora) a aplicar como override de ese día.
+ *  `cambioHorario`/`horaReal`: si el archivo reportó este día con una hora distinta a
+ *  la programada, `cambioHorario` viene en `true` y `horaReal` trae la hora real. */
 export interface LayoutRealAplicado {
   ordenEstacionDiaId: string;
   spots: number;
+  cambioHorario: boolean;
+  horaReal: string | null;
 }
 
 /** ADR-149: una fecha+hora del layout CSV que NO existe en la OE — se ofrece como día
@@ -293,7 +303,12 @@ export type OrdenClienteInput = Omit<
   | "odc_cerrada_ref"
   | "carta_conciliacion_ref"
   | "documentos_cierre_faltantes"
->;
+> & {
+  /** ADR-180: transitorio (no persiste como campo propio) — requerido SOLO si
+   * `fecha_inicio_campania`/`fecha_fin_campania` de verdad cambiaron respecto al valor
+   * guardado (un solo motivo cubre ambas, mismo criterio que `motivo_cambio_tarifa`). */
+  motivo_cambio_fecha?: string;
+};
 
 /** Campos que captura el formulario de ALTA de OrdenEstacion (Tanda 3). Excluye lo que
  * genera el sistema (folio, id, orden_id, estatus, % OIR calculado) y lo que solo aparece

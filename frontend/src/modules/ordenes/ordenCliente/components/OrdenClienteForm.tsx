@@ -20,6 +20,23 @@
  * ADR-168 (petición del usuario, probado en vivo): "Producto" SÍ es obligatorio — Total
  * de spots/Spots bonificables/Precio unitario quedan deshabilitados hasta elegir uno, y
  * no se puede guardar la orden sin él.
+ *
+ * ADR-180 (petición del usuario): editar "Inicio de campaña"/"Fin de campaña" exige un
+ * "Motivo del cambio" — select con las Descripciones del catálogo Constantes del
+ * Sistema, grupo `MotivoCambio`, clave `CambioFecha`/`CambioFecha_N` (ADR-178); si el
+ * catálogo no tiene ninguna opción activa, cae de regreso a texto libre (mismo patrón
+ * que `TarifaForm.tsx`, ADR-179). El campo se deshabilita mientras ninguna de las dos
+ * fechas difiera de su valor original — se habilita solo al modificar alguna.
+ *
+ * ADR-181 (petición del usuario): el radio "Afiliado factura directo al cliente" se
+ * renombra a "Facturación a la Agencia" (su columna real,
+ * `afiliado_factura_directo_al_cliente`, NO cambia — sigue siendo la misma del modelo,
+ * solo cambia la etiqueta visible). Al elegirlo, "Dirección de facturación" se
+ * autocompleta con el domicilio ESTRUCTURADO de la Agencia (ADR-175, vía
+ * `formatDomicilio`); si la Agencia no tiene domicilio capturado (o no hay ninguna
+ * ligada), el campo se VACÍA para que el usuario la capture a mano. Al elegir
+ * "Facturación directa al cliente" vuelve a la del Anunciante (mismo texto que ya usaba
+ * `onAnuncianteChange`) si hay uno elegido.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,8 +44,10 @@ import { useEffect, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
+import { formatDomicilio } from "@/shared/lib/formatDomicilio";
 import { FieldTag, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
@@ -50,6 +69,14 @@ import { esComisionOverride } from "../../state/selectors";
 import type { EstadoOC, OrdenClienteInput } from "../../types";
 
 const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
+
+// ADR-180: clave base (sin sufijo) del grupo MotivoCambio reservada para estas fechas.
+const CLAVE_BASE_MOTIVO_FECHA = "cambiofecha";
+
+// ADR-181: misma fórmula en 2 lugares (al elegir Anunciante, y al volver a "Facturación
+// directa al cliente") — un helper evita que diverjan.
+const direccionDeAnunciante = (a: { nombre_fiscal: string; rfc_anunciante: string }) =>
+  `${a.nombre_fiscal} · RFC ${a.rfc_anunciante}`;
 
 const numeroOpcionalPct = () =>
   z
@@ -113,6 +140,7 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     observaciones_libres: z.string().trim().max(1000).optional(),
     odc_pdf_ref: z.string().optional(),
     motivo_cambio_comision: z.string().trim().max(500).optional(),
+    motivo_cambio_fecha: z.string().trim().max(500).optional(),
     })
     .refine(
       (d) =>
@@ -227,6 +255,7 @@ export function OrdenClienteForm({
       observaciones_libres: defaultValues?.observaciones_libres ?? "",
       odc_pdf_ref: defaultValues?.odc_pdf_ref ?? "",
       motivo_cambio_comision: "",
+      motivo_cambio_fecha: "",
     },
   });
 
@@ -250,7 +279,7 @@ export function OrdenClienteForm({
     if (!anunciante) return;
     if (anunciante.agencia_id && !watch("agencia_id")) setValue("agencia_id", anunciante.agencia_id);
     if (!watch("direccion_facturacion")) {
-      setValue("direccion_facturacion", `${anunciante.nombre_fiscal} · RFC ${anunciante.rfc_anunciante}`);
+      setValue("direccion_facturacion", direccionDeAnunciante(anunciante));
     }
   };
 
@@ -325,6 +354,29 @@ export function OrdenClienteForm({
   const mesVenta = fechaVenta ? fechaVenta.slice(5, 7) : "—";
   const fechaInicio = watch("fecha_inicio_campania");
   const fechaFin = watch("fecha_fin_campania");
+
+  // ADR-180: "Motivo del cambio" de fechas — habilitado solo si alguna de las dos
+  // difiere de su valor original (mismo criterio que `algunSensibleCambio` de Tarifa).
+  const fechaInicioCambiada =
+    isEdit &&
+    defaultValues?.fecha_inicio_campania !== undefined &&
+    fechaInicio !== defaultValues.fecha_inicio_campania;
+  const fechaFinCambiada =
+    isEdit &&
+    defaultValues?.fecha_fin_campania !== undefined &&
+    fechaFin !== defaultValues.fecha_fin_campania;
+  const algunaFechaCambio = fechaInicioCambiada || fechaFinCambiada;
+
+  const motivosFechaQuery = useConstantes().useList({ grupo: "MotivoCambio", activo: true, size: 100 });
+  const motivosCambioFecha = useMemo(() => {
+    const items = motivosFechaQuery.data?.items ?? [];
+    return items.filter((c) => {
+      const clave = c.clave.trim().toLowerCase();
+      return clave === CLAVE_BASE_MOTIVO_FECHA || clave.startsWith(`${CLAVE_BASE_MOTIVO_FECHA}_`);
+    });
+  }, [motivosFechaQuery.data]);
+  const motivoFechaComoTexto = !motivosFechaQuery.isLoading && motivosCambioFecha.length === 0;
+
   const totalSpots = Number(watch("total_spots")) || 0;
   const spotsBonificables = Math.min(Number(watch("cantidad_spots_bonificables")) || 0, totalSpots);
   const precioUnitario = Number(watch("precio_unitario")) || 0;
@@ -409,16 +461,28 @@ export function OrdenClienteForm({
       observaciones_predefinidas: data.observaciones_predefinidas ?? "",
       observaciones_libres: data.observaciones_libres?.trim() ?? "",
       odc_pdf_ref: data.odc_pdf_ref || null,
+      // ADR-180: transitorio — solo se manda si de verdad cambió alguna de las dos fechas.
+      ...(isEdit && algunaFechaCambio && data.motivo_cambio_fecha?.trim()
+        ? { motivo_cambio_fecha: data.motivo_cambio_fecha.trim() }
+        : {}),
     };
     const cambioComision = CAMPOS_SNAP.some((campo) => input[campo] !== (defaultValues?.[campo] ?? null));
     return { input, motivoComision: cambioComision ? data.motivo_cambio_comision?.trim() || undefined : undefined, cambioComision };
   };
 
-  /** Al editar, si de verdad cambió algún % de comisión, el motivo es obligatorio — no lo
-   * exige el schema de Zod (que no conoce `defaultValues` al definirse), así que se valida
-   * aquí y se marca el error manualmente en el campo compartido de "Motivo del cambio". */
+  /** Al editar, si de verdad cambió algún % de comisión o alguna fecha de campaña, el
+   * motivo correspondiente es obligatorio — ninguno lo exige el schema de Zod (que no
+   * conoce `defaultValues` al definirse), así que se valida aquí y se marca el error
+   * manualmente en el campo compartido de cada uno. */
   const construirYValidar = (data: FormValues) => {
     const { input, motivoComision, cambioComision } = construir(data);
+    if (isEdit && algunaFechaCambio && !data.motivo_cambio_fecha?.trim()) {
+      setError("motivo_cambio_fecha", {
+        type: "manual",
+        message: "El motivo es obligatorio al cambiar la fecha de inicio o fin de campaña.",
+      });
+      return null;
+    }
     if (isEdit && cambioComision && !motivoComision) {
       setError("motivo_cambio_comision", { type: "manual", message: "El motivo es obligatorio al cambiar un % de comisión." });
       return null;
@@ -614,6 +678,44 @@ export function OrdenClienteForm({
                 <div className="fv mono">{dias != null && dias > 0 ? `${dias} días` : "—"}</div>
               </div>
             </div>
+
+            {/* ADR-180: compartido entre inicio/fin de campaña (un solo motivo para las
+                dos), mismo criterio que el motivo de comisiones y el de Tarifa. */}
+            {isEdit && (
+              <>
+                <div className="fl fl-required">
+                  Motivo del cambio{" "}
+                  <span style={{ color: "var(--text3)", fontWeight: 400 }}>
+                    (si modificas el inicio o el fin de campaña)
+                  </span>
+                </div>
+                {motivoFechaComoTexto ? (
+                  <input
+                    className="fi"
+                    placeholder="Requerido al modificar la fecha…"
+                    disabled={!algunaFechaCambio}
+                    {...register("motivo_cambio_fecha")}
+                  />
+                ) : (
+                  <select
+                    className="fsel"
+                    disabled={motivosFechaQuery.isLoading || !algunaFechaCambio}
+                    {...register("motivo_cambio_fecha")}
+                  >
+                    <option value="">
+                      {motivosFechaQuery.isLoading ? "Cargando…" : "Selecciona…"}
+                    </option>
+                    {motivosCambioFecha.map((m) => (
+                      <option key={m.constante_sistema_id} value={m.descripcion}>
+                        {m.descripcion}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="fe">{errors.motivo_cambio_fecha?.message}</div>
+              </>
+            )}
+
             <div className="r2">
               <div>
                 <div className="fl fl-required">
@@ -755,10 +857,7 @@ export function OrdenClienteForm({
 
           <div className="form-card">
             <div className="form-card-title">Facturación</div>
-            <div className="fl">
-              Dirección de facturación <FieldTag origin="heredado" text="Heredado de anunciante" />{" "}
-              <span className="derivado-hint">editable si esta venta usa otra</span>
-            </div>
+            <div className="fl">Dirección de facturación</div>
             <textarea className="ftxt" rows={2} disabled={congelado} {...register("direccion_facturacion")} />
             {/* ADR-141 (petición del usuario): antes eran 2 checkboxes independientes —
                 permitían los 4 estados (ninguno/uno/otro/los dos), pero solo UNO tiene
@@ -766,7 +865,14 @@ export function OrdenClienteForm({
                 uno seleccionado siempre; siguen siendo 2 columnas booleanas del modelo
                 (spec BD v2, sin cambio de esquema) — el radio solo pone la contraria en
                 `false` al elegir una. Default (alta nueva): "Facturación directa al
-                cliente". */}
+                cliente".
+                ADR-181 (petición del usuario): al elegir cada opción, "Dirección de
+                facturación" se recalcula desde la fuente correspondiente. "Facturación
+                directa al cliente" siempre trae algo del Anunciante (si hay uno
+                elegido). "Facturación a la Agencia" usa su domicilio estructurado si lo
+                tiene capturado — si NO lo tiene (o no hay Agencia ligada), VACÍA el
+                campo para que el usuario la capture a mano (a propósito: no debe quedar
+                pegada la dirección del Anunciante bajo esta opción). */}
             <div className="r2" style={{ marginTop: 6 }}>
               <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
                 <input
@@ -777,6 +883,8 @@ export function OrdenClienteForm({
                   onChange={() => {
                     setValue("facturacion_directa_cliente", true);
                     setValue("afiliado_factura_directo_al_cliente", false);
+                    const anunciante = anunciantes.find((a) => a.id === watch("anunciante_id"));
+                    if (anunciante) setValue("direccion_facturacion", direccionDeAnunciante(anunciante));
                   }}
                 />
                 <div>
@@ -793,11 +901,29 @@ export function OrdenClienteForm({
                   onChange={() => {
                     setValue("afiliado_factura_directo_al_cliente", true);
                     setValue("facturacion_directa_cliente", false);
+                    const agencia = findAgencia(watch("agencia_id") || null);
+                    const domicilio = agencia
+                      ? formatDomicilio({
+                          calle: agencia.calle ?? null,
+                          numero_exterior: agencia.numero_exterior ?? null,
+                          numero_interior: agencia.numero_interior ?? null,
+                          colonia: agencia.colonia ?? null,
+                          localidad: agencia.localidad ?? null,
+                          municipio: agencia.municipio ?? null,
+                          estado: agencia.estado ?? null,
+                          pais: agencia.pais ?? null,
+                          codigo_postal: agencia.codigo_postal ?? null,
+                        })
+                      : null;
+                    // Con domicilio, lo usa; sin él, limpia el campo para que el usuario
+                    // capture la dirección a mano (a diferencia de "Facturación directa
+                    // al cliente", que siempre trae algo del Anunciante).
+                    setValue("direccion_facturacion", domicilio ?? "");
                   }}
                 />
                 <div>
-                  <div className="check-box-title">Afiliado factura directo al cliente</div>
-                  <div className="check-box-desc">El afiliado emite su factura al cliente final, no a OIR.</div>
+                  <div className="check-box-title">Facturación a la Agencia</div>
+                  <div className="check-box-desc">La agencia factura al anunciante.</div>
                 </div>
               </label>
             </div>

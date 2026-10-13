@@ -16,6 +16,12 @@ interface MultiSearchableSelectProps {
   placeholder?: string;
   emptyResultsLabel?: string;
   disabled?: boolean;
+  /** Tope de elementos seleccionables (p.ej. "Material a Transmitir" de
+   *  `PeriodoTransmisionGrid.tsx`, ADR-187: no más de 1 por spot del día). Al llegar al
+   *  tope, el desplegable deja de ofrecer opciones nuevas — pero `options` se sigue
+   *  usando tal cual para resolver las etiquetas de los chips ya elegidos, así que
+   *  SIEMPRE hay que pasar la lista completa (nunca truncarla a mano). */
+  maxSelected?: number;
 }
 
 export function MultiSearchableSelect({
@@ -25,6 +31,7 @@ export function MultiSearchableSelect({
   placeholder = "Busca y selecciona…",
   emptyResultsLabel = "Sin resultados.",
   disabled,
+  maxSelected,
 }: MultiSearchableSelectProps) {
   const [abierto, setAbierto] = useState(false);
   const [query, setQuery] = useState("");
@@ -46,7 +53,8 @@ export function MultiSearchableSelect({
     .map((v) => options.find((o) => o.value === v))
     .filter((o): o is OpcionBuscable => o != null);
 
-  const disponibles = options.filter((o) => !value.includes(o.value));
+  const alTope = maxSelected != null && value.length >= maxSelected;
+  const disponibles = alTope ? [] : options.filter((o) => !value.includes(o.value));
   const filtradas = query.trim()
     ? disponibles.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
     : disponibles;

@@ -171,6 +171,8 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 15,
+          cambio_horario: false,
+          hora_real: null,
         },
         // ADR-157: dia-b no viene en el archivo — el backend lo manda igual, en 0
         // (conciliación completa contra lo programado, no un "no se menciona = sin
@@ -180,6 +182,8 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-02",
           hora_inicio: "07:00",
           spots: 0,
+          cambio_horario: false,
+          hora_real: null,
         },
       ],
       nuevos: [],
@@ -211,6 +215,107 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     expect(screen.getByText(/Radio MTY/)).toBeInTheDocument();
   });
 
+  it("ADR-174b: un día con hora distinta (sin cambio de spots) se marca 'cambio horario' y muestra la hora REAL", async () => {
+    const diaA = makeRow({
+      orden_estacion_dia_id: "dia-a",
+      fecha: "2025-06-01",
+      hora_inicio: "07:00",
+      hora_termino: "07:00",
+      spots_diarios: 10,
+    });
+    const oe = makeOE({ periodo_transmision: [diaA] });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-ch1",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 10,
+          cambio_horario: true,
+          hora_real: "09:00",
+        },
+      ],
+      nuevos: [],
+      errores: [],
+    });
+
+    const onAvanzar = vi.fn();
+    render(<RealesForm oe={oe} onAvanzar={onAvanzar} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    // La fila muestra la hora REAL (09:00, lo que de verdad pasó), no la programada.
+    await waitFor(() => expect(screen.getByText("09:00")).toBeInTheDocument());
+    expect(screen.getByText("cambio horario")).toBeInTheDocument();
+    // Los spots no cambiaron (10 == 10) — sin bonificación ni descuento.
+    expect(screen.queryByText(/bonif\.|desc\./)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Avanzar a 2.3 →" }));
+    const [horariosReales] = onAvanzar.mock.calls[0];
+    expect(horariosReales[0].hora_real).toBe("09:00");
+  });
+
+  it("ADR-174b: un día con hora Y spots distintos muestra las DOS marcas (cambio horario + bonificación)", async () => {
+    const diaA = makeRow({
+      orden_estacion_dia_id: "dia-a",
+      fecha: "2025-06-01",
+      hora_inicio: "07:00",
+      hora_termino: "07:00",
+      spots_diarios: 8,
+    });
+    const oe = makeOE({ periodo_transmision: [diaA] });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-ch2",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 11,
+          cambio_horario: true,
+          hora_real: "09:00",
+        },
+      ],
+      nuevos: [],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    await waitFor(() => expect(screen.getByText("+3 bonif.")).toBeInTheDocument());
+    expect(screen.getByText("cambio horario")).toBeInTheDocument();
+    expect(screen.getByText("1 cambio(s) de horario", { exact: false })).toBeInTheDocument();
+  });
+
   it("ADR-151: sin cargar ningún layout, la tabla sigue el flujo normal de siempre (periodo_transmision completo)", async () => {
     const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
     const diaB = makeRow({ orden_estacion_dia_id: "dia-b", fecha: "2025-06-02", spots_diarios: 5 });
@@ -236,7 +341,14 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
         created_at: "2026-09-30T00:00:00",
       },
       aplicados: [
-        { orden_estacion_dia_id: "dia-a", fecha_transmision: "2025-06-01", hora_inicio: "07:00", spots: 10 },
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 10,
+          cambio_horario: false,
+          hora_real: null,
+        },
       ],
       nuevos: [{ fecha_transmision: "2025-07-01", hora_inicio: "09:00:00", spots: 6 }],
       errores: [],
@@ -316,6 +428,8 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 10,
+          cambio_horario: false,
+          hora_real: null,
         },
       ],
       // 2 spots que antes NO existían en esta OE — un día nuevo.
@@ -337,12 +451,70 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText("Nuevo")).toBeInTheDocument());
 
     // ANTES de ADR-160: el panel ignoraba por completo los días nuevos — "no los
-    // registró como bonificaciones" (petición del usuario). Ahora sí cuentan: 2 spots
+    // registró como bonificaciones" (petición del usuario). ADR-160 los sumó al mismo
+    // contador de bonificación; ADR-176 (petición del usuario) los separó en su propio
+    // contador ("spot(s) en registros nuevos", medido en spots, no en filas) — 2 spots
     // nuevos a $800 c/u = +$1,600.00, y se refleja también en "Reales".
-    expect(screen.getByText("• 1 bonificación(es)")).toBeInTheDocument();
+    expect(screen.getByText("• 2 spot(s) en registros nuevos")).toBeInTheDocument();
+    expect(screen.queryByText(/bonificación\(es\)/)).toBeNull();
     expect(screen.queryByText(/descuento\(s\)/)).toBeNull();
     expect(screen.getByText("+$1,600.00")).toBeInTheDocument();
     expect(screen.getByText(/Programados 10 spots → Reales 12/)).toBeInTheDocument();
+  });
+
+  it("ADR-176 (petición del usuario): la bonificación del panel SUMA los spots de todos los días modificados, no cuenta días", async () => {
+    const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 1 });
+    const diaB = makeRow({ orden_estacion_dia_id: "dia-b", fecha: "2025-06-02", spots_diarios: 1 });
+    const oe = makeOE({ periodo_transmision: [diaA, diaB], precio_spot: 100 });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-9",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      // dia-a: +2 sobre lo programado (1 → 3). dia-b: +3 sobre lo programado (1 → 4).
+      // Dos DÍAS con bonificación, pero 5 SPOTS en total — el panel debe mostrar 5, no 2.
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 3,
+          cambio_horario: false,
+          hora_real: null,
+        },
+        {
+          orden_estacion_dia_id: "dia-b",
+          fecha_transmision: "2025-06-02",
+          hora_inicio: "07:00",
+          spots: 4,
+          cambio_horario: false,
+          hora_real: null,
+        },
+      ],
+      nuevos: [],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    await waitFor(() => expect(screen.getByText("+2 bonif.")).toBeInTheDocument());
+    expect(screen.getByText("+3 bonif.")).toBeInTheDocument();
+    // 2 días afectados, pero 5 SPOTS de bonificación (2 + 3) — no "2 bonificación(es)".
+    expect(screen.getByText("• 5 spot(s) de bonificación")).toBeInTheDocument();
+    expect(screen.queryByText(/descuento\(s\)/)).toBeNull();
+    expect(screen.getByText("+$500.00")).toBeInTheDocument(); // 5 spots × $100
   });
 
   it("ADR-152: un día nuevo fuera de la campaña de la OC se marca en la tabla y bloquea 'Avanzar'", async () => {

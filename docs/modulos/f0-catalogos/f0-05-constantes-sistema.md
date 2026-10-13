@@ -11,16 +11,18 @@
 ## Qué se construyó (resumen)
 
 - **`ConstantesSistema`** (tabla `constantes_sistema`): entidad de configuración homogénea
-  (`grupo`/`clave`/`descripcion`/`valor`) con los 9 grupos SAT/timbrador. Unicidad natural
-  `(grupo, clave)` case-insensitive. CRUD manual (Admin) + **carga masiva CSV** con flujo
-  *dry-run → confirmar*. Filtro por grupo, conteos por grupo (pills) y búsqueda.
+  (`grupo`/`clave`/`descripcion`/`valor`) con los 9 grupos SAT/timbrador + el grupo NO
+  fiscal **`MotivoCambio`** (ADR-178). Unicidad natural `(grupo, clave)` case-insensitive
+  (excepto en `MotivoCambio`, ver ADR-178 abajo). CRUD manual (Admin) + **carga masiva CSV**
+  con flujo *dry-run → confirmar*. Filtro por grupo, conteos por grupo (pills) y búsqueda.
 - **`CuentaContable`** (tabla `cuenta_contable`, **tabla propia** — ADR-024): catálogo
   contable con `codigo_cuenta` (único CI), `nombre_cuenta` y `tipo_cuenta` (ENUM). CRUD
   manual simple (sin carga CSV por ahora).
 - **`MetodoPago`**: se gestiona como **grupo** de `ConstantesSistema` (valores PUE/PPD).
-- Migración `b6d9f2a4c817` (aplicada y verificada contra RDS: CHECK, únicos, tipos).
-- Decisiones registradas en **ADR-024** (modelado CuentaContable) y **ADR-025** (carga CSV);
-  endpoints en `docs/API-CONTRACT.md` (sección F0-05).
+- Migración `b6d9f2a4c817` (aplicada y verificada contra RDS: CHECK, únicos, tipos) y
+  `e92f9bc99f9f` (ADR-178: agrega `MotivoCambio` al CHECK de `grupo`).
+- Decisiones registradas en **ADR-024** (modelado CuentaContable), **ADR-025** (carga CSV) y
+  **ADR-178** (grupo `MotivoCambio`); endpoints en `docs/API-CONTRACT.md` (sección F0-05).
 
 ## Propósito
 
@@ -44,6 +46,14 @@ p.ej. legacy "33"), `activo`, `created_at`, `updated_at`.
 - **FormaPago** — Forma de pago SAT.
 - **MetodoPago** — Método de pago SAT.
 - **MonedaSAT** — Moneda.
+
+### Grupo no fiscal (ADR-178)
+- **MotivoCambio** — catálogo de motivos reutilizable por otras pantallas que piden al
+  usuario un "motivo del cambio" en texto libre (empieza por el `motivo_cambio` de Tarifa,
+  F0-02; se irá conectando a más pantallas después). Se agrupan por pantalla/sección: la
+  Clave identifica el grupo de motivos (p.ej. `CambioFecha`) y cada Descripción es UNA
+  opción seleccionable dentro de ese grupo — ver "ADR-178" más abajo para el detalle de
+  por qué la Clave NO es única aquí y cómo se resuelve.
 
 ### Grupos absorbidos desde F0-04 (decisión del equipo)
 - **MetodoPago** (ya listado arriba como catálogo SAT) — se gestiona aquí como **grupo** de
@@ -99,6 +109,66 @@ Solo para `ConstantesSistema` (Admin). Detalle completo en **ADR-025** y en `API
   errores_estructura, filas[] }` con `estado` por fila ∈ creada|actualizada|omitida|rechazada.
 - **Helper reutilizable** `importacion_csv.py`: CuentaContable u otros catálogos podrán sumar
   carga CSV reusándolo (hoy no lo exponen).
+
+## ADR-178 — Grupo `MotivoCambio`: Clave NO única, agrupa Descripciones por pantalla/sección
+
+- **Contexto (petición del usuario, 2026-10-09):** el cliente pidió un catálogo de
+  motivos que, más adelante, alimentará el selector de "motivo del cambio" de varias
+  pantallas (empieza por Tarifa, F0-02) en vez de que el usuario lo escriba a mano. Pidió
+  agruparlos "por pantalla o por sección" dentro de un solo grupo nuevo `MotivoCambio`,
+  con 3 claves iniciales (`CambioFecha`, `CancelarTransmision`, `CambioTarifa`), cada una
+  con **2 descripciones distintas**.
+- **Conflicto con el modelo existente:** la unicidad `(grupo, clave)` es una restricción de
+  BD (índice único) — 2 registros con la misma Clave en el mismo Grupo violan esa regla.
+  Se señaló al usuario antes de programar (regla de oro #2/#9) y se resolvió vía
+  `AskUserQuestion` en dos preguntas:
+  1. Cómo modelar varias Descripciones por Clave → el usuario confirmó que la Clave debe
+     seguir siendo única a nivel BD, y que el sistema le agregue un **sufijo numérico
+     automático** (`CambioFecha_1`, `CambioFecha_2`...) para no repetirla.
+  2. A qué grupos aplica ese auto-sufijo → el usuario confirmó que **solo a
+     `MotivoCambio`**; los 9 grupos SAT/timbrador siguen rechazando duplicados tal cual
+     (ahí la Clave es un código fiscal real que el timbrador espera exacto — auto-sufijarla
+     lo volvería inválido).
+- **Decisión:**
+  - Nuevo grupo `MotivoCambio` agregado al enum `GrupoConstante` (y al CHECK de la columna
+    `grupo`, migración `e92f9bc99f9f`: ensancha el CHECK existente, sin tocar los índices).
+  - `ConstanteSistemaService._pre_create()`: si `grupo == MotivoCambio`, en vez de llamar a
+    `_verificar_unico` (que respondería 409), calcula el siguiente sufijo libre para esa
+    Clave base (`_siguiente_clave_motivo_cambio`, cuenta cuántas claves en el grupo ya
+    empiezan con `{clave}_` o son exactamente esa, case-insensitive) y guarda
+    `clave = "{clave}_{N}"`. Para cualquier otro grupo, el comportamiento NO cambia.
+  - Frontend: `ConstanteForm.tsx` muestra un aviso bajo "Clave" cuando el grupo elegido en
+    ALTA es `MotivoCambio`, explicando el sufijo automático.
+- **6 registros iniciales creados** (vía la pantalla, confirmando el sufijo en vivo):
+
+  | Clave resultante | Descripción |
+  |---|---|
+  | `CambioFecha_1` | Se cancelaron spots |
+  | `CambioFecha_2` | Se redujo el periodo |
+  | `CancelarTransmision_1` | A solicitud del cliente |
+  | `CancelarTransmision_2` | Por error de la emisora |
+  | `CambioTarifa_1` | Por oferta de la emisora |
+  | `CambioTarifa_2` | Por incremento de tarifa |
+
+- **Conectado a Tarifa (F0-02) en ADR-179:** el "Motivo del cambio" de `TarifaForm.tsx`
+  pasa de texto libre a un select con las Descripciones de clave `CambioTarifa*` — ver
+  ADR-179 en `docs/arquitectura.md` y la ficha de F0-02.
+- **Conectado a Orden de Servicio (F1) en ADR-180:** el "Motivo del cambio" al editar
+  `fecha_inicio_campania`/`fecha_fin_campania` en `OrdenClienteForm.tsx` usa la clave
+  `CambioFecha*` del mismo grupo — ver ADR-180 en `docs/arquitectura.md` y
+  `docs/modulos/f1-ordenes/f1-00-ordenes.md`.
+- **Conectado a Orden de Transmisión (F1) en ADR-183:** el "Motivo del cambio de tarifa"
+  de `OrdenEstacionForm.tsx` (alta y edición, cuando `precio_spot` diverge de la tarifa
+  sugerida) usa la MISMA clave `CambioTarifa*` que ya usa Tarifa (ADR-179) — ver ADR-183
+  en `docs/arquitectura.md` y `docs/modulos/f1-ordenes/f1-00-ordenes.md`. Las demás
+  pantallas con un motivo en texto libre (comisiones de vendedor/agencia, cancelar
+  transmisión...) siguen pendientes.
+- **Verificado:** backend, 6 pruebas nuevas en `test_f0_05_constantes.py` (autogenera
+  sufijo, secuencia independiente por clave base, case-insensitive, los demás grupos
+  siguen rechazando duplicados, HTTP de punta a punta); `ruff check` limpio; migración con
+  roundtrip `upgrade`→`downgrade`→`upgrade` verificado sobre SQLite (CHECK e índices
+  sobreviven la recreación de tabla en modo batch). Frontend, `tsc --noEmit`/`eslint`
+  limpios (sin suite de pruebas propia — mismo hueco preexistente que Tarifa/Agencia).
 
 ## Roles / permisos
 - **Lectura:** todas las áreas operativas.

@@ -4,12 +4,21 @@
 que Facturación (F2) consume al **preparar** el archivo plano del timbrador (el sistema NO
 timbra). Nueve grupos SAT/timbrador (incluye MetodoPago, diferido de F0-04 — ADR-022):
 TipoComprobante, Serie, RegimenFiscal, ClaveProdServ, ClaveUnidad, UsoCFDI, FormaPago,
-MetodoPago, MonedaSAT.
+MetodoPago, MonedaSAT. Más el décimo grupo **MotivoCambio** (ADR-178, no fiscal): catálogo
+de motivos de cambio reutilizable por otras pantallas (p.ej. el "Motivo del cambio" de
+Tarifa, F0-02) que piden al usuario escribir un motivo en texto libre — se agrupan por
+pantalla/sección dentro de este único grupo.
 
 Monta la base de F0-00 (`BaseRepository`/`BaseService`/`build_crud_router`) y añade:
 - **Unicidad natural `(grupo, clave)`** case-insensitive (una clave por grupo; la misma
   clave puede repetirse entre grupos). Verificada en el servicio con `func.lower(...)`
   (portable a SQL Server, coincide con el índice único bajo collation CI — ADR-017).
+  **Excepción, solo para el grupo `MotivoCambio` (ADR-178):** ahí la Clave agrupa varias
+  Descripciones seleccionables de una misma pantalla/sección (p.ej. "CambioFecha" con 2+
+  motivos distintos) — por diseño NO es única; en vez de rechazar el alta con 409, el
+  servicio le agrega un sufijo numérico secuencial (`CambioFecha_1`, `CambioFecha_2`...).
+  Los 9 grupos SAT/timbrador NO cambian: siguen rechazando duplicados tal cual, porque ahí
+  la clave es un código fiscal real que el timbrador espera exacto.
 - **Filtro por `grupo`** en la lista (la pantalla tiene pills por grupo): se reemplaza SOLO
   la ruta `listar` de la factory, como en `tarifa.py` (ADR-015, decisión E-3).
 - **Conteos por grupo** (`/constantes/conteos`) para las pills con su número.
@@ -54,7 +63,9 @@ COLUMNAS_OPCIONALES = ["valor", "activo"]
 
 
 class GrupoConstante(StrEnum):
-    """Grupos SAT/timbrador de la pantalla aprobada (fuente única de los valores válidos)."""
+    """Grupos de la pantalla aprobada (fuente única de los valores válidos). Los primeros
+    9 son SAT/timbrador; `MOTIVO_CAMBIO` (ADR-178) es el único grupo NO fiscal — catálogo
+    de motivos reutilizable por otras pantallas que piden un "motivo del cambio"."""
 
     TIPO_COMPROBANTE = "TipoComprobante"
     SERIE = "Serie"
@@ -65,6 +76,7 @@ class GrupoConstante(StrEnum):
     FORMA_PAGO = "FormaPago"
     METODO_PAGO = "MetodoPago"
     MONEDA_SAT = "MonedaSAT"
+    MOTIVO_CAMBIO = "MotivoCambio"
 
 
 # CHECK del `grupo` derivado del enum (una sola fuente de verdad para el DDL del modelo).
@@ -201,6 +213,16 @@ class ConstanteSistemaRepository(BaseRepository[ConstanteSistema]):
             stmt = stmt.where(ConstanteSistema.activo == True)  # noqa: E712  (portable, ADR-014)
         return {grupo: int(total) for grupo, total in self.db.execute(stmt).all()}
 
+    def claves_del_grupo(self, grupo: str) -> list[str]:
+        """Todas las claves (tal cual, sin normalizar mayúsculas) ya capturadas en `grupo`.
+
+        ADR-178: la usa `_siguiente_clave_motivo_cambio` para calcular el siguiente sufijo
+        libre en el grupo `MotivoCambio` — el catálogo es pequeño, precargarlo es barato
+        (mismo criterio que `mapa_por_grupo_clave`, usado por la importación CSV).
+        """
+        stmt = select(ConstanteSistema.clave).where(ConstanteSistema.grupo == grupo)
+        return [clave for (clave,) in self.db.execute(stmt).all()]
+
     def mapa_por_grupo_clave(self) -> dict[tuple[str, str], ConstanteSistema]:
         """Índice {(grupo, clave en minúsculas): obj} de TODO el catálogo, en una consulta.
 
@@ -233,7 +255,24 @@ class ConstanteSistemaService(
         payload["descripcion"] = _normaliza(payload["descripcion"])
         if payload.get("valor") is not None:
             payload["valor"] = _normaliza(payload["valor"]) or None
-        self._verificar_unico(payload["grupo"], payload["clave"], excluir_id=None)
+        if payload["grupo"] == GrupoConstante.MOTIVO_CAMBIO.value:
+            # ADR-178 (petición del usuario): aquí la Clave NO es única por diseño — agrupa
+            # varias Descripciones seleccionables de una misma pantalla/sección. En vez de
+            # rechazar el alta con 409, se le agrega un sufijo numérico secuencial.
+            payload["clave"] = self._siguiente_clave_motivo_cambio(payload["clave"])
+        else:
+            self._verificar_unico(payload["grupo"], payload["clave"], excluir_id=None)
+
+    def _siguiente_clave_motivo_cambio(self, clave_base: str) -> str:
+        """ADR-178: calcula `{clave_base}_{N}` con el siguiente entero libre — N arranca en
+        1 y nunca se reutiliza aunque la clave original (sin sufijo) ya no exista."""
+        prefijo = clave_base.lower() + "_"
+        sufijos: list[int] = []
+        for clave in self._const_repo.claves_del_grupo(GrupoConstante.MOTIVO_CAMBIO.value):
+            resto = clave.lower().removeprefix(prefijo)
+            if resto != clave.lower() and resto.isdigit():
+                sufijos.append(int(resto))
+        return f"{clave_base}_{max(sufijos, default=0) + 1}"
 
     def _pre_update(
         self, obj: ConstanteSistema, payload: dict[str, Any], usuario: CurrentUser

@@ -237,10 +237,9 @@ Estación (y desde TarifaPlaza, F0-02), y Afiliado no referencia una plaza en ab
   `Afiliado.plaza_id`.
 
 **`/catalogos/afiliados`** — campos: `afiliado_id`, `nombre_afiliado` (req.),
-`razon_social_afiliado` (req.), `rfc_afiliado` (req., **único**), `contacto_nombre`,
-`contacto_email`, `contacto_telefono`, `activo`, timestamps. **Sin `plaza_id`** (ADR-096,
-petición del usuario — lo tuvo hasta 2026-09-21): la plaza es propiedad de la Estación,
-no del Afiliado.
+`razon_social_afiliado` (req.), `rfc_afiliado` (req., **único**), `activo`, timestamps.
+**Sin `plaza_id`** (ADR-096, petición del usuario — lo tuvo hasta 2026-09-21): la plaza
+es propiedad de la Estación, no del Afiliado.
 - **Derivado (solo lectura):** `estaciones_count` = nº de estaciones del afiliado
   (**todas**, mismo criterio que Plaza). No se acepta en Create/Update; se calcula en el
   servicio por lote (sin N+1).
@@ -249,9 +248,8 @@ no del Afiliado.
 - **Baja con dependientes:** afiliado con **estaciones activas** → 409 `dependencias_activas`
   (`detalles: { estaciones_activas }`) salvo `forzar:true`.
 - Búsqueda `?q` sobre nombre, razón social y RFC.
-- `contacto_nombre`/`contacto_email`/`contacto_telefono` son **LEGADO** desde ADR-094: ya
-  no se capturan en Create/Update (siguen aceptándose en el schema por compatibilidad con
-  filas viejas, pero el formulario no los manda); el reemplazo es `ContactoAfiliado`.
+- **ADR-174: ya no tiene `contacto_*`** (contacto único legado que desde ADR-094 era de
+  solo lectura — eliminado por completo; el reemplazo es `ContactoAfiliado`).
 
 **`/catalogos/contactos-afiliado`** (entidad NUEVA, fuera de la spec BD v2 — ADR-094) —
 campos: `contacto_afiliado_id`, `afiliado_id` (req., FK), `nombre_contacto` (req.),
@@ -296,24 +294,28 @@ Ejemplo alta de estación (Plaza y Afiliado, ambos explícitos):
 
 ### Tarifas (F0-02) — TarifaPlaza
 
-Catálogo de tarifas de referencia por **estación + duración de spot + producto**, sobre
-el patrón CRUD estándar (escritura solo **admin** en F0). Depende de Estación.
-**ADR-097 (petición del usuario):** el diseño original de F0-02 era por **plaza** y con
-**vigencia** — ambos se eliminaron; ver ADR-097 en `docs/arquitectura.md`. **ADR-158
-(petición del usuario):** ya NO tiene `tipo_senal` — es propiedad de la Estación
-referenciada (`Estacion.tipo_senal`), no de la tarifa. **ADR-166 (petición del
-usuario):** `duracion_spot`/`producto` dejan de ser los CHECK/enum cerrados y pasan a
-texto libre, elegidos del catálogo Producto Duración (F0-06).
+Catálogo de tarifas de referencia por **anunciante + estación + duración de spot +
+producto**, sobre el patrón CRUD estándar (escritura solo **admin** en F0). Depende de
+Estación y, desde ADR-177, de Anunciante. **ADR-097 (petición del usuario):** el diseño
+original de F0-02 era por **plaza** y con **vigencia** — ambos se eliminaron; ver
+ADR-097 en `docs/arquitectura.md`. **ADR-158 (petición del usuario):** ya NO tiene
+`tipo_senal` — es propiedad de la Estación referenciada (`Estacion.tipo_senal`), no de
+la tarifa. **ADR-166 (petición del usuario):** `duracion_spot`/`producto` dejan de ser
+los CHECK/enum cerrados y pasan a texto libre, elegidos del catálogo Producto Duración
+(F0-06). **ADR-177 (petición del usuario):** se agrega `anunciante_id` como PRIMER
+componente de la llave de unicidad.
 
-**`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, `estacion_id` (req., FK),
-`duracion_spot` (req., 1–60 caracteres, **texto libre desde ADR-166** — antes CHECK
-`20s|30s|60s`; el literal "sin resultado" del catálogo Producto Duración está
-EXPLÍCITAMENTE PROHIBIDO aquí, 400 `error_dominio`), `producto` (req., 1–60 caracteres,
-**texto libre desde ADR-166** — antes CHECK `spot|mencion|control_remoto|patrocinio`),
-**`tarifa_bruta` (req., ≥0, PARÁMETRO SENSIBLE, ADR-099)**, **`descuento_pct` (req.,
-0–100, PARÁMETRO SENSIBLE, ADR-099)**, **`tarifa_neta` (Calculado)**, `notas`, `activo`,
-`created_at`, `created_by`, `updated_at`. **Ya NO tiene** `vigencia_desde`/
-`vigencia_hasta` (ADR-097) ni `tipo_senal` (ADR-158).
+**`/catalogos/tarifas`** — campos: `tarifa_plaza_id`, **`anunciante_id` (FK, NULLABLE a
+nivel BD pero OBLIGATORIO en el alta — ADR-177; `null` solo en tarifas capturadas ANTES
+de este campo)**, `estacion_id` (req., FK), `duracion_spot` (req., 1–60 caracteres,
+**texto libre desde ADR-166** — antes CHECK `20s|30s|60s`; el literal "sin resultado"
+del catálogo Producto Duración está EXPLÍCITAMENTE PROHIBIDO aquí, 400 `error_dominio`),
+`producto` (req., 1–60 caracteres, **texto libre desde ADR-166** — antes CHECK
+`spot|mencion|control_remoto|patrocinio`), **`tarifa_bruta` (req., ≥0, PARÁMETRO
+SENSIBLE, ADR-099)**, **`descuento_pct` (req., 0–100, PARÁMETRO SENSIBLE, ADR-099)**,
+**`tarifa_neta` (Calculado)**, `notas`, `activo`, `created_at`, `created_by`,
+`updated_at`. **Ya NO tiene** `vigencia_desde`/`vigencia_hasta` (ADR-097) ni
+`tipo_senal` (ADR-158).
 - **Montos como string:** `tarifa_bruta`, `descuento_pct` y `tarifa_neta` viajan como
   **string** en el JSON (entrada y salida) para preservar la precisión `Decimal` (E-4). El
   servidor acepta también número, pero devuelve string.
@@ -324,33 +326,43 @@ EXPLÍCITAMENTE PROHIBIDO aquí, 400 `error_dominio`), `producto` (req., 1–60 
   mecanismo de auditoría descrito en "Parámetros sensibles y auditoría" (abajo) —
   `motivo_cambio` requerido al modificar CUALQUIERA de los dos (un solo motivo cubre
   ambos, no uno por campo).
-- **Derivado (solo lectura):** `estacion_nombre` (nombre de la estación referenciada),
-  calculado por lote (sin N+1). No se acepta en Create/Update.
+- **Derivado (solo lectura):** `estacion_nombre` (nombre de la estación referenciada) y
+  (ADR-177) `anunciante_nombre` (nombre del anunciante referenciado, `null` junto con
+  `anunciante_id`), calculados por lote (sin N+1). No se aceptan en Create/Update.
 - **`created_by`:** username del capturista (texto, no FK; la entidad Usuario llega en
   F0-04). Lo fija el servidor desde el usuario autenticado, no el cliente.
+- **`anunciante_id` obligatorio al crear, y requisito para reactivar (ADR-177):** el
+  servidor verifica que el Anunciante exista (400 `error_dominio` si no). Reactivar
+  (`PATCH` a `activo: true`) una tarifa **legada** (`anunciante_id = NULL`) se rechaza
+  con 400 `error_dominio` — hay que editarla primero para asignarle un Anunciante.
 - **Sin duplicado activo (409 `conflicto`, ADR-097 — reemplaza la validación de
-  solapamiento por vigencia; combinación simplificada por ADR-158):** al crear, editar
-  o **reactivar** una tarifa activa, no puede existir OTRA tarifa activa con la misma
-  combinación (estación + duracion_spot + producto). `detalles` incluye la tarifa en
-  conflicto.
-- **Filtros de lista:** `?activo`, `?q` (busca en nombre/siglas de la estación y en
-  notas), y (ADR-102, F1 los usa para sugerir `precio_spot` al asignar una estación)
-  `?estacion_id`, `?duracion_spot`, `?producto` — coincidencia EXACTA de cada uno (no
-  búsqueda parcial; ADR-158 quitó `?tipo_senal`). Ruta propia (`listar_tarifas`), no la
-  genérica de `build_crud_router`.
+  solapamiento por vigencia; combinación ajustada por ADR-158/ADR-177):** al crear,
+  editar o **reactivar** una tarifa activa, no puede existir OTRA tarifa activa con la
+  misma combinación (**anunciante_id** + estación + duracion_spot + producto).
+  `detalles` incluye la tarifa en conflicto.
+- **Filtros de lista:** `?activo`, `?q` (busca en nombre/siglas de la estación, notas y,
+  desde ADR-177, nombre comercial del anunciante), y (ADR-102, F1 los usa para sugerir
+  `precio_spot` al asignar una estación) `?estacion_id`, `?duracion_spot`, `?producto`,
+  `?anunciante_id` (ADR-177) — coincidencia EXACTA de cada uno (no búsqueda parcial;
+  ADR-158 quitó `?tipo_senal`). Ruta propia (`listar_tarifas`), no la genérica de
+  `build_crud_router`.
 - **Búsqueda `?q`:** coincidencia parcial case-insensitive sobre **nombre de la estación,
-  siglas de la estación y notas** (coincide en cualquiera). Resuelta con un JOIN a
-  `estacion` en el repositorio (sin N+1); `ilike` portable a SQL Server.
+  siglas de la estación, notas y (ADR-177) nombre comercial del anunciante** (coincide en
+  cualquiera). Resuelta con un JOIN a `estacion` y un `outerjoin` a `anunciante` en el
+  repositorio (sin N+1; el outer evita excluir tarifas legadas sin anunciante); `ilike`
+  portable a SQL Server.
+- **Orden de lista (ADR-177):** Anunciante → Emisora → Producto → Duración (por nombre,
+  vía JOIN; antes: Emisora → Producto → Duración).
 
 **`GET /catalogos/tarifas/{id}/historial`** (`catalogos:leer`) — historial de auditoría de
 UNA tarifa: lee `LogCambioParametro` filtrado por (`entidad="TarifaPlaza"`, `entidad_id=id`),
 ordenado del **más reciente al más antiguo**. Mismo shape de respuesta que Agencia (ver
 "Parámetros sensibles y auditoría"). 404 si la tarifa no existe.
 
-Ejemplo alta de tarifa (sin `tarifa_neta`):
+Ejemplo alta de tarifa (sin `tarifa_neta`; `anunciante_id` obligatorio desde ADR-177):
 ```json
 {
-  "estacion_id": "1a...", "duracion_spot": "30", "producto": "Spot",
+  "anunciante_id": "7f...", "estacion_id": "1a...", "duracion_spot": "30", "producto": "Spot",
   "tarifa_bruta": "9000.00", "descuento_pct": "10",
   "notas": "Tarifa general FM CDMX"
 }
@@ -360,10 +372,11 @@ Ejemplo de rechazo por "sin resultado" (400 `error_dominio`):
 { "estacion_id": "1a...", "duracion_spot": "sin resultado", "producto": "Mención", "tarifa_bruta": "500.00" }
 → { "error": { "codigo": "error_dominio", "mensaje": "No se puede guardar la tarifa con la duración «sin resultado». Ve al catálogo Producto Duración y da de alta una duración real para este producto antes de continuar.", ... } }
 ```
-Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivado):
+Fragmento de la respuesta (montos como string; `tarifa_neta` calculada + derivados):
 ```json
 {
-  "tarifa_plaza_id": "9c...", "tarifa_bruta": "9000.00", "descuento_pct": "10",
+  "tarifa_plaza_id": "9c...", "anunciante_id": "7f...", "anunciante_nombre": "Televisa Publicidad",
+  "tarifa_bruta": "9000.00", "descuento_pct": "10",
   "tarifa_neta": "8100.00", "estacion_nombre": "XHRC-FM",
   "created_by": "admin", "activo": true
 }
@@ -442,9 +455,14 @@ Cadena comercial (Agencia ← Anunciante ← Marca/Contrato) sobre el patrón CR
 las siguientes tandas).*
 
 **`/catalogos/agencias`** — campos: `agencia_id`, `nombre_agencia` (req., **único**),
-`rfc_agencia` (req.), `contacto_nombre`, `contacto_email`, `contacto_telefono`,
-**`porcentaje_comision_agencia_default` (PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
-`updated_at`.
+`rfc_agencia` (req.), **`porcentaje_comision_agencia_default` (PARÁMETRO SENSIBLE)**,
+`activo`, `created_at`, `updated_at`. **ADR-174: ya no tiene `contacto_*`** (contacto
+único legado, eliminado por completo — el reemplazo es `ContactoAgencia`, abajo).
+**ADR-175:** domicilio ESTRUCTURADO (`calle`, `numero_exterior`, `numero_interior`,
+`colonia`, `localidad`, `referencia_domicilio`, `municipio`, `estado`, `pais`,
+`codigo_postal`) — mismo mecanismo de autocompletado por `GET /codigos-postales/{cp}`
+que ya usan Anunciante/EmpresaFacturadora (ADR-059); Agencia no tenía ningún campo de
+domicilio antes.
 - **`nombre_agencia` único (case-insensitive):** los nombres se normalizan colapsando
   espacios; la unicidad ignora mayúsculas/minúsculas (la BD `GRC-OIR` usa collation
   `SQL_Latin1_General_CP1_CI_AS`, case-insensitive; el servicio además compara con `LOWER()`
@@ -472,7 +490,6 @@ Ejemplo alta de agencia:
 ```json
 {
   "nombre_agencia": "Publicidad Total", "rfc_agencia": "PTO950101ABC",
-  "contacto_nombre": "Ana López", "contacto_email": "ana@ejemplo.mx",
   "porcentaje_comision_agencia_default": "15.00"
 }
 ```
@@ -483,8 +500,10 @@ Ejemplo edición del % sensible (motivo requerido):
 
 **`/catalogos/anunciantes`** — campos: `anunciante_id`, **`agencia_id` (FK NULL = directo)**,
 `nombre_comercial` (req.), `nombre_fiscal` (req., el que va en la factura),
-`rfc_anunciante` (req.), `localizacion`, `referencia_anunciante`, `contacto_*`,
+`rfc_anunciante` (req.), `localizacion`, `referencia_anunciante`,
 **`dias_credito_default` (PARÁMETRO SENSIBLE, entero ≥0)**, `activo`, timestamps.
+**ADR-174: ya no tiene `contacto_*`** (contacto único legado, eliminado por completo —
+el reemplazo es `ContactoAnunciante`, abajo).
 - **Vía agencia / Directo:** `agencia_id` NULL ⇒ el anunciante es directo (sin agencia). Si
   se envía, debe existir (→ 404 si no). Filtro de lista **`?relacion=todas|via_agencia|directo`**
   (dimensión independiente de `?activo`).
@@ -621,17 +640,24 @@ case-insensitive**), `descripcion_categoria` (texto largo), `activo`, `created_a
 preparar el archivo plano del timbrador, y catálogo contable (menú **"Soporte"**). Escritura
 solo **admin**; lectura para todas las áreas (para el operador son de solo lectura).
 
-**`/catalogos/constantes`** — campos: `constante_sistema_id`, `grupo` (req., uno de los 9
-grupos SAT), `clave` (req.), `descripcion` (req.), `valor` (opcional), `activo`, `created_at`,
+**`/catalogos/constantes`** — campos: `constante_sistema_id`, `grupo` (req., uno de los 10
+grupos), `clave` (req.), `descripcion` (req.), `valor` (opcional), `activo`, `created_at`,
 `updated_at`. Grupos válidos: `TipoComprobante`, `Serie`, `RegimenFiscal`, `ClaveProdServ`,
-`ClaveUnidad`, `UsoCFDI`, `FormaPago`, `MetodoPago`, `MonedaSAT` (grupo inválido → **422**).
+`ClaveUnidad`, `UsoCFDI`, `FormaPago`, `MetodoPago`, `MonedaSAT` (los 9 SAT/timbrador) y
+**`MotivoCambio`** (ADR-178, el único NO fiscal — grupo inválido → **422**).
 - **Unicidad `(grupo, clave)`** case-insensitive: la misma clave puede repetirse entre grupos,
   pero no dentro de uno → duplicado en el mismo grupo = **409 `conflicto`**. `grupo`/`clave` no
   se editan (identidad natural): el `PUT` solo cambia `descripcion` y `valor`.
+- **Excepción, SOLO en el grupo `MotivoCambio` (ADR-178):** ahí la Clave agrupa varias
+  Descripciones seleccionables de una misma pantalla/sección (p.ej. "CambioFecha" con 2+
+  motivos) — por diseño NO es única. En vez de responder 409, el servidor le agrega un
+  sufijo numérico secuencial antes de guardar: `clave="CambioFecha"` → se persiste como
+  `"CambioFecha_1"` la primera vez, `"CambioFecha_2"` la siguiente, etc. (secuencia
+  independiente por cada clave base, case-insensitive). Los demás 9 grupos NO cambian.
 - **`GET /catalogos/constantes?grupo=<grupo>`**: además de `page/size/activo/q`, filtra por
   grupo. Búsqueda `?q` sobre clave, descripción y grupo.
 - **`GET /catalogos/constantes/conteos?solo_activos=<bool>`** (`catalogos:leer`): conteo por
-  grupo para las pills (devuelve los 9 grupos, con 0 si están vacíos).
+  grupo para las pills (devuelve los 10 grupos, con 0 si están vacíos).
 
 **`POST /catalogos/constantes/importar`** (`catalogos:crear`, solo **admin**) — carga masiva
 CSV. `multipart/form-data`: `archivo` (.csv), `commit` (bool, default `false`),
@@ -677,9 +703,13 @@ Filtros: `?q` (folio/número de orden), `?estatus_orden`, `?anunciante_id`, `?ag
 aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstring de
 `app/modules/ordenes/orden_cliente.py`. Montos/% como **string** (ADR-015).
 - **`GET /ordenes/clientes/{id}`** — uno (404 si no existe).
-- **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a los % de
-  comisión snapshot (más reciente primero; mismo mecanismo `LogCambioParametro` que los
-  catálogos, `entidad="OrdenCliente"`).
+- **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a parámetros
+  sensibles de la OC (más reciente primero; mismo mecanismo `LogCambioParametro` que los
+  catálogos, `entidad="OrdenCliente"`). A pesar del nombre (histórico, de cuando solo
+  auditaba comisiones — ADR-029), desde **ADR-180** también incluye cambios a
+  `fecha_inicio_campania`/`fecha_fin_campania` (ver `PUT /ordenes/clientes/{id}` abajo) —
+  el filtro es por `(entidad, entidad_id)`, no por campo, así que ambos tipos comparten
+  el mismo endpoint/respuesta.
 
 **`GET /ordenes/estaciones`** (`ordenes:leer`) — lista paginada de `OrdenEstacion`.
 Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de OrdenCliente),
@@ -745,11 +775,19 @@ Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de Orden
     **ADR-147/ADR-149** lo parsea (columnas `Estacion, Fecha, Hora, Spots` — Spots
     opcional, default 1), agrupa las filas VÁLIDAS por `fecha_transmision` +
     `hora_inicio` exactas y SUMA sus `Spots` dentro de cada grupo (`Estacion` debe
-    coincidir normalizada con la de esta OE). Cada grupo resultante:
-    - Si la fecha+hora coincide con un día YA existente → `aplicados`
-      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots}` — `spots` ya
-      sumado).
-    - Si NO coincide con ningún día existente → `nuevos`
+    coincidir normalizada con la de esta OE). **ADR-174b** (reemplaza el criterio de
+    emparejamiento de ADR-147/149/157, que era por fecha+hora EXACTA): cada grupo se
+    reagrupa por FECHA solamente y se empareja, dentro de cada fecha, CRONOLÓGICAMENTE
+    contra los días YA programados de esa fecha (ambos lados ordenados por hora, 1º
+    con 1º, 2º con 2º...):
+    - Un par emparejado → `aplicados`
+      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots, cambio_horario,
+      hora_real}` — `hora_inicio` es la PROGRAMADA, sin cambio; si la hora del archivo
+      difiere, `cambio_horario=true` y `hora_real` trae la hora reportada).
+    - Programados de esa fecha que sobran (el archivo trajo menos registros de los
+      programados) → `aplicados` con `spots=0` (faltante, ADR-157, sin cambio).
+    - Grupos del archivo que sobran (más registros de los programados para esa fecha,
+      o una fecha sin ningún día programado) → `nuevos`
       (`{fecha_transmision, hora_inicio, spots}` — propuesta de día NUEVO a crear al
       avanzar a 2.3; nada se crea aquí). Si la suma da 0, no se puede crear un día
       sin spots y se reporta en `errores` en su lugar.
@@ -833,6 +871,14 @@ opción seleccionable en el formulario).
   orden está en un estado congelado (`orden_cerrada`/`facturada`/`cobrada`). Recalcula
   totales si cambian `total_spots`/`precio_unitario` o las fechas de campaña. **No**
   acepta los 3 campos de comisión (`extra="forbid"` — 422 si se incluyen).
+  - **`motivo_cambio_fecha` (ADR-180, petición del usuario):** campo TRANSITORIO (no es
+    columna) requerido solo si `fecha_inicio_campania`/`fecha_fin_campania` de verdad
+    cambian respecto al valor guardado (un solo motivo cubre ambas, mismo criterio que
+    `TarifaPlazaUpdate.motivo_cambio`, ADR-099) — **400 `error_dominio`** si falta.
+    Auditado en `LogCambioParametro` (`entidad="OrdenCliente"`, un registro por campo que
+    de verdad cambió) **sin** pasar por el candado de permiso de campo (que bloquearía a
+    Ventas, única área que edita OC) — mismo criterio que las comisiones en el alta.
+    Reenviar el mismo valor que ya tenía la orden NO exige motivo ni audita nada.
 - **`PATCH /ordenes/clientes/{id}/comisiones`** (`ordenes:leer` — ver nota de permisos
   abajo) — ÚNICO canal para editar los 3 % de comisión DESPUÉS del alta (propuesta §9:
   *"el % de comisión de un vendedor puede editarse solo por Dirección, aunque Ventas
@@ -874,7 +920,8 @@ la tarifa cliente de la OC — el margen OIR (`porcentaje_participacion_oir`/`im
 único piso; el tope superior de 100% en `porcentaje_participacion_oir` se mantiene).
 **ADR-102/ADR-106:** busca la tarifa ACTIVA de `TarifaPlaza` para (`estacion_id`,
 `duracion_spot` de ESTA OE, `producto_tarifa` — ADR-158: ya NO filtra también por
-`Estacion.tipo_senal`, redundante con `estacion_id`); si `precio_spot` no coincide con
+`Estacion.tipo_senal`, redundante con `estacion_id`; **ADR-177:** también filtra por
+`anunciante_id`, heredado de la OC/OE padre); si `precio_spot` no coincide con
 su `tarifa_neta`, exige `motivo_cambio_tarifa` (**400** si falta) y audita en
 `LogCambioParametro` (`entidad="OrdenEstacion"`, `campo="precio_spot"`) — **sin** el
 candado de permiso de `TarifaPlaza.tarifa_bruta`/`descuento_pct` (Ventas sigue capturando
@@ -901,11 +948,19 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
   arriba), `notas_transmision`, `reporte_reales_ref` (el backend lo sigue aceptando sin
   cambios; **ADR-146**: el frontend de "Capturar Reales" ya no muestra esta sección
   ("Reporte del afiliado") ni la manda al avanzar — mismo criterio que ADR-143 con
-  `reporte_programados_ref`), `dias_nuevos` (**ADR-149**, opcional —
+  `reporte_programados_ref`); cada excepción en `dias` acepta además `hora_real`
+  (**ADR-174b**, opcional): la hora REAL que reportó el layout si difiere de la
+  programada — el servicio genera una `Incidencia` `cambio_horario` ADEMÁS de la de
+  spots si también difieren (nunca la reemplaza; `diferencia_spots=0`/sin
+  `monto_ajuste`, puramente informativa). `dias_nuevos` (**ADR-149**, opcional —
   `{fecha_transmision, hora_inicio, spots > 0}[]`): crea días que NO existían, propuestos
-  por "Carga de Órdenes Reales Desde Layout" cuando una fecha+hora del CSV no coincide
-  con ningún día ya asignado. Cada uno nace con `spots_solicitados = spots_asignados =
-  spots_verificados = spots` (nunca genera `Incidencia`: verificado == programado). 400
+  por "Carga de Órdenes Reales Desde Layout" cuando el archivo trae más registros para
+  una fecha de los que había programados, o una fecha sin ningún día programado
+  (ADR-174b). Cada uno nace con `spots_solicitados = spots_asignados = spots` y
+  **`spots_programados = 0`** (reemplaza el criterio de ADR-149: antes nacía igual a sus
+  propios spots y nunca generaba `Incidencia`) — SIEMPRE genera su `Incidencia`
+  `excedente` (bonificación) por el total de sus spots, mismo mecanismo genérico que
+  cualquier otro día. 400
   (`error_dominio`) si la fecha cae fuera de la campaña de la OC, si ya existe un día con
   esa fecha+hora, o si excede el balance de spots de TODA la OC (`spots_asignados`
   sumados de las OE hermanas + los nuevos > `oc.total_spots`).
@@ -915,7 +970,8 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
   `OrdenEstacion` (dato histórico preservado) pero ya no se escriben desde aquí. Crea
   **una `Verificacion` por CADA día** de la OE (spec — no solo los listados); genera una
   `Incidencia` automática (`faltante`/`excedente`, `monto_ajuste = diferencia ×
-  precio_spot`, `resolucion="pendiente"`) por cada día con diferencia. 409 si la OE no
+  precio_spot`, `resolucion="pendiente"`) por cada día con diferencia, más la de
+  `cambio_horario` descrita arriba cuando aplica. 409 si la OE no
   está en `asignada` ni en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la
   OC pasa de `en_transmision` a `en_verificacion` automáticamente.
 

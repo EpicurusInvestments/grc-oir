@@ -204,15 +204,47 @@ def test_editar_mismo_valor_no_audita(svc: AgenciaService, sqlite_session: Sessi
 
 def test_editar_campo_no_sensible_no_audita(svc: AgenciaService, sqlite_session: Session) -> None:
     a = _crear(svc, comision="10")
-    svc.update(a.agencia_id, AgenciaUpdate(contacto_nombre="Nueva persona"), ADMIN)
+    svc.update(a.agencia_id, AgenciaUpdate(regimen_fiscal="601"), ADMIN)
     logs = _logs(sqlite_session)
-    assert len(logs) == 1  # solo el del alta; el cambio de contacto no se audita
+    assert len(logs) == 1  # solo el del alta; el cambio de régimen fiscal no se audita
 
 
 def test_motivo_cambio_no_es_columna(svc: AgenciaService) -> None:
     # `motivo_cambio` es transitorio: se consume en el servicio y no se persiste.
     assert not hasattr(Agencia, "motivo_cambio")
     assert "motivo_cambio" not in AgenciaCreate.model_fields
+
+
+# ── Domicilio estructurado (ADR-175, mismo mecanismo que ADR-059 en Anunciante) ───
+def test_domicilio_estructurado_se_captura_y_lee(svc: AgenciaService) -> None:
+    a = svc.create(
+        AgenciaCreate(
+            nombre_agencia="OMD México",
+            rfc_agencia="OMD950101AB1",
+            calle="Av. Constituyentes",
+            numero_exterior="1154",
+            colonia="Lomas Altas",
+            municipio="Miguel Hidalgo",
+            estado="Ciudad de México",
+            codigo_postal="11950",
+        ),
+        ADMIN,
+    )
+    leido = svc.get(a.agencia_id)
+    assert leido.calle == "Av. Constituyentes"
+    assert leido.numero_exterior == "1154"
+    assert leido.colonia == "Lomas Altas"
+    assert leido.municipio == "Miguel Hidalgo"
+    assert leido.estado == "Ciudad de México"
+    assert leido.codigo_postal == "11950"
+    assert leido.pais == "MEX"  # default
+
+
+def test_domicilio_sin_capturar_queda_en_none(svc: AgenciaService) -> None:
+    a = _crear(svc)
+    leido = svc.get(a.agencia_id)
+    assert leido.calle is None
+    assert leido.codigo_postal is None
 
 
 # ── Baja lógica + filtros ─────────────────────────────────────────────────────────

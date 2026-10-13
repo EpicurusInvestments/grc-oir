@@ -1911,13 +1911,13 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
      adaptador cae ENTERO al texto libre en `Referencia` (mismo apaño de ADR previos),
      nunca mezcla ambos.
   3. **`FacturaClienteService._datos_timbrado()`** arma `emisor_domicilio` siempre
-     desde `EmpresaFacturadora` (el emisor no cambia de identidad). El receptor es
-     más delicado: **solo se resuelve cuando el receptor de ESTA factura es el
-     Anunciante** (facturación directa, mismo criterio que `create()` para elegir
-     razón social/RFC) — si es la Agencia, `receptor_domicilio` queda `None` a
-     propósito, porque `Agencia` TODAVÍA no tiene domicilio estructurado (ADR-059
-     solo cubrió Anunciante/EmpresaFacturadora); cae al texto libre de
-     `direccion_facturacion`, sin cambios.
+     desde `EmpresaFacturadora` (el emisor no cambia de identidad). El receptor
+     distingue si ES el Anunciante (facturación directa) o la Agencia (vía agencia,
+     mismo criterio que `create()` para elegir razón social/RFC) y resuelve
+     `receptor_domicilio` de quien corresponda. *(Superado por ADR-175: en su momento
+     Agencia no tenía domicilio estructurado, así que ese caso quedaba siempre en
+     `None`, cayendo al texto libre de `direccion_facturacion` — desde ADR-175 también
+     se resuelve.)*
   4. **`AGREGADOS.LugarExpedicion`** = el código postal del domicilio fiscal del
      emisor (`emisor.codigo_postal`) — es un dato SAT estándar (de dónde se expide
      el CFDI), no una constante nueva que capturar aparte. Se resuelve en el mismo
@@ -6738,3 +6738,1239 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   si la OC no capturó ninguna; Duración vacía si la OC guardó "sin resultado"). `tsc
   --noEmit` limpio, `eslint` 0 errores (mismas 3 advertencias preexistentes), suite
   `ordenes`+`catalogos` 222/222 (15 archivos).
+
+### ADR-174 — Se elimina el contacto único legado de Anunciante/Agencia/Afiliado; Cobranza migra a `ContactoAnunciante`
+
+- **Estado:** aceptada · **Fecha:** 2026-10-08 (F0/F3, reporte de bug del usuario: "en el
+  Catálogo de Anunciantes... Agencias... Afiliados... aparece [el bloque de] contacto
+  comercial [junto a Contactos]... se quedó la vieja funcionalidad que antes agregaba un
+  contacto").
+- **Contexto:** ADR-091/092/094 habían introducido "Contactos" (varios, entidad nueva por
+  catálogo: `ContactoAnunciante`/`ContactoAgencia`/`ContactoAfiliado`) y decidido dejar el
+  contacto único original (`contacto_nombre`/`contacto_email`/`contacto_telefono`, 3
+  columnas planas en cada una de las 3 tablas — nunca una tabla propia) de solo lectura
+  con tag "Legado", para no perder datos ya capturados. El usuario, probando en vivo, vio
+  ese bloque como "la vieja funcionalidad" coexistiendo de forma confusa con "Contactos" y
+  pidió quitarlo. Evaluación de impacto (petición explícita del usuario antes de tocar
+  nada) encontró un bloqueador real: `CobranzaFacturasPage.tsx` ("Contacto cobranza")
+  dependía 100% de esos 3 campos legado del Anunciante — el ÚNICO contacto que mostraba
+  ahí, sin tag "Legado" (se veía como funcionalidad viva, con su propia prueba). Nunca se
+  había migrado a la lista de Contactos nueva. El usuario confirmó: quitar los campos
+  legado de catálogos Y arreglar Cobranza para que consulte el primer contacto disponible
+  de la lista nueva.
+- **Decisión:**
+  - **Backend:** se eliminan `contacto_nombre`/`contacto_email`/`contacto_telefono` de
+    los modelos y schemas (`Create`/`Update`/`Read`) de `Anunciante`, `Agencia` y
+    `Afiliado` (`app/modules/catalogos/anunciante.py`/`agencia.py`/`afiliado.py`) —
+    migración nueva `2d68ec72846c` (SQLite vía `batch_alter_table`, SQL Server vía
+    `op.drop_column`; `downgrade` simétrico agrega las columnas de vuelta nullable; sin
+    backfill — ADR-091/092/094 nunca migraron estos datos a Contactos, y no se pidió
+    aquí). 2 pruebas existentes que usaban `contacto_nombre` como ejemplo de "campo no
+    sensible" (`test_f0_03_agencia.py`/`test_f0_03_anunciante_marca.py`) se ajustan a
+    `regimen_fiscal`/`referencia_anunciante` respectivamente; un dato suelto en
+    `test_f1_11_correo_orden_transmision.py` (incidental, nunca leído por la lógica de
+    correo real) se quita.
+  - **Frontend — catálogos:** se quita el bloque "Contacto (Legado)" de
+    `AnuncianteDetailPanel.tsx`, `AfiliadoDetailPanel.tsx` y `AgenciaCatalogPage.tsx`
+    (detalle), y la columna "Contacto" de la lista de Agencias; los 3 campos se quitan de
+    `anunciante/types.ts`/`agencia/types.ts`/`afiliado/types.ts`. De paso, se encontró y
+    limpió un campo suelto `AfiliadoRef.contacto_email` en
+    `ordenes/state/catalogosCache.ts` (se poblaba desde `catalogosApi.ts` pero ningún
+    componente lo leía — el "Abrir correo" real de Órdenes ya usa `ContactoAfiliado`/
+    `ContactoAnunciante`, no este campo).
+  - **Frontend — Cobranza (el bloqueador):** `CobranzaFacturasPage.tsx` ("Contacto
+    cobranza") deja de leer `anuncianteSel.contacto_*` y en su lugar llama
+    `useContactosAnunciante().useListPorAnunciante(anuncianteId, {activo: true, size: 1})`
+    — mismo hook ya usado por los paneles de catálogo — y muestra el primer contacto
+    ACTIVO (orden alfabético por nombre, mismo criterio del backend), con mensaje "Sin
+    contactos activos registrados" si no hay ninguno. `AnuncianteInfo` (`cobranza/types.ts`)
+    pierde los 3 campos legado (ya no viajan desde el backend).
+- **Consecuencia:** ninguna negativa — Cobranza sigue mostrando un contacto utilizable
+  (ahora de una lista administrable con alta/edición/baja, en vez de un campo fijo sin
+  mantenimiento). Si un anunciante no tiene ningún contacto activo capturado todavía,
+  Cobranza lo indica explícitamente en vez de mostrar guiones.
+- **Verificado:** backend, suite completa 724/724 (sin cambio neto: se ajustaron
+  aserciones, no se agregaron/quitaron casos), roundtrip
+  upgrade→downgrade→upgrade de la migración nueva. Frontend, `tsc --noEmit` limpio,
+  `eslint` 0 errores (mismas 3 advertencias preexistentes), suite
+  `ordenes`+`cobranza`+`catalogos` 233/233 (17 archivos) — incluye 1 prueba nueva en
+  `CobranzaFacturasPage.test.tsx` mockeando `ContactoAnunciante` en vez del campo legado.
+
+### ADR-174b — La carga del Layout de Reales concilia por FECHA (ya no fecha+hora exacta); marca "cambio de horario" y los registros nuevos siempre generan su bonificación
+
+- **Estado:** aceptada · **Fecha:** 2026-10-08 (F1, petición del usuario viendo la
+  pantalla de "Capturar Reales": "Para la carga del Layout reales, la solo será la
+  fecha que se usará. Si aparece un registro con hora diferente debería marcar cambio
+  de horario. Si tiene spots de más debería marcar bonificaciones y su correspondiente
+  incidencia. Si tiene de menos debería marcar descuento y su correspondiente
+  incidencia. Si aparece alguno adicional... o alguna fecha adicional genera el
+  registro nuevo y la correspondiente bonificación. Si vienen de menos en la misma
+  fecha marcar el descuento").
+- **Contexto:** ADR-147/149/157 habían fijado el emparejamiento del layout contra lo
+  programado por fecha+hora EXACTA, con una decisión explícita del usuario en su
+  momento (ADR-157: "nunca reclasificar por fecha") — una hora distinta generaba
+  "falta" (el horario viejo) + "nuevo" (el horario nuevo), sin ningún concepto de
+  "cambio de horario". El usuario, probando más a fondo la conciliación, pidió
+  revertir ese criterio. Se confirmaron 4 puntos por `AskUserQuestion` antes de tocar
+  código (dado que reabría una decisión ya confirmada): (1) el emparejamiento SÍ pasa a
+  ser por fecha solamente; (2) cuando una fecha tiene VARIOS horarios programados
+  (el modelo ya lo permite, ADR-127) y/o el archivo trae varias filas para ella, se
+  emparejan CRONOLÓGICAMENTE (1º con 1º, 2º con 2º...); (3) un registro nuevo/extra del
+  layout SIEMPRE genera una Incidencia real de bonificación (no solo una etiqueta
+  visual) — reemplaza el criterio de ADR-149 ("nunca genera Incidencia"), pero
+  ÚNICAMENTE en este flujo (no en la captura manual de días); (4) si un registro
+  cambia de hora Y ADEMÁS de spots, se generan LAS DOS incidencias, nunca solo una.
+- **Decisión:**
+  - **Backend (`_parsear_layout_reales_csv`, `orden_estacion.py`):** se reagrupan los
+    grupos (fecha, hora)→spots válidos del archivo por FECHA, y por separado los días
+    YA programados (no cancelados) también por fecha — ambos ordenados por hora. Por
+    cada fecha (unión de las dos): se emparejan 1 a 1 en orden; un par con hora
+    distinta se marca `cambio_horario=True`/`hora_real=<hora del archivo>` (el día
+    sigue siendo el mismo registro, su `hora_inicio` programada no cambia); programados
+    sobrantes → `aplicados` con `spots=0` (faltante, mecanismo de ADR-157 sin cambio);
+    sobrantes del archivo → `nuevos`. `LayoutRealAplicadoRead` gana los 2 campos
+    nuevos (`cambio_horario`, `hora_real`), ambos opcionales/con default, sin romper
+    compatibilidad.
+  - **Backend (`avanzar_reales`):** un día `dias_nuevos` ahora nace con
+    `spots_programados=0` explícito (antes quedaba `None`, que el servicio resolvía
+    igual a `spots_asignados` → sin diferencia nunca) — con la base en 0, el mismo
+    mecanismo genérico de diff SIEMPRE produce su `Incidencia` `excedente`
+    (bonificación) por el total de sus spots, sin ningún caso especial. `
+    OrdenEstacionDiaRealIn` gana `hora_real: time | None` (opcional): si viene y
+    difiere de `OrdenEstacionDia.hora_inicio`, se agrega una `Incidencia` `cambio_horario`
+    ADICIONAL a la de spots (si también aplica) — `diferencia_spots=0` y sin
+    `monto_ajuste` (puramente informativa; el impacto monetario de spots, si lo hay,
+    ya lo cubre la otra incidencia, sin duplicar). Ningún cambio de esquema/migración:
+    todos los campos nuevos son opcionales en schemas de request/response, no columnas
+    de tablas.
+  - **Frontend (`RealesForm.tsx`):** `onLayoutAplicado` refleja la hora REAL (no la
+    programada) en la fila cuando `cambioHorario` viene en `true` — reutiliza el
+    mecanismo de diff/badge que ya existía (`distinto()`) sin tocarlo, y manda esa hora
+    aparte (`hora_real`) al avanzar. El badge de "Resultado" deja de ser excluyente
+    (antes mostraba bonif. O desc. O cambio de horario, nunca dos a la vez) — ahora
+    muestra bonif./desc. Y cambio de horario de forma independiente, cuando ambos
+    aplican. El panel "Al avanzar a 2.3 se generarán" suma un conteo de "cambio(s) de
+    horario".
+- **Consecuencia:** ninguna negativa para el caso común (1 horario programado por
+  fecha, el archivo trae la misma hora) — se comporta idéntico a antes. El criterio de
+  ADR-157 ("nunca reclasificar por fecha") queda SUPERADO específicamente para este
+  flujo de carga de layout; no se tocó ningún otro flujo (edición manual de un día en
+  esta misma pantalla, captura de programados, etc.).
+- **Verificado:** backend, 6 pruebas nuevas en `test_f1_14_layout_reales_aplicar_csv.py`
+  (hora distinta sin tocar spots → cambio_horario puro; hora y spots distintos → las
+  DOS incidencias al avanzar; emparejamiento cronológico entre 2 horarios de la misma
+  fecha; más registros que programados en la misma fecha → el extra es día nuevo;
+  menos registros → faltante) + 1 prueba reescrita (día nuevo ahora SÍ genera su
+  incidencia de bonificación, antes esperaba que no generara ninguna) — suite completa
+  de backend sin regresiones. Frontend, 2 pruebas nuevas en `RealesForm.test.tsx`
+  (badge "cambio horario" solo, con hora real visible; badge doble cuando también
+  cambian los spots, más el conteo en el panel lateral) — suite `ordenes` 224/224,
+  `tsc`/`eslint` limpios.
+
+### ADR-175 — Agencia gana domicilio estructurado (mismo mecanismo que ADR-059 en Anunciante)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-08 (F0, petición del usuario: "vamos a
+  corregir otro bug en los catálogos de Agencia agregale la funcionalidad de la
+  dirección como lo que hicimos en anunciantes").
+- **Contexto:** ADR-059 había agregado domicilio estructurado (10 campos,
+  autocompletado por código postal contra `asentamiento_postal`/SEPOMEX) a Anunciante
+  y EmpresaFacturadora; ADR-060 dejó constancia explícita de que Agencia **todavía** no
+  lo tenía. El usuario pidió cerrar ese pendiente — Agencia no tenía NINGÚN campo de
+  domicilio antes (ni uno legado tipo `localizacion`, a diferencia de Anunciante), así
+  que no hay nada que preservar: son 10 columnas enteramente nuevas.
+- **Decisión:** réplica mecánica de ADR-059, campo por campo, mismo orden y tipos
+  (`calle`/`numero_exterior`/`numero_interior`/`colonia`/`localidad`/
+  `referencia_domicilio`/`municipio`/`estado`/`pais`/`codigo_postal`) en `Agencia`,
+  `AgenciaCreate`, `AgenciaUpdate`, `AgenciaRead` (`agencia.py`) — migración nueva
+  `b8abcebf5d8b` (10 `add_column` nullable, sin rama por dialecto: SQLite no necesita
+  `batch_alter_table` para agregar columnas nullable). Frontend: `AgenciaForm.tsx`
+  reutiliza **sin ningún cambio** el componente compartido `DomicilioPostalInput`
+  (`@/shared/ui`, ya usado por Anunciante/EmpresaFacturadora) y el mismo patrón de
+  `watch()`/`setValue()` que `AnuncianteForm.tsx`; `AgenciaCatalogPage.tsx` muestra el
+  domicilio en el detalle con `formatDomicilio` (función compartida, también sin
+  cambios). `agencia/types.ts` gana los 10 campos en `Agencia`/`AgenciaCreate`
+  (`AgenciaUpdate` los hereda vía `Partial<AgenciaCreate>`, sin tocar).
+- **Consecuencia / pendiente detectado:** ADR-060 (F2) resolvía `receptor_domicilio`
+  para el archivo plano de timbrado SOLO cuando el receptor de la factura es el
+  Anunciante (facturación directa) — si es la Agencia (trato vía agencia),
+  `receptor_domicilio` se dejaba `None` a propósito "porque Agencia TODAVÍA no tiene
+  domicilio estructurado". El usuario confirmó cerrar también este pendiente —
+  **resuelto en ADR-175b**, más abajo.
+- **Verificado:** backend, 2 pruebas nuevas en `test_f0_03_agencia.py` (domicilio se
+  captura y se lee; sin capturar queda en `None`, con `pais="MEX"` por default),
+  roundtrip upgrade→downgrade→upgrade de la migración nueva, suite completa de backend
+  sin regresiones. Frontend, `tsc --noEmit` limpio, `eslint` 0 errores (mismas 3
+  advertencias preexistentes) — sin pruebas de frontend nuevas porque ni Anunciante ni
+  Agencia tienen suite de pruebas para sus formularios/páginas (patrón ya existente en
+  el módulo `catalogos`, no introducido aquí).
+
+### ADR-175b — El archivo de timbrado también desglosa el domicilio del receptor cuando es la Agencia (cierra el pendiente de ADR-175/ADR-060)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-08 (F2, petición del usuario: "si
+  revisémoslo, como ya vamos a meter ese dato ya podría pintarlo en la facturación").
+- **Contexto:** ADR-060 había dejado `receptor_domicilio` sin resolver para el caso
+  "receptor = Agencia" únicamente porque Agencia no tenía domicilio estructurado
+  todavía — nunca fue una exclusión de diseño, solo un dato que no existía. ADR-175
+  acababa de agregarlo.
+- **Decisión:** `FacturaClienteService._domicilio_de()` (`factura_cliente.py`) ya era
+  100% genérico (lee los mismos 10 atributos de cualquier objeto) — no necesitó ningún
+  cambio, solo se actualizó su docstring para mencionar `Agencia`. En
+  `_datos_timbrado()`, la rama `elif obj.agencia_id is not None:` (receptor = Agencia)
+  ahora también llama `receptor_domicilio = self._domicilio_de(agencia_receptora)`,
+  exactamente el mismo patrón que ya usaba la rama del Anunciante. `DomicilioFiscal`
+  (`port.py`) no cambia de forma — solo se actualizó el comentario de
+  `receptor_domicilio` que documentaba la limitación ya superada.
+- **Consecuencia:** ninguna negativa — una Agencia SIN domicilio capturado (registro
+  viejo) sigue cayendo al texto libre de `direccion_facturacion`, exactamente como
+  antes; el cambio solo agrega la ruta de éxito para Agencias que SÍ lo capturen.
+- **Verificado:** backend — `test_domicilio_del_receptor_desglosado_solo_si_es_directa`
+  (`test_f2_02_facturacion_escritura.py`) se ajustó (ya no afirma que el receptor
+  nunca sale desglosado si es la agencia, solo que el domicilio del Anunciante —que no
+  es el receptor real— nunca se filtra) + 1 prueba nueva
+  (`test_domicilio_del_receptor_desglosado_si_es_via_agencia_y_la_agencia_lo_tiene`:
+  con domicilio capturado en la Agencia, sale desglosado en `ExReceptorDomFiscal` y
+  desaparece de `X-Campos-Faltantes`). Suite completa de backend sin regresiones,
+  `ruff check` limpio en los 3 archivos tocados.
+
+### ADR-176 — El panel "Al avanzar a 2.3" cuenta la bonificación en SPOTS, no en días afectados
+
+- **Estado:** aceptada · **Fecha:** 2026-10-09 (F1, petición del usuario probando en
+  vivo el layout de prueba de ADR-174b: "parece que va a cambiar porque estás
+  contándolos por fecha... pero me comentan que deben ser por los spots... en vez de
+  que salgan 4 tendría que ser 5 más las nuevas que son 7... haz el ajuste y si no es
+  así revertimos ese movimiento" — y, ya en curso el ajuste: "lo demás lo debes dejar
+  como lo estabas calculando, solo son las bonificaciones").
+- **Contexto:** con un layout que afectaba 4 días (2 con bonificación de +2/+3 spots,
+  2 registros nuevos de 2/5 spots), el panel mostraba "4 bonificación(es)" — contaba
+  **días modificados** (+1 por día), no la cantidad real de spots de bonificación. El
+  usuario esperaba ver la bonificación medida en spots: 5 (2+3, de los días ya
+  existentes) separado de 7 (2+5, de los registros nuevos) — confirmó explícitamente
+  que SOLO la bonificación cambia de criterio; descuentos y cambios de horario se
+  quedan como conteo de días/filas, tal como ya funcionaban.
+- **Decisión:** en `RealesForm.tsx`, `bonifSpots` reemplaza a `nBonif` — en vez de
+  `nBonif++` por cada día con `diff > 0`, suma `diff` (spots reales de bonificación).
+  Los registros nuevos del layout ya NO se suman a `bonifSpots`: tienen su propio
+  contador `nuevosSpots` (suma de `d.spots` de `diasNuevos`), mostrado en su propia
+  línea del panel ("N spot(s) en registros nuevos"). `nDesc`/`nCambioHorario` NO
+  cambian: siguen siendo conteo de días/filas afectadas (`nDesc++`/`nCambioHorario++`),
+  sin tocar su lógica. El "Impacto neto" en dinero no cambia — ya sumaba por spots
+  (`diff * precio_spot` y `d.spots * precio_spot`), nunca por día; solo se corrigió
+  cómo se DESGLOSA arriba.
+- **Consecuencia:** ninguna negativa — es puramente una corrección de qué unidad
+  cuenta cada línea del panel, verificado en vivo con el layout de prueba del usuario
+  (18 días programados, 2 bonificaciones existentes + 2 registros nuevos): antes
+  mostraba "4 bonificación(es)", ahora muestra "5 spot(s) de bonificación" +
+  "7 spot(s) en registros nuevos" — exactamente los números que el usuario esperaba.
+- **Verificado:** frontend, 1 prueba existente ajustada (ADR-160: un día nuevo ahora
+  se reporta como "spot(s) en registros nuevos", no como "bonificación(es)") + 1 prueba
+  nueva (2 días con bonificación de +2/+3 spots → el panel suma "5 spot(s) de
+  bonificación", no "2 bonificación(es)") — suite `ordenes` 225/225, `tsc`/`eslint`
+  limpios.
+
+### ADR-177 — Tarifa agrega Anunciante como parte de su llave de unicidad (Anunciante + Emisora + Producto + Duración)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-09 (F0, petición del usuario: "al Catálogo de
+  Tarifas se agrega el campo del Anunciante... ahora la llave de la tarifa será
+  Anunciante, Emisora, Producto, Duración. El Anunciante debe ser el primer campo del
+  formulario... agregar la columna anunciante en la lista... que el orden de la lista
+  sea Anunciante, Emisora, Producto, Duración").
+- **Contexto:** `TarifaPlaza` (F0-02) sugería precio por Emisora+Producto+Duración, sin
+  distinguir anunciante — dos anunciantes distintos con la misma combinación emisora/
+  producto/duración no podían tener tarifas propias simultáneas (una de las dos quedaba
+  bloqueada por "duplicado activo").
+- **Decisión:**
+  - Backend: nuevo `anunciante_id` (FK a `Anunciante`) en `TarifaPlaza` — **NULLABLE a
+    nivel BD** (las 5 tarifas ya existentes no se pueden backfillear con un anunciante
+    real) pero **obligatorio en `TarifaPlazaCreate`** (decisión tomada vía
+    `AskUserQuestion`: "Anunciante obligatorio; desactivar las 5 tarifas viejas"). La
+    migración `20261009_1943-3bef064c9917` agrega la columna+FK+índice, recompone el
+    índice combinado (`anunciante_id, estacion_id, duracion_spot, producto`) y ejecuta
+    `UPDATE tarifa_plaza SET activo = 0` sobre TODAS las filas preexistentes.
+  - `existe_duplicado_activo()`/`_apply_filters()` (repositorio) y `_pre_create()`/
+    `_pre_update()` (servicio) se extienden para incluir `anunciante_id` en la
+    combinación de unicidad y para validar que el Anunciante exista
+    (`_verificar_anunciante`, mismo patrón que `_verificar_estacion`).
+  - `cambiar_estado()`: reactivar una tarifa con `anunciante_id IS NULL` (una tarifa
+    legada) se **rechaza** con un error de dominio — hay que editarla primero para
+    asignarle un Anunciante.
+  - Lista: `default_order_by` pasa a `[Anunciante.nombre_comercial,
+    Estacion.nombre_estacion, TarifaPlaza.producto, TarifaPlaza.duracion_spot]`
+    (antes: Estación→Producto→Duración). La búsqueda `q` se extiende con un
+    `outerjoin` a `Anunciante` (outer porque las tarifas legadas no tienen anunciante y
+    no deben excluirse de la lista).
+  - `_tarifa_sugerida()` en `orden_estacion.py` (F1, sugerencia de tarifa al capturar
+    Orden de Transmisión) también se extiende para exigir coincidencia de
+    `anunciante_id` (decisión confirmada vía `AskUserQuestion`: "Sí, inclúyelo en este
+    mismo ajuste") — toma el anunciante de la OC/OE padre, ya denormalizado.
+  - Frontend: `TarifaForm.tsx` agrega el selector "Anunciante" como **primer campo**
+    (antes de "Nombre de la emisora"); `TarifaCatalogPage.tsx` agrega la columna
+    "Anunciante" como primera columna de la lista y la pasa al form; `tarifaReferencia()`
+    (`state/catalogosCache.ts`, usado por `OrdenEstacionForm.tsx`/
+    `OrdenEstacionDetailPanel.tsx`) gana un parámetro `anuncianteId` opcional (mismo
+    criterio que el `producto` opcional ya existente).
+- **Consecuencia:** las 5 tarifas preexistentes quedan desactivadas y solo pueden
+  reactivarse tras editarlas para asignarles un Anunciante — decisión explícita del
+  usuario, no un efecto colateral no revisado. Ninguna otra ruptura: `anunciante_id`
+  nullable a nivel BD evita que la migración falle por falta de datos.
+- **Verificado:** backend, suite completa de `pytest` limpia (incl. 8 pruebas nuevas en
+  `test_f0_02_tarifas.py`: obligatoriedad, no-duplicado por anunciante distinto,
+  anunciante inexistente, reactivación de tarifa legada rechazada, enriquecimiento
+  con/sin anunciante, búsqueda por nombre de anunciante, orden de lista; + 1 fixture de
+  `test_f1_05_ordenes_escritura.py` corregida — `_seed_tarifa()` no declaraba
+  `anunciante_id`, lo que rompía 7 pruebas de divergencia de precio/auditoría al dejar
+  de encontrar la tarifa sembrada); `ruff check` limpio; migración con roundtrip
+  `upgrade`→`downgrade`→`upgrade` verificado sobre SQLite. Frontend, `tsc --noEmit` y
+  `eslint` limpios, suite `ordenes` 225/225 (ajustes de fixtures en `selectors.test.ts`,
+  `OrdenEstacionForm.test.tsx`, `OrdenEstacionDetailPanel.test.tsx` para declarar
+  `anunciante_id` en las tarifas sembradas).
+
+### ADR-178 — Nuevo grupo `MotivoCambio` en Constantes del Sistema: la Clave agrupa Descripciones por pantalla/sección (auto-sufijo, exclusivo de este grupo)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-09 (F0, petición del usuario: catálogo de
+  motivos de cambio, reutilizable por pantallas que hoy piden un "motivo del cambio" en
+  texto libre —empieza por Tarifa, F0-02—, agrupado "por pantalla o por sección" dentro
+  de un nuevo grupo `MotivoCambio` con 3 claves iniciales y 2 descripciones cada una).
+- **Contexto:** `ConstantesSistema` (F0-05) tiene unicidad `(grupo, clave)` a nivel BD
+  (índice único) — una clave por grupo. Lo pedido (2+ registros con la MISMA clave, p.ej.
+  "CambioFecha", pero distinta descripción, dentro del mismo grupo nuevo) viola esa regla
+  tal cual. Se señaló el conflicto antes de programar (regla de oro #2/#9).
+- **Decisión (confirmada en 2 rondas de `AskUserQuestion`):**
+  1. **Cómo modelarlo:** se mantiene la Clave única a nivel BD, pero el servicio le agrega
+     un **sufijo numérico secuencial automático** en vez de rechazar el alta — `"CambioFecha"`
+     se guarda como `"CambioFecha_1"` la primera vez que se captura esa clave en el grupo,
+     `"CambioFecha_2"` la siguiente, etc. (secuencia independiente por clave base,
+     case-insensitive: `claves_del_grupo()` + `_siguiente_clave_motivo_cambio()` en
+     `constantes_sistema.py`).
+  2. **Alcance del auto-sufijo:** SOLO el grupo `MotivoCambio`. Los 9 grupos SAT/timbrador
+     (`TipoComprobante`, `RegimenFiscal`, etc.) NO cambian — ahí la clave es un código
+     fiscal real que el timbrador espera exacto; auto-sufijarlo lo volvería inválido, así
+     que siguen rechazando duplicados con 409 `conflicto` como siempre.
+  - `GrupoConstante` gana el valor `MOTIVO_CAMBIO = "MotivoCambio"`; migración
+    `e92f9bc99f9f` ensancha el CHECK `ck_constantes_sistema_grupo` existente (sin tocar
+    los índices ni la unicidad `(grupo, clave)` a nivel BD, que se preserva intacta — el
+    sufijo la satisface por construcción).
+  - `ConstanteForm.tsx` (frontend) muestra un aviso bajo "Clave" cuando el grupo elegido
+    en ALTA es `MotivoCambio`, explicando el sufijo automático.
+  - Se crearon los 6 registros iniciales pedidos por el usuario (vía la pantalla, en vivo):
+    `CambioFecha_1`/`_2` ("Se cancelaron spots"/"Se redujo el periodo"),
+    `CancelarTransmision_1`/`_2` ("A solicitud del cliente"/"Por error de la emisora"),
+    `CambioTarifa_1`/`_2` ("Por oferta de la emisora"/"Por incremento de tarifa").
+- **Consecuencia:** conectar este catálogo a las pantallas que hoy piden el motivo en
+  texto libre (Tarifa y las que sigan) queda como trabajo FUTURO explícito — este cambio
+  solo construye el catálogo y su regla de captura, no modifica ninguna otra pantalla.
+- **Verificado:** backend, suite completa de `pytest` limpia (incl. 6 pruebas nuevas:
+  autogenera sufijo, secuencia independiente por clave base, case-insensitive, los demás
+  grupos siguen rechazando duplicados — regresión —, HTTP de punta a punta); `ruff check`
+  limpio; migración con roundtrip `upgrade`→`downgrade`→`upgrade` verificado sobre
+  SQLite (CHECK e índices sobreviven la recreación de tabla en modo batch). Frontend,
+  `tsc --noEmit`/`eslint` limpios.
+
+### ADR-179 — "Motivo del cambio" de Tarifa se conecta al catálogo MotivoCambio/CambioTarifa (primer consumidor de ADR-178)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-09 (F0, petición del usuario: "aquí vamos a
+  cargar nuestros datos de CambioTarifa... para que seleccione una opción y guarde en el
+  log el registro", sobre el campo "Motivo del cambio" de `TarifaForm.tsx` al editar
+  `tarifa_bruta`/`descuento_pct`).
+- **Contexto:** ADR-178 creó el catálogo `MotivoCambio` (grupo `CambioTarifa` con 2
+  Descripciones: "Por oferta de la emisora"/"Por incremento de tarifa") como trabajo
+  reutilizable; este ADR es su primer consumidor real.
+- **Decisión:** `TarifaForm.tsx` consulta `useConstantes().useList({ grupo:
+  "MotivoCambio", activo: true, size: 100 })` y filtra client-side las que su `clave`
+  (normalizada a minúsculas) es `cambiotarifa` o empieza con `cambiotarifa_` (match de
+  prefijo sobre la clave BASE sin sufijo — agnóstico a cuántos sufijos termine teniendo
+  ADR-178). El campo "Motivo del cambio" se vuelve un `<select>` con esas Descripciones;
+  el valor que viaja al backend (`TarifaPlazaUpdate.motivo_cambio`, y de ahí a
+  `LogCambioParametro`) sigue siendo la Descripción como texto — el backend NO cambia,
+  sigue aceptando cualquier string. Si el catálogo no trae ninguna opción activa para
+  `CambioTarifa` (vacío o la consulta falla), el campo cae de regreso al `<input>` de
+  texto libre que ya existía, para no bloquear la edición de la tarifa por eso. El campo
+  (select o input) se deshabilita mientras `tarifa_bruta`/`descuento_pct` NO difieran de
+  su valor original — se habilita solo al modificar alguno de los dos (corrección pedida
+  en vivo tras ver el primer resultado: el select salía habilitado siempre).
+- **Consecuencia:** si se desactivan las 2 constantes de `CambioTarifa` sin agregar
+  otras, el formulario vuelve a comportarse como antes de este cambio (texto libre) —
+  sin código nuevo para ese caso, es el mismo fallback que cubre la carga en curso/con
+  error. Las demás pantallas con "motivo del cambio" en texto libre (Orden de Servicio/
+  Transmisión, comisiones de vendedor/agencia...) quedan pendientes de conectar, cada
+  una a su propia clave base dentro de `MotivoCambio` cuando se pida.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; el backend ya expone las 2
+  constantes `CambioTarifa_1`/`CambioTarifa_2` sembradas en ADR-178 (confirmado vía
+  `GET /catalogos/constantes?grupo=MotivoCambio`). Pendiente: confirmación visual en el
+  navegador de que el select las muestra al editar una tarifa (sin pruebas automatizadas
+  propias — mismo hueco preexistente del módulo Tarifa).
+
+### ADR-180 — Editar fechas de campaña en Orden de Servicio exige motivo (catálogo MotivoCambio/CambioFecha), auditado en LogCambioParametro
+
+- **Estado:** aceptada · **Fecha:** 2026-10-09 (F1, petición del usuario: "en Órdenes de
+  Servicio, si el usuario intenta editar las fechas, que haga lo mismo que en Tarifa —
+  pida el motivo del cambio seleccionándolo del combo [CambioFecha: 'Se cancelaron
+  spots'/'Se redujo el periodo'], inhabilitado salvo que muevan la fecha, obligatorio si
+  la mueven").
+- **Contexto:** a diferencia de Tarifa (editada solo por Admin), `OrdenCliente` la edita
+  normalmente **Ventas** vía el `PUT` general (`ordenes:editar`). El mecanismo "completo"
+  de parámetro sensible (`audit.registrar_cambio_sensible`) pasa por
+  `field_permissions.verificar`, hoy hardcodeado a "solo Admin" (placeholder de F0) — 
+  usarlo tal cual habría bloqueado a Ventas de seguir editando fechas, rompiendo el flujo
+  normal de captura. El propio código de `create()` para comisiones ya documentaba este
+  mismo problema y su solución (llamar `log_cambio_parametro` directo, sin el candado de
+  permiso) — se reutilizó el mismo criterio aquí.
+- **Decisión:**
+  - `OrdenClienteUpdate` gana `motivo_cambio_fecha: str | None` — TRANSITORIO (se hace
+    `pop()` en `_pre_update`, nunca llega a `repo.update`), requerido solo si
+    `fecha_inicio_campania`/`fecha_fin_campania` de verdad cambian respecto al valor
+    guardado en BD (comparación contra el objeto, no contra lo que mande el cliente —
+    reenviar el mismo valor, como ya hace siempre el front, nunca exige motivo). Un solo
+    motivo cubre ambas fechas si las dos cambian a la vez (mismo criterio que
+    `TarifaPlazaUpdate.motivo_cambio`, ADR-099, y que los 3 % de comisión de esta misma
+    entidad).
+  - Se audita con `audit.log_cambio_parametro` DIRECTO (no `registrar_cambio_sensible`):
+    un registro por cada campo que de verdad cambió, `entidad="OrdenCliente"`. La
+    validación "requiere motivo" se hace a mano en el servicio (misma forma que
+    `actualizar_comisiones`), sin pasar por `field_permissions.verificar`.
+  - **Efecto colateral aceptado:** `GET /ordenes/clientes/{id}/historial-comisiones` (que
+    solo filtra por `(entidad, entidad_id)`, no por campo) ahora también devuelve estas
+    entradas de fecha mezcladas con las de comisión — se optó por reutilizar el mismo
+    balde en vez de crear un endpoint/mecanismo paralelo. El panel de detalle de
+    `OrdenClienteDetailPanel.tsx` renombra su sección de "Historial de cambios de
+    comisión" a "Historial de cambios" y agrega las 2 etiquetas de fecha a su mapa de
+    nombres legibles.
+  - Frontend: `OrdenClienteForm.tsx` agrega, en la tarjeta "Campaña y montos", un select
+    "Motivo del cambio" (compartido entre Inicio/Fin de campaña) con las Descripciones
+    del catálogo `MotivoCambio`/`CambioFecha*` — mismo patrón de fallback a texto libre
+    que ADR-179 si el catálogo no tiene opciones. Deshabilitado mientras ninguna de las
+    dos fechas difiera de su valor original (`algunaFechaCambio`, mismo criterio que
+    `algunSensibleCambio` de Tarifa); se habilita y se vuelve obligatorio en cuanto el
+    usuario toca alguna. El valor viaja en el MISMO `PUT` (no por un canal aparte como
+    comisiones, porque aquí no hay restricción de área adicional) — `OrdenClienteInput`
+    gana `motivo_cambio_fecha?: string`, `ordenClienteUpdateToApi` lo incluye en el body
+    solo si viene presente.
+- **Consecuencia:** ninguna ruptura de RBAC — Ventas sigue editando fechas igual que
+  antes, solo que ahora el formulario le pide elegir un motivo si de verdad las mueve.
+- **Verificado:** backend, suite completa de `pytest` limpia (incl. 3 pruebas existentes
+  ajustadas para pasar `motivo_cambio_fecha` — ya cambiaban fechas sin motivo — y 5
+  nuevas: rechazo sin motivo, mismas fechas no exige ni audita, una fecha audita solo
+  esa, ambas fechas auditan las dos con el mismo motivo, editar otros campos no exige
+  motivo); `ruff check` limpio. Frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `ordenes` 229/229 (1 prueba existente ajustada — ahora hay 2 "Motivo del cambio" en
+  edición, no 1 — y 4 nuevas sobre el flujo de fecha, con un mock nuevo del catálogo
+  `constantesSistema/api` para esta suite).
+
+### ADR-181 — "Afiliado factura directo al cliente" se renombra a "Facturación a la Agencia"; autocompleta la dirección de facturación con el domicilio de la Agencia
+
+- **Estado:** aceptada · **Fecha:** 2026-10-10 (F1, petición del usuario: cambiar la
+  etiqueta y descripción del radio, "y cuando seleccione la opción Facturación a la
+  Agencia que actualice la dirección de facturación por la dirección de la Agencia, sino
+  selecciona esa opción que se siga trayendo la que actualmente maneja"; corrección en
+  el mismo día: "si la Agencia no tiene domicilio capturado, el campo que se borre y que
+  permita al usuario meter una dirección — en caso de que seleccione el otro check que
+  cargue su dirección como lo venimos haciendo").
+- **Contexto:** el radio "Afiliado factura directo al cliente" (ADR-141) vive sobre la
+  misma columna booleana `afiliado_factura_directo_al_cliente` desde entonces; el
+  cliente pidió renombrarlo sin tocar el modelo. Además, ya con Agencia teniendo
+  domicilio estructurado (ADR-175), tenía sentido aprovecharlo para autocompletar
+  "Dirección de facturación" al elegir esa opción, igual que ya pasaba con el
+  Anunciante al elegirlo a él.
+- **Decisión:**
+  - Solo texto visible: título → "Facturación a la Agencia"; descripción → "La agencia
+    factura al anunciante". **La columna/campo `afiliado_factura_directo_al_cliente` NO
+    se renombra** (regla de oro #3) — sigue siendo el mismo booleano del modelo.
+  - `onChange` de "Facturación a la Agencia": busca la Agencia ya ligada a la OC
+    (`agencia_id`) y, si tiene domicilio capturado, arma una línea legible con
+    `formatDomicilio` (el mismo helper de ADR-059/175) y la pone en "Dirección de
+    facturación". **Si la Agencia NO tiene domicilio (o no hay ninguna ligada), VACÍA el
+    campo** — a propósito, para que el usuario la capture a mano en vez de quedarse con
+    la dirección del Anunciante pegada bajo esta opción (corrección del usuario sobre la
+    decisión original, que dejaba el campo intacto en ese caso).
+  - `onChange` de "Facturación directa al cliente": sigue igual que siempre — recalcula
+    la dirección desde el Anunciante actual (`nombre_fiscal · RFC rfc_anunciante`, la
+    misma fórmula que ya usaba `onAnuncianteChange`, ahora factorizada en
+    `direccionDeAnunciante`). Si no hay anunciante elegido, no toca el campo.
+  - ~~El tag «Heredado de anunciante»/«Heredado de agencia» junto a "Dirección de
+    facturación" ahora es dinámico según cuál radio está activo.~~ **Retirado el mismo
+    día, a petición del usuario**: ya no hay tag ni el texto "editable si esta venta usa
+    otra" junto a la etiqueta — "Dirección de facturación" queda como etiqueta simple.
+  - `AgenciaRef` (`state/catalogosCache.ts`) gana los 9 campos de domicilio (opcionales,
+    `string | null | undefined`, para no romper fixtures de prueba existentes);
+    `adapters/catalogosApi.ts` los puebla desde la Agencia real al cargar catálogos.
+- **Consecuencia:** elegir "Facturación a la Agencia" sin que esa Agencia tenga
+  domicilio capturado deja el campo en blanco (antes se quedaba con lo que ya hubiera) —
+  cambio de comportamiento deliberado, pedido explícitamente por el usuario tras ver el
+  resultado original.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 233/233 (1
+  prueba existente ajustada al nuevo texto del radio + 3 nuevas: autocompleta desde la
+  Agencia, revierte al Anunciante al volver, VACÍA el campo si la Agencia no tiene
+  domicilio).
+
+### ADR-182 — "Nueva Orden de Transmisión" muestra el Anunciante heredado de su Orden de Servicio de origen
+
+- **Estado:** aceptada · **Fecha:** 2026-10-10 (F1, petición del usuario: en la pantalla
+  de Orden de Transmisión, agregar el nombre del anunciante heredado de la Orden de
+  Servicio, junto al folio de esta última).
+- **Contexto:** `OrdenEstacionForm.tsx` ya resuelve la OC de origen (`oc`) y ya tenía
+  `anunciante_id` disponible en ella (denormalizado también en la propia OE desde
+  ADR-140); solo faltaba mostrarlo.
+- **Decisión:** en la tarjeta "Orden de Servicio de origen" se agrega, debajo del folio
+  (o del selector), un bloque con la etiqueta "Anunciante" (tag «Heredado de la Orden de
+  Servicio») y `findAnunciante(oc.anunciante_id)?.nombre_comercial` — `"—"` si el
+  anunciante no está en el catálogo cargado (nunca rompe el formulario). Se muestra en
+  cuanto `oc` resuelve, SIN importar cómo se resolvió.
+- **Corrección el mismo día (bug real, reportado con capturas):** la primera versión
+  solo lo mostraba dentro de la rama `ocIdFijo || isEdit` (OE ya amarrada a su OC, o en
+  edición) — en el alta SUELTA (sin `ocIdFijo`, cuando el usuario elige la OC de origen a
+  mano en el `SearchableSelect`), el bloque nunca se montaba porque vivía en la rama
+  contraria del condicional. Se corrigió sacando el bloque del `if/else` de arriba y
+  condicionándolo solo a `oc` (que ya resuelve igual en ambos casos) — ahora aparece
+  también al elegir la OC del selector.
+- **Consecuencia:** ninguna — es una adición puramente informativa, de solo lectura.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 236/236 (2
+  pruebas del caso ya amarrada/edición + 1 nueva de regresión para el alta suelta: elegir
+  la OC del `SearchableSelect` también muestra el Anunciante).
+
+### ADR-183 — "Motivo del cambio de tarifa" de Orden de Transmisión se conecta al catálogo MotivoCambio/CambioTarifa (mismo catálogo que ya usa Tarifa)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-10 (F1, petición del usuario: "aplica la misma
+  funcionalidad que usamos para el catálogo de tarifas... usa el grupo CambioTarifa...
+  aquí solo aparecerá si el usuario quiere cambiar la tarifa, se habilitará el motivo del
+  cambio, de lo contrario permanecerá inhabilitado").
+- **Contexto:** `OrdenEstacionForm.tsx` (alta y edición) ya exigía un motivo en texto
+  libre cuando `precio_spot` divergía de la tarifa sugerida del catálogo (ADR-102/106),
+  pero el campo entero se OCULTABA por completo mientras no hubiera divergencia — patrón
+  distinto al que ya se adoptó para Tarifa (ADR-179) y Orden de Servicio (ADR-180/181):
+  ahí el campo SIEMPRE está visible, solo deshabilitado.
+- **Decisión:**
+  - Reutiliza el MISMO catálogo que ya usa `TarifaForm.tsx` (Constantes del Sistema,
+    grupo `MotivoCambio`, clave `CambioTarifa`/`CambioTarifa_N` — ADR-178/179): mismo
+    `CLAVE_BASE_MOTIVO_TARIFA = "cambiotarifa"`, mismo filtro por prefijo, mismo fallback
+    a texto libre si el catálogo no tiene opciones activas.
+  - El bloque "Motivo del cambio de tarifa" deja de estar condicionado a
+    `tarifaDivergente` para RENDERIZARSE — ahora siempre se muestra (en alta y en
+    edición) y solo su `disabled` depende de `tarifaDivergente` (mismo criterio que ya
+    exigía el motivo para poder guardar, sin cambios en esa validación).
+  - Este formulario usa `useState` plano (no React Hook Form, a diferencia de
+    `TarifaForm.tsx`/`OrdenClienteForm.tsx`) — el select controla `motivoCambioTarifa`
+    con `value`/`onChange` directos, mismo patrón que el resto del formulario.
+- **Consecuencia:** ninguna — la regla de negocio (motivo obligatorio solo si el precio
+  realmente se aparta de la tarifa sugerida) no cambió, solo cómo se captura.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 236/236 (5
+  pruebas existentes ajustadas al nuevo patrón "siempre visible, deshabilitado" + select
+  con las 2 Descripciones reales, usando un mock nuevo de `constantesSistema/api` para
+  esta suite).
+
+### ADR-183b — "Motivo del cambio de tarifa" vuelve a OCULTARSE (no solo deshabilitarse) si se toca otro campo después de divergir
+
+- **Estado:** aceptada · **Fecha:** 2026-10-10 (mismo día, corrección sobre ADR-183 —
+  petición del usuario: "mejor que el combo se muestre cuando el usuario quiera cambiar
+  la tarifa... y lo habilite; si no modifica la tarifa que no muestre el componente; sin
+  embargo si modifica la tarifa pero luego le cambia valores a los demás componentes
+  como spots, duración o emisora, que oculte el componente de motivo de cambio").
+- **Contexto:** ADR-183 (mismo día, unas horas antes) había alineado este campo al
+  patrón "siempre visible, deshabilitado" de Tarifa/Orden de Servicio. El usuario probó
+  el resultado y pidió explícitamente lo contrario para ESTE campo en particular: que
+  vuelva a OCULTARSE por completo cuando no aplica — pero con una condición más estricta
+  que antes de ADR-183 (que solo miraba `tarifaDivergente`): debe ocultarse también si,
+  tras divergir, el usuario toca Estación/Producto/Duración/Spots bonificables — aunque
+  el precio siga siendo numéricamente distinto de la tarifa del catálogo.
+- **Decisión:**
+  - Nuevo estado `tarifaEsUltimoCampoTocado` (booleano, default `false`): se pone en
+    `true` SOLO en el `onChange` del propio input "Tarifa por spot"; se pone en `false`
+    en los `onChange` de Estación, Producto, Duración y Spots bonificables (los 4 campos
+    que el usuario mencionó/agrupó como "los demás componentes").
+  - Nueva condición `requiereMotivoTarifa = tarifaDivergente && tarifaEsUltimoCampoTocado`
+    — reemplaza a `tarifaDivergente` tanto para RENDERIZAR el bloque (antes se
+    renderizaba siempre desde ADR-183) como para la validación "obligatorio antes de
+    guardar" y para lo que se manda en `motivo_cambio_tarifa` del payload.
+  - **Por qué también cambia la validación, no solo la visibilidad:** si solo se hubiera
+    ocultado el campo sin tocar la validación, un precio que sigue divergiendo
+    numéricamente habría seguido bloqueando "Guardar" con un error ("captura el motivo
+    del cambio") sin ninguna forma visible de resolverlo — un candado invisible. Se
+    decidió que tocar otro campo después de divergir "perdona" esa captura puntual (no
+    se exige ni se audita motivo para ESE guardado), consistente con ocultar el control.
+  - Dentro del select/select, YA NO hace falta el `disabled={!tarifaDivergente}` (ADR-183)
+    porque ahora el bloque entero solo se renderiza cuando de verdad aplica — el único
+    `disabled` que queda es `motivosTarifaQuery.isLoading` (mientras carga el catálogo).
+- **Consecuencia:** si el usuario diverge la tarifa, elige un motivo, y LUEGO también
+  ajusta Spots bonificables (u otro de los 4 campos) antes de guardar, ese guardado NO
+  llevará `motivo_cambio_tarifa` aunque el precio siga siendo distinto al del catálogo —
+  decisión explícita del usuario, documentada aquí para que no se lea como un bug si
+  alguien la redescubre después.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 237/237 (3
+  pruebas de ADR-183 ajustadas de "deshabilitado" a "oculto" + 1 nueva: tocar Spots
+  bonificables después de divergir oculta el motivo y permite Guardar sin él).
+
+### ADR-184 — Generador por calendario: "Horario de transmisión" vuelve a ser un RANGO (Hora inicio/Hora fin); los spots de un día se reparten uniformemente en ese rango en vez de sumar 1 minuto
+
+- **Estado:** aceptada · **Fecha:** 2026-10-11 (F1, petición del usuario sobre "Nueva
+  Orden de Transmisión" → "Generar días desde calendario": "vuelve a ser rango de
+  horario, en lugar de un solo horario... en el botón horario de transmisión vamos a
+  poner de nuevo hora inicio y hora fin... el campo spots por día se queda igual... se
+  capturará Hora inicio, Hora Fin y Spots por día: genera un registro con cada fecha y
+  cada registro repite los horarios y los spots"; sobre Reales: "quiero que sigas
+  mostrando los mismos registros... para que se sigan visualizando por fecha y hora...
+  en vez de que le pongas un minuto [por spot], aplica esta regla (hora inicio − hora
+  fin) / no. de spots registrados para esa fecha"; "la carga del layout va a seguir
+  funcionando exactamente igual").
+- **Contexto:** el modelo `OrdenEstacionDia` SIEMPRE tuvo `hora_inicio`/`hora_fin` como
+  un rango genuino (el `CHECK ck_orden_estacion_dia_horas` solo exige `hora_fin >=
+  hora_inicio`, nunca igualdad) — ADR-108 (2026-09-23) simplificó la CAPTURA a un solo
+  punto en el tiempo (`hora_inicio == hora_fin` siempre), y ADR-127 (2026-09-27) hizo que
+  "Spots por día" = N generara N filas reales (1 spot c/u), separadas por defecto sumando
+  1 minuto a partir del horario capturado, para que cada spot pudiera reacomodarse en la
+  tabla sin chocar con `uq_orden_estacion_dia_oe_fecha_hora`. El usuario pidió revertir
+  SOLO el aspecto de "un solo horario" del generador por calendario (no de la grid ni de
+  Reales), reemplazando el incremento de 1 minuto por un reparto proporcional al rango
+  capturado.
+- **Decisión — alcance acotado a UN solo archivo:** el cambio completo vive en
+  `CalendarioPeriodoTransmision.tsx` (frontend). NINGÚN otro archivo cambia: no hay
+  migración, no hay cambio de modelo/schema/servicio en el backend, `PeriodoTransmisionGrid.tsx`
+  sigue con su único input "Horario de transmisión" por fila (ADR-108, sin cambio),
+  `RealesForm.tsx` sigue con su única columna de horario por fila (adenda de ADR-108,
+  sin cambio), y el parseo del layout CSV de reales (`_parsear_layout_reales_csv`,
+  ADR-174b) no se toca — todos ellos siguen leyendo/escribiendo exactamente las MISMAS
+  filas reales de `OrdenEstacionDia` de siempre (1 fila = 1 spot, con su propio
+  `hora_inicio`/`hora_termino`), así que "los mismos registros" y "la carga del layout
+  sigue igual" se cumplen de forma automática, sin tocarlos.
+  - `CalendarioPeriodoTransmision.tsx`: los estados `horaInicio`/`horaFin` reemplazan al
+    único `horario` de ADR-108 (2 `<input type="time">` en vez de 1, etiquetados "Hora
+    inicio"/"Hora fin"). "Spots por día" no cambia.
+  - Nueva función `repartirHoras(horaInicio, horaFin, spots)`: con 1 solo spot, regresa
+    `[horaInicio]` (el rango no importa). Con 2+, calcula
+    `intervalo = (minutos(horaFin) − minutos(horaInicio)) / spots` y regresa la fila *i*
+    en `horaInicio + i×intervalo` (i = 0..spots−1) — reemplaza a la función `sumarMinutos`
+    de ADR-127 como mecanismo de generación (esa función se conserva, ahora como
+    primitiva interna de `repartirHoras`). Cada spot SIGUE siendo su propia fila real
+    independiente (`spots_diarios: 1` cada una) — eso no cambió desde ADR-127.
+  - **Validación nueva:** con 2+ spots, si "Hora fin" no es estrictamente posterior a
+    "Hora inicio", el intervalo sería 0 y TODAS las filas caerían en la misma hora,
+    violando `uq_orden_estacion_dia_oe_fecha_hora` al guardar — se bloquea el botón
+    "Generar" y se muestra un mensaje explícito en vez de dejar que el guardado falle
+    después, en silencio, en otra pantalla.
+- **Consecuencia:** ninguna negativa — el cambio es 100% ADITIVO sobre la UX de captura;
+  el resto del sistema (modelo, backend, grid, Reales, layout CSV) es indiferente a CÓMO
+  se repartieron las horas entre los spots de un día, solo le importa que cada fila sea
+  válida y única.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 239/239 —
+  `CalendarioPeriodoTransmision.test.tsx` reescrito (8 pruebas: 2 campos de hora en vez
+  de 1, reparto uniforme con rango real [60 min / 3 spots → 07:00/07:20/07:40], 1 spot
+  ignora el rango, bloqueo explícito con rango inválido y 2+ spots, navegación de mes
+  sin cambio — ADR-132).
+
+### ADR-185 — "Datos de la Orden de Transmisión" (la grid) agrupa visualmente por fecha — sigue guardando un registro real POR SPOT; Reales/backend/layout CSV no se tocan
+
+- **Estado:** aceptada · **Fecha:** 2026-10-11 (mismo día, corrección sobre un primer
+  intento que sí se mostró en vivo al usuario — ver "Errores de este ADR" abajo).
+- **Contexto:** tras ADR-184, el generador por calendario vuelve a crear N filas reales
+  por fecha (1 por spot, repartidas con `repartirHoras`), pero la grid de "Datos de la
+  Orden de Transmisión" (`PeriodoTransmisionGrid.tsx`) las mostraba literalmente como N
+  renglones de tabla — el usuario, viendo la captura de pantalla, lo señaló como
+  incorrecto: *"esta mal quiero el mismo comportamiento de antes. solo debe mostrar un
+  registro por fecha con sus columnas editables de hora Inicio - Hora Fin... Sin embargo
+  así como ahorita generaste la lista donde se ve como desglosaste por registro los
+  spots... ESO ESTÁ BIEN PERO ESO SE DEBE VISUALIZAR EN LA PANTALLA DE REALES cuando le
+  demos clic a Guardar Orden de Transmisión y nos vayamos a Capturar reales"*. Tras una
+  pregunta de aclaración que confundió al usuario, confirmó explícitamente: *"quiero que
+  el comportamiento que actualmente hace la pantalla de capturar reales siga siendo igual
+  ... y lo mismo el layout debe seguir igual. el único cambio que se tiene que hacer es en
+  la orden de transmisión ahora solo aparecerán en la lista por Fecha ya no fecha-hora"*
+  — es decir: el cambio es **puramente de presentación en esta grid**, no de qué se
+  genera ni de cómo Reales lo consume.
+- **Decisión:**
+  1. **El generador (`CalendarioPeriodoTransmision.tsx`) NO cambia respecto a ADR-184:**
+     sigue creando un registro real por spot (`spots_diarios: 1` cada uno), repartidos con
+     `repartirHoras` dentro del rango Hora Inicio/Hora Fin capturado. Esto es justo lo que
+     mantiene intacto el resto del sistema (ver punto 4).
+  2. **`PeriodoTransmisionGrid.tsx` agrega una capa de AGRUPACIÓN VISUAL** (`GrupoFecha`,
+     `agruparPorFecha`): la tabla muestra **un renglón por fecha** — Hora Inicio = la más
+     temprana del grupo, Hora Fin = la más tardía, Spots = la suma — aunque por dentro
+     sigan existiendo N filas reales independientes (`indices` guarda sus posiciones en
+     el arreglo original para poder reemplazarlas). Editar Hora Inicio/Hora Fin del
+     renglón agregado regenera las N filas del grupo con `repartirHoras` (mismo criterio
+     que el generador; las filas viejas pierden su `orden_estacion_dia_id`, igual que ya
+     pasaba con "Quitar día" + "+ Agregar día").
+  3. **Editar "Spots" distingue 2 casos** (`actualizarRango`):
+     - Si Hora Inicio ≠ Hora Fin (hay un rango real capturado): regenera con
+       `repartirHoras`, igual que el punto anterior.
+     - Si Hora Inicio === Hora Fin (el default histórico de "+ Agregar día", y de
+       cualquier fila de un solo spot sin rango capturado): **NO reparte** — dado que no
+       hay un rango que llenar, solo actualiza `spots_diarios` en el renglón existente
+       (conservando su `orden_estacion_dia_id` cuando el grupo ya era de 1 sola fila).
+       Esto preserva, sin romper, el comportamiento de SIEMPRE donde una sola fila puede
+       legítimamente llevar `spots_diarios > 1` (p.ej. 50) sin que eso exija 50 renglones
+       editables — detectado por una prueba de regresión real que se rompió al intentar
+       repartir incondicionalmente (`OrdenEstacionForm.test.tsx`, "al resolver todos los
+       errores, 'Guardar' llama a onGuardar con el input correcto": `+ Agregar día` → fija
+       Spots en 50 → esperaba 1 sola fila con `spots_diarios: 50`, no 50 filas).
+  4. **"Material a Transmitir" y "Cancelar transmisión"** (antes por fila) ahora aplican a
+     TODO el grupo de la fecha a la vez — decisión de UX tomada unilateralmente para que
+     la agrupación visual sea consistente (ya no se puede elegir un material distinto o
+     cancelar un spot suelto del día desde esta pantalla); comunicada al usuario para que
+     la corrija si la quiere distinta.
+  5. **Reales (`RealesForm.tsx`), la carga del layout CSV (`_parsear_layout_reales_csv`,
+     ADR-174b) y el backend NO se tocan.** Confirmado leyendo el código (no por
+     inferencia): `RealesForm.tsx` consume `oe.periodo_transmision`/`oe.horarios_reales`
+     ya como 1 fila por `orden_estacion_dia_id` real — sin ninguna lógica de reparto
+     propia (`fromApi.ts` mapea cada `OrdenEstacionDia` 1:1 a una `PeriodoTransmisionRow`,
+     sin expansión); y `Verificacion` tiene `UniqueConstraint("orden_estacion_dia_id")`
+     (`backend/app/modules/ordenes/verificacion.py`) — 1:1 real con `OrdenEstacionDia`, no
+     1:N por `spots_diarios`. Por eso cada spot generado por el calendario (1 fila real =
+     1 id) sigue pudiendo tener su propia Verificación independiente, exactamente como
+     antes de esta sesión — ambas pantallas siguen viendo "los mismos registros" tal cual
+     el usuario pidió.
+  - **Errores de este ADR antes de llegar aquí:** un primer intento, mostrado en vivo al
+    usuario, colapsó el GENERADOR mismo a 1 fila por fecha con `spots_diarios = N` (sin
+    la capa de agrupación visual) — el usuario lo rechazó porque reventaba el supuesto de
+    "N filas reales = N ids reales" del que depende Reales/`Verificacion`. Un segundo
+    intento (antes de confirmar con el usuario) generalizó el reparto de "Spots" a CUALQUIER
+    grupo sin distinguir si había rango real — reventaba el flujo histórico de "+ Agregar
+    día" con un solo spot_diarios grande, detectado por la prueba de regresión del punto 3.
+- **Consecuencia:** ninguna negativa — el modelo de datos, backend, Reales y layout CSV
+  quedan 100% intactos; el único cambio de comportamiento observable es la agrupación
+  visual en "Datos de la Orden de Transmisión".
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios (mismos 2 warnings
+  preexistentes de fast-refresh, no nuevos); suite `ordenes` 240/240 —
+  `CalendarioPeriodoTransmision.test.tsx` reescrito una última vez (9 pruebas: N filas
+  reales por fecha vía `repartirHoras`, 1 spot conserva el rango capturado tal cual,
+  varias fechas repiten el reparto, rango inválido con 2+ spots bloquea "Generar");
+  `PeriodoTransmisionGrid.test.ts`/`.render.test.tsx` con pruebas de agrupación (1
+  renglón por fecha con N filas reales por dentro, Hora Inicio/Hora Fin independientes
+  por grupo, y una prueba explícita de "Spots sin rango NO reparte y conserva el id
+  real"). No se probó en el navegador en vivo esta vuelta — pendiente que el usuario lo
+  verifique, en particular que "Capturar Reales" siga mostrando los mismos N registros
+  por fecha/hora de siempre.
+
+### ADR-186 — Corrige un bug real de ADR-185: el renglón agrupado mostraba un punto interior del reparto como "Hora Fin", no el fin de rango capturado
+
+- **Estado:** aceptada · **Fecha:** 2026-10-11 (mismo día, el usuario probó ADR-185/184 en
+  vivo sobre la orden OE-2026-0044B: capturó Hora inicio 09:05 a.m., Hora fin 11:00 p.m.,
+  5 spots, y el renglón agrupado de la grid mostró Hora Fin = 08:13 p.m. — un punto
+  interior del reparto, no las 11:00 p.m. capturadas. Pidió explícitamente: *"debes dejar
+  la fecha inicio y fecha fin que seleccione para que se muestren en los registros... aquí
+  no debes aplicar el cálculo matemático... eso se hace cuando se pasa a programados, algo
+  que ya haces bien"*; además pidió un estilo más bonito para el calendario, con margen.
+- **Contexto:** `repartirHoras` (ADR-184/185), con 2+ spots, hacía que CADA fila colapsara
+  `hora_termino` a su propio punto (`hora_inicio === hora_termino`) — esto es correcto
+  para que cada spot sea un registro real válido (`hora_fin >= hora_inicio` se cumple
+  trivialmente), pero al AGRUPAR esas filas por fecha para mostrarlas (`PeriodoTransmisionGrid.tsx`,
+  `agruparPorFecha`: Hora Fin = la máxima de `hora_termino` del grupo), la máxima resultaba
+  ser el ÚLTIMO punto del reparto (`hora_inicio + (N-1)×intervalo`), que SIEMPRE es
+  estrictamente anterior al fin de rango capturado cuando N > 1 — el dato de "hasta dónde
+  capturó el usuario" se perdía en cuanto había 2+ spots.
+- **Decisión:** `repartirHoras` sigue generando N puntos de `hora_inicio` distintos
+  (mismo `intervalo = (hora_fin − hora_inicio) / N`, sin cambio), pero TODAS las filas
+  comparten el MISMO `hora_termino = horaFin` (el fin de rango tal cual se capturó), en
+  vez de que cada una colapse `hora_termino` a su propio punto. Esto no rompe nada: el
+  CHECK `hora_fin >= hora_inicio` se sigue cumpliendo (cada punto es ≤ `horaFin` por
+  construcción) y el unique constraint sigue intacto (`hora_inicio` sigue siendo distinto
+  por fila). El efecto es que `agruparPorFecha` ahora recupera EXACTAMENTE el rango
+  capturado: Hora Inicio del grupo = mínimo de `hora_inicio` = el primer punto = lo que
+  tecleó el usuario; Hora Fin del grupo = máximo de `hora_termino` = `horaFin` compartido
+  = también lo que tecleó. Esto aplica igual de bien a una fila recién generada (sin
+  guardar) que a una ya guardada y reabierta para editar (los N registros reales de
+  `OrdenEstacionDia` persisten el mismo `hora_fin` compartido) — el usuario sigue viendo
+  SIEMPRE el rango que capturó, nunca un punto intermedio del reparto. "Capturar reales"
+  no cambia: cada fila real conserva su propio `hora_inicio` distinto, que es lo único que
+  usa para mostrarse "por fecha y hora".
+- **Estilo del calendario:** `.rdp-wrapper` pasa de un `margin: 1px` inline (casi
+  imperceptible) a una tarjeta propia en `theme.css` — fondo `var(--surface2)`, borde
+  `var(--border)`, radio `var(--rl)`, padding 12px, y el acento de selección
+  (`--rdp-accent-color`/`--rdp-accent-background-color`/`--rdp-today-color`) en el teal de
+  F1 en vez del azul default de `react-day-picker`.
+- **Consecuencia:** ninguna negativa — ninguna otra pantalla (Reales, layout CSV, backend)
+  lee `hora_termino` de una forma que este cambio rompa; solo se usa para el CHECK de
+  rango válido y para la agregación visual de esta grid.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes` 242/242 —
+  `CalendarioPeriodoTransmision.test.tsx` ajustado (con 3 spots en un rango de 60 min, las
+  3 filas comparten `hora_termino` = el fin de rango, no su propio punto);
+  `PeriodoTransmisionGrid.render.test.tsx` con una prueba nueva que reproduce el bug
+  reportado (5 filas estilo calendario con 09:05–23:00 repartidas → el grupo muestra Hora
+  Inicio=09:05, Hora Fin=23:00, nunca el último punto interior). Servidores de
+  backend/frontend reiniciados — pendiente que el usuario lo verifique en vivo sobre
+  OE-2026-0044B.
+
+### ADR-187 — "Material a Transmitir" pasa de 1 default compartido a 1 material por spot (multi-select por fecha)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-11 (mismo día, petición del usuario tras
+  confirmar ADR-186 en vivo): *"por default se le asignan todos lo materiales a
+  transmitir en el orden en el que fueron capturados, entonces es un material por spot
+  validando que no exceda el número de spots por día... Ahora en el campo Material a
+  Transmitir de la tabla te debe permitir seleccionar varios materiales... Siempre
+  validando que el número de materiales seleccionado no exceda el número de spots
+  capturados en ese mismo registro"*. Aclarado por pregunta directa: si se seleccionan
+  menos materiales que spots, se reparten cíclicamente (no se quedan spots sin material).
+- **Contexto:** desde ADR-103/107, `audios[0]` (el primero subido) era EL default
+  compartido por todos los días sin override propio; "Sustitución de Material" cambiaba
+  ese default por UN solo audio alternativo, para TODO el día. El modelo ya soportaba lo
+  pedido sin cambios: cada spot de un día (post-ADR-127/185) es su propia fila real
+  `OrdenEstacionDia`, con su PROPIO `orden_estacion_audio_id` — un campo por fila, no por
+  día — así que "1 material por spot" es asignar un id DISTINTO a cada fila del grupo, no
+  una funcionalidad nueva de backend.
+- **Decisión:**
+  1. **`asignarPorPosicion(ids, cantidad)`** (`CalendarioPeriodoTransmision.tsx`, nueva):
+     reparte `ids` cíclicamente entre `cantidad` posiciones — spot 1→material 1, spot
+     2→material 2, spot 3→material 1 de nuevo (si solo hay 2 materiales), etc. Con
+     `ids` vacío, regresa solo `null`s (sin material subido todavía).
+  2. **Asignación EAGER al crear filas** (ya no queda en blanco esperando un fallback):
+     el generador por calendario (`generar()`, por fecha, reinicia la posición en cada
+     una) y "+ Agregar día" (`agregarFila()`, posición = cuántas filas ya existen esa
+     fecha) escriben el `orden_estacion_audio_id` de cada fila nueva de inmediato, con
+     `asignarPorPosicion`. Esto evita depender del fallback "sin override, usa el único
+     default" del backend (`OrdenEstacionAudio`), que NO distingue posición — seguir
+     dependiendo de él habría hecho que todos los spots sin tocar cayeran en el MISMO
+     material, no uno por posición.
+  3. **Columna "Material a Transmitir" pasa a multi-select** (`PeriodoTransmisionGrid.tsx`):
+     por grupo (fecha), muestra los materiales YA asignados a sus filas reales
+     (deduplicados, en el orden en que aparecen entre ellas) y permite agregar/quitar. Al
+     cambiar la selección, se reparte 1 a 1 (`asignarPorPosicion`, cíclico) sobre las
+     filas reales del grupo, en el MISMO orden en que se eligieron — con id real, llama a
+     `onAsignarAudio` por cada fila que cambió de valor (nunca a la que no cambió); sin
+     id real (alta), actualiza el estado local.
+     **Corrección en el mismo día:** el primer intento reusó `MultiSearchableSelect` de
+     `shared/ui/` (chips removibles + buscador siempre visible) — el usuario, viendo una
+     captura de otro proyecto ("seguros"), pidió explícitamente el patrón de
+     **desplegable de casillas**: campo cerrado con el resumen de lo elegido, que al
+     abrirse muestra buscador + **"[Selecciona todos]"** + lista con un checkbox por
+     opción. Se creó **`CheckboxMultiSelect`** (nuevo, `shared/ui/`) con ese patrón —
+     mismas props que `MultiSearchableSelect` (`value`/`onChange`/`options`/`maxSelected`/
+     `disabled`), así que el cambio en `PeriodoTransmisionGrid.tsx` fue solo de
+     componente, sin tocar la lógica de asignación. `MultiSearchableSelect` NO se borró
+     (lo sigue usando "Factura relacionada" en F2) — ambos quedan disponibles en
+     `shared/ui/` para el patrón que corresponda.
+  4. **Validación del tope** (prop `maxSelected` en `CheckboxMultiSelect`, de uso
+     general): al llegar a `grupo.filas.length` seleccionados, las opciones NO elegidas
+     se muestran deshabilitadas (checkbox `disabled`, no se pueden marcar más — sí se
+     puede seguir desmarcando) y "[Selecciona todos]" solo llena hasta el cupo disponible.
+  5. **Vista de solo lectura preservada** (sin id real y sin `permiteAsignacionLocal` —
+     p.ej. el detalle): se sigue mostrando una VISTA PREVIA calculada por posición
+     (`materialesConVistaPrevia`), nunca editable. Para el multi-select EDITABLE
+     (`materialesAsignados`) se usa el valor real tal cual (puede venir vacío) — nunca
+     una vista previa inventada, porque eso impedía QUITAR un material ya elegido (al
+     quedar en null, la vista previa lo volvía a "rellenar" de inmediato, descubierto
+     por una prueba real que fallaba al intentar reasignar).
+  6. **Texto de subida actualizado** (`OrdenEstacionForm.tsx` alta, `MaterialATransmitir.tsx`
+     edición): se quita el lenguaje de "Default"/"el primero es el default"; las
+     etiquetas de la lista de audios subidos pasan de "Default"/`#N` a `#1`/`#2`/… (ya no
+     hay un primero especial).
+- **Consecuencia:** un día con 1 sola fila real (capturado sin rango, "+ Agregar día" con
+  `spots_diarios` grande) solo puede llevar 1 material — el tope es `grupo.filas.length`
+  (cuántas filas REALES tiene el grupo), no `grupo.spots` (el conteo capturado); para que
+  un día lleve varios materiales distintos hace falta que tenga varias filas reales de
+  verdad (generado con un rango real + 2+ spots, ADR-184/185). Documentado explícitamente
+  para que no se lea como un bug si se redescubre.
+- **Corrección en el mismo día (viendo `CheckboxMultiSelect` en vivo, 3+ materiales en un
+  día):** el campo cerrado juntaba TODOS los elegidos separados por coma — con 3+
+  materiales de nombre largo, la columna se volvía desproporcionadamente ancha. Fix: el
+  campo cerrado muestra SOLO el primero elegido (no los demás, ni un conteo "+N"),
+  abreviado a 20 caracteres + "…" (`abreviar()`, nuevo en `CheckboxMultiSelect.tsx`); el
+  `title` del botón sigue llevando la lista completa (tooltip nativo al pasar el mouse).
+  Las opciones de la lista del panel TAMBIÉN se abrevian igual (20 + "…"), con `title`
+  propio por casilla para ver el nombre completo. Ninguna de las dos áreas depende de
+  CSS para el recorte — es texto ya cortado en JS, para que no haya que lidiar con
+  `text-overflow` dentro de una celda de tabla angosta.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios (1 warning preexistente de
+  fast-refresh, no nuevo); suite `ordenes`+`shared/ui` 252/252 — pruebas reescritas para
+  el patrón de casillas (abrir el panel vía el campo-botón, marcar/desmarcar por
+  `getByLabelText`, en vez de chips): reasignar en un grupo de 2 filas reales llama a
+  `onAsignarAudio` SOLO de la fila que cambió; un grupo con 1 sola fila (sin rango) tope
+  en 1 material, reasignar requiere desmarcar primero; un día con id real y sin material
+  arranca con el placeholder (no inventa un default); el campo cerrado con 2+ materiales
+  muestra SOLO el primero; un nombre largo se abrevia a 20 + "…" tanto en el campo como
+  en la casilla; `MaterialATransmitir.tsx`/`OrdenEstacionForm.tsx` sin "Default"/`#N`.
+  `CheckboxMultiSelect` nuevo, sin suite propia todavía (cubierto indirectamente vía
+  `PeriodoTransmisionGrid.render.test.tsx`).
+- **Corrección en el mismo día (bug real, reportado en vivo):** el panel se cerraba solo
+  en cuanto el usuario intentaba arrastrar la barra de scroll para bajar y ver más
+  renglones de la tabla. Causa: la grid vive dentro de un contenedor con `overflow: auto`
+  propio (el panel del formulario, no la ventana) — un `mousedown` sobre la barra de
+  scroll de ese contenedor ANCESTRO llega con `target` = el contenedor mismo, que el
+  listener de "clic afuera" (`CheckboxMultiSelect.tsx`) no reconocía como "adentro"
+  (`contenedorRef.current.contains(target)` es `false` porque la relación es al revés:
+  el contenedor ENVUELVE al selector, no al contrario). Primer intento de fix: ignorar el
+  evento siempre que el `target` CONTIENE al propio selector
+  (`target.contains(contenedorRef.current)`) — **esto introdujo una regresión real**,
+  detectada en vivo al probarlo: CUALQUIER clic en el fondo del formulario (no solo en la
+  barra de scroll) también tiene como `target` a ese mismo contenedor ancestro, así que
+  el panel dejó de cerrarse con un clic genuino afuera, solo dentro del mismo contenedor
+  con scroll. **Fix definitivo:** cuando el `target` contiene al selector, se compara la
+  posición del clic (`e.clientX`/`e.clientY`) contra el `clientWidth`/`clientHeight` del
+  `target` (excluye su barra de scroll, a diferencia de `offsetWidth`/`offsetHeight`) — si
+  el clic cae DENTRO de esa área de contenido, es un clic de verdad sobre el ancestro
+  (cierra el panel); si cae fuera de ella (en la franja de la barra de scroll), se
+  ignora. **Verificado:** suite `shared/ui/__tests__/CheckboxMultiSelect.test.tsx`
+  ampliada a 8 pruebas — además del caso de la barra de scroll y el hermano no
+  relacionado, una prueba nueva confirma que un clic en el FONDO del mismo contenedor
+  ancestro (dentro de su `clientWidth`/`clientHeight`, simulado con
+  `getBoundingClientRect`/`clientWidth` de prueba, ya que jsdom no hace layout real) SÍ
+  cierra el panel. Suite `ordenes`+`shared/ui` 260/260; `tsc --noEmit`/`eslint` limpios.
+
+### ADR-188 — El calendario ya no bloquea elegir una fecha que ya tiene filas (pueden repetirse)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (petición del usuario, viendo
+  `CheckboxMultiSelect` funcionando bien en OE-2026-0044B): *"quitar la validación de
+  repetir fechas, porque si se puede dar ese caso de que las fechas se repitan"* —
+  preguntó directamente si, al repetirse, debía generar fila(s) nuevas o sumar los spots
+  al registro existente de esa fecha.
+- **Contexto:** desde el primer `CalendarioPeriodoTransmision.tsx` (antes de esta sesión),
+  una fecha con filas ya capturadas salía deshabilitada en el `DayPicker` y `generar()` la
+  descartaba en silencio de `fechasElegidas` — pensado para evitar duplicar un día sin
+  querer. El usuario confirmó que SÍ hay casos legítimos de capturar más spots para una
+  fecha que ya tiene registro (p.ej. una segunda tanda de spots más tarde ese mismo día).
+- **Decisión:** se quita el filtro/deshabilitado por completo — **no hizo falta decidir
+  entre "generar filas nuevas" o "sumar al existente"**: gracias a que la grid ya agrupa
+  por fecha (ADR-185: Hora Inicio = la más temprana del grupo, Hora Fin = la más tardía,
+  Spots = la suma), generar MÁS filas reales para una fecha con registros se ve
+  automáticamente como "sumar spots al mismo renglón" — sin ninguna lógica de fusión
+  aparte. Lo único que sí requirió código nuevo: los horarios recién generados no deben
+  chocar con `hora_inicio` de las filas YA existentes de esa fecha
+  (`uq_orden_estacion_dia_oe_fecha_hora`) — se corren +1 minuto hasta encontrar uno libre
+  (mismo criterio que "+ Agregar día", ADR-134), considerando también lo recién agregado
+  en la MISMA llamada a `generar()` (por si acaso, aunque el `DayPicker` ya impide elegir
+  la misma fecha dos veces en una sola selección). Caso especial: con 1 solo spot y Hora
+  inicio === Hora fin (un PUNTO, no un rango), correr solo `hora_inicio` sin tocar
+  `hora_termino` rompería el CHECK `hora_fin >= hora_inicio` — en ese caso se corren
+  AMBOS campos juntos, para seguir siendo el mismo punto.
+- **Consecuencia:** ninguna negativa — el modelo, backend, Reales y layout CSV no
+  cambian; la grid ya sabía mostrar/guardar 2+ filas reales por fecha desde ADR-127.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios (mismos 2 warnings
+  preexistentes de fast-refresh); suite `ordenes`+`shared/ui` 263/263 — 3 pruebas nuevas
+  en `CalendarioPeriodoTransmision.test.tsx`: una fecha con filas ya no sale deshabilitada
+  en el calendario; generar sobre ella agrega una fila nueva con el horario corrido (caso
+  punto, ambos campos corridos); con un rango real, solo se corre `hora_inicio` (el fin
+  de rango capturado no cambia).
+
+### ADR-189 — El tope de "Material a Transmitir" es los SPOTS capturados, no cuántas filas reales existen hoy (expande el grupo si hace falta)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (bug real, reportado en vivo): el usuario
+  agregó un día con "+ Agregar día", le puso Spots = 2, y el multi-select de material
+  solo lo dejaba elegir 1 — quería 2 materiales distintos para esos 2 spots.
+- **Contexto:** un día capturado SIN rango ("+ Agregar día", Hora Inicio === Hora Fin) se
+  queda como **1 sola fila real** aunque `spots_diarios` sea grande (ADR-185/186: no
+  reparte si no hay un rango real que llenar). ADR-187 había ligado el tope del
+  multi-select a `grupo.filas.length` (cuántas filas reales existen), no a `grupo.spots`
+  (el conteo capturado) — correcto mientras ambos coincidían (el caso normal: generado
+  por calendario con rango real, 1 fila por spot), pero roto para un día sin rango con
+  spots > 1, donde `grupo.filas.length` (1) queda muy por debajo de `grupo.spots` (2+).
+- **Decisión:** el tope (`maxSelected` de `CheckboxMultiSelect`) pasa a ser `grupo.spots`
+  siempre. `aplicarSeleccionMateriales` distingue 2 casos:
+  1. Lo elegido cabe en las filas YA existentes (`seleccion.length <= grupo.filas.length`):
+     comportamiento de siempre, reparte 1 a 1 sobre ELLAS sin tocar su cantidad.
+  2. Se necesitan MÁS materiales distintos que filas existen: el grupo se EXPANDE a
+     `grupo.spots` filas (mismo efecto que editar Hora Inicio/Hora Fin/Spots — pierden su
+     `orden_estacion_dia_id`, ya aceptado desde ADR-185). Con un rango real reparte con
+     `repartirHoras` (sin cambio); sin rango (un PUNTO) usa la función nueva
+     **`dividirPuntoEnFilas`** (`CalendarioPeriodoTransmision.tsx`) — separa cada fila por
+     1 minuto a partir del punto capturado (mismo criterio histórico de ADR-127), SOLO
+     para darle a cada una su propio `hora_inicio` (y así poder llevar su propio
+     material) — `repartirHoras` no sirve aquí porque, sin un rango real que repartir,
+     colapsaría todos los puntos en el mismo `hora_inicio`, chocando con
+     `uq_orden_estacion_dia_oe_fecha_hora`.
+- **Consecuencia:** después de expandir, el grupo deja de ser un "punto" (Hora Inicio ≠
+  Hora Fin, por los minutos de separación) — se ve como un rango angosto en vez de un
+  único horario, reflejando honestamente que ahora SON 2+ registros reales distintos.
+  Ninguna otra pantalla cambia (Reales/backend/layout CSV siguen leyendo las mismas filas
+  de siempre).
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios (4 warnings preexistentes de
+  fast-refresh, no nuevos); suite `ordenes`+`shared/ui` 264/264 — nueva prueba que
+  reproduce el bug exacto (1 fila real, `spots_diarios=2`, elegir 2 materiales expande a
+  2 filas con horarios "07:00"/"07:01" y cada una con su propio material).
+
+### ADR-190 — `repartirHoras` podía generar `hora_inicio` repetidos (bug real: `UNIQUE constraint failed` al guardar)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (bug real, reportado en vivo sobre
+  OE-2026-0044B): el usuario agregó un día con "+ Agregar día", le subió Spots a 6, y
+  eligió varios materiales distintos — al hacer clic en "Guardar cambios" salió
+  "Network Error". El log del backend (`uvicorn`) mostró la causa real:
+  `sqlite3.IntegrityError: UNIQUE constraint failed: orden_estacion_dia.orden_estacion_id,
+  orden_estacion_dia.fecha_transmision, orden_estacion_dia.hora_inicio` — con DOS filas
+  de la fecha 2026-10-12 insertándose con el MISMO `hora_inicio` ("20:14:00").
+- **Contexto:** la secuencia real fue: (1) el día nace como 1 fila SIN rango ("+ Agregar
+  día"); (2) el usuario elige un 2º material → ADR-189 lo expande a 2 filas vía
+  `dividirPuntoEnFilas` ("20:13"/"20:14" — ya NO es un punto: `horaInicio ≠ horaFin`);
+  (3) elige un 3er material → `aplicarSeleccionMateriales` ve que el grupo YA no es un
+  punto y usa `repartirHoras("20:13", "20:14", 6 spots)` — un rango de SOLO 1 minuto para
+  6 puntos. `Math.round(intervalo × i)` (intervalo = 1/6 ≈ 0.167) redondea VARIAS `i` al
+  MISMO minuto (p.ej. i=0,1,2 → 0 minutos; i=3,4,5 → 1 minuto) — `repartirHoras` nunca
+  verificaba que sus propios puntos fueran distintos entre sí.
+- **Decisión:** `repartirHoras` ahora lleva un set de horarios `usados` dentro del mismo
+  llamado — cada punto que choca con uno YA asignado en ese reparto se corre +1 minuto
+  hasta encontrar uno libre (mismo criterio de colisión que ya usan `agregarFila`/
+  `generar()`, ADR-134/188). Si eso empuja algún punto más allá de la `horaFin`
+  capturada (rango demasiado angosto para tantos spots), el **fin efectivo de TODAS las
+  filas del reparto se extiende** al punto más tardío generado — sigue siendo el MISMO
+  para todas (ADR-186), solo que ahora puede ser más tardío que lo tecleado, en vez de
+  dejar una fila con `hora_fin < hora_inicio` o duplicada.
+- **Consecuencia:** en el caso límite (rango angosto + muchos spots), el rango mostrado
+  en la grid se ve más ancho de lo que el usuario capturó — aceptado como mejor
+  alternativa a que el guardado truene. Ningún llamado existente con rango suficiente
+  (el caso normal) cambia de comportamiento.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios (3 warnings preexistentes de
+  fast-refresh, no nuevos); suite `ordenes`+`shared/ui` 267/267 — 3 pruebas nuevas,
+  unitarias sobre `repartirHoras`: reproduce el bug exacto (6 spots en 1 minuto → 6
+  `hora_inicio` distintos, ya no duplicados); confirma que el fin efectivo se extiende y
+  se comparte entre todas las filas; confirma que un rango con espacio de sobra no
+  cambia de comportamiento.
+
+### ADR-191 — El combo de "Estación" en Orden de Transmisión muestra "Siglas Frecuencia TIPO Nombre" (revierte ADR-136)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (petición del usuario, con una captura de
+  pantalla de referencia): *"En la presentación de la Estación quizás se vea mejor:
+  Siglas+' '+Frecuencia+' '+'Tipo Señal'+' ' Nombre de la emisora. Quitando los espacios
+  en blanco."* — la especificación original ya NO incluía la Plaza/ciudad. Primero se
+  preguntó directamente y el usuario pidió mantenerla (como se veía en el ejemplo); poco
+  después, en un mensaje aparte, pidió quitarla — queda fuera, como decía la
+  especificación original.
+- **Contexto:** ADR-136 armaba el combo como `{nombre_estacion}-{siglas}-{frecuencia}`
+  (guiones, 3 partes, sin tipo de señal). El usuario pidió una presentación distinta: 4
+  partes (siglas, frecuencia, tipo de señal, nombre), separadas por un solo espacio, SIN
+  partes vacías colgando (de ahí "quitando los espacios en blanco" — se refiere a evitar
+  que un hueco quede como espacio de más cuando falta un dato, no a quitar todos los
+  separadores).
+- **Decisión:** en `OrdenEstacionForm.tsx` (el `<select>` de "Estación", única pantalla
+  afectada — ningún otro selector/listado del código arma este mismo formato), cada
+  `<option>` arma un arreglo `[siglas, frecuencia, tipo_senal.toUpperCase(),
+  nombre_estacion]`, filtra los valores vacíos (`.filter(Boolean)`) y los une con
+  `.join(" ")`. `tipo_senal` ("fm"/"am"/"tv") se muestra en mayúsculas, como columna
+  aparte de `frecuencia` — confirmado leyendo el catálogo real
+  (`EstacionCatalogPage.tsx`) que ambos campos se capturan y muestran por separado, así
+  que concatenarlos no duplica texto (a diferencia de datos de prueba viejos como
+  `frecuencia: "900 AM"`, que SÍ embebían el tipo como texto libre — corregidos en el
+  fixture de pruebas para reflejar el dato "limpio" esperado).
+- **Consecuencia:** ninguna negativa — cambio 100% de presentación en un solo `<select>`;
+  el valor que viaja (`e.id`) no cambia. La Plaza sigue viéndose, sin cambio, en el
+  bloque "Datos heredados de la estación" debajo del selector, una vez elegida una
+  estación.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite `ordenes`+`shared/ui`
+  268/268 — prueba de ADR-136 actualizada al nuevo formato (con datos parciales, omite
+  siglas faltantes sin dejar huecos); prueba nueva con los 4 datos completos confirma el
+  orden exacto "XHMT 90.1 FM Multimedios Estrellas de Oro".
+
+### ADR-192 — Los 3 PDFs de OrdenEstacion (Servicio/Programados/Reales) vuelven a mostrar Hora Inicio y Hora Fin (revierte ADR-118/155/156)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (reporte del usuario: *"vamos a corregir
+  nuestros 3 reportes empezando en donde deben poner la hora de transmisión que colocan
+  la hora de inicio y la hora de fin"*).
+- **Contexto:** ADR-108 (captura web) había consolidado `hora_inicio`/`hora_fin` en un
+  solo valor capturado, y ADR-118 (PDF Programados)/ADR-155/156 (PDF Servicio/Reales)
+  siguieron el mismo criterio en el backend, bajo el supuesto — válido EN ESE MOMENTO —
+  de que ambos campos siempre se capturaban iguales, así que mostrar los 2 solo repetía
+  el mismo valor. Ese supuesto dejó de valer desde ADR-184 en adelante (esta misma
+  sesión): la captura web volvió a un rango real, y nadie actualizó
+  `orden_estacion_pdf.py` para reflejarlo — quedó mostrando SOLO `hora_inicio` en los 3
+  PDFs, perdiendo la hora de fin capturada.
+- **Decisión:** en `backend/app/modules/ordenes/orden_estacion_pdf.py`:
+  1. **Servicio** (`generar_pdf_servicio`): la tabla "Periodo de Transmisión" vuelve a 2
+     columnas, "Hora Inicio"/"Hora Fin" (antes "Horario de Transmisión", 1 columna) —
+     `colWidths` ajustado de 5 a 6 columnas repartiendo el ancho que antes ocupaba la
+     columna única.
+  2. **Programados** (`_fila_dia_programado`): el texto "Horario: …" vuelve a mostrar el
+     rango completo (`hora_inicio A hora_fin`, formato 12h con AM/PM — mismo criterio que
+     ya usaba el párrafo-resumen del PDF de Servicio).
+  3. **Reales** (`generar_pdf_reales`): la columna "HORA" vuelve a mostrar el rango
+     `inicio - fin` (formato 24h), como antes de ADR-155.
+  Ningún otro dato/columna cambia; no hay PDF de Orden de Servicio separado para la OC
+  (`OrdenCliente`) — el único "Orden de Servicio" en el sistema es el de la OE, ya
+  corregido arriba.
+- **Consecuencia:** ninguna negativa — cambio 100% de presentación en los 3 PDFs; ningún
+  dato nuevo, solo se vuelve a imprimir un campo que ya existía (`hora_fin`).
+- **Verificado:** backend, `ruff check` limpio en las líneas tocadas (3 errores
+  preexistentes de líneas largas en el archivo, ninguno en código nuevo ni modificado);
+  suite `test_f1_06_ordenes_pdf.py` 14/14 — 3 pruebas nuevas que EXTRAEN el texto real
+  del PDF generado (`pypdf.PdfReader`, no solo "no truena") y confirman que Hora Inicio Y
+  Hora Fin aparecen distintas en cada uno de los 3 PDFs (fixture con
+  `hora_inicio=08:00`/`hora_fin=10:00`, un rango genuino de 2 horas).
+
+### ADR-193 — Los 3 PDFs de OrdenEstacion agregan "Marca" y "Producto" (`oe.producto_tarifa`, catálogo F0-06); "Producto" se relabeled a "Campaña"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (petición del usuario: *"revisar en el pdf
+  de ordenes de servicio que los nuevos campos salgan bien en todos los pdf's, revisar
+  que salgan los campos Marca, producto y campaña... revisar que los campos importantes
+  salgan en los 3 pdf's"*). Auditoría previa (los 3 PDFs completos + modelos +
+  `_cargar_contexto`) confirmó 2 problemas reales antes de tocar código.
+- **Contexto — 2 hallazgos de la auditoría:**
+  1. **"Marca" no aparecía en ningún PDF, y ni siquiera se cargaba en el contexto**
+     (`_cargar_contexto`/`_Contexto` no tenían ninguna referencia a `Marca` — confirmado
+     por grep sobre todo el archivo).
+  2. **Lo que los 3 PDFs mostraban como "Producto" (Servicio) / "CAMPAÑA" (Programados,
+     Reales) es, en realidad, el MISMO campo: `oc.producto`** (texto libre, preexistente
+     — la "Campaña"). El Producto de VERDAD — `oe.producto_tarifa`, conectado al
+     catálogo F0-06 por ADR-166/169 esta misma sesión anterior ("Producto/Duración") —
+     **no aparecía en ningún PDF**. El propio modelo (`orden_estacion.py`) ya documenta
+     la distinción en un comentario: "`producto_tarifa`... NO confundir con `producto`
+     de arriba ('Campaña', texto libre heredado de la OC)" — el PDF nunca se había
+     actualizado para reflejarla.
+  - Categoría y Contrato también resultaron ausentes en los 3 PDFs (ninguno cargado en
+    el contexto) — señalado al usuario, quien decidió dejarlos fuera de este cambio.
+- **Decisión:**
+  1. `_Contexto`/`_cargar_contexto` agregan `marca: Marca | None` — `db.get(Marca,
+     oc.marca_id) if oc.marca_id else None` (campo opcional en `OrdenCliente`).
+  2. **Servicio** (`tabla_campos`): la fila que decía "Producto" (`oc.producto`) se
+     renombra a "Campaña"; se agregan 2 filas nuevas, "Marca" (`ctx.marca.nombre_marca`)
+     y "Producto" (`oe.producto_tarifa`) — reusando 2 celdas que antes quedaban en
+     blanco (columna izquierda de las filas de Importe/I.V.A.), sin agregar filas de
+     más.
+  3. **Programados**: nueva línea `MARCA : … PRODUCTO : …` entre "CAMPAÑA" y "No. DE
+     ORDEN".
+  4. **Reales**: "MARCA" rellena una celda que antes quedaba en blanco (junto a
+     "DURACION"); "PRODUCTO" se agrega como fila nueva al final de la tabla de campos.
+  Ningún otro campo/columna cambia.
+- **Consecuencia:** ninguna negativa — cambio 100% de presentación/datos adicionales en
+  los 3 PDFs; "Marca"/"Producto" muestran "—" si la OC no los capturó (ambos opcionales).
+- **Verificado:** backend, `ruff check` limpio en líneas nuevas/modificadas (3 errores
+  preexistentes de líneas largas en el archivo, ninguno introducido); suite
+  `test_f1_06_ordenes_pdf.py` 17/17 — 3 pruebas nuevas que confirman "Marca Uno"
+  (`ctx.marca`), "Pan Bimbo Integral 680g" (`oc.producto`, Campaña) y "spot"
+  (`oe.producto_tarifa`, Producto) apareciendo DISTINTOS en el texto extraído de cada uno
+  de los 3 PDFs; suite completa del backend sin regresiones.
+
+### ADR-194 — PDF de Reales: los valores después de los ":" ya no van en negritas (solo la etiqueta)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-12 (petición del usuario, con una captura
+  marcando en rojo los valores en negritas de "CLIENTE:", "CAMPAÑA:", "DURACION:",
+  "EMISORA:", "PRODUCTO:", "PERIODO:", "TIPO DE MEDIO:", "MARCA:" y "TOTAL SPOTS
+  REALES:" del PDF 3 — pidió que el valor saliera SIN negritas, dejando la negrita solo
+  en la etiqueta).
+- **Contexto:** `_campo_negrita`/`_campo_negrita_der` (únicas usadas por
+  `generar_pdf_reales`) envolvían tanto la etiqueta COMO el valor en `<b>` — decisión
+  original documentada en el comentario del código ("etiqueta Y valor en negritas...
+  igual al PDF de referencia"), que el usuario ahora pide cambiar. Los PDFs de Servicio
+  (`_campo`/`_campo_der`) y Programados (`_CAMPO_LINEA`, con `<b>` solo en la etiqueta
+  dentro del mismo `Paragraph`) YA mostraban el valor sin negritas — el ajuste es
+  exclusivo del PDF de Reales.
+- **Decisión:** `_campo_negrita`/`_campo_negrita_der` dejan de envolver el valor en
+  `<b>…</b>` — el valor se pasa tal cual al `Paragraph`, sin marcado. La etiqueta
+  conserva su negrita.
+- **Consecuencia:** ninguna negativa — cambio puramente visual, ningún dato cambia. No
+  hay forma sencilla de aserto automatizado sobre "negritas o no" extrayendo texto plano
+  del PDF (`pypdf` no distingue el peso de fuente al extraer) — verificado leyendo el
+  código fuente del cambio y confirmando que las pruebas existentes (que sí verifican el
+  CONTENIDO de cada campo) siguen en verde.
+- **Verificado:** backend, `ruff check` limpio (mismos 3 errores preexistentes de líneas
+  largas, ninguno nuevo); suite `test_f1_06_ordenes_pdf.py` 17/17; suite completa del
+  backend sin regresiones.
+
+### ADR-195 — La tarjeta "Orden de Servicio de origen" pone el Anunciante heredado del lado derecho
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con captura): el
+  campo "Anunciante" (heredado de la Orden de Servicio, ADR-182) iba apilado DEBAJO del
+  folio/selector de la OC, ocupando todo el ancho de la tarjeta — pidió que vaya del
+  lado derecho en su lugar.
+- **Decisión:** en `OrdenEstacionForm.tsx` ("Orden de Servicio de origen"), el folio/
+  `SearchableSelect` de la OC y el bloque de Anunciante se envuelven en un `.r2` (grid de
+  2 columnas iguales, mismo patrón ya usado en el resto del formulario) — quedan lado a
+  lado en vez de apilados. Sin `oc` resuelto, la columna derecha simplemente no se
+  renderiza (el grid no exige llenar la celda). Sin cambios de lógica — mismo criterio
+  de ADR-182 para cuándo se muestra el Anunciante (ambos casos: OC ya amarrada o elegida
+  a mano).
+  - **Ajuste 1 (mismo día):** el `.r2` (2 columnas iguales) dejaba el Anunciante a la
+    mitad de la tarjeta, no pegado al borde — el usuario pidió *"pegas más a la
+    derecha el anunciante"*. Se cambia por `display: flex; justifyContent:
+    space-between` envolviendo los mismos dos bloques: el de la izquierda (folio/
+    selector) ocupa solo lo que necesita y el de Anunciante se empuja al borde derecho
+    real de la tarjeta, sin depender del ancho de la columna izquierda.
+  - **Ajuste 2 (mismo día):** con `space-between`, el `SearchableSelect` de la
+    izquierda quedaba angosto (encogido a su contenido mínimo) — pidió *"hazlo del
+    doble o triple de largo sin afectar al anunciante a la derecha"*. Se quita
+    `justifyContent: space-between` y la izquierda pasa a `flexGrow: 1, minWidth: 0`
+    (toma TODO el ancho que el Anunciante no ocupa, en vez de encogerse); el
+    Anunciante pasa a `flexShrink: 0` (ancho natural fijo). Con un solo item
+    creciendo no sobra espacio que repartir, así que el Anunciante queda en el mismo
+    borde derecho de antes sin necesitar `space-between`.
+- **Consecuencia:** ninguna negativa — cambio 100% de layout.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenEstacionForm.test.tsx` 39/39 sin regresiones (ninguna prueba dependía de la
+  posición visual del bloque); re-verificado tras el ajuste a flex (sigue 39/39, además
+  de la suite completa de `src/modules/ordenes` en 254/254 — ver ADR-197).
+
+### ADR-196 — El detalle de OE y los PDFs de Servicio/Programados vuelven a mostrar el período de transmisión agrupado por fecha (Reales, sin cambio)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con 3 capturas): al
+  guardar la orden y ver el detalle, y también en los PDFs de Servicio y Programados, la
+  lista del período de transmisión mostraba el desglose por SPOT/hora (1 renglón por
+  spot, varias filas de la misma fecha con horarios distintos) en vez de 1 renglón por
+  FECHA, como ya hace la grid de captura (ADR-185) — explícitamente: *"eso va pero en la
+  de los reales"* (Reales se queda igual, sin agrupar) y *"corrige el reporte de los
+  reales ahí solo debe ir una sola hora de transmisión y no el rango"* (revierte el
+  rango que ADR-192 había puesto en la columna "HORA" de Reales) y *"en la columna
+  material a transmitir debes poner todos los materiales que se seleccionaron separados
+  por coma"* (Programados).
+- **Contexto:** desde ADR-185, SOLO `PeriodoTransmisionGrid.tsx` (la pantalla de
+  captura) agrupaba visualmente las N filas reales de una fecha (1 por spot, ADR-127) en
+  un renglón — el propio docstring del archivo ya lo advertía: *"esta pantalla es la
+  ÚNICA que ahora las agrupa visualmente"*. `OrdenEstacionDetailPanel.tsx` (el detalle de
+  solo lectura) y los PDFs de Servicio/Programados (`orden_estacion_pdf.py`) nunca se
+  actualizaron — seguían iterando `periodo_transmision`/`ctx.dias` crudo, 1 renglón por
+  spot. Además, `_nombre_material` en el backend seguía con el criterio VIEJO de ADR-107
+  ("el override propio, si no el default `audios[0]`") — nunca se actualizó para ADR-187
+  (1 material por spot, sin default compartido), así que el PDF de Programados solo
+  mostraba 1 nombre por día en vez de todos los usados.
+- **Decisión:**
+  1. **Frontend:** `agruparPorFecha`/`GrupoFecha` (antes privados de
+     `PeriodoTransmisionGrid.tsx`) se exportan; `OrdenEstacionDetailPanel.tsx` los reusa
+     para agrupar `oe.periodo_transmision` antes de renderizar la tabla "Periodo de
+     transmisión" — mismo criterio que la grid de captura (Hora Inicio = la más
+     temprana, Hora Fin = la más tardía, Spots = la suma, cancelado si TODO el grupo lo
+     está).
+  2. **Backend — Servicio y Programados:** nueva función `_agrupar_dias_por_fecha`
+     (dataclass `_GrupoFechaDia`) en `orden_estacion_pdf.py`, mismo criterio que el
+     frontend. `generar_pdf_servicio` arma la tabla "Periodo de Transmisión" desde los
+     grupos (ya no `ctx.dias` crudo) — "Total de Spots"/"Total de Días" y el párrafo-
+     resumen de horario uniforme también se recalculan desde los grupos (antes nunca
+     coincidía: con 1 fila por spot, cada una ya traía su propio `hora_inicio`, así que
+     el resumen "todos comparten el mismo horario" casi nunca se imprimía).
+     `generar_pdf_programados`/`_fila_dia_programado` reciben un `_GrupoFechaDia` en vez
+     de una fila suelta.
+  3. **Backend — `_nombre_material`:** se corrige para reflejar ADR-187 (ya no hay
+     default compartido) — sin `orden_estacion_audio_id` propio, regresa `None` (nada
+     que aportar), no un fallback inventado. Nueva función `_materiales_grupo`: junta los
+     nombres DISTINTOS de todas las filas del grupo (ordenadas por `hora_inicio`, el
+     mismo orden posicional de ADR-187), separados por coma, para la columna "Material a
+     Transmitir" de Programados.
+  4. **Backend — Reales (corrige ADR-192):** la columna "HORA" vuelve a mostrar UN SOLO
+     horario (`hora_inicio`, el punto real de ese spot) — NO el rango `inicio - fin` que
+     ADR-192 había puesto por error: desde ADR-186, `hora_fin` es el fin de rango
+     COMPARTIDO entre todos los spots del día (no algo propio de un renglón individual),
+     así que mostrarlo como rango en Reales confundía en vez de aclarar. "Capturar
+     reales" (pantalla y PDF) sigue siendo 1 renglón por spot, SIN agrupar — a propósito,
+     confirmado por el usuario.
+- **Consecuencia:** ninguna negativa — el modelo de datos, el guardado y el layout CSV de
+  reales no cambian; todos siguen leyendo/escribiendo exactamente el mismo arreglo de
+  filas reales de siempre, 1 por spot. Solo cambia CÓMO se presentan en 3 lugares más
+  (detalle, Servicio, Programados) — ahora consistente con la grid de captura.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; 2 pruebas nuevas en
+  `OrdenEstacionDetailPanel.test.tsx` (varias filas de la misma fecha se ven como 1 solo
+  renglón con el rango completo; un día cancelado se sigue viendo atenuado, agrupado).
+  Backend, `ruff check` limpio (3 errores preexistentes de líneas largas, ninguno
+  nuevo); suite `test_f1_06_ordenes_pdf.py` 19/19 — 2 pruebas de `_nombre_material`
+  actualizadas al contrato nuevo (regresa `None`, no un fallback); 1 prueba reescrita
+  para Reales (un solo horario, ya no el rango); 2 pruebas nuevas que reproducen el bug
+  exacto (3 filas reales de la misma fecha en Servicio se ven como 1 renglón con
+  08:00:00–18:00:00 y Spots=3, sin que 09:00:00/10:00:00 aparezcan sueltos; Programados
+  lista "uno.mp3, dos.mp3" en un solo renglón, no 3 renglones con 1 material cada uno).
+  Suite completa del frontend (`ordenes`, 254/254) y del backend sin regresiones.
+
+### ADR-197 — "Material a Transmitir" permite elegir varios archivos de audio de un jalón (en vez de uno por uno)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con captura del
+  selector de archivos de Windows): el `<input type="file">` de "Material a Transmitir"
+  no tenía el atributo `multiple` — el selector nativo de Windows solo dejaba marcar UN
+  archivo por apertura, obligando a repetir "Elegir archivo" + subir, uno por uno, para
+  cargar varios materiales de un mismo día.
+- **Decisión:** se agrega `multiple` al `<input type="file">` en los DOS lugares donde
+  existe esta captura (estado independiente cada uno, ver ADR-109):
+  `MaterialATransmitir.tsx` (edición, OE ya guardada, sube contra
+  `subirAudioOrdenEstacionApi`) y la sección "Material a Transmitir" de
+  `OrdenEstacionForm.tsx` en alta (`audiosStaging`, sube contra
+  `subirMaterialStagingApi`). En ambos, el handler (`onElegir`/`onElegirAudioStaging`)
+  cambia de recibir un `File | undefined` a un `FileList | null`, y sube cada archivo
+  **en SECUENCIA** (`for...of` + `await`, no `Promise.all`/paralelo): el orden de subida
+  es el que define la posición de cada spot (ADR-187, "spot 1 → material #1, spot 2 →
+  material #2…"), así que subir en paralelo podría dejarlos en un orden distinto al que
+  el usuario los seleccionó en el explorador de Windows. Un archivo inválido (extensión
+  no permitida, excede tamaño) o que falla en la subida NO detiene a los demás — se siguen
+  subiendo uno a uno y los errores se acumulan en un solo mensaje al final
+  (`"archivo1.mp3: formato no permitido (...). archivo2.wav: no se pudo subir."`).
+- **Consecuencia:** ninguna negativa — el backend ya aceptaba subidas individuales
+  repetidas (no hay endpoint nuevo ni cambio de contrato); esto solo cambia CUÁNTAS
+  veces y con qué UI se invoca desde el front. Sin cambios de permisos/validación de
+  servidor.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite completa de
+  `src/modules/ordenes` 254/254 sin regresiones (no existían pruebas que fijaran el
+  input en modo single-file).

@@ -18,10 +18,13 @@ estaciones en varias plazas). El campo `plaza_id`/`plaza_nombre` que existía aq
 
 **ContactoAfiliado** (entidad NUEVA, fuera de la spec BD v2 — ADR-094, petición del
 usuario): el Afiliado ya traía un solo contacto plano (`contacto_nombre`/
-`contacto_email`/`contacto_telefono`, arriba). Mismo patrón que `ContactoAnunciante`/
+`contacto_email`/`contacto_telefono`). Mismo patrón que `ContactoAnunciante`/
 `ContactoAgencia` (ADR-091/092): tabla propia, anidada (CRUD completo + alta/edición
-en vivo dentro del propio formulario del padre, no solo desde el detalle), los 3 campos
-planos quedan como LEGADO sin tocar.
+en vivo dentro del propio formulario del padre, no solo desde el detalle).
+
+**ADR-174 (petición del usuario, reporte de bug):** los 3 campos planos legado se
+ELIMINAN por completo — ver la nota completa en `anunciante.py` (mismo ADR, aplicado a
+los 3 catálogos con contacto legado).
 """
 
 from __future__ import annotations
@@ -68,9 +71,6 @@ class Afiliado(Base):
     nombre_afiliado: Mapped[str] = mapped_column(Unicode(160), index=True)
     razon_social_afiliado: Mapped[str] = mapped_column(Unicode(200))
     rfc_afiliado: Mapped[str] = mapped_column(Unicode(13), unique=True, index=True)
-    contacto_nombre: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_email: Mapped[str | None] = mapped_column(Unicode(160), default=None)
-    contacto_telefono: Mapped[str | None] = mapped_column(Unicode(40), default=None)
     activo: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
     updated_at: Mapped[datetime | None] = mapped_column(
@@ -83,9 +83,6 @@ class AfiliadoCreate(BaseModel):
     nombre_afiliado: str = Field(min_length=1, max_length=160)
     razon_social_afiliado: str = Field(min_length=1, max_length=200)
     rfc_afiliado: str = Field(min_length=12, max_length=13)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
 
     @field_validator("rfc_afiliado")
     @classmethod
@@ -97,9 +94,6 @@ class AfiliadoUpdate(BaseModel):
     nombre_afiliado: str | None = Field(default=None, min_length=1, max_length=160)
     razon_social_afiliado: str | None = Field(default=None, min_length=1, max_length=200)
     rfc_afiliado: str | None = Field(default=None, min_length=12, max_length=13)
-    contacto_nombre: str | None = Field(default=None, max_length=160)
-    contacto_email: str | None = Field(default=None, max_length=160)
-    contacto_telefono: str | None = Field(default=None, max_length=40)
 
     @field_validator("rfc_afiliado")
     @classmethod
@@ -114,9 +108,6 @@ class AfiliadoRead(CatalogoReadBase):
     nombre_afiliado: str
     razon_social_afiliado: str
     rfc_afiliado: str
-    contacto_nombre: str | None = None
-    contacto_email: str | None = None
-    contacto_telefono: str | None = None
     # Derivado (solo lectura; NO se acepta en Create/Update):
     estaciones_count: int = 0  # nº de estaciones del afiliado (todas)
 

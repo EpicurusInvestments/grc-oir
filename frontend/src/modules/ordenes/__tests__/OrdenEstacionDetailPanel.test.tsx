@@ -49,8 +49,8 @@ vi.mock("@/modules/catalogos/anunciante/api", () => ({
 // contra él, así que sembramos aquí lo mínimo que las pruebas de desvío contra tarifa (abajo)
 // necesitan: es6 = XHRC-FM (fm), ta1 = es6/fm/30s → tarifa_bruta 9500, descuento 10%.
 estaciones.push({ id: "es6", afiliado_id: "af3", plaza_id: "pl1", nombre_estacion: "XHRC-FM", frecuencia: "100.9 FM", tipo_senal: "fm" });
-tarifas.push({ id: "ta1", estacion_id: "es6", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
-afiliados.push({ id: "af3", nombre_afiliado: "Afiliado Tres", porcentaje_participacion_oir_default: 20, contacto_email: null });
+tarifas.push({ id: "ta1", anunciante_id: "an1", estacion_id: "es6", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+afiliados.push({ id: "af3", nombre_afiliado: "Afiliado Tres", porcentaje_participacion_oir_default: 20 });
 anunciantes.push({
   id: "an1",
   agencia_id: null,
@@ -251,5 +251,40 @@ describe("ADR-140/ADR-145: Servicio/Reales dependen del anunciante; Programados 
     expect(
       screen.getByRole("button", { name: /Abrir correo/ }).getAttribute("title"),
     ).toBe("El afiliado no tiene contactos activos con correo cargado.");
+  });
+});
+
+describe("Periodo de transmisión — agrupado por fecha (ADR-196, corrige un bug real)", () => {
+  it("varias filas reales de la MISMA fecha (1 por spot) se muestran como UN solo renglón, con Horario = el rango completo y Spots = la suma", () => {
+    const oe = makeOE({
+      periodo_transmision: [
+        makeRow({ fecha: "2026-10-13", hora_inicio: "08:05", hora_termino: "08:05", spots_diarios: 1 }),
+        makeRow({ fecha: "2026-10-13", hora_inicio: "10:00", hora_termino: "22:00", spots_diarios: 1 }),
+        makeRow({ fecha: "2026-10-13", hora_inicio: "14:00", hora_termino: "22:00", spots_diarios: 1 }),
+        makeRow({ fecha: "2026-10-13", hora_inicio: "18:00", hora_termino: "22:00", spots_diarios: 1 }),
+        makeRow({ fecha: "2026-10-14", hora_inicio: "09:00", hora_termino: "21:00", spots_diarios: 4 }),
+      ],
+    });
+    renderPanel(oe, makeOC());
+
+    const filas = screen.getAllByRole("row");
+    // encabezado + 2 fechas agrupadas (13 y 14) + pie de total — no 5 renglones sueltos.
+    expect(filas).toHaveLength(4);
+    expect(screen.getByText("2026-10-13")).toBeInTheDocument();
+    expect(screen.getByText("08:05–22:00")).toBeInTheDocument(); // rango completo del grupo del 13
+    expect(screen.getByText("2026-10-14")).toBeInTheDocument();
+    expect(screen.getByText("09:00–21:00")).toBeInTheDocument();
+  });
+
+  it("un día cancelado se sigue mostrando atenuado, como un solo renglón agrupado", () => {
+    const oe = makeOE({
+      periodo_transmision: [
+        makeRow({ fecha: "2026-10-15", hora_inicio: "07:00", hora_termino: "07:00", spots_diarios: 1, cancelada: true }),
+        makeRow({ fecha: "2026-10-15", hora_inicio: "08:00", hora_termino: "08:00", spots_diarios: 1, cancelada: true }),
+      ],
+    });
+    renderPanel(oe, makeOC());
+    expect(screen.getByText("Cancelado")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(3); // encabezado + 1 fecha + pie
   });
 });

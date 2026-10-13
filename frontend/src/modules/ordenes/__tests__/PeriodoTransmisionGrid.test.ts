@@ -35,11 +35,14 @@ describe("problemasDeFila", () => {
     expect(problemas).toContain("Falta el horario de transmisión.");
   });
 
-  // ADR-108: "Horario de transmisión" es UNA sola hora — hora_inicio/hora_termino se
-  // capturan siempre iguales; ya no se valida un rango entre ambos.
-  it("ADR-108: ya no valida un rango entre hora_inicio/hora_termino (es un solo horario)", () => {
+  // ADR-185 (petición del usuario, revierte ADR-108): "Hora Inicio"/"Hora Fin" vuelven a
+  // ser un rango real — un mismo valor en ambas sigue siendo válido (spot puntual), pero
+  // Hora Fin anterior a Hora Inicio ya se rechaza.
+  it("ADR-185: acepta hora_inicio == hora_termino, rechaza hora_termino < hora_inicio", () => {
     expect(problemasDeFila(makeRow({ hora_inicio: "08:00", hora_termino: "08:00" }), RANGO)).toEqual([]);
-    expect(problemasDeFila(makeRow({ hora_inicio: "10:00", hora_termino: "09:00" }), RANGO)).toEqual([]);
+    expect(problemasDeFila(makeRow({ hora_inicio: "10:00", hora_termino: "09:00" }), RANGO)).toContain(
+      '"Hora Fin" no puede ser anterior a "Hora Inicio".',
+    );
   });
 
   it("rechaza spots_diarios en 0 o negativos", () => {

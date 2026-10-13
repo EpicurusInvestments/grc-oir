@@ -168,6 +168,8 @@ export interface LayoutRealAplicadoApiDTO {
   fecha_transmision: string;
   hora_inicio: string;
   spots: number;
+  cambio_horario: boolean;
+  hora_real: string | null;
 }
 
 /** ADR-149: una fecha+hora del CSV que NO existe en la OE — se ofrece como día nuevo a

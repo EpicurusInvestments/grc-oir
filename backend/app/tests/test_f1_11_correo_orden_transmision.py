@@ -109,7 +109,6 @@ def cat(db: Session) -> dict[str, uuid.UUID]:
             nombre_afiliado="Afiliado Uno",
             razon_social_afiliado="Afiliado Uno SA de CV",
             rfc_afiliado="AUN900101AB1",
-            contacto_email="legado@afiliado-uno.com",
         )
     )
     ids["afiliado"] = afiliado_id

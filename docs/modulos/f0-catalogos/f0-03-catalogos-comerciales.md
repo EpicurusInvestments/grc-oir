@@ -14,14 +14,19 @@ marcas y sus contratos. Es la base de la captura de órdenes (F1) y de la factur
 
 ## Entidades (spec BD v2)
 
-### Agencia (10 campos)
+### Agencia (7 campos + 10 de domicilio estructurado, ADR-175 — sin contacto legado, ADR-174)
 `agencia_id` (PK), `nombre_agencia` (NOT NULL, **único, case-insensitive**), `rfc_agencia`
-(NOT NULL, 12-13), `contacto_nombre`, `contacto_email`, `contacto_telefono`,
-`regimen_fiscal` (desviación aditiva, ADR-065 — clave SAT como RECEPTORA, trato vía
-agencia), **`porcentaje_comision_agencia_default` (NUMERIC(5,2) · PARÁMETRO SENSIBLE)**,
-`activo`, `created_at`, `updated_at`. No accede al sistema.
+(NOT NULL, 12-13), `regimen_fiscal` (desviación aditiva, ADR-065 — clave SAT como
+RECEPTORA, trato vía agencia), **`porcentaje_comision_agencia_default` (NUMERIC(5,2) ·
+PARÁMETRO SENSIBLE)**, `activo`, `created_at`, `updated_at`. No accede al sistema.
+**Domicilio estructurado** (desviación aditiva, ADR-175 — mismo mecanismo que ADR-059 en
+Anunciante, ver abajo): `calle`, `numero_exterior`, `numero_interior`, `colonia`,
+`localidad`, `referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se
+autocompleta al escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda
+editable a mano. A diferencia de Anunciante, Agencia no tenía ningún campo de domicilio
+antes (ni uno legado): las 10 columnas son enteramente nuevas.
 
-### Anunciante (16 campos + 10 de domicilio estructurado, ADR-059)
+### Anunciante (13 campos + 10 de domicilio estructurado, ADR-059 — sin contacto legado, ADR-174)
 `anunciante_id` (PK), `agencia_id` (FK NULL — null si trata directo), `nombre_comercial`
 (NOT NULL), `nombre_fiscal` (NOT NULL — el que aparece en la factura), `rfc_anunciante`
 (NOT NULL, 12-13), `localizacion` (legacy, ya no tiene input propio — ver abajo),
@@ -29,9 +34,8 @@ agencia), **`porcentaje_comision_agencia_default` (NUMERIC(5,2) · PARÁMETRO SE
 sin agencia), `uso_cfdi_default` (desviación aditiva, ADR-065 — SUGIERE el
 `AGREGADOS.UsoCFDI` de una factura directa a este anunciante; lo que se timbra vive en
 `FacturaCliente.uso_cfdi`, editable por factura), `referencia_anunciante`,
-`contacto_nombre`, `contacto_email`, `contacto_telefono`, **`dias_credito_default`
-(INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`, `updated_at`. **Domicilio
-estructurado** (desviación aditiva, ADR-059):
+**`dias_credito_default` (INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
+`updated_at`. **Domicilio estructurado** (desviación aditiva, ADR-059):
 `calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
 `referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta
 al escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siempre queda editable a
@@ -53,10 +57,10 @@ NULL a su padre), `nombre_contacto` (NOT NULL), `puesto_contacto`, `telefono_con
   (sub-lista en el detalle: agregar/editar/desactivar ahí mismo), mismo patrón que Marca.
 - **Dos tablas separadas** (no una compartida con discriminador): cada una con su FK
   simple al padre — decisión confirmada con el usuario, ver ADR-091.
-- Los 3 campos planos que YA existían en Agencia/Anunciante (`contacto_nombre`/
-  `contacto_email`/`contacto_telefono`) quedan como **LEGADO**: ya no se capturan desde el
-  formulario, pero se siguen mostrando de solo lectura en el detalle si una fila vieja los
-  trae.
+- **ADR-174 (petición del usuario, reporte de bug):** los 3 campos planos que existían en
+  Agencia/Anunciante (`contacto_nombre`/`contacto_email`/`contacto_telefono`) — que
+  ADR-091 había dejado de solo lectura ("Legado") — se ELIMINARON por completo: convivían
+  de forma confusa junto a estas entidades, su reemplazo definitivo.
 
 ### Contrato (16 campos)
 `contrato_id` (PK), `anunciante_id` (FK NOT NULL), `numero_contrato` (NOT NULL),

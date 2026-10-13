@@ -52,7 +52,7 @@ contratos.push(
   { id: "co1", anunciante_id: "an1", numero_contrato: "CT-2025-001", nombre_contrato: "Campaña Verano 2025", estado_contrato: "vigente" },
   { id: "co1b", anunciante_id: "an1", numero_contrato: "CT-2024-098", nombre_contrato: "Anual 2024 (cerrado)", estado_contrato: "finalizado" },
 );
-tarifas.push({ id: "ta1", estacion_id: "es1", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
+tarifas.push({ id: "ta1", anunciante_id: "an1", estacion_id: "es1", duracion_spot: "30s", producto: "spot", tarifa_bruta: 9500, descuento_pct: 10, tarifa_neta: 8550 });
 
 describe("totalesOC — 1.1", () => {
   it("subtotal = total_spots × precio_unitario", () => {

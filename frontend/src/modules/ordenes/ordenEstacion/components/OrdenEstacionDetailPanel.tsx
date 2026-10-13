@@ -20,6 +20,7 @@ import {
 import { logEnvioCorreoFromApi, ordenEstacionAudioFromApi } from "../../adapters/fromApi";
 import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../adapters/pdfsApi";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
+import { agruparPorFecha } from "../../components/PeriodoTransmisionGrid";
 import { IVA_RATE } from "../../constants";
 import { diaDeSemana, fmtMonto, fmtPct, oGuion } from "../../format";
 import { findAfiliado, findAnunciante, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
@@ -66,7 +67,7 @@ export function OrdenEstacionDetailPanel({
   // nada que buscar, igual que el backend (`_tarifa_sugerida`).
   const tarRef =
     estacion && oe.duracion_spot
-      ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined)
+      ? tarifaReferencia(estacion.id, oe.duracion_spot, oe.producto_tarifa ?? undefined, oe.anunciante_id)
       : undefined;
   const tarifaRefNeta = tarRef ? tarRef.tarifa_bruta * (1 - tarRef.descuento_pct / 100) : null;
   const desvioPct = tarifaRefNeta && tarifaRefNeta > 0 ? (oe.precio_spot / tarifaRefNeta - 1) * 100 : null;
@@ -233,18 +234,23 @@ export function OrdenEstacionDetailPanel({
             </tr>
           </thead>
           <tbody>
-            {oe.periodo_transmision.map((p, i) => (
-              <tr key={i} style={p.cancelada ? { opacity: 0.55 } : undefined}>
+            {/* ADR-196 (corrige un bug real): antes mostraba `oe.periodo_transmision`
+                SIN agrupar — 1 renglón por SPOT (hora_inicio/hora_termino distintos
+                por fila), en vez de 1 renglón por FECHA como ya hace la grid de edición
+                (ADR-185). Reusa `agruparPorFecha` para que el detalle de solo lectura
+                se vea igual que la pantalla de captura. */}
+            {agruparPorFecha(oe.periodo_transmision).map((grupo) => (
+              <tr key={grupo.fecha} style={grupo.cancelada ? { opacity: 0.55 } : undefined}>
                 <td className="td-2" style={{ fontSize: 11 }}>
-                  {diaDeSemana(p.fecha)}
+                  {diaDeSemana(grupo.fecha)}
                 </td>
-                <td className="td-mono">{p.fecha}</td>
+                <td className="td-mono">{grupo.fecha}</td>
                 <td className="td-mono">
-                  {p.hora_inicio}–{p.hora_termino}
+                  {grupo.horaInicio}–{grupo.horaFin}
                 </td>
-                <td className="td-center td-mono">{p.spots_diarios}</td>
+                <td className="td-center td-mono">{grupo.spots}</td>
                 <td style={{ fontSize: 11, color: "var(--red-text)", fontWeight: 600 }}>
-                  {p.cancelada ? "Cancelado" : ""}
+                  {grupo.cancelada ? "Cancelado" : ""}
                 </td>
               </tr>
             ))}

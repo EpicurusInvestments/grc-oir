@@ -1,7 +1,7 @@
 /** "Material a Transmitir" (ADR-103): audios de una OrdenEstacion ya creada — subida
- * real a S3/local (mp3/wav/ogg, ≤ 15 MB), lista con descarga/baja. El PRIMERO de la
- * lista es el DEFAULT que usan los días sin asignación propia (ver el selector de
- * audio por día en `PeriodoTransmisionGrid.tsx`).
+ * real a S3/local (mp3/wav/ogg, ≤ 15 MB), lista con descarga/baja. ADR-187: cada SPOT
+ * recibe su propio material por posición (orden de esta lista) — ver el multi-select de
+ * "Material a Transmitir" por fecha en `PeriodoTransmisionGrid.tsx`.
  *
  * Requiere un `orden_estacion_id` real (subir un audio no tiene sentido antes de
  * guardar la OE) — por eso se muestra en `OrdenEstacionDetailPanel.tsx` (el detalle, a
@@ -35,34 +35,48 @@ export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }:
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onElegir = async (archivo: File | undefined) => {
+  // ADR-197 (petición del usuario): el selector de archivos del sistema operativo solo
+  // dejaba elegir UNO a la vez (sin `multiple`, Windows no permite Ctrl/Shift-clic para
+  // varios) — ahora se pueden elegir varios de un jalón; se suben uno por uno, EN
+  // ORDEN (no en paralelo, `Promise.all`): el orden de subida es el que define la
+  // posición de cada spot (ADR-187), así que subir en paralelo podría dejarlos en un
+  // orden distinto al que el usuario los eligió. Un archivo inválido o que falla NO
+  // tumba a los demás — se acumulan los errores y se siguen subiendo el resto.
+  const onElegir = async (archivos: FileList | null) => {
     setError(null);
-    if (!archivo) return;
+    if (!archivos || archivos.length === 0) return;
 
-    // Validación en el front (UX inmediata) — el backend SIEMPRE revalida extensión,
-    // magic bytes y tamaño; esto no la reemplaza, la anticipa.
-    const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
-      setError(`Formato no permitido. Usa: ${EXTENSIONES_AUDIO_ORDENES.join(", ")}.`);
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
-    if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
-      setError(`El archivo excede el tamaño máximo permitido (${Math.round(AUDIO_ORDEN_MAX_BYTES / 1024 / 1024)} MB).`);
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
-
+    const errores: string[] = [];
     setSubiendo(true);
     try {
-      const dto = await subirAudioOrdenEstacionApi(ordenEstacionId, archivo);
-      onAudiosChange([...audios, ordenEstacionAudioFromApi(dto)]);
-    } catch (e) {
-      setError(e instanceof ApiRequestError ? e.message : "No se pudo subir el audio.");
+      let audiosActuales = audios;
+      for (const archivo of Array.from(archivos)) {
+        // Validación en el front (UX inmediata) — el backend SIEMPRE revalida extensión,
+        // magic bytes y tamaño; esto no la reemplaza, la anticipa.
+        const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
+        if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
+          errores.push(`${archivo.name}: formato no permitido (usa ${EXTENSIONES_AUDIO_ORDENES.join(", ")}).`);
+          continue;
+        }
+        if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
+          errores.push(
+            `${archivo.name}: excede el tamaño máximo permitido (${Math.round(AUDIO_ORDEN_MAX_BYTES / 1024 / 1024)} MB).`,
+          );
+          continue;
+        }
+        try {
+          const dto = await subirAudioOrdenEstacionApi(ordenEstacionId, archivo);
+          audiosActuales = [...audiosActuales, ordenEstacionAudioFromApi(dto)];
+          onAudiosChange(audiosActuales);
+        } catch (e) {
+          errores.push(`${archivo.name}: ${e instanceof ApiRequestError ? e.message : "no se pudo subir"}.`);
+        }
+      }
     } finally {
       setSubiendo(false);
       if (inputRef.current) inputRef.current.value = "";
     }
+    if (errores.length > 0) setError(errores.join(" "));
   };
 
   const onDescargar = async (audio: OrdenEstacionAudio) => {
@@ -92,7 +106,8 @@ export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }:
     <div className="form-card">
       <div className="form-card-title">Material a Transmitir</div>
       <div className="form-card-sub">
-        Audios que se van a transmitir. El primero de la lista es el que usan los días sin una asignación propia.
+        Audios que se van a transmitir. Cada spot de un día recibe su material por este orden de captura
+        (spot 1 → #1, spot 2 → #2…, repitiendo si hay menos materiales que spots).
       </div>
 
       {audios.length === 0 && (
@@ -102,8 +117,8 @@ export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }:
       )}
       {audios.map((audio, idx) => (
         <div key={audio.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span className={`badge ${idx === 0 ? "b-teal" : "b-gray"}`} style={{ fontSize: 10 }}>
-            {idx === 0 ? "Default" : `#${idx + 1}`}
+          <span className="badge b-gray" style={{ fontSize: 10 }}>
+            #{idx + 1}
           </span>
           <span style={{ flex: 1, fontSize: 13 }}>{audio.nombre_archivo}</span>
           <button type="button" className="btn btn-xs" onClick={() => void onDescargar(audio)}>
@@ -119,9 +134,10 @@ export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }:
         ref={inputRef}
         className="file-input"
         type="file"
+        multiple
         accept={AUDIO_ORDEN_ACCEPT}
         disabled={subiendo}
-        onChange={(e) => void onElegir(e.target.files?.[0])}
+        onChange={(e) => void onElegir(e.target.files)}
       />
       {subiendo && (
         <span className="fv muted" style={{ marginLeft: 8, fontSize: 11 }}>

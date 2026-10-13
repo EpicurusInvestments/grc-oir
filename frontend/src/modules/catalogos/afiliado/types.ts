@@ -13,9 +13,6 @@ export interface Afiliado extends CatalogoBase {
   nombre_afiliado: string;
   razon_social_afiliado: string;
   rfc_afiliado: string;
-  contacto_nombre: string | null;
-  contacto_email: string | null;
-  contacto_telefono: string | null;
   /** Derivado (solo lectura): nº de estaciones del afiliado. */
   estaciones_count: number;
 }
@@ -24,17 +21,14 @@ export interface AfiliadoCreate {
   nombre_afiliado: string;
   razon_social_afiliado: string;
   rfc_afiliado: string;
-  contacto_nombre?: string | null;
-  contacto_email?: string | null;
-  contacto_telefono?: string | null;
 }
 
 export type AfiliadoUpdate = Partial<AfiliadoCreate>;
 
 // ── ContactoAfiliado (anidado en Afiliado — entidad nueva, ADR-094) ───────────────
-// El Afiliado ya trae un solo contacto plano (`contacto_nombre`/`contacto_email`/
-// `contacto_telefono`, arriba) — queda como LEGADO, sin tocar. Este es el nuevo
-// "varios contactos", mismo patrón anidado que `ContactoAnunciante`/`ContactoAgencia`.
+// ADR-174: el contacto único legado (`contacto_nombre`/`contacto_email`/
+// `contacto_telefono`) se eliminó por completo. Este es el "varios contactos", mismo
+// patrón anidado que `ContactoAnunciante`/`ContactoAgencia`.
 export interface ContactoAfiliado extends CatalogoBase {
   contacto_afiliado_id: string;
   afiliado_id: string;

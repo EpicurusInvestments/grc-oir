@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionForm } from "../ordenEstacion/components/OrdenEstacionForm";
 import { OrdenesProvider } from "../state/OrdenesContext";
-import { estaciones, tarifas } from "../state/catalogosCache";
+import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE } from "./fixtures";
@@ -53,11 +53,44 @@ vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
   },
 }));
 
+// ADR-183: catálogo Constantes del Sistema (grupo MotivoCambio, clave CambioTarifa) para
+// el select de "Motivo del cambio de tarifa".
+vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
+  constanteApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { constante_sistema_id: "mc1", grupo: "MotivoCambio", clave: "CambioTarifa_1", descripcion: "Por oferta de la emisora", valor: null, activo: true },
+        { constante_sistema_id: "mc2", grupo: "MotivoCambio", clave: "CambioTarifa_2", descripcion: "Por incremento de tarifa", valor: null, activo: true },
+      ],
+      total: 2,
+      page: 1,
+      size: 100,
+      pages: 1,
+    }),
+  },
+}));
+
+// ADR-182: "an1" es el `anunciante_id` default de `makeOC()` (fixtures.ts) — se siembra
+// para probar que la tarjeta "Orden de Servicio de origen" muestra su nombre.
+anunciantes.push({
+  id: "an1",
+  agencia_id: null,
+  nombre_comercial: "Televisa Publicidad",
+  nombre_fiscal: "Televisa Publicidad SA de CV",
+  rfc_anunciante: "TPU900101XX1",
+  dias_credito_default: 30,
+  categoria_id: "",
+});
+
 // `es1` (plaza pl2): la estación que usan las pruebas de este archivo — el formulario la
 // resuelve contra `state/catalogosCache.ts`, que nace vacío.
-estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900 AM", tipo_senal: "am" });
+// ADR-191: `frecuencia` ya NO lleva el tipo de señal embebido como texto libre (el
+// catálogo real lo captura aparte, en `tipo_senal`) — el selector de Orden de
+// Transmisión arma "Siglas Frecuencia TIPO Plaza Nombre" concatenando ambos campos por
+// separado; con `frecuencia: "900 AM"` (viejo) saldría "900 AM AM" duplicado.
+estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900", tipo_senal: "am" });
 // Fix: una estación dada de baja no debe aparecer en el select de "Estación".
-estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1 FM", tipo_senal: "fm", activo: false });
+estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1", tipo_senal: "fm", activo: false });
 
 function renderForm(
   opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[]; oe?: Partial<OrdenEstacion> } = {},
@@ -103,6 +136,42 @@ async function agregarDia(container: HTMLElement, spots: number) {
   const ultimo = spotsInputs[spotsInputs.length - 1] as HTMLInputElement;
   fireEvent.change(ultimo, { target: { value: String(spots) } });
 }
+
+describe("ADR-182: la tarjeta 'Orden de Servicio de origen' muestra el Anunciante heredado", () => {
+  it("muestra el nombre comercial del anunciante de la OC junto al folio", () => {
+    renderForm({ oc: { anunciante_id: "an1" } });
+    expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+  });
+
+  it("si el anunciante no está en el catálogo cargado, muestra un guion en vez de romperse", () => {
+    renderForm({ oc: { anunciante_id: "an-no-existe" } });
+    const card = screen.getByText("Orden de Servicio de origen").closest(".form-card") as HTMLElement;
+    expect(within(card).getByText("—")).toBeInTheDocument();
+  });
+
+  it("fix: en el alta SUELTA (sin ocIdFijo), al elegir una OC del selector también aparece el Anunciante", () => {
+    const oc = makeOC({ anunciante_id: "an1" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <OrdenesProvider
+          initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}
+        >
+          <OrdenEstacionForm onGuardar={vi.fn()} onCancelar={vi.fn()} />
+        </OrdenesProvider>
+      </QueryClientProvider>,
+    );
+
+    // Antes de elegir una OC, sin Anunciante que mostrar.
+    expect(screen.queryByText("Televisa Publicidad")).toBeNull();
+
+    const combo = fieldByLabelText<HTMLInputElement>(container, "Orden de Servicio de origen");
+    fireEvent.focus(combo);
+    fireEvent.mouseDown(screen.getByText(`${oc.folio_orden} — ${oc.numero_orden_cliente}`));
+
+    expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+  });
+});
 
 describe("Balance de spots en vivo — 1.2", () => {
   it("agregar días refleja 'faltan N por asignar', luego 100%, luego sobre-asignación", async () => {
@@ -288,6 +357,7 @@ describe("Spots bonificables de la OI (ADR-068)", () => {
 // tarifa sembrada) para no interferir con ellas.
 tarifas.push({
   id: "ta-am-60-spot",
+  anunciante_id: "an1",
   estacion_id: "es1",
   duracion_spot: "60s",
   producto: "spot",
@@ -299,6 +369,7 @@ tarifas.push({
 // confirmar que la sugerencia de tarifa del catálogo sigue funcionando igual.
 tarifas.push({
   id: "ta-am-15-jingle",
+  anunciante_id: "an1",
   estacion_id: "es1",
   duracion_spot: "15",
   producto: "Jingle promocional",
@@ -317,7 +388,8 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
 
-    // La tarifa se autocarga a 1000 (coincide con `ta-am-30-spot`) — no aparece "Motivo".
+    // La tarifa se autocarga a 1000 (coincide con `ta-am-30-spot`) — no hay divergencia,
+    // así que el campo "Motivo" ni siquiera se muestra (ADR-183b).
     expect(screen.getByText(/Tarifa del catálogo: \$1,000\.00/)).toBeInTheDocument();
     expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
 
@@ -340,20 +412,51 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1500" } });
     await agregarDia(container, 10);
 
-    expect(screen.getByText("Motivo del cambio de tarifa")).toBeInTheDocument();
     expect(
       screen.getByText(/El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio\./),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeDisabled();
 
-    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa"), {
-      target: { value: "Negociación especial con el afiliado" },
-    });
+    // ADR-183/183b: "Motivo del cambio de tarifa" es un select con las Descripciones
+    // del catálogo MotivoCambio/CambioTarifa — se espera a que cargue (mock); se MUESTRA
+    // (siempre habilitado) porque lo último que se tocó fue la tarifa misma.
+    await screen.findByText("Por oferta de la emisora");
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    expect(motivoSelect).toBeEnabled();
+    fireEvent.change(motivoSelect, { target: { value: "Por incremento de tarifa" } });
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
     const [, input] = onGuardar.mock.calls[0];
-    expect(input.motivo_cambio_tarifa).toBe("Negociación especial con el afiliado");
+    expect(input.motivo_cambio_tarifa).toBe("Por incremento de tarifa");
+  });
+
+  it("ADR-183b (petición del usuario): tocar Spots bonificables DESPUÉS de divergir la tarifa oculta el motivo y ya no lo exige", async () => {
+    const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() =>
+      expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
+    );
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Producto"), { target: { value: "spot" } });
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "60s" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1500" } });
+    await screen.findByText("Motivo del cambio de tarifa");
+
+    // Toca "Spots bonificables del afiliado" después de divergir — el precio SIGUE
+    // siendo 1500 (sigue divergiendo numéricamente), pero el motivo ya no es lo último
+    // que se tocó: el campo debe ocultarse y dejar de bloquear Guardar.
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables del afiliado"), {
+      target: { value: "5" },
+    });
+    expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
+
+    await agregarDia(container, 10);
+    expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.precio_spot).toBe(1500);
+    expect(input.motivo_cambio_tarifa).toBeUndefined();
   });
 
   it("ADR-115 (fix): al cambiar a una duración SIN tarifa en el catálogo, el campo se limpia para capturarla a mano", async () => {
@@ -424,7 +527,7 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     });
 
     // El precio (1500) ya diverge de la tarifa del catálogo (1000), pero no se tocó en
-    // esta edición — no debe aparecer el campo de motivo ni bloquear Guardar por eso.
+    // esta edición — no debe aparecer el campo de motivo (ADR-183b) ni bloquear Guardar.
     expect(screen.getByText(/Tarifa del catálogo: \$1,000\.00/)).toBeInTheDocument();
     expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeEnabled();
@@ -443,16 +546,16 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "1600" } });
 
-    expect(screen.getByText("Motivo del cambio de tarifa")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
 
-    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa"), {
-      target: { value: "Segundo ajuste" },
-    });
+    await screen.findByText("Por oferta de la emisora");
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    expect(motivoSelect).toBeEnabled();
+    fireEvent.change(motivoSelect, { target: { value: "Por oferta de la emisora" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     const [, input] = onGuardar.mock.calls[0];
     expect(input.precio_spot).toBe(1600);
-    expect(input.motivo_cambio_tarifa).toBe("Segundo ajuste");
+    expect(input.motivo_cambio_tarifa).toBe("Por oferta de la emisora");
   });
 
   it("ADR-169: producto con solo 'sin resultado' en el catálogo deja Duración deshabilitada, pero SÍ permite capturar tarifa y guardar", async () => {
@@ -586,7 +689,7 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     elegirArchivo(container);
 
     await waitFor(() => expect(screen.getByText("uno.mp3")).toBeInTheDocument());
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("#1")).toBeInTheDocument();
 
     // También aparece como material por default en la tabla de días (aunque el día
     // todavía no tenga `orden_estacion_dia_id` real).
@@ -626,7 +729,7 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     expect(screen.getByText("Sin audios elegidos todavía.")).toBeInTheDocument();
   });
 
-  it("ADR-111: con 2+ audios subidos, 'Sustitución de Material' permite elegir otro para un día ya generado", async () => {
+  it("ADR-111/ADR-187: con 2+ audios subidos, un día de 1 solo renglón (sin rango) asigna por posición y permite reasignar a otro material", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
     elegirArchivo(container, "uno.mp3");
@@ -643,13 +746,18 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
     await agregarDia(container, 50);
 
-    // Por default se pinta el primero subido (aparece tanto en la lista de audios como
-    // en la tabla de días).
+    // "+ Agregar día" genera UN solo renglón (sin rango, `hora_inicio === hora_termino`)
+    // con `spots_diarios = 50` — por dentro sigue siendo 1 sola fila real, así que solo
+    // puede llevar 1 material (el tope del multi-select es `grupo.filas.length`, no los
+    // spots): le toca el primero por posición (ADR-187).
     expect(screen.getAllByText("uno.mp3").length).toBeGreaterThanOrEqual(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Sustitución de Material" }));
-    const selectSustitucion = container.querySelector("table.cat-table select") as HTMLSelectElement;
-    fireEvent.change(selectSustitucion, { target: { value: "orden_estacion/audios/abc_dos.wav" } });
+    // Para reasignar: abrir el panel, desmarcar "uno.mp3" (ya está al tope de 1) y
+    // marcar "dos.wav".
+    const tabla = container.querySelector("table.cat-table") as HTMLElement;
+    fireEvent.click(within(tabla).getByRole("button", { name: "uno.mp3" }));
+    fireEvent.click(within(tabla).getByLabelText("uno.mp3"));
+    fireEvent.click(within(tabla).getByLabelText("dos.wav"));
 
     await waitFor(() => expect(screen.queryByText("Sin audios elegidos todavía.")).toBeNull());
     expect(screen.getAllByText("dos.wav").length).toBeGreaterThanOrEqual(2);
@@ -743,9 +851,28 @@ describe("Fix: estaciones inactivas no aparecen en el select", () => {
   it("la estación activa aparece en el select, la dada de baja no", async () => {
     const { container } = renderForm({ oc: { total_spots: 120 } });
     const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
-    // ADR-136: el combo muestra "Estación-Siglas-Frecuencia" — sin siglas capturadas
-    // en el fixture, cae al guion.
-    expect(within(select).getByText("XEW-AM-—-900 AM")).toBeInTheDocument();
+    // ADR-191: el combo muestra "Siglas Frecuencia TIPO Plaza Nombre" — sin siglas
+    // capturadas ni plaza registrada en este fixture (`findPlaza("pl2")` no existe en
+    // esta suite), ambas partes se OMITEN (no un "—" ni un espacio de más).
+    expect(within(select).getByText("900 AM XEW-AM")).toBeInTheDocument();
     expect(within(select).queryByText(/XEW-FM \(baja\)/)).toBeNull();
+  });
+});
+
+describe("ADR-191 (petición del usuario): el combo de Estación muestra 'Siglas Frecuencia TIPO Nombre' (sin Plaza)", () => {
+  it("con todos los datos capturados (siglas), arma las 4 partes en ese orden, separadas por un solo espacio", async () => {
+    estaciones.push({
+      id: "es-completa",
+      afiliado_id: "af1",
+      plaza_id: "pl2",
+      nombre_estacion: "Multimedios Estrellas de Oro",
+      siglas: "XHMT",
+      frecuencia: "90.1",
+      tipo_senal: "fm",
+    });
+
+    const { container } = renderForm({ oc: { total_spots: 120 } });
+    const select = fieldByLabelText<HTMLSelectElement>(container, "Estación");
+    expect(within(select).getByText("XHMT 90.1 FM Multimedios Estrellas de Oro")).toBeInTheDocument();
   });
 });

@@ -78,12 +78,17 @@ const CAMPOS_ACTUALIZABLES = [
   "observaciones_libres",
 ] as const satisfies readonly (keyof OrdenCliente)[];
 
-export function ordenClienteUpdateToApi(patch: Partial<OrdenCliente>): Record<string, unknown> {
+export function ordenClienteUpdateToApi(
+  patch: Partial<OrdenCliente> & { motivo_cambio_fecha?: string },
+): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const campo of CAMPOS_ACTUALIZABLES) {
     if (campo in patch) body[campo] = patch[campo];
   }
   if ("odc_pdf_ref" in patch) body.archivo_orden_original_path = patch.odc_pdf_ref;
+  // ADR-180: transitorio — el backend solo lo exige si fecha_inicio/fin_campania
+  // de verdad cambiaron respecto al valor guardado.
+  if ("motivo_cambio_fecha" in patch) body.motivo_cambio_fecha = patch.motivo_cambio_fecha || null;
   return body;
 }
 
@@ -156,6 +161,9 @@ export function realesToApi(input: AvanzarARealesInput) {
     dias: input.horariosReales.map((row) => ({
       orden_estacion_dia_id: row.orden_estacion_dia_id,
       spots_verificados: row.spots_diarios,
+      // ADR-174b: hora real reportada por el layout, si difiere de la programada — el
+      // backend genera la Incidencia de cambio de horario cuando corresponde.
+      hora_real: row.hora_real ?? null,
     })),
     // ADR-149: días propuestos por el layout que no existían — el backend los crea
     // (spots_solicitados = spots_asignados = spots_verificados = spots) solo aquí, al

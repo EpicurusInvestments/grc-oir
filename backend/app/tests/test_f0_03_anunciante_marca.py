@@ -208,7 +208,7 @@ def test_editar_dias_credito_no_admin_rechazado(anunciante_svc: AnuncianteServic
 
 def test_editar_no_sensible_no_audita(anunciante_svc: AnuncianteService, db: Session) -> None:
     a = _anunciante(anunciante_svc, dias=30)
-    anunciante_svc.update(a.anunciante_id, AnuncianteUpdate(contacto_nombre="Nueva"), ADMIN)
+    anunciante_svc.update(a.anunciante_id, AnuncianteUpdate(referencia_anunciante="Nueva"), ADMIN)
     assert len(_logs(db, "dias_credito_default")) == 1  # solo el del alta
 
 

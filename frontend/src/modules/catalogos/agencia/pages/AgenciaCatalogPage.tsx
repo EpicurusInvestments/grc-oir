@@ -8,15 +8,22 @@
  * baja con anunciantes activos pide confirmación y reintenta con `forzar`. Errores de
  * negocio (409 nombre, 422 RFC) → form.
  *
- * "Contacto" (`contacto_nombre`/`contacto_email`/`contacto_telefono`) es el único
- * contacto plano de la spec original — queda como LEGADO, de solo lectura (ya no se
- * captura desde el formulario). "Contactos" es la lista nueva (varios).
+ * ADR-174 (petición del usuario, reporte de bug): el contacto único legado
+ * (`contacto_nombre`/`contacto_email`/`contacto_telefono`, el único contacto plano de la
+ * spec original, ADR-091) se ELIMINÓ POR COMPLETO — convivía de forma confusa junto a
+ * la sección "Contactos" nueva. Se quitó del detalle Y de la columna "Contacto" de la
+ * lista (antes `contacto_nombre`).
+ *
+ * ADR-175 (petición del usuario): domicilio ESTRUCTURADO (mismo mecanismo que ADR-059
+ * en Anunciante) — se muestra en el detalle con `formatDomicilio` (función compartida,
+ * sin cambios).
  */
 
 import { useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { currentUser } from "@/shared/lib/currentUser";
+import { formatDomicilio } from "@/shared/lib/formatDomicilio";
 import type { ListParams } from "@/shared/types";
 import {
   CatalogToolbar,
@@ -179,6 +186,16 @@ export function AgenciaCatalogPage() {
         defaultValues={{
           nombre_agencia: selected.nombre_agencia,
           rfc_agencia: selected.rfc_agencia,
+          calle: selected.calle ?? "",
+          numero_exterior: selected.numero_exterior ?? "",
+          numero_interior: selected.numero_interior ?? "",
+          colonia: selected.colonia ?? "",
+          localidad: selected.localidad ?? "",
+          referencia_domicilio: selected.referencia_domicilio ?? "",
+          municipio: selected.municipio ?? "",
+          estado: selected.estado ?? "",
+          pais: selected.pais ?? "MEX",
+          codigo_postal: selected.codigo_postal ?? "",
           regimen_fiscal: selected.regimen_fiscal ?? "",
           porcentaje_comision_agencia_default: selected.porcentaje_comision_agencia_default,
         }}
@@ -219,27 +236,17 @@ export function AgenciaCatalogPage() {
           <div className="fl">Régimen fiscal (como receptora)</div>
           <div className="fv mono">{oGuion(selected.regimen_fiscal)}</div>
 
+          <div className="sec">Domicilio</div>
+          <div className="fv">{formatDomicilio(selected) ?? "—"}</div>
+
           <div className="sec">Comisión</div>
           <div className="fl">
             % comisión por defecto <FieldTag origin="audit" />
           </div>
           <div className="fv mono">{selected.porcentaje_comision_agencia_default}%</div>
 
-          {(selected.contacto_nombre || selected.contacto_email || selected.contacto_telefono) && (
-            <>
-              <div className="sec">
-                Contacto <FieldTag origin="derivado" text="Legado" />
-              </div>
-              <div className="fl">Nombre</div>
-              <div className="fv">{oGuion(selected.contacto_nombre)}</div>
-              <div className="fl">Correo</div>
-              <div className="fv link">{oGuion(selected.contacto_email)}</div>
-              <div className="fl">Teléfono</div>
-              <div className="fv">{oGuion(selected.contacto_telefono)}</div>
-            </>
-          )}
-
-          {/* ── Contactos anidados (entidad nueva, reemplaza al contacto único de arriba) ── */}
+          {/* ── Contactos anidados (entidad nueva, ADR-174: reemplaza por completo al
+              contacto único legado — ya no se muestra, ver docstring arriba) ── */}
           <ContactosSection
             agenciaId={selected.agencia_id}
             canWrite={canWrite}
@@ -315,7 +322,6 @@ export function AgenciaCatalogPage() {
           <tr>
             <th>Agencia</th>
             <th style={{ width: 120 }}>RFC</th>
-            <th>Contacto</th>
             <th className="td-center" style={{ width: 90 }}>
               % comisión
             </th>
@@ -336,7 +342,6 @@ export function AgenciaCatalogPage() {
             >
               <td className="td-main">{a.nombre_agencia}</td>
               <td className="td-mono">{a.rfc_agencia}</td>
-              <td className="td-2">{oGuion(a.contacto_nombre)}</td>
               <td className="td-center td-2">{a.porcentaje_comision_agencia_default}%</td>
               <td className="td-center td-2">{a.anunciantes_count}</td>
               <td className="td-center">

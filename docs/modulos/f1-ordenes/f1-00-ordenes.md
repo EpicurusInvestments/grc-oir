@@ -135,6 +135,31 @@ en el catálogo). El usuario sigue pudiendo cambiar cualquiera de los dos; si la
 combinación precargada tiene tarifa sembrada, se autocarga sola igual que si se
 eligieran a mano. Nada más de la pantalla cambia — es solo el valor inicial.
 
+**ADR-182 (petición del usuario):** la tarjeta "Orden de Servicio de origen" de
+`OrdenEstacionForm.tsx` muestra también el nombre comercial del Anunciante heredado
+(`findAnunciante(oc.anunciante_id)`, "—" si no está en el catálogo cargado) — puramente
+informativo, de solo lectura. Se muestra en cuanto `oc` resuelve, tanto si la OE llega ya
+amarrada a su OC (`ocIdFijo`/edición) como si se elige a mano en el alta suelta (bug real
+de la primera versión, que solo lo mostraba en el primer caso — corregido el mismo día).
+
+**ADR-183 (petición del usuario):** `motivo_cambio_tarifa` (ver párrafo de ADR-102/106
+arriba) deja de capturarse en texto libre y pasa a un select con las Descripciones del
+catálogo Constantes del Sistema, grupo `MotivoCambio`, clave `CambioTarifa`/
+`CambioTarifa_N` — el MISMO catálogo que ya usa Tarifa (F0-02, ADR-179). Cae a texto
+libre si el catálogo no tiene opciones activas.
+
+**ADR-183b (petición del usuario, mismo día, corrige el criterio de visibilidad de
+ADR-183):** a diferencia de Tarifa/Orden de Servicio (donde el campo queda SIEMPRE
+visible, solo deshabilitado), aquí el bloque se OCULTA por completo salvo que lo ÚLTIMO
+que el usuario tocó haya sido la tarifa misma Y de verdad diverja —
+`tarifaEsUltimoCampoTocado`, en `false` por defecto y puesto en `true` solo por el
+`onChange` del input de tarifa; tocar después Estación, Producto, Duración o Spots
+bonificables lo vuelve a poner en `false` (oculta el bloque de nuevo). La obligatoriedad
+de capturar el motivo (y lo que se manda al backend) sigue EXACTAMENTE la misma
+condición que la visibilidad (`requiereMotivoTarifa`) — para no dejar un candado
+invisible: si el usuario toca otro de esos campos después de divergir, ESE guardado ya
+no exige ni audita motivo, aunque el precio siga siendo distinto al de catálogo.
+
 **"Material a Transmitir" — `OrdenEstacionAudio`** (ADR-103, Fase 3 del rediseño): tabla
 hija NUEVA, fuera de la spec BD v2 — uno o más audios por OE, subidos vía endpoints
 dedicados (`POST`/`GET`/`DELETE /ordenes/estaciones/{id}/audios`), NO por el
@@ -222,6 +247,42 @@ pisaba al primero. Corregido en el mismo cambio: `avanzar_programados`/`avanzar_
 (backend) y `selectors.ts`/`RealesForm.tsx` (frontend) ahora matchean por
 `orden_estacion_dia_id`.
 
+**ADR-184/185 (petición del usuario) — "Hora Inicio"/"Hora Fin" vuelven a ser un RANGO
+real, y "Datos de la Orden de Transmisión" agrupa visualmente por fecha (sin tocar
+Reales/backend/layout):** ADR-184 cambió el generador por calendario para pedir un rango
+real (`horaInicio`/`horaFin`) en vez de un solo punto (revierte ADR-108) — "Spots por
+día" = N **sigue generando N filas reales** (1 spot c/u, sin cambio de ADR-127), ahora
+repartidas dentro de ese rango con `repartirHoras` (`intervalo = (hora_fin − hora_inicio)
+/ N`) en vez del incremento de 1 minuto. ADR-185 resuelve dónde se VEN esas N filas:
+**`PeriodoTransmisionGrid.tsx`** agrupa todas las filas reales de una misma fecha en **UN
+solo renglón visible** (Hora Inicio = la más temprana, Hora Fin = la más tardía, Spots =
+la suma) — por dentro siguen existiendo N filas reales independientes, cada una con su
+propio `orden_estacion_dia_id`. Editar Hora Inicio/Hora Fin del renglón regenera esas N
+filas con `repartirHoras`; editar Spots hace lo mismo SOLO si hay un rango real
+capturado (Hora Inicio ≠ Hora Fin) — si Hora Inicio === Hora Fin (el default histórico de
+"+ Agregar día"), el cambio de Spots no reparte: solo actualiza `spots_diarios` en el
+renglón existente, conservando su id, igual que siempre. "Material a Transmitir" y
+"Cancelar transmisión" ahora aplican a todo el grupo de la fecha a la vez (antes, por
+fila individual) — simplificación de UX explícita, no pedida palabra por palabra.
+**Reales (`RealesForm.tsx`), el layout CSV y el backend NO se tocan** — ambos ya
+consumían `periodo_transmision`/`Verificacion` como 1 fila/1 registro por
+`orden_estacion_dia_id` real (confirmado leyendo el código: `Verificacion` tiene
+`UniqueConstraint("orden_estacion_dia_id")`, 1:1 real con `OrdenEstacionDia`), así que
+"los mismos registros de siempre" se cumple sin cambios ahí. Ver ADR-185 en
+`docs/arquitectura.md` para el detalle completo, incluidos los 2 intentos previos
+descartados.
+
+**ADR-186 (corrige un bug real de ADR-185):** el renglón agrupado mostraba, como "Hora
+Fin", el ÚLTIMO PUNTO del reparto (p.ej. 08:13 p.m. con 5 spots en 09:05 a.m.–11:00 p.m.),
+no el fin de rango que el usuario capturó. Causa: `repartirHoras` colapsaba
+`hora_termino` al mismo punto que `hora_inicio` en cada fila repartida. Fix: todas las
+filas de un reparto ahora comparten `hora_termino = horaFin` (el fin de rango capturado),
+y solo varía `hora_inicio` entre ellas — así, al agrupar por fecha (mínimo de
+`hora_inicio`, máximo de `hora_termino`), se recupera EXACTO el rango tecleado, tanto
+recién generado como al reabrir una orden ya guardada para editar. También se le dio
+estilo de tarjeta al calendario (`.rdp-wrapper` en `theme.css`: fondo, borde, radio y
+acento teal de F1, en vez de un `margin: 1px` casi invisible).
+
 **Subida de "Material a Transmitir" DURANTE el alta, y obligatoria para el calendario**
 (ADR-109 + ADR-110, correcciones sobre la Fase 4): antes, subir un audio requería que la
 OE ya existiera (`orden_estacion_id` real). Ahora, al dar de alta, cada archivo elegido
@@ -248,6 +309,130 @@ sustitución de un día YA guardado sigue siendo, sin cambio, el endpoint dedica
 inmediato (`onAsignarAudio`); un día nuevo sin guardar en edición NO tiene forma de
 llevarse un override de audio a "Guardar" todavía (limitación conocida, fuera de
 alcance de este ADR).
+
+**ADR-187 (petición del usuario) — 1 material por SPOT, ya no 1 default compartido:**
+"Material a Transmitir" deja de tener un solo default (`audios[0]`) para todos los días —
+cada spot (cada fila real `OrdenEstacionDia`, que post-ADR-127/185 ya es 1 por spot)
+recibe su propio material por POSICIÓN, en el orden de captura de los audios (spot 1 →
+#1, spot 2 → #2…, repitiendo cíclicamente si hay menos materiales que spots). Sin cambios
+de backend/esquema: cada fila YA tenía su propio `orden_estacion_audio_id`, lo único
+nuevo es el algoritmo de asignación (`asignarPorPosicion`, `CalendarioPeriodoTransmision.tsx`)
+y que se escribe de inmediato al crear la fila (generador o "+ Agregar día"), en vez de
+quedar en blanco esperando el fallback de un solo default. La columna de la grid pasa de
+"1 nombre + botón 🔄" a un multi-select de CASILLAS (`CheckboxMultiSelect`, nuevo en
+`shared/ui/` — campo cerrado con el resumen de lo elegido; al abrir, buscador +
+"[Selecciona todos]" + lista con un checkbox por opción) por fecha: muestra los
+materiales ya asignados a esa fecha y reparte cualquier cambio 1 a 1 sobre sus filas
+reales, validando que no excedan los spots de ese renglón (las opciones de más se
+deshabilitan, no desaparecen). Importante: un día con 1 sola fila real (capturado sin rango, "+ Agregar día" con
+`spots_diarios` grande) solo puede llevar 1 material — el tope es cuántas filas reales
+tiene el grupo, no el conteo de spots capturado; varios materiales distintos en un mismo
+día requieren que ese día tenga varias filas reales de verdad (rango real + 2+ spots).
+
+**ADR-188 (petición del usuario) — una fecha puede repetirse en el calendario:** antes,
+una fecha que ya tenía filas salía deshabilitada en el `DayPicker` y se descartaba en
+silencio al generar; el usuario confirmó que sí puede querer capturar más spots para un
+día ya existente (p.ej. una segunda tanda más tarde). Se quitó el bloqueo — gracias al
+agrupado por fecha (ADR-185), generar filas de más para una fecha existente se ve
+automáticamente como "sumar spots al mismo renglón", sin ninguna lógica de fusión
+aparte. Único cuidado: los horarios nuevos no deben chocar con `hora_inicio` de las
+filas ya existentes de esa fecha — se corren +1 minuto hasta encontrar uno libre (mismo
+criterio que "+ Agregar día", ADR-134); si la fila es un PUNTO (1 spot, Hora inicio =
+Hora fin), se corren ambos campos juntos para no violar el CHECK `hora_fin >=
+hora_inicio`.
+
+**ADR-189 (corrige un bug real) — el tope de "Material a Transmitir" es los SPOTS, no
+cuántas filas reales existen:** un día sin rango ("+ Agregar día") se queda como 1 sola
+fila real aunque sus spots sean varios — el usuario reportó que, con 2 spots así, el
+multi-select solo dejaba elegir 1 material. El tope (`maxSelected`) pasa a ser
+`grupo.spots`; si el usuario elige más materiales distintos de los que hay filas, el
+grupo se EXPANDE a `grupo.spots` filas (mismo efecto que editar Hora Inicio/Hora
+Fin/Spots, pierden su `orden_estacion_dia_id`) — con un rango real reparte con
+`repartirHoras`; sin rango, con la función nueva `dividirPuntoEnFilas` (separa 1 minuto
+por fila, criterio histórico de ADR-127, solo para que cada una tenga su propio
+`hora_inicio`).
+
+**ADR-190 (corrige un bug real) — `repartirHoras` ya no genera `hora_inicio`
+repetidos:** reportado en vivo como "Network Error" al guardar — el log del backend
+mostró `UNIQUE constraint failed` con 2 filas de la misma fecha insertándose con el
+mismo `hora_inicio`. Causa: tras expandir un día por ADR-189, el grupo deja de ser un
+"punto" (Hora Inicio ≠ Hora Fin por 1 minuto); seguir editando materiales llamaba a
+`repartirHoras` con ese rango angosto (1 minuto) para varios spots — el redondeo
+(`Math.round`) colapsaba varias posiciones en el mismo minuto. Fix: `repartirHoras`
+ahora corre cada punto que choca +1 minuto hasta encontrar uno libre (igual que
+`agregarFila`/`generar()`); si eso empuja algún punto más allá del fin capturado, el fin
+efectivo de TODAS las filas del reparto se extiende para seguir cumpliendo `hora_fin >=
+hora_inicio`.
+
+**ADR-191 (petición del usuario) — el combo de "Estación" muestra "Siglas Frecuencia
+TIPO Nombre" (revierte ADR-136, sin Plaza):** antes armaba
+`{nombre_estacion}-{siglas}-{frecuencia}` (guiones, 3 partes). Ahora cada `<option>`
+concatena `[siglas, frecuencia, tipo_senal.toUpperCase(), nombre_estacion]`, filtrando
+partes vacías y uniendo con un solo espacio — ej. "XHMT 90.1 FM Multimedios Estrellas de
+Oro". Cambio 100% de presentación, un solo `<select>` afectado; la Plaza sigue viéndose
+sin cambio en "Datos heredados de la estación", debajo del selector.
+
+**ADR-192 (petición del usuario) — los 3 PDFs de OrdenEstacion vuelven a mostrar Hora
+Inicio Y Hora Fin (revierte ADR-118/155/156):** esos ADRs habían consolidado el horario
+a un solo valor en `orden_estacion_pdf.py`, asumiendo que `hora_inicio == hora_fin`
+siempre (supuesto que venía de ADR-108) — supuesto inválido desde ADR-184 en adelante
+(la captura web volvió a un rango real), y nadie actualizó el backend. Fix: PDF Servicio
+vuelve a 2 columnas "Hora Inicio"/"Hora Fin" en la tabla de días; PDF Programados vuelve
+a mostrar el rango completo en el texto "Horario: … A …"; PDF Reales vuelve a mostrar
+"inicio - fin" en la columna "HORA". No hay PDF de Orden de Servicio separado para la OC
+— el único existente es el de la OE, corregido aquí.
+
+**ADR-193 (petición del usuario) — los 3 PDFs agregan "Marca" y "Producto" (catálogo
+F0-06); "Producto" se relabeled a "Campaña":** auditoría previa encontró que "Marca" no
+se cargaba ni se mostraba en ningún PDF, y que lo etiquetado como "Producto"/"CAMPAÑA"
+era en realidad `oc.producto` (texto libre, la Campaña) — el Producto de verdad
+(`oe.producto_tarifa`, conectado al catálogo F0-06 por ADR-166/169) no aparecía en
+ninguno. Fix: `_cargar_contexto` carga `Marca` (vía `oc.marca_id`); los 3 PDFs muestran
+"Marca", "Campaña" (`oc.producto`, renombrado) y "Producto" (`oe.producto_tarifa`) como 3
+campos distintos. Categoría/Contrato quedaron fuera de este cambio (decisión explícita
+del usuario) — ninguno de los dos se carga todavía en el contexto de los PDFs.
+
+**ADR-194 (petición del usuario) — PDF de Reales: los valores después de los ":" ya no
+van en negritas:** `_campo_negrita`/`_campo_negrita_der` (exclusivas de
+`generar_pdf_reales`) envolvían etiqueta Y valor en `<b>` — ahora solo la etiqueta. Los
+PDFs de Servicio y Programados ya mostraban el valor sin negritas, sin cambio.
+
+**ADR-195 (petición del usuario) — "Orden de Servicio de origen" pone el Anunciante
+heredado del lado derecho:** en `OrdenEstacionForm.tsx`, el folio/selector de la OC y el
+bloque de Anunciante (heredado, ADR-182) se envuelven en un `.r2` (grid de 2 columnas) en
+vez de ir apilados — cambio 100% de layout. Ajuste el mismo día (*"pégalo más a la
+derecha"*): se reemplaza por `display: flex; justifyContent: space-between`, que empuja
+el Anunciante al borde derecho real de la tarjeta en vez de dejarlo a medio camino.
+Segundo ajuste, mismo día (*"hazlo del doble o triple de largo sin afectar al
+anunciante"*): el selector de la izquierda quedaba angosto con `space-between` — pasa a
+`flexGrow: 1` (toma todo el espacio sobrante) y el Anunciante a `flexShrink: 0` (ancho
+fijo, mismo borde derecho de antes).
+
+**ADR-196 (petición del usuario, corrige un bug real) — el detalle de OE y los PDFs de
+Servicio/Programados vuelven a agrupar el período de transmisión por fecha (Reales, sin
+cambio):** desde ADR-185, SOLO la grid de captura (`PeriodoTransmisionGrid.tsx`) agrupaba
+visualmente las N filas reales de una fecha (1 por spot, ADR-127) en un renglón — el
+detalle (`OrdenEstacionDetailPanel.tsx`) y los PDFs de Servicio/Programados seguían
+mostrando 1 renglón por spot. Fix: `agruparPorFecha`/`GrupoFecha` se exportan y el
+detalle los reusa; el backend agrega `_agrupar_dias_por_fecha` (mismo criterio) para las
+tablas de Servicio y Programados — "Total de Spots"/"Total de Días" también se recalculan
+desde los grupos. De paso se corrige `_nombre_material` (seguía con el criterio VIEJO de
+ADR-107, nunca actualizado a ADR-187: ya no hay default compartido, regresa `None` sin
+override propio) y se agrega `_materiales_grupo`: la columna "Material a Transmitir" de
+Programados lista TODOS los materiales distintos del día, separados por coma (antes solo
+1). El PDF de Reales, además, revierte el rango `inicio - fin` que ADR-192 le había
+puesto en la columna "HORA" — vuelve a ser un solo horario (`hora_inicio`), ya que
+`hora_fin` es el fin de rango COMPARTIDO del día (ADR-186), no algo propio del spot de
+ese renglón. "Capturar reales" (pantalla y PDF) sigue sin agruparse, a propósito.
+
+**ADR-197 (petición del usuario) — "Material a Transmitir" permite elegir varios audios
+de un jalón:** el `<input type="file">` no tenía `multiple` — el selector de Windows solo
+dejaba marcar uno por apertura. Se agrega `multiple` en los 2 lugares donde existe esta
+captura (`MaterialATransmitir.tsx` en edición, la sección de alta en
+`OrdenEstacionForm.tsx`); el handler sube cada archivo EN SECUENCIA (no en paralelo) para
+no alterar el orden que define la posición de cada spot (ADR-187); un archivo inválido o
+que falla no detiene a los demás, los errores se acumulan en un solo mensaje. Sin cambios
+de backend (el endpoint de subida ya aceptaba llamadas repetidas).
 
 **Envío de los PDFs por correo — `LogEnvioCorreoOrdenEstacion`** (ADR-105, Fase 5 del
 rediseño): tabla nueva, fuera de la spec BD v2 — bitácora de cada intento de envío
@@ -421,7 +606,9 @@ fecha+hora que NO existe entre los días de esta OE ya NO es un error — se ofr
 crear la OE (ADR-127: una hora distinta, aunque sea por 1 minuto, es un registro
 distinto). El día nuevo nace con `spots_asignados = spots_solicitados =
 spots_verificados` = la suma de `Spots` del CSV (confirmado con el usuario) — por
-construcción nunca genera `Incidencia` (verificado == programado). Solo se crea de
+construcción nunca genera `Incidencia` (verificado == programado). **Superado por
+ADR-174b:** ahora nace con `spots_programados = 0` y SIEMPRE genera su `Incidencia` de
+bonificación. Solo se crea de
 verdad al "Avanzar a 2.3" (`POST .../reales`, body `dias_nuevos`), validando lo mismo
 que un día nuevo al crear/editar la OE: rango de campaña de la OC, que no exista ya un
 día con esa fecha+hora, y el balance de spots de TODA la OC. Una fecha+hora nueva cuya
@@ -469,7 +656,8 @@ carga del layout ahora CONCILIA de verdad contra lo programado, de los 4 casos q
 pidió el usuario: (1) diferencia en spots en un día que coincide → ya marcaba
 bonif./desc. correctamente (sin cambios); (2) diferencia de hora → el usuario
 confirmó NO intentar adivinar un match por solo fecha (se resuelve con los otros 2
-casos: el horario viejo queda como faltante, el nuevo como "Nuevo"); (3) registros
+casos: el horario viejo queda como faltante, el nuevo como "Nuevo") — **revertido por
+ADR-174b**, ver abajo; (3) registros
 adicionales → ya se marcaban "Nuevo" (sin cambios); (4) **registros faltantes**
 (un día ya programado que el CSV no menciona) — antes desaparecía de la tabla
 (ADR-151); ahora `_parsear_layout_reales_csv()` lo agrega a `aplicados` con `spots=0`
@@ -478,14 +666,30 @@ tabla con su descuento y genera su `Incidencia` normal al avanzar. Un día ya
 **cancelado** (ADR-104) se excluye de este chequeo (ya tiene su propia
 `Verificacion`).
 
+**ADR-174b (petición del usuario, revierte el punto 2 de ADR-157):** probando más a
+fondo, el usuario pidió exactamente lo que ADR-157 había descartado — el
+emparejamiento contra lo programado pasa a ser por FECHA (no fecha+hora exacta),
+cronológico cuando una fecha tiene varios horarios (el modelo ya lo permite, ADR-127).
+Un horario distinto para la misma fecha ya no se resuelve como "falta + nuevo": se
+marca `cambio_horario` sobre el MISMO registro, que genera su propia `Incidencia`
+`cambio_horario` al avanzar (ADEMÁS de la de spots, si también difieren — nunca una
+reemplaza a la otra). Ver ADR-174b completo en `docs/arquitectura.md` para el detalle
+de emparejamiento y la Incidencia automática de los registros nuevos.
+
 **ADR-160 (petición del usuario; renumerado de ADR-158 al fusionar con
 `fix/catalogos-correcciones-f0`, que ya usaba ADR-158/159):** el panel "Al avanzar a
 2.3 se generarán" (bonif./desc./impacto neto) solo sumaba `oe.periodo_transmision` — un
 día NUEVO del layout (ADR-149) nunca entraba a esa cuenta, aunque sus spots sean reales
 adicionales a lo ya vendido ("se agregaron 2 nuevos spots y no los registró como
 bonificaciones"). Un día nuevo siempre cuenta como bonificación completa en el panel
-(nunca genera `Incidencia` en el backend, eso no cambia — es puro ajuste de
-presentación en el frontend).
+(en ese momento nunca generaba `Incidencia` en el backend, era puro ajuste de
+presentación en el frontend — **desde ADR-174b sí la genera**, así que esta cuenta del
+panel ahora coincide con una Incidencia real, no solo con la vista previa). **ADR-176
+(petición del usuario, probando en vivo):** el panel dejó de sumar días nuevos al
+mismo contador que la bonificación de días existentes — ahora cada uno tiene su propia
+línea ("N spot(s) de bonificación" vs "N spot(s) en registros nuevos"), y ambos cuentan
+SPOTS, no días afectados (antes "bonificación" sumaba +1 por día, sin importar cuántos
+spots de diferencia tuviera ese día).
 
 **ADR-161 (petición del usuario; renumerado de ADR-159, mismo motivo):** "no se está
 registrando el log... hice un cambio en
@@ -532,10 +736,12 @@ ver ADR-030). Tabla REAL persistida: revierte una decisión previa del frontend-
 
 ### Incidencia (spec, 11 campos)
 PK `incidencia_id`. FK a `Verificacion` y (denormalizada) a `OrdenEstacion`. Modelo
-**híbrido** (ADR-031): la generación automática (al capturar una `Verificacion`) solo
-puede inferir `faltante`/`excedente`; los otros 3 tipos de la spec (`cambio_horario`,
-`cambio_fecha`, `spot_no_emitido`) quedan para alta manual (Tanda 5). `resolucion`
-(spec) se agrega completo, default `pendiente`.
+**híbrido** (ADR-031): la generación automática (al capturar una `Verificacion`) infiere
+`faltante`/`excedente` por diferencia de spots, y desde **ADR-174b** también
+`cambio_horario` (cuando "Carga de Órdenes Reales Desde Layout" reporta una hora
+distinta a la programada para la misma fecha — ver más abajo); `cambio_fecha` y
+`spot_no_emitido` quedan para alta manual (Tanda 5). `resolucion` (spec) se agrega
+completo, default `pendiente`.
 
 ## Estados
 
@@ -620,6 +826,28 @@ propuesta no le da captura sobre Órdenes.
   guardado) se valida contra `OrdenEstacionDia.fecha_transmision` de esas OE — si algún
   día ya capturado quedaría fuera del nuevo rango, `400 error_dominio`. No es un bloqueo
   en bloque: solo se dispara cuando de verdad se angosta al menos un lado.
+- **ADR-180 (petición del usuario) — motivo obligatorio al cambiar fecha de campaña:**
+  si `fecha_inicio_campania`/`fecha_fin_campania` de verdad cambian respecto al valor
+  guardado (no basta con reenviarlas, el front siempre lo hace), el `PUT` exige
+  `motivo_cambio_fecha` (transitorio, un solo motivo cubre ambas) y audita cada campo
+  que cambió en `LogCambioParametro` (`entidad="OrdenCliente"`) — mismo criterio que
+  `TarifaPlazaUpdate.motivo_cambio` (ADR-099), pero auditado con `log_cambio_parametro`
+  DIRECTO (sin pasar por `field_permissions.verificar`, que bloquearía a Ventas, única
+  área que edita OC). El frontend (`OrdenClienteForm.tsx`) lo captura con un select
+  poblado desde Constantes del Sistema (grupo `MotivoCambio`, clave `CambioFecha*` —
+  ADR-178), deshabilitado hasta que alguna de las dos fechas cambie; cae a texto libre si
+  el catálogo no tiene opciones. `GET .../historial-comisiones` (que filtra por
+  `entidad_id`, no por campo) ahora también devuelve estas entradas — el panel de
+  detalle renombra su sección a "Historial de cambios" (ya no "... de comisión").
+- **ADR-181 (petición del usuario) — "Facturación a la Agencia" (antes "Afiliado factura
+  directo al cliente"):** solo cambia la etiqueta/descripción visible del radio
+  (ADR-141) — la columna `afiliado_factura_directo_al_cliente` NO se renombra. Al
+  elegirlo, "Dirección de facturación" se autocompleta con el domicilio estructurado de
+  la Agencia (ADR-175, vía `formatDomicilio`) si lo tiene capturado; **si NO lo tiene (o
+  no hay Agencia ligada), VACÍA el campo** a propósito, para que el usuario la capture a
+  mano (corrección explícita del usuario — la primera versión dejaba el campo intacto en
+  ese caso). Al volver a "Facturación directa al cliente", siempre regresa a la
+  identidad del Anunciante (`nombre_fiscal · RFC`), igual que desde el principio.
 - Editar `precio_unitario` (tarifa cliente) de una OC con OE ya creadas es libre — cada
   `OrdenEstacion` ya guarda su propio `precio_spot`, así que las existentes no se ven
   afectadas. Es **aviso, no candado** (a diferencia de otras ediciones de la OC que sí

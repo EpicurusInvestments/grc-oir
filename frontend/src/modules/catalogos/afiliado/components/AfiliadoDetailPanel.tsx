@@ -1,10 +1,10 @@
-/** Panel de detalle del Afiliado: datos fiscales + contacto legado + Contactos ANIDADOS
- * (add/edit/desactivar inline, ADR-094) + Estaciones (lectura, ver abajo).
+/** Panel de detalle del Afiliado: datos fiscales + Contactos ANIDADOS (add/edit/
+ * desactivar inline, ADR-094) + Estaciones (lectura, ver abajo).
  *
- * "Contacto" (`contacto_nombre`/`contacto_email`/`contacto_telefono`) es el único
- * contacto plano de la spec original — queda como LEGADO, de solo lectura (ya no se
- * captura desde el formulario). "Contactos" es la lista nueva (varios), entidad fuera
- * de la spec BD v2, mismo patrón anidado que `ContactoAnunciante`/`ContactoAgencia`.
+ * ADR-174 (petición del usuario, reporte de bug): el contacto único legado
+ * (`contacto_nombre`/`contacto_email`/`contacto_telefono`, el único contacto plano de la
+ * spec original, ADR-091) se ELIMINÓ POR COMPLETO (campos y columnas) — convivía de
+ * forma confusa junto a la sección "Contactos" nueva.
  *
  * Las Estaciones YA NO se administran aquí (ADR-094: pantalla propia,
  * `modules/catalogos/estacion/`) — esta sección es de SOLO LECTURA, para no tener dos
@@ -13,7 +13,7 @@
 
 import { useEstacionesPorAfiliado } from "@/modules/catalogos/estacion/hooks";
 import type { TipoSenal } from "@/modules/catalogos/estacion/types";
-import { FieldTag, StatusBadge } from "@/shared/ui";
+import { StatusBadge } from "@/shared/ui";
 
 import type { Afiliado } from "../types";
 import { ContactosSection } from "./ContactosSection";
@@ -64,21 +64,8 @@ export function AfiliadoDetailPanel({
         <div className="fl">RFC</div>
         <div className="fv mono">{afiliado.rfc_afiliado}</div>
 
-        {(afiliado.contacto_nombre || afiliado.contacto_email || afiliado.contacto_telefono) && (
-          <>
-            <div className="sec">
-              Contacto <FieldTag origin="derivado" text="Legado" />
-            </div>
-            <div className="fl">Nombre</div>
-            <div className="fv">{afiliado.contacto_nombre ?? "—"}</div>
-            <div className="fl">Correo</div>
-            <div className="fv link">{afiliado.contacto_email ?? "—"}</div>
-            <div className="fl">Teléfono</div>
-            <div className="fv">{afiliado.contacto_telefono ?? "—"}</div>
-          </>
-        )}
-
-        {/* ── Contactos anidados (entidad nueva, reemplaza al contacto único de arriba) ── */}
+        {/* ── Contactos anidados (entidad nueva, ADR-174: reemplaza por completo al
+            contacto único legado — ya no se muestra, ver docstring arriba) ── */}
         <ContactosSection
           afiliadoId={afiliado.afiliado_id}
           canWrite={canWrite}

@@ -25,14 +25,41 @@
  * arrancan precargados con los de esa Orden de Servicio en vez de vacíos — el resto de
  * la pantalla (validaciones, habilitado/deshabilitado de Duración, sugerencia de
  * tarifa) no cambia en nada, el usuario sigue pudiendo editarlos como siempre.
+ *
+ * ADR-177 (petición del usuario): `tarifaReferencia` ahora también filtra por
+ * Anunciante (`oc.anunciante_id`, heredado de la Orden de Servicio) — la llave de la
+ * tarifa pasa a Anunciante+Emisora+Producto+Duración.
+ *
+ * ADR-182 (petición del usuario): la tarjeta "Orden de Servicio de origen" muestra
+ * también el nombre del Anunciante (`findAnunciante(oc.anunciante_id)`, heredado —
+ * `oc.anunciante_id` ya viene denormalizado en la Orden de Servicio) en cuanto `oc`
+ * resuelve — tanto si llega ya amarrada (`ocIdFijo`/edición) como si se elige a mano en
+ * el `SearchableSelect` (alta suelta).
+ *
+ * ADR-183 (petición del usuario): "Motivo del cambio de tarifa" deja de ser texto libre
+ * y pasa a un select con las Descripciones del catálogo Constantes del Sistema, grupo
+ * `MotivoCambio`, clave `CambioTarifa`/`CambioTarifa_N` — el MISMO catálogo que ya usa
+ * `TarifaForm.tsx` (ADR-179). Cae a texto libre si el catálogo no tiene opciones activas.
+ *
+ * ADR-183b (petición del usuario, corrige el criterio de visibilidad de ADR-183): a
+ * diferencia de Tarifa/Orden de Servicio (donde el campo queda SIEMPRE visible, solo
+ * deshabilitado), aquí el campo se MUESTRA (siempre habilitado al mostrarse) SOLO si lo
+ * ÚLTIMO que el usuario tocó fue la tarifa misma y de verdad diverge
+ * (`tarifaEsUltimoCampoTocado`) — tocar después Estación, Producto, Duración o Spots
+ * bonificables lo OCULTA de nuevo. Para no dejar un candado invisible (campo oculto pero
+ * bloqueando Guardar sin forma de capturarlo), la obligatoriedad/auditoría del motivo
+ * (`requiereMotivoTarifa`) sigue EXACTAMENTE la misma condición que su visibilidad:
+ * tocar otro campo después de divergir "perdona" esa captura puntual (no se exige ni se
+ * manda motivo), no solo oculta el control.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
+import { FieldTag, MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import {
   asignarAudioDiaApi,
@@ -48,6 +75,7 @@ import { fmtMonto, fmtPct } from "../../format";
 import {
   esActivo,
   findAfiliado,
+  findAnunciante,
   findEstacion,
   findPlaza,
   estaciones,
@@ -65,6 +93,10 @@ import type {
 import { MaterialATransmitir } from "./MaterialATransmitir";
 
 const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
+
+// ADR-183: clave base (sin sufijo) del grupo MotivoCambio reservada para esta tarifa —
+// MISMO catálogo que ya usa TarifaForm.tsx (ADR-179) para editar tarifa_bruta/descuento_pct.
+const CLAVE_BASE_MOTIVO_TARIFA = "cambiotarifa";
 
 interface OrdenEstacionFormProps {
   /** Si viene fija (desde el detalle de una OC), aquí ya no se puede cambiar de OC. */
@@ -109,6 +141,11 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   );
   const [precioSpot, setPrecioSpot] = useState(oe ? String(oe.precio_spot) : "");
   const [motivoCambioTarifa, setMotivoCambioTarifa] = useState("");
+  // ADR-183b (petición del usuario): "Motivo del cambio de tarifa" solo se MUESTRA si lo
+  // último que el usuario tocó fue la tarifa misma (y de verdad diverge) — tocar después
+  // cualquier otro campo de esta sección (Estación, Producto, Duración, Spots
+  // bonificables) lo OCULTA, aunque el precio siga divergiendo numéricamente.
+  const [tarifaEsUltimoCampoTocado, setTarifaEsUltimoCampoTocado] = useState(false);
   const [spotsBonificables, setSpotsBonificables] = useState(oe ? String(oe.cantidad_spots_bonificables) : "0");
   const [observaciones, setObservaciones] = useState(oe?.observaciones_estacion ?? "");
   const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(oe?.periodo_transmision ?? []);
@@ -141,26 +178,40 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const [subiendoAudioStaging, setSubiendoAudioStaging] = useState(false);
   const audiosInputRef = useRef<HTMLInputElement>(null);
 
-  const onElegirAudioStaging = async (archivo: File | undefined) => {
+  // ADR-197 (petición del usuario, mismo criterio que `MaterialATransmitir.tsx`): se
+  // pueden elegir varios archivos de un jalón en vez de uno por uno; se suben EN ORDEN
+  // (no en paralelo) porque ese orden define la posición de cada spot (ADR-187). Un
+  // archivo inválido o que falla no detiene a los demás.
+  const onElegirAudioStaging = async (archivos: FileList | null) => {
     setErrorAudioStaging(null);
-    if (!archivo) return;
-    const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
-      setErrorAudioStaging(`Formato no permitido. Usa: ${EXTENSIONES_AUDIO_ORDENES.join(", ")}.`);
-    } else if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
-      setErrorAudioStaging(`El archivo excede el tamaño máximo permitido (${Math.round(AUDIO_ORDEN_MAX_BYTES / 1024 / 1024)} MB).`);
-    } else {
-      setSubiendoAudioStaging(true);
-      try {
-        const dto = await subirMaterialStagingApi(archivo);
-        setAudiosStaging((prev) => [...prev, { ref: dto.ref, nombre_archivo: dto.nombre_archivo }]);
-      } catch (e) {
-        setErrorAudioStaging(e instanceof ApiRequestError ? e.message : "No se pudo subir el audio.");
-      } finally {
-        setSubiendoAudioStaging(false);
+    if (!archivos || archivos.length === 0) return;
+    const errores: string[] = [];
+    setSubiendoAudioStaging(true);
+    try {
+      for (const archivo of Array.from(archivos)) {
+        const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
+        if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
+          errores.push(`${archivo.name}: formato no permitido (usa ${EXTENSIONES_AUDIO_ORDENES.join(", ")}).`);
+          continue;
+        }
+        if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
+          errores.push(
+            `${archivo.name}: excede el tamaño máximo permitido (${Math.round(AUDIO_ORDEN_MAX_BYTES / 1024 / 1024)} MB).`,
+          );
+          continue;
+        }
+        try {
+          const dto = await subirMaterialStagingApi(archivo);
+          setAudiosStaging((prev) => [...prev, { ref: dto.ref, nombre_archivo: dto.nombre_archivo }]);
+        } catch (e) {
+          errores.push(`${archivo.name}: ${e instanceof ApiRequestError ? e.message : "no se pudo subir"}.`);
+        }
       }
+    } finally {
+      setSubiendoAudioStaging(false);
+      if (audiosInputRef.current) audiosInputRef.current.value = "";
     }
-    if (audiosInputRef.current) audiosInputRef.current.value = "";
+    if (errores.length > 0) setErrorAudioStaging(errores.join(" "));
   };
   const quitarAudioStaging = (idx: number) =>
     setAudiosStaging((prev) => prev.filter((_, i) => i !== idx));
@@ -262,8 +313,23 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   // la Estación, ya implícita en `estacion.id`).
   const tarifaSugerida = useMemo(() => {
     if (!estacion || !productoTarifa || !duracionSpot) return undefined;
-    return tarifaReferencia(estacion.id, duracionSpot, productoTarifa);
-  }, [estacion, productoTarifa, duracionSpot]);
+    return tarifaReferencia(estacion.id, duracionSpot, productoTarifa, oc?.anunciante_id);
+  }, [estacion, productoTarifa, duracionSpot, oc?.anunciante_id]);
+
+  // ADR-183: Descripciones del catálogo Constantes del Sistema (grupo MotivoCambio,
+  // clave CambioTarifa/CambioTarifa_N — ADR-178, mismo que ya usa Tarifa, ADR-179) para
+  // el select de "Motivo del cambio de tarifa".
+  const motivosTarifaQuery = useConstantes().useList({ grupo: "MotivoCambio", activo: true, size: 100 });
+  const motivosCambioTarifa = useMemo(() => {
+    const items = motivosTarifaQuery.data?.items ?? [];
+    return items.filter((c) => {
+      const clave = c.clave.trim().toLowerCase();
+      return clave === CLAVE_BASE_MOTIVO_TARIFA || clave.startsWith(`${CLAVE_BASE_MOTIVO_TARIFA}_`);
+    });
+  }, [motivosTarifaQuery.data]);
+  // Si el catálogo no tiene ninguna opción (vacío o falló la carga), cae al input de
+  // texto libre para no bloquear el guardado por eso.
+  const motivoTarifaComoTexto = !motivosTarifaQuery.isLoading && motivosCambioTarifa.length === 0;
 
   // Auto-carga `precioSpot` con la tarifa sugerida SOLO si el campo está vacío o todavía
   // tiene la ÚLTIMA sugerencia sin tocar — así no pisa un valor que el usuario ya escribió
@@ -347,6 +413,12 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
     tarifaSugerida != null &&
     precio !== tarifaSugerida.tarifa_neta &&
     (!isEdit || precio !== oe!.precio_spot);
+  // ADR-183b (petición del usuario): el motivo solo se EXIGE (y se manda) si lo último
+  // que el usuario tocó fue la tarifa misma — tocar después Estación/Producto/Duración/
+  // Spots bonificables "perdona" la divergencia para esta captura (ya no se le pide ni
+  // se audita), evitando que el campo quede oculto pero bloqueando Guardar sin forma de
+  // capturarlo.
+  const requiereMotivoTarifa = tarifaDivergente && tarifaEsUltimoCampoTocado;
 
   const errores: string[] = [];
   if (!oc) errores.push("Selecciona la Orden de Servicio de origen.");
@@ -359,7 +431,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   // ninguna duración real en el catálogo (p.ej. Mención) puede quedarse sin capturar,
   // sin bloquear el resto de la Orden de Transmisión.
   if (oc && (!precioSpot.trim() || precio <= 0)) errores.push("Captura una tarifa por spot mayor a 0.");
-  if (tarifaDivergente && !motivoCambioTarifa.trim()) {
+  if (requiereMotivoTarifa && !motivoCambioTarifa.trim()) {
     errores.push("El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio.");
   }
   // ADR-110: "Material a Transmitir" es obligatorio — sin al menos un audio no tiene
@@ -377,6 +449,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
 
   const onEstacionChange = (id: string) => {
     setEstacionId(id);
+    setTarifaEsUltimoCampoTocado(false);
   };
 
   const guardar = async () => {
@@ -390,7 +463,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
       cantidad_spots_bonificables: bonificablesRaw,
       periodo_transmision: periodo,
       observaciones_estacion: observaciones.trim(),
-      motivo_cambio_tarifa: tarifaDivergente ? motivoCambioTarifa.trim() : undefined,
+      motivo_cambio_tarifa: requiereMotivoTarifa ? motivoCambioTarifa.trim() : undefined,
       // ADR-109: ya subidos a S3 (staging) — el backend crea las filas reales al crear
       // la OE, en este mismo orden.
       audios_staging: !isEdit && audiosStaging.length > 0 ? audiosStaging : undefined,
@@ -409,22 +482,47 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
         <div>
           <div className="form-card">
             <div className="form-card-title">Orden de Servicio de origen</div>
-            {ocIdFijo || isEdit ? (
-              <div className="fv mono">{oc?.folio_orden}</div>
-            ) : (
-              <>
-                <SearchableSelect
-                  value={ocId}
-                  onChange={setOcId}
-                  options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
-                />
-                {ocsElegibles.length === 0 && (
-                  <div className="fv muted" style={{ fontSize: 12 }}>
-                    No hay Órdenes de Servicio elegibles (no deben estar congeladas).
-                  </div>
+            {/* ADR-195 (petición del usuario, ajustado para pegarlo más a la derecha):
+                el Anunciante heredado pasa a vivir del lado DERECHO, junto a la Orden de
+                Servicio — antes iba apilado debajo, ocupando todo el ancho de la
+                tarjeta. Se sigue mostrando en AMBOS casos de la izquierda (ya
+                amarrada/edición, o elegida a mano en el select, ADR-182) en cuanto `oc`
+                resuelve.
+                Ajuste (mismo día, "hazlo del doble o triple de largo sin afectar al
+                anunciante a la derecha"): la izquierda (folio/selector) lleva
+                `flexGrow: 1` — toma TODO el ancho que el Anunciante no necesita, en vez
+                de encogerse a su contenido mínimo (el `SearchableSelect` se veía
+                angosto). El Anunciante conserva su ancho natural y queda pegado al
+                borde derecho igual que antes, ya no hace falta `justify-content`: con
+                un solo item creciendo no sobra espacio que repartir. */}
+            <div style={{ display: "flex", gap: 24 }}>
+              <div style={{ flexGrow: 1, minWidth: 0 }}>
+                {ocIdFijo || isEdit ? (
+                  <div className="fv mono">{oc?.folio_orden}</div>
+                ) : (
+                  <>
+                    <SearchableSelect
+                      value={ocId}
+                      onChange={setOcId}
+                      options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
+                    />
+                    {ocsElegibles.length === 0 && (
+                      <div className="fv muted" style={{ fontSize: 12 }}>
+                        No hay Órdenes de Servicio elegibles (no deben estar congeladas).
+                      </div>
+                    )}
+                  </>
                 )}
-              </>
-            )}
+              </div>
+              {oc && (
+                <div style={{ flexShrink: 0 }}>
+                  <div className="fl">
+                    Anunciante <FieldTag origin="heredado" text="Heredado de la Orden de Servicio" />
+                  </div>
+                  <div className="fv">{findAnunciante(oc.anunciante_id)?.nombre_comercial ?? "—"}</div>
+                </div>
+              )}
+            </div>
           </div>
 
           {oc && (
@@ -441,12 +539,25 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 >
                   <option value="">Selecciona…</option>
                   {/* ADR-136 (petición del usuario): "Estación-Siglas-Frecuencia" — antes
-                      solo mostraba "Estación (Frecuencia)". */}
-                  {estaciones.filter(esActivo).map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.nombre_estacion}-{e.siglas || "—"}-{e.frecuencia}
-                    </option>
-                  ))}
+                      solo mostraba "Estación (Frecuencia)". REVERTIDO en ADR-191 (ver
+                      abajo). */}
+                  {/* ADR-191 (petición del usuario, corrige un primer intento que SÍ
+                      incluía la plaza): "Siglas Frecuencia TipoSeñal Nombre", separados
+                      por un solo espacio (ya no guiones, sin Plaza) — Frecuencia y Tipo
+                      de señal van por separado (antes venían ya combinados en el campo
+                      `frecuencia`, p.ej. "90.1 FM", perdiendo la distinción). Cualquier
+                      parte vacía (siglas/frecuencia faltantes) se OMITE en vez de
+                      mostrar un "—" o dejar un espacio en blanco de más. */}
+                  {estaciones.filter(esActivo).map((e) => {
+                    const partes = [e.siglas, e.frecuencia, e.tipo_senal.toUpperCase(), e.nombre_estacion].filter(
+                      (parte): parte is string => !!parte,
+                    );
+                    return (
+                      <option key={e.id} value={e.id}>
+                        {partes.join(" ")}
+                      </option>
+                    );
+                  })}
                 </select>
                 {estacion && (
                   <div className="heredado-block" style={{ marginTop: 4 }}>
@@ -490,6 +601,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                           // de abajo la vuelve a autocargar si la nueva combinación tiene
                           // una tarifa configurada en el catálogo.
                           setPrecioSpot("");
+                          setTarifaEsUltimoCampoTocado(false);
                         }}
                       >
                         <option value="">{catalogoDuraciones.isLoading ? "Cargando…" : "Selecciona…"}</option>
@@ -512,6 +624,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                           // limpia la tarifa (aunque se haya editado a mano), igual que
                           // al cambiar de producto.
                           setPrecioSpot("");
+                          setTarifaEsUltimoCampoTocado(false);
                         }}
                       >
                         <option value="">
@@ -543,24 +656,51 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                         <MoneyInput
                           style={{ maxWidth: 200 }}
                           value={precioSpot}
-                          onChange={setPrecioSpot}
+                          onChange={(v) => {
+                            setPrecioSpot(v);
+                            setTarifaEsUltimoCampoTocado(true);
+                          }}
                         />
                         {tarifaSugerida && (
                           <div className="fv muted" style={{ fontSize: 11, marginTop: 2 }}>
                             Tarifa del catálogo: {fmtMonto(tarifaSugerida.tarifa_neta)}
                           </div>
                         )}
-                        {tarifaDivergente && (
+                        {/* ADR-183b (petición del usuario): a diferencia de Tarifa
+                            (ADR-179) y Orden de Servicio (ADR-180/181), aquí el campo
+                            NO se queda siempre visible — solo aparece (y, al aparecer,
+                            siempre habilitado) si lo ÚLTIMO que el usuario tocó fue la
+                            tarifa misma y de verdad diverge. Tocar después Estación,
+                            Producto, Duración o Spots bonificables lo oculta otra vez. */}
+                        {requiereMotivoTarifa && (
                           <>
                             <div className="fl fl-required" style={{ marginTop: 6 }}>
                               Motivo del cambio de tarifa
                             </div>
-                            <input
-                              className="fi"
-                              placeholder="Por qué el precio no coincide con la tarifa del catálogo…"
-                              value={motivoCambioTarifa}
-                              onChange={(e) => setMotivoCambioTarifa(e.target.value)}
-                            />
+                            {motivoTarifaComoTexto ? (
+                              <input
+                                className="fi"
+                                placeholder="Por qué el precio no coincide con la tarifa del catálogo…"
+                                value={motivoCambioTarifa}
+                                onChange={(e) => setMotivoCambioTarifa(e.target.value)}
+                              />
+                            ) : (
+                              <select
+                                className="fsel"
+                                disabled={motivosTarifaQuery.isLoading}
+                                value={motivoCambioTarifa}
+                                onChange={(e) => setMotivoCambioTarifa(e.target.value)}
+                              >
+                                <option value="">
+                                  {motivosTarifaQuery.isLoading ? "Cargando…" : "Selecciona…"}
+                                </option>
+                                {motivosCambioTarifa.map((m) => (
+                                  <option key={m.constante_sistema_id} value={m.descripcion}>
+                                    {m.descripcion}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </>
                         )}
                       </>
@@ -577,7 +717,10 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                       style={{ maxWidth: 200, fontFamily: "var(--mono)" }}
                       inputMode="numeric"
                       value={spotsBonificables}
-                      onChange={(e) => setSpotsBonificables(e.target.value.replace(/\D/g, ""))}
+                      onChange={(e) => {
+                        setSpotsBonificables(e.target.value.replace(/\D/g, ""));
+                        setTarifaEsUltimoCampoTocado(false);
+                      }}
                     />
                     {bonificablesExcede && <div className="fe">No puede exceder los spots asignados de esta OI.</div>}
                   </div>
@@ -595,10 +738,11 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 <div className="form-card">
                   <div className="form-card-title fl-required">Material a Transmitir</div>
                   <div className="form-card-sub">
-                    Elige uno o más audios (mp3/wav/ogg, máx. 15 MB) — se suben de inmediato. Si eliges solo
-                    uno, se usa por default en todos los días; con dos o más, el primero es el default y
-                    podrás cambiarlo por día desde "Sustitución de Material" una vez guardada la orden.
-                    Es obligatorio: se necesita al menos un material subido para habilitar el calendario.
+                    Elige uno o más audios (mp3/wav/ogg, máx. 15 MB) — se suben de inmediato. Cada spot de un
+                    día recibe su material por este mismo orden de captura (spot 1 → #1, spot 2 → #2…,
+                    repitiendo si hay menos materiales que spots); editable por fecha desde "Material a
+                    Transmitir" en la tabla de abajo. Es obligatorio: se necesita al menos un material subido
+                    para habilitar el calendario.
                   </div>
                   {audiosStaging.length === 0 && (
                     <div className="fv muted" style={{ fontSize: 12, marginBottom: 8 }}>
@@ -607,8 +751,8 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                   )}
                   {audiosStaging.map((a, idx) => (
                     <div key={a.ref} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span className={`badge ${idx === 0 ? "b-teal" : "b-gray"}`} style={{ fontSize: 10 }}>
-                        {idx === 0 ? "Default" : `#${idx + 1}`}
+                      <span className="badge b-gray" style={{ fontSize: 10 }}>
+                        #{idx + 1}
                       </span>
                       <span style={{ flex: 1, fontSize: 13 }}>{a.nombre_archivo}</span>
                       <button type="button" className="btn btn-xs btn-danger" onClick={() => quitarAudioStaging(idx)}>
@@ -620,9 +764,10 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                     ref={audiosInputRef}
                     className="file-input"
                     type="file"
+                    multiple
                     accept={AUDIO_ORDEN_ACCEPT}
                     disabled={subiendoAudioStaging}
-                    onChange={(e) => void onElegirAudioStaging(e.target.files?.[0])}
+                    onChange={(e) => void onElegirAudioStaging(e.target.files)}
                   />
                   {subiendoAudioStaging && (
                     <span className="fv muted" style={{ marginLeft: 8, fontSize: 11 }}>
@@ -644,6 +789,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                 rows={periodo}
                 onGenerar={(nuevas) => setPeriodo((prev) => [...prev, ...nuevas])}
                 rangoCampania={{ inicio: oc.fecha_inicio_campania, fin: oc.fecha_fin_campania }}
+                audios={audiosVistaPrevia}
                 disabled={!hayMaterial}
               />
               <PeriodoTransmisionGrid
