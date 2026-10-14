@@ -89,6 +89,9 @@ anunciantes.push({
 // Transmisión arma "Siglas Frecuencia TIPO Plaza Nombre" concatenando ambos campos por
 // separado; con `frecuencia: "900 AM"` (viejo) saldría "900 AM AM" duplicado.
 estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900", tipo_senal: "am" });
+// `es2`: segunda estación activa — usada por la prueba de ADR-199 (cambiar de estación
+// limpia Producto/Duración/Tarifa) para simular un cambio real entre dos emisoras.
+estaciones.push({ id: "es2", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XHMT-FM", frecuencia: "90.1", tipo_senal: "fm" });
 // Fix: una estación dada de baja no debe aparecer en el select de "Estación".
 estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1", tipo_senal: "fm", activo: false });
 
@@ -671,6 +674,36 @@ describe("ADR-173 (petición del usuario): Producto/Duración se precargan desde
       expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("mencion")).toBeInTheDocument(),
     );
     expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("");
+  });
+});
+
+describe("ADR-199 (petición del usuario): cambiar de Estación en el alta limpia Producto/Duración/Tarifa", () => {
+  it("elegir OTRA estación después de ya tener una vacía Producto, Duración y Tarifa", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120 } });
+
+    // Precarga de ADR-173 (producto_tarifa/duracion_spot de la OC, default "spot"/"30s"
+    // en `makeOC`) al elegir la PRIMERA estación — no debe limpiarse.
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    await waitFor(() => expect(fieldByLabelText<HTMLSelectElement>(container, "Producto").value).toBe("spot"));
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Duración").value).toBe("30s");
+
+    // El usuario captura una tarifa a mano (es1/spot/30s no tiene tarifa sembrada en el
+    // catálogo de este archivo).
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "500" } });
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("500.00");
+
+    // Cambia a OTRA estación ya elegida antes (es1 -> es2): Producto/Duración/Tarifa se
+    // deben limpiar — no tiene sentido arrastrar una tarifa/producto de la emisora
+    // anterior a la nueva.
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es2" } });
+
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Producto").value).toBe("");
+    const selectDuracion = fieldByLabelText<HTMLSelectElement>(container, "Duración");
+    expect(selectDuracion.value).toBe("");
+    expect(selectDuracion).toBeDisabled();
+    // Sin Producto elegido, la tarjeta de "Tarifa por spot" ni siquiera se muestra
+    // (ADR-169: requiere Producto elegido o estar editando).
+    expect(screen.queryByText("Tarifa por spot (MXN)")).toBeNull();
   });
 });
 

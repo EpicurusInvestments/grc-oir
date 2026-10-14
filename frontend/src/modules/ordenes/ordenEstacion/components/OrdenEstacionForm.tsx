@@ -59,7 +59,7 @@ import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { FieldTag, MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
+import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import {
   asignarAudioDiaApi,
@@ -448,6 +448,21 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const listo = errores.length === 0;
 
   const onEstacionChange = (id: string) => {
+    // ADR-199 (petición del usuario): CAMBIAR de una estación a otra, en el alta (el
+    // select va deshabilitado al editar, `disabled={isEdit}` arriba — esto nunca corre
+    // ahí), limpia Producto/Duración/Tarifa — la tarifa es específica de
+    // Estación+Producto+Duración (ADR-177/166), así que arrastrar los valores de la
+    // estación anterior podía dejar una tarifa que no corresponde a la nueva emisora.
+    // Mismo criterio que ya usan los `onChange` de Producto/Duración (ADR-170).
+    // Solo aplica si YA había una estación elegida (`estacionId` previo no vacío): la
+    // PRIMERA selección (de "Selecciona…" a una estación) no debe limpiar nada, porque
+    // ahí es cuando ADR-173 precarga Producto/Duración desde la OC de origen — limpiar
+    // en ese momento los borraría antes de que el usuario los viera.
+    if (estacionId) {
+      setProductoTarifa("");
+      setDuracionSpot("");
+      setPrecioSpot("");
+    }
     setEstacionId(id);
     setTarifaEsUltimoCampoTocado(false);
   };
@@ -480,49 +495,57 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignContent: "start" }}>
         <div>
-          <div className="form-card">
+          <div className="form-card" style={{ position: "relative" }}>
+            {/* ADR-198b/c (petición del usuario): "Anunciante" (título) va en la MISMA
+                fila que "Orden de Servicio de origen" y su valor va debajo, al mismo
+                nivel que el folio/selector — misma estructura de 2 renglones que la
+                columna izquierda, en espejo. Se posiciona con `position: absolute`
+                (esquina superior derecha de la tarjeta, que lleva `position:
+                relative`) en vez de reordenar el DOM: el título debe seguir siendo el
+                hermano INMEDIATO del campo folio/selector — así lo espera
+                `fieldByLabelText` (helper de pruebas que busca "la etiqueta visible
+                seguida de su campo", documentado en `domHelpers.ts`) — insertarlo entre
+                ambos rompía esas pruebas.
+                `top`/`right: 18px` (no `0`) porque `position: absolute` se posiciona
+                contra el borde de la tarjeta, SIN el padding de 18px que sí respeta el
+                contenido normal (título/folio) — con `0` quedaba más arriba/más a la
+                derecha que ellos. El título conserva el `marginBottom: 14px` normal de
+                `.form-card-title` (no se fuerza a 0) para que su valor quede separado
+                exactamente igual que el folio lo está de su propio título. */}
             <div className="form-card-title">Orden de Servicio de origen</div>
-            {/* ADR-195 (petición del usuario, ajustado para pegarlo más a la derecha):
-                el Anunciante heredado pasa a vivir del lado DERECHO, junto a la Orden de
-                Servicio — antes iba apilado debajo, ocupando todo el ancho de la
-                tarjeta. Se sigue mostrando en AMBOS casos de la izquierda (ya
-                amarrada/edición, o elegida a mano en el select, ADR-182) en cuanto `oc`
-                resuelve.
-                Ajuste (mismo día, "hazlo del doble o triple de largo sin afectar al
-                anunciante a la derecha"): la izquierda (folio/selector) lleva
-                `flexGrow: 1` — toma TODO el ancho que el Anunciante no necesita, en vez
-                de encogerse a su contenido mínimo (el `SearchableSelect` se veía
-                angosto). El Anunciante conserva su ancho natural y queda pegado al
-                borde derecho igual que antes, ya no hace falta `justify-content`: con
-                un solo item creciendo no sobra espacio que repartir. */}
-            <div style={{ display: "flex", gap: 24 }}>
-              <div style={{ flexGrow: 1, minWidth: 0 }}>
-                {ocIdFijo || isEdit ? (
-                  <div className="fv mono">{oc?.folio_orden}</div>
-                ) : (
-                  <>
-                    <SearchableSelect
-                      value={ocId}
-                      onChange={setOcId}
-                      options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
-                    />
-                    {ocsElegibles.length === 0 && (
-                      <div className="fv muted" style={{ fontSize: 12 }}>
-                        No hay Órdenes de Servicio elegibles (no deben estar congeladas).
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              {oc && (
-                <div style={{ flexShrink: 0 }}>
-                  <div className="fl">
-                    Anunciante <FieldTag origin="heredado" text="Heredado de la Orden de Servicio" />
-                  </div>
-                  <div className="fv">{findAnunciante(oc.anunciante_id)?.nombre_comercial ?? "—"}</div>
-                </div>
+            {/* ADR-198d (petición del usuario): al CREAR suelto (sin `ocIdFijo`), el
+                `SearchableSelect` de la OC se estiraba a TODO el ancho de la tarjeta
+                (su `.fi` es `width: 100%` del contenedor) — antes lo acotaba el
+                `flexGrow: 1` en un flex de 2 columnas junto al Anunciante; al mover el
+                Anunciante a `position: absolute` (ADR-198b) ese contenedor se quedó
+                sin hermano que lo limitara. `maxWidth` fijo lo acota sin afectar el
+                caso ya resuelto (folio en texto, `.fv.mono`, siempre corto). */}
+            <div style={{ maxWidth: 420 }}>
+              {ocIdFijo || isEdit ? (
+                <div className="fv mono">{oc?.folio_orden}</div>
+              ) : (
+                <>
+                  <SearchableSelect
+                    value={ocId}
+                    onChange={setOcId}
+                    options={ocsElegibles.map((o) => ({ value: o.id, label: `${o.folio_orden} — ${o.numero_orden_cliente}` }))}
+                  />
+                  {ocsElegibles.length === 0 && (
+                    <div className="fv muted" style={{ fontSize: 12 }}>
+                      No hay Órdenes de Servicio elegibles (no deben estar congeladas).
+                    </div>
+                  )}
+                </>
               )}
             </div>
+            {oc && (
+              <div style={{ position: "absolute", top: 18, right: 18, textAlign: "right" }}>
+                <div className="form-card-title">Anunciante</div>
+                <div className="fv" style={{ marginBottom: 0 }}>
+                  {findAnunciante(oc.anunciante_id)?.nombre_comercial ?? "—"}
+                </div>
+              </div>
+            )}
           </div>
 
           {oc && (

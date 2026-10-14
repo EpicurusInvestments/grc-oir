@@ -434,6 +434,47 @@ no alterar el orden que define la posición de cada spot (ADR-187); un archivo i
 que falla no detiene a los demás, los errores se acumulan en un solo mensaje. Sin cambios
 de backend (el endpoint de subida ya aceptaba llamadas repetidas).
 
+**ADR-198 (petición del usuario) — el bloque "Anunciante" usa el mismo título en
+negritas que la tarjeta, en un renglón, sin el tag "Heredado":** el título pasa de `.fl`
+(etiqueta chica gris) a `.form-card-title` (mismo estilo que "Orden de Servicio de
+origen" a su izquierda), en línea junto a su valor en vez de apilado; se quita el
+`FieldTag` "Heredado de la Orden de Servicio". Cambio 100% visual.
+
+**ADR-198b (petición del usuario) — "Anunciante" sube al mismo renglón que el título de
+la tarjeta, sin ":":** se posiciona con `position: absolute` en la esquina superior
+derecha de la tarjeta (`position: relative`) en vez de reordenar el DOM — el título debe
+seguir siendo el hermano inmediato del campo folio/selector, de lo que depende
+`fieldByLabelText` (helper de pruebas en `domHelpers.ts`).
+
+**ADR-198c (petición del usuario, corrige ADR-198b) — alineación del bloque
+"Anunciante":** quedaba más arriba que el título real y con el valor en la misma línea.
+Fix: `top`/`right: 18px` (el padding de `.form-card`, no `0`, que `position: absolute`
+ignora) y estructura en columna (título arriba con su `marginBottom` normal, valor
+debajo) — en espejo con el folio de la columna izquierda.
+
+**ADR-198d (petición del usuario) — el selector de OC en alta suelta ya no se estira a
+todo el ancho:** al mover el Anunciante a `position: absolute` (ADR-198b), el
+`SearchableSelect` de la OC se quedó sin el `flexGrow: 1`/hermano de flex que antes lo
+acotaba — su `.fi` es `width: 100%` de su contenedor, así que ocupaba TODA la tarjeta.
+Fix: `maxWidth: 420` en ese contenedor (no afecta el folio ya elegido, `.fv.mono`,
+siempre corto).
+
+**ADR-199 (petición del usuario) — cambiar de Estación en el alta limpia
+Producto/Duración/Tarifa:** `onEstacionChange` limpia esos 3 campos (mismo patrón que ya
+usan Producto/Duración desde ADR-170), pero SOLO si ya había una estación elegida antes
+— la primera selección no limpia nada, porque ahí es cuando ADR-173 precarga
+Producto/Duración desde la OC de origen. El select de Estación ya va deshabilitado al
+editar, así que esto solo aplica en alta.
+
+**ADR-200 (petición del usuario) — "Dirección de facturación" (Orden de Servicio) pasa
+a ser SIEMPRE de solo lectura:** antes se podía editar a mano aunque viniera
+autocompletada del Anunciante/Agencia (ADR-181). Pasa de `disabled={congelado}` a
+`readOnly` incondicional (nunca editable, independientemente de si la orden está
+congelada) — `readOnly`, no `disabled`, para que los `setValue` programáticos de
+ADR-181 sigan funcionando y el valor se siga mandando con React Hook Form. Se pierde la
+captura manual cuando el catálogo no tiene domicilio (decisión explícita del usuario):
+ese caso se corrige en el catálogo de Anunciante/Agencia, no aquí.
+
 **Envío de los PDFs por correo — `LogEnvioCorreoOrdenEstacion`** (ADR-105, Fase 5 del
 rediseño): tabla nueva, fuera de la spec BD v2 — bitácora de cada intento de envío
 (`POST .../pdf/{tipo}/enviar-correo`, `tipo` = servicio/programados/reales), exitoso o
