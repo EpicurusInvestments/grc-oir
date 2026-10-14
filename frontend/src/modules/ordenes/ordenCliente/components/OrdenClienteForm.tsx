@@ -858,7 +858,11 @@ export function OrdenClienteForm({
           <div className="form-card">
             <div className="form-card-title">Facturación</div>
             <div className="fl">Dirección de facturación</div>
-            <textarea className="ftxt" rows={2} disabled={congelado} {...register("direccion_facturacion")} />
+            {/* ADR-200 (petición del usuario): el campo SIEMPRE es de solo lectura — se
+                autocompleta con el domicilio del Anunciante o la Agencia (ADR-181) y no
+                se captura a mano; si el catálogo no tiene domicilio, se queda vacío y se
+                corrige ahí (catálogo de Anunciante/Agencia), no aquí. */}
+            <textarea className="ftxt" rows={2} readOnly {...register("direccion_facturacion")} />
             {/* ADR-141 (petición del usuario): antes eran 2 checkboxes independientes —
                 permitían los 4 estados (ninguno/uno/otro/los dos), pero solo UNO tiene
                 sentido de negocio a la vez. Un solo radio group garantiza exactamente

@@ -7974,3 +7974,128 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
 - **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite completa de
   `src/modules/ordenes` 254/254 sin regresiones (no existían pruebas que fijaran el
   input en modo single-file).
+
+### ADR-198 — El bloque "Anunciante" de la tarjeta "Orden de Servicio de origen" usa el mismo título en negritas que la tarjeta, en un solo renglón, sin el tag "Heredado"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con captura): el
+  "Anunciante" heredado (ADR-182, reacomodado a la derecha en ADR-195) se veía con la
+  etiqueta chica gris de siempre (`.fl`, 11px) + el tag "Heredado de la Orden de
+  Servicio" arriba, y el valor apilado debajo — pidió que el título "Anunciante" fuera
+  negritas igual que el de la izquierda, en el mismo renglón que su valor, mismo tipo de
+  letra, y sin el tag.
+- **Decisión:** el título deja de usar `.fl` y pasa a `.form-card-title` (el MISMO estilo
+  —13px, negrita, misma tipografía— que usa el título de la tarjeta, "Orden de Servicio
+  de origen", a su izquierda), en línea (`display: flex; alignItems: baseline`) junto con
+  el valor (`.fv`) en vez de apilados; se quita el `<FieldTag origin="heredado" .../>`
+  por completo (el origen ya es obvio por el contexto de la tarjeta) y su import ya sin
+  otro uso en el archivo.
+- **Consecuencia:** ninguna negativa — cambio 100% visual, sin tocar lógica ni datos.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenEstacionForm.test.tsx` 39/39 sin regresiones.
+
+### ADR-198b — "Anunciante" sube al mismo renglón que el título de la tarjeta, sin ":"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con captura): tras
+  ADR-198, "Anunciante" compartía renglón con el folio/selector de la OC (un nivel más
+  abajo que el título de la tarjeta) — pidió que quedara al MISMO nivel que "Orden de
+  Servicio de origen" (el título), y sin los ":" después de "Anunciante".
+- **Decisión:** el DOM NO se reordena — el título sigue siendo el hermano INMEDIATO del
+  campo folio/selector, exactamente como antes de ADR-195/198 (`fieldByLabelText`, el
+  helper de pruebas que busca "la etiqueta visible seguida de su campo" documentado en
+  `domHelpers.ts`, depende de ese orden; moverlo entre ambos rompía 3 pruebas existentes
+  — `"Orden de Servicio de origen" no tiene un campo inmediatamente después`). En vez de
+  eso, el bloque "Anunciante" se pinta con `position: absolute; top: 0; right: 0` sobre
+  la tarjeta (`position: relative`, esquina superior derecha) — visualmente queda a la
+  altura del título sin alterar el flujo/orden real del documento. Se quitan los ":" del
+  texto.
+- **Consecuencia:** ninguna negativa — cambio 100% visual/CSS.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenEstacionForm.test.tsx` 39/39 (las 3 que se habían roto con el primer intento
+  vuelven a pasar).
+
+### ADR-198c — Corrige la alineación del bloque "Anunciante" (quedaba más arriba y en línea; debe ser título arriba + valor abajo, en espejo con folio)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-13 (petición del usuario, con captura): ADR-198b
+  dejó "Anunciante" más ARRIBA que "Orden de Servicio de origen" (no al mismo nivel) y
+  con su valor en la MISMA línea que el título (en vez de abajo) — pidió el mismo nivel
+  exacto para el título, y el valor "Refrescos del Norte" debajo, alineado con
+  "OC-2026-0045".
+- **Causa:** `position: absolute` posiciona contra el borde (padding box) de la tarjeta,
+  SIN el padding de 18px que sí empuja al contenido normal (título/folio) — `top: 0;
+  right: 0` quedaba por encima/a la derecha de donde arranca el contenido real.
+- **Decisión:** `top: 18px; right: 18px` (el mismo padding de `.form-card`) en vez de
+  `0`, para que el bloque arranque exactamente donde arranca el título real. El bloque
+  pasa de fila (`flex` + `alignItems: baseline`) a columna: título arriba
+  (`.form-card-title`, CON su `marginBottom: 14px` normal, sin forzarlo a `0`) y el
+  valor (`.fv`) debajo — la misma estructura de 2 renglones que la columna izquierda
+  (título de tarjeta + folio), en espejo a la derecha; `textAlign: right` para que ambos
+  renglones queden alineados al borde derecho.
+- **Consecuencia:** ninguna negativa — cambio 100% visual/CSS.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenEstacionForm.test.tsx` 39/39 sin regresiones.
+
+### ADR-198d — El selector de "Orden de Servicio de origen" (alta suelta) ya no se estira a todo el ancho de la tarjeta
+
+- **Estado:** aceptada · **Fecha:** 2026-10-14 (petición del usuario, con 3 capturas): en
+  edición (`isEdit`/`ocIdFijo`) la tarjeta se veía bien, pero al CREAR una OE suelta
+  (sin OC fija, "Nueva Orden de Transmisión") el `SearchableSelect` de la OC se estiraba
+  a TODO el ancho de la tarjeta — un selector larguísimo, incómodo.
+- **Causa:** el `.fi` de `SearchableSelect` es `width: 100%` de su contenedor. Antes de
+  ADR-198b, ese contenedor compartía un flex de 2 columnas con el bloque de Anunciante,
+  y un `flexGrow: 1` ahí lo acotaba a "todo el espacio que el Anunciante no ocupa". Al
+  mover el Anunciante a `position: absolute` (ADR-198b, para alinearlo con el título),
+  ese contenedor del selector se quedó solo en el flujo normal, sin ningún hermano que
+  limitara su ancho — por eso ocupaba el 100% real de la tarjeta.
+- **Decisión:** `maxWidth: 420` fijo en el contenedor del folio/selector — acota el
+  `SearchableSelect` sin afectar el caso ya resuelto (folio ya elegido, `.fv.mono`,
+  siempre un texto corto que nunca se acerca a ese máximo).
+- **Consecuencia:** ninguna negativa — cambio 100% visual/CSS; no toca el flujo de
+  selección ni los datos.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenEstacionForm.test.tsx` 39/39 sin regresiones.
+
+### ADR-199 — Cambiar de Estación en el alta limpia Producto/Duración/Tarifa
+
+- **Estado:** aceptada · **Fecha:** 2026-10-14 (petición del usuario): al crear una OE y
+  cambiar de Estación (sin haber guardado todavía), Producto/Duración/Tarifa capturados
+  para la estación ANTERIOR se quedaban con el valor viejo — la tarifa es específica de
+  Estación+Producto+Duración (ADR-177/166), así que podían quedar valores que no
+  corresponden a la nueva emisora.
+- **Decisión:** `onEstacionChange` limpia `productoTarifa`/`duracionSpot`/`precioSpot`
+  (mismo patrón que ya usan los `onChange` de Producto/Duración desde ADR-170), pero
+  SOLO si YA había una estación elegida antes (`estacionId` previo no vacío). La PRIMERA
+  selección (de "Selecciona…" a una estación) NO limpia nada — es el momento en que
+  ADR-173 precarga Producto/Duración desde la Orden de Servicio de origen; limpiar ahí
+  los borraría antes de que el usuario los viera. El select de Estación ya va
+  deshabilitado al editar (`disabled={isEdit}`), así que este cambio solo aplica en alta.
+- **Consecuencia:** ninguna negativa — ADR-173 (precarga en la primera selección) y
+  ADR-170 (limpieza al cambiar Producto/Duración) siguen funcionando igual.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; prueba nueva ("elegir OTRA
+  estación después de ya tener una vacía Producto, Duración y Tarifa", con una segunda
+  estación `es2` sembrada en el mock); suite `OrdenEstacionForm.test.tsx` 40/40 y
+  `src/modules/ordenes` completa 255/255 sin regresiones (confirma que la precarga de
+  ADR-173 y el resto de los flujos de Producto/Duración/Tarifa no se rompieron).
+
+### ADR-200 — "Dirección de facturación" (Orden de Servicio) pasa a ser SIEMPRE de solo lectura
+
+- **Estado:** aceptada · **Fecha:** 2026-10-14 (petición del usuario, con captura): en
+  "Nueva Orden de Servicio" (sección "Facturación"), el campo "Dirección de facturación"
+  se podía editar a mano aunque viniera autocompletado del Anunciante/Agencia (ADR-181)
+  — pidió que fuera de solo lectura, sin permitir modificar su valor.
+- **Disyuntiva planteada al usuario:** hoy, si el Anunciante/Agencia elegido NO tiene
+  domicilio capturado en su catálogo, el campo se VACÍA a propósito para que el usuario
+  lo escriba a mano (mismo ADR-181) — hacerlo 100% de solo lectura cierra esa vía de
+  captura manual. Se preguntó y el usuario confirmó **solo lectura SIEMPRE** (preferido
+  sobre "solo lectura solo cuando ya trae un valor"): si falta el domicilio, se corrige
+  en el catálogo de Anunciante/Agencia, no en la Orden de Servicio.
+- **Decisión:** el `<textarea>` cambia de `disabled={congelado}` a `readOnly`
+  incondicional — ya no depende de si la orden está congelada, nunca es editable a mano.
+  `readOnly` (no `disabled`) para que el valor se siga mandando con React Hook Form
+  igual que antes (los `setValue` programáticos de ADR-181 al elegir Anunciante/Agencia
+  no se ven afectados, solo se bloquea la escritura del usuario) y para reusar el mismo
+  estilo visual atenuado que ya define `.ftxt:read-only, .ftxt:disabled` en el tema.
+- **Consecuencia:** se pierde la captura manual de la dirección de facturación cuando el
+  catálogo no tiene domicilio — aceptado explícitamente por el usuario; el domicilio
+  faltante se debe capturar en el catálogo de Anunciante/Agencia, no aquí.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
+  `OrdenClienteForm.test.tsx` 46/46 sin regresiones.
