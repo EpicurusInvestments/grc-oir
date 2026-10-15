@@ -22,7 +22,7 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
-import { facturaClienteApi } from "../../api";
+import { adjuntosFacturacionApi, facturaClienteApi } from "../../api";
 import { badgeEstadoFactura, fmtFecha, fmtMoneda, oGuion } from "../../format";
 import { useFacturasCliente, useFacturasDelAnunciante, useOrdenesPorFacturar } from "../../hooks";
 import {
@@ -130,6 +130,30 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
     setErrorAccion(null);
     try {
       setSelected(await accion());
+    } catch (e) {
+      setErrorAccion(mensajeDeError(e));
+    }
+  };
+
+  // ADR-206 (petición del usuario): una vez timbrada, el detalle permite descargar
+  // tanto el PDF como el XML ya cargados, y además VER (visor de solo consulta,
+  // `verEnVisor` — pestaña nueva, imprimible desde ahí, sin editar nada) el PDF — el
+  // XML no tiene un visor con sentido (ADR-203: no es un documento visual), así que
+  // solo se puede descargar. Mismos endpoints que ya usa `AdjuntoFacturaInput` en el
+  // alta/edición del timbrado, aquí de solo lectura.
+  const descargarAdjuntoFactura = async (ref: string) => {
+    setErrorAccion(null);
+    try {
+      await adjuntosFacturacionApi.ver(ref);
+    } catch (e) {
+      setErrorAccion(mensajeDeError(e));
+    }
+  };
+
+  const verPdfFactura = async (ref: string) => {
+    setErrorAccion(null);
+    try {
+      await adjuntosFacturacionApi.verEnVisor(ref);
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
     }
@@ -414,6 +438,37 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                   <div className="fv mono">{oGuion(selected.serie_timbrado)}</div>
                 </div>
               </div>
+              {(selected.pdf_path || selected.xml_path) && (
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  {selected.pdf_path && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void verPdfFactura(selected.pdf_path!)}
+                      >
+                        Ver factura
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void descargarAdjuntoFactura(selected.pdf_path!)}
+                      >
+                        <i className="pi pi-download" aria-hidden="true" /> Descargar PDF
+                      </button>
+                    </>
+                  )}
+                  {selected.xml_path && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => void descargarAdjuntoFactura(selected.xml_path!)}
+                    >
+                      <i className="pi pi-download" aria-hidden="true" /> Descargar XML
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           )}
 

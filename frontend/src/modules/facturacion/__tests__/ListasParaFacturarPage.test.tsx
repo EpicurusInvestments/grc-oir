@@ -15,10 +15,12 @@ import type { OrdenPorFacturar } from "../types";
 const porFacturarMock = vi.fn();
 const facturaListMock = vi.fn();
 const anunciantesMock = vi.fn();
+const agenciasMock = vi.fn();
 
 vi.mock("../api", () => ({
   ordenesPorFacturar: (p: unknown) => porFacturarMock(p),
   anunciantesFacturables: (m: unknown) => anunciantesMock(m),
+  agenciasFacturables: (m: unknown) => agenciasMock(m),
   facturaClienteApi: {
     list: (p: unknown) => facturaListMock(p),
     create: vi.fn(),
@@ -76,6 +78,21 @@ const segundaOrden: OrdenPorFacturar = {
   total: "348000.00",
 };
 
+/** Orden "vía agencia" (ADR-201): receptor es la agencia, no el anunciante — la que
+ *  usan las pruebas del modo "Facturar Múltiples Órdenes por Agencia". */
+const ordenAgencia: OrdenPorFacturar = {
+  ...orden,
+  orden_id: "oc-21",
+  folio_orden: "OC-2025-0061",
+  numero_orden_cliente: "LALA-YOG-21",
+  agencia: "Mindshare México",
+  facturacion_directa_cliente: false,
+  receptor_razon_social: "Mindshare México SA de CV",
+  receptor_rfc: "MMX900101AB1",
+  receptor_direccion: "CDMX, Reforma 222",
+  receptor_uso_cfdi_default: null,
+};
+
 function renderCon(items: OrdenPorFacturar[]) {
   porFacturarMock.mockResolvedValue({
     items,
@@ -98,6 +115,8 @@ describe("ListasParaFacturarPage", () => {
     facturaListMock.mockReset();
     anunciantesMock.mockReset();
     anunciantesMock.mockResolvedValue([]);
+    agenciasMock.mockReset();
+    agenciasMock.mockResolvedValue([]);
     facturaListMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 });
   });
 
@@ -179,7 +198,7 @@ describe("ListasParaFacturarPage", () => {
     renderCon([orden]);
     await screen.findByText("OC-2025-0051");
 
-    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/));
 
     // El botón está desde el principio: valida al hacer clic, no se deshabilita.
     expect(await screen.findByText("Generar Factura Múltiple")).toBeInTheDocument();
@@ -197,7 +216,7 @@ describe("ListasParaFacturarPage", () => {
     renderCon([orden]);
     await screen.findByText("OC-2025-0051");
 
-    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/));
     const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
     fireEvent.focus(combo);
     // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
@@ -220,7 +239,7 @@ describe("ListasParaFacturarPage", () => {
     ]);
     renderCon([orden]);
     await screen.findByText("OC-2025-0051");
-    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/));
     const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
     fireEvent.focus(combo);
     // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
@@ -241,7 +260,7 @@ describe("ListasParaFacturarPage", () => {
     ]);
     renderCon([orden, segundaOrden]);
     await screen.findByText("OC-2025-0051");
-    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes/));
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/));
     const combo = await screen.findByPlaceholderText("Seleccionar Anunciante");
     fireEvent.focus(combo);
     // `SearchableSelect` elige en mouseDown (antes del blur), no en click.
@@ -271,7 +290,7 @@ describe("ListasParaFacturarPage", () => {
     ]);
     renderCon([orden]);
     await screen.findByText("OC-2025-0051");
-    const check = screen.getByLabelText(/Facturar Múltiples Órdenes/);
+    const check = screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/);
 
     fireEvent.click(check);
     expect(await screen.findByText("Generar Factura Múltiple")).toBeInTheDocument();
@@ -279,5 +298,67 @@ describe("ListasParaFacturarPage", () => {
     fireEvent.click(check);
     expect(await screen.findByText("Generar factura →")).toBeInTheDocument();
     expect(screen.queryByText("Generar Factura Múltiple")).not.toBeInTheDocument();
+  });
+
+  // ── Facturación múltiple por Agencia (ADR-201, petición del usuario) ────────────
+  it("el check de Agencia revela el combo y el botón, y hasta elegir agencia no lista órdenes", async () => {
+    agenciasMock.mockResolvedValue([
+      { agencia_id: "ag-11", agencia: "Mindshare México", ordenes: 3 },
+    ]);
+    renderCon([ordenAgencia]);
+    await screen.findByText("OC-2025-0061");
+
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Agencia/));
+
+    expect(await screen.findByText("Generar Factura Múltiple")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Elige una agencia para ver sus órdenes cerradas/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("OC-2025-0061")).not.toBeInTheDocument();
+  });
+
+  it("al elegir agencia pide SOLO sus órdenes y cambia el botón por la casilla", async () => {
+    agenciasMock.mockResolvedValue([
+      { agencia_id: "ag-11", agencia: "Mindshare México", ordenes: 2 },
+    ]);
+    renderCon([ordenAgencia]);
+    await screen.findByText("OC-2025-0061");
+
+    fireEvent.click(screen.getByLabelText(/Facturar Múltiples Órdenes por Agencia/));
+    const combo = await screen.findByPlaceholderText("Seleccionar Agencia");
+    fireEvent.focus(combo);
+    fireEvent.mouseDown(await screen.findByText(/Mindshare México · 2 órdenes/));
+
+    await waitFor(() =>
+      expect(porFacturarMock).toHaveBeenCalledWith(
+        expect.objectContaining({ agencia_id: "ag-11" }),
+      ),
+    );
+    expect(await screen.findByLabelText(/Incluir en la factura/)).toBeInTheDocument();
+    expect(screen.queryByText("Generar factura →")).not.toBeInTheDocument();
+  });
+
+  it("marcar Agencia apaga el modo Anunciante (y viceversa) — no se pueden combinar", async () => {
+    anunciantesMock.mockResolvedValue([
+      { anunciante_id: "an-11", anunciante: "OXXO", ordenes: 2 },
+    ]);
+    agenciasMock.mockResolvedValue([
+      { agencia_id: "ag-11", agencia: "Mindshare México", ordenes: 2 },
+    ]);
+    renderCon([orden]);
+    await screen.findByText("OC-2025-0051");
+
+    const checkAnunciante = screen.getByLabelText(/Facturar Múltiples Órdenes por Anunciante/);
+    const checkAgencia = screen.getByLabelText(/Facturar Múltiples Órdenes por Agencia/);
+
+    fireEvent.click(checkAnunciante);
+    expect(await screen.findByPlaceholderText("Seleccionar Anunciante")).toBeInTheDocument();
+
+    // Marcar Agencia apaga Anunciante: solo un modo activo a la vez.
+    fireEvent.click(checkAgencia);
+    expect(screen.queryByPlaceholderText("Seleccionar Anunciante")).not.toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Seleccionar Agencia")).toBeInTheDocument();
+    expect((checkAnunciante as HTMLInputElement).checked).toBe(false);
+    expect((checkAgencia as HTMLInputElement).checked).toBe(true);
   });
 });

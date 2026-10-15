@@ -17,6 +17,8 @@ diferencia al tocar la factory, `test_subir_y_descargar_conserva_el_prefijo_uuid
 
 from __future__ import annotations
 
+import codecs
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -87,6 +89,51 @@ def test_extensiones_permitidas_incluyen_xml() -> None:
     """La única extensión que F2 admite de más respecto al set base de F1 (para el CFDI)."""
     assert "xml" in EXTENSIONES_ADJUNTO_FACTURACION
     assert "exe" not in EXTENSIONES_ADJUNTO_FACTURACION
+
+
+# ADR-203 (bug real, petición del usuario): un XML de prueba editado en Notepad y
+# guardado como "Unicode" (UTF-16 LE con BOM, el default histórico de ese diálogo) se
+# rechazaba — la firma solo contemplaba UTF-8 con/sin BOM. Cubre las 2 variantes de
+# BOM UTF-16 (LE/BE); el contenido real es XML válido en ambos casos, solo cambia la
+# codificación de bytes.
+@pytest.mark.parametrize(
+    "xml_bytes",
+    [
+        pytest.param(
+            codecs.BOM_UTF16_LE + '<?xml version="1.0"?><cfdi:Comprobante/>'.encode("utf-16-le"),
+            id="utf16-le",
+        ),
+        pytest.param(
+            codecs.BOM_UTF16_BE + '<?xml version="1.0"?><cfdi:Comprobante/>'.encode("utf-16-be"),
+            id="utf16-be",
+        ),
+    ],
+)
+def test_subir_xml_utf16_con_bom_se_acepta(api, xml_bytes: bytes) -> None:  # type: ignore[no-untyped-def]
+    files = {"archivo": ("cfdi.xml", xml_bytes, "application/xml")}
+    r = api.post("/api/v1/facturacion/adjuntos?tipo=cfdi_xml", files=files, headers=_hdr("cxp"))
+    assert r.status_code == 201, r.text
+
+
+def test_subir_xml_sin_declaracion_se_acepta(api) -> None:  # type: ignore[no-untyped-def]
+    """ADR-204 (petición del usuario): el prólogo `<?xml ...?>` es OPCIONAL en la spec
+    XML — un archivo armado a mano (p. ej. una prueba en Notepad) rara vez lo incluye y
+    es igual de válido arrancando directo con su elemento raíz."""
+    files = {
+        "archivo": ("cfdi.xml", b"<cfdi:Comprobante>prueba</cfdi:Comprobante>", "application/xml")
+    }
+    r = api.post("/api/v1/facturacion/adjuntos?tipo=cfdi_xml", files=files, headers=_hdr("cxp"))
+    assert r.status_code == 201, r.text
+
+
+def test_subir_binario_renombrado_a_xml_sigue_rechazado(api) -> None:  # type: ignore[no-untyped-def]
+    """El fix de UTF-16/sin-prólogo no debe abrir la puerta a CUALQUIER contenido con
+    extensión `.xml` — un binario/ejecutable renombrado sigue sin pasar: ninguno arranca
+    con "<" (el único requisito real que queda, ver `_parece_xml`)."""
+    files = {"archivo": ("falso.xml", b"MZ" + b"\x00" * 20, "application/octet-stream")}
+    r = api.post("/api/v1/facturacion/adjuntos?tipo=cfdi_xml", files=files, headers=_hdr("cxp"))
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "archivo_no_permitido"
 
 
 def test_prefijo_distinto_por_tipo(api) -> None:  # type: ignore[no-untyped-def]

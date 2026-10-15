@@ -1196,15 +1196,25 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   vigente** (`NOT EXISTS` sobre `factura_cliente_orden`; las **canceladas no cuentan**, así
   que una OC cuya factura se canceló vuelve a la bandeja — ADR-047). Es el atajo operativo
   del día a día de Facturación. Acepta `page`, `size`, `q` (folio, número de orden y
-  anunciante) y **`anunciante_id`**, que es como la facturación múltiple acota la bandeja
-  al anunciante elegido. El `total` SIN filtros es el contador que la pantalla pinta en el
-  sidebar.
+  anunciante), **`anunciante_id`** y **`agencia_id`** (ADR-201, mutuamente excluyentes),
+  que es como la facturación múltiple acota la bandeja. Con `anunciante_id` solo trae
+  órdenes **directas** de ese anunciante (`facturacion_directa_cliente = True OR
+  agencia_id IS NULL`); con `agencia_id` solo las **vía agencia** de esa agencia
+  (`agencia_id = X AND facturacion_directa_cliente = False`) — una factura múltiple no
+  puede mezclar receptores, así que cada filtro descarta de raíz las órdenes del otro tipo.
+  El `total` SIN filtros es el contador que la pantalla pinta en el sidebar.
 
 - **`GET /facturacion/ordenes-por-facturar/anunciantes`** (`facturacion:leer`) — llena el
-  combo de facturación múltiple: anunciantes con al menos `minimo` órdenes **disponibles**
-  (por defecto **2**; con una sola no hay nada que agrupar). Devuelve `anunciante_id`,
+  combo de facturación múltiple **por Anunciante**: anunciantes con al menos `minimo`
+  órdenes **directas disponibles** (ADR-201; por defecto **2**; con una sola no hay nada
+  que agrupar — las "vía agencia" de ese anunciante no cuentan). Devuelve `anunciante_id`,
   `anunciante` y `ordenes` (cuántas tiene listas). Sin paginar a propósito: es un combo con
   búsqueda en el cliente, no una lista.
+
+- **`GET /facturacion/ordenes-por-facturar/agencias`** (`facturacion:leer`) — espejo de
+  `/anunciantes` (ADR-201): llena el combo de facturación múltiple **por Agencia**,
+  agencias con al menos `minimo` órdenes **vía agencia disponibles** (las directas de esa
+  agencia no cuentan). Devuelve `agencia_id`, `agencia` y `ordenes`.
 
   Devuelve los NOMBRES ya resueltos (`anunciante`, `agencia`, `vendedor`) además de los
   datos de la orden, para que la vista no dispare tres consultas de catálogo por renglón.

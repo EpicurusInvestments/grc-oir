@@ -26,7 +26,7 @@ vi.mock("../api", () => ({
     cancelar: vi.fn(),
     descargarArchivoPlano: vi.fn(),
   },
-  adjuntosFacturacionApi: { subir: vi.fn(), ver: vi.fn() },
+  adjuntosFacturacionApi: { subir: vi.fn(), ver: vi.fn(), verEnVisor: vi.fn() },
   nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
   ordenesPorFacturar: (params: unknown) => porFacturarMock(params),
   ordenesFacturables: vi.fn().mockResolvedValue([]),
@@ -220,6 +220,72 @@ describe("FacturasClientePage", () => {
 
     (await screen.findByText("Registrar timbrado")).click();
     expect(await screen.findByText(/El folio fiscal.*es obligatorio/)).toBeInTheDocument();
+  });
+
+  // ── ADR-206 (petición del usuario): PDF se puede VER y descargar; XML solo descargar ──
+  it("timbrada CON pdf_path Y xml_path ofrece 'Ver factura', 'Descargar PDF' y 'Descargar XML'", async () => {
+    renderCon({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      pdf_path: "facturacion/clientes/pdf/abc_factura.pdf",
+      xml_path: "facturacion/clientes/xml/abc_factura.xml",
+    });
+    (await screen.findByText("A-1041")).click();
+
+    const { adjuntosFacturacionApi } = await import("../api");
+    (await screen.findByText("Ver factura")).click();
+    await waitFor(() =>
+      expect(adjuntosFacturacionApi.verEnVisor).toHaveBeenCalledWith(
+        "facturacion/clientes/pdf/abc_factura.pdf",
+      ),
+    );
+
+    screen.getByText("Descargar PDF").click();
+    await waitFor(() =>
+      expect(adjuntosFacturacionApi.ver).toHaveBeenCalledWith(
+        "facturacion/clientes/pdf/abc_factura.pdf",
+      ),
+    );
+
+    screen.getByText("Descargar XML").click();
+    await waitFor(() =>
+      expect(adjuntosFacturacionApi.ver).toHaveBeenCalledWith(
+        "facturacion/clientes/xml/abc_factura.xml",
+      ),
+    );
+
+    // El XML no tiene un visor con sentido (ADR-203): solo se puede descargar.
+    expect(screen.queryByText("Ver XML")).not.toBeInTheDocument();
+  });
+
+  it("timbrada SIN pdf_path ni xml_path no ofrece ningún botón de ver/descargar", async () => {
+    renderCon({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      pdf_path: null,
+      xml_path: null,
+    });
+    (await screen.findByText("A-1041")).click();
+    await waitFor(() => expect(screen.getByText("Datos del timbrado")).toBeInTheDocument());
+    expect(screen.queryByText("Ver factura")).not.toBeInTheDocument();
+    expect(screen.queryByText("Descargar PDF")).not.toBeInTheDocument();
+    expect(screen.queryByText("Descargar XML")).not.toBeInTheDocument();
+  });
+
+  it("timbrada CON xml_path pero SIN pdf_path solo ofrece 'Descargar XML'", async () => {
+    renderCon({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      pdf_path: null,
+      xml_path: "facturacion/clientes/xml/abc_factura.xml",
+    });
+    (await screen.findByText("A-1041")).click();
+    expect(await screen.findByText("Descargar XML")).toBeInTheDocument();
+    expect(screen.queryByText("Ver factura")).not.toBeInTheDocument();
+    expect(screen.queryByText("Descargar PDF")).not.toBeInTheDocument();
   });
 
   it("una factura cancelada no ofrece ninguna transición ni la descarga del archivo plano", async () => {

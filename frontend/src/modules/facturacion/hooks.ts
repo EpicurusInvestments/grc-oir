@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   afiliadosActivos,
   agenciasActivas,
+  agenciasFacturables,
   anunciantesFacturables,
   costoApi,
   cuentasContables,
@@ -270,6 +271,7 @@ export function useOrdenesPorFacturar(params: {
   size?: number;
   q?: string;
   anunciante_id?: string;
+  agencia_id?: string;
 }) {
   return useQuery({
     queryKey: [K_POR_FACTURAR, "list", params],
@@ -277,13 +279,24 @@ export function useOrdenesPorFacturar(params: {
   });
 }
 
-/** Anunciantes con 2 o más órdenes disponibles — opciones del combo de facturación
- *  múltiple. Solo se pide cuando el usuario marca el check: hasta entonces `enabled`
- *  la mantiene apagada, para no gastar una consulta que nadie va a ver. */
+/** Anunciantes con 2 o más órdenes DIRECTAS disponibles — opciones del combo de
+ *  facturación múltiple POR ANUNCIANTE (ADR-201). Solo se pide cuando el usuario marca
+ *  el check: hasta entonces `enabled` la mantiene apagada, para no gastar una consulta
+ *  que nadie va a ver. */
 export function useAnunciantesFacturables(activo: boolean) {
   return useQuery({
     queryKey: [K_POR_FACTURAR, "anunciantes"],
     queryFn: () => anunciantesFacturables(2),
+    enabled: activo,
+  });
+}
+
+/** Agencias con 2 o más órdenes "vía agencia" disponibles — opciones del combo de
+ *  facturación múltiple POR AGENCIA (ADR-201), espejo de `useAnunciantesFacturables`. */
+export function useAgenciasFacturables(activo: boolean) {
+  return useQuery({
+    queryKey: [K_POR_FACTURAR, "agencias"],
+    queryFn: () => agenciasFacturables(2),
     enabled: activo,
   });
 }

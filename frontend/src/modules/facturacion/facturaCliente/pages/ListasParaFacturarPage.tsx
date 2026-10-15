@@ -27,6 +27,7 @@ import { Paginator, SearchableSelect } from "@/shared/ui";
 import { FacturaClienteForm } from "../components/FacturaClienteForm";
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
 import {
+  useAgenciasFacturables,
   useAnunciantesFacturables,
   useFacturasCliente,
   useOrdenesPorFacturar,
@@ -37,6 +38,12 @@ import type { FacturaClienteCreate, OrdenPorFacturar } from "../../types";
  *  con el que el backend arma el combo, así que los dos criterios coinciden. */
 const MINIMO_MULTIPLE = 2;
 
+/** ADR-201 (petición del usuario): una factura múltiple no puede mezclar receptores (el
+ *  backend ya lo rechaza al crear — "no se pueden mezclar órdenes facturadas a la
+ *  agencia con otras facturadas directo"), así que los dos modos son mutuamente
+ *  excluyentes — nunca los dos combos a la vez. */
+type ModoMultiple = "ninguno" | "anunciante" | "agencia";
+
 export function ListasParaFacturarPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
@@ -45,21 +52,24 @@ export function ListasParaFacturarPage() {
   const [creada, setCreada] = useState<string | null>(null);
 
   // ── modo múltiple ──
-  const [multiple, setMultiple] = useState(false);
+  const [modoMultiple, setModoMultiple] = useState<ModoMultiple>("ninguno");
   const [anuncianteId, setAnuncianteId] = useState("");
+  const [agenciaId, setAgenciaId] = useState("");
   const [marcadas, setMarcadas] = useState<string[]>([]);
   const [errorSeleccion, setErrorSeleccion] = useState<string | null>(null);
   const [ordenesMultiples, setOrdenesMultiples] = useState<OrdenPorFacturar[] | null>(null);
 
   const qc = useQueryClient();
-  // En modo múltiple la bandeja se acota al anunciante elegido; mientras no se elija
-  // ninguno no se pide nada, porque la pantalla muestra la invitación a elegirlo.
+  // En modo múltiple la bandeja se acota al anunciante/agencia elegido; mientras no se
+  // elija ninguno no se pide nada, porque la pantalla muestra la invitación a elegirlo.
   const lista = useOrdenesPorFacturar({
     page,
     size,
-    anunciante_id: multiple ? anuncianteId || undefined : undefined,
+    anunciante_id: modoMultiple === "anunciante" ? anuncianteId || undefined : undefined,
+    agencia_id: modoMultiple === "agencia" ? agenciaId || undefined : undefined,
   });
-  const anunciantes = useAnunciantesFacturables(multiple);
+  const anunciantes = useAnunciantesFacturables(modoMultiple === "anunciante");
+  const agencias = useAgenciasFacturables(modoMultiple === "agencia");
   // Se reutiliza la mutación de alta del módulo: misma validación, mismos errores.
   const { crear } = useFacturasCliente({ page: 1, size: 1 });
 
@@ -68,8 +78,22 @@ export function ListasParaFacturarPage() {
   const totalSeleccionado = seleccionadas.reduce((suma, o) => suma + Number(o.total), 0);
 
   const salirDeMultiple = () => {
-    setMultiple(false);
+    setModoMultiple("ninguno");
     setAnuncianteId("");
+    setAgenciaId("");
+    setMarcadas([]);
+    setErrorSeleccion(null);
+    setPage(1);
+  };
+
+  const onElegirModo = (modo: "anunciante" | "agencia", marcado: boolean) => {
+    if (!marcado) {
+      salirDeMultiple();
+      return;
+    }
+    setModoMultiple(modo);
+    setAnuncianteId("");
+    setAgenciaId("");
     setMarcadas([]);
     setErrorSeleccion(null);
     setPage(1);
@@ -170,7 +194,10 @@ export function ListasParaFacturarPage() {
   }
 
   // ── Bandeja ─────────────────────────────────────────────────────────────────
-  const esperandoAnunciante = multiple && !anuncianteId;
+  const multiple = modoMultiple !== "ninguno";
+  const esperandoSeleccion =
+    (modoMultiple === "anunciante" && !anuncianteId) ||
+    (modoMultiple === "agencia" && !agenciaId);
 
   return (
     <>
@@ -180,9 +207,11 @@ export function ListasParaFacturarPage() {
           <div className="cat-sub">
             Órdenes en estado <strong>orden cerrada</strong> que aún no tienen factura
             generada.{" "}
-            {multiple
-              ? "Elige un anunciante y marca las órdenes que irán en la misma factura."
-              : "Selecciona una para empezar a prepararla."}
+            {modoMultiple === "anunciante" &&
+              "Elige un anunciante y marca las órdenes que irán en la misma factura."}
+            {modoMultiple === "agencia" &&
+              "Elige una agencia y marca las órdenes que irán en la misma factura."}
+            {modoMultiple === "ninguno" && "Selecciona una para empezar a prepararla."}
           </div>
         </div>
       </div>
@@ -190,65 +219,118 @@ export function ListasParaFacturarPage() {
       {/* Tarjeta del modo múltiple: mismo look que las secciones de "Nueva orden del
           cliente" (`.form-card` + `.check-box`), en vez de la barra plana anterior. Vive
           fuera del scroll de las tarjetas para que siga visible al marcar órdenes en una
-          lista larga. */}
+          lista larga.
+
+          ADR-201 (petición del usuario): dos filas — "por Anunciante" (directa al
+          cliente) y "por Agencia" (clon de la anterior, filtrando por agencia) — una
+          factura múltiple no puede mezclar receptores, así que son mutuamente
+          excluyentes (`onElegirModo` apaga la otra al marcar una). El botón "Generar
+          Factura Múltiple" y el resumen de seleccionadas son compartidos: solo un modo
+          está activo a la vez. */}
       <div style={{ padding: "16px 22px 0" }}>
         <div className="form-card" style={{ marginBottom: 0 }}>
           <div className="form-card-title">Facturación múltiple</div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: modoMultiple === "anunciante" ? 10 : 0 }}>
+            <label
+              className="check-box"
+              style={{ marginBottom: 0 }}
+              title="Agrupa varias órdenes cerradas del mismo anunciante, facturadas directo al cliente, en una sola factura."
+            >
+              <input
+                type="checkbox"
+                checked={modoMultiple === "anunciante"}
+                onChange={(e) => onElegirModo("anunciante", e.target.checked)}
+              />
+              <div className="check-box-title">Facturar Múltiples Órdenes por Anunciante</div>
+            </label>
+
+            {modoMultiple === "anunciante" && (
+              <div className="combo-multiple">
+                <SearchableSelect
+                  value={anuncianteId}
+                  onChange={(v) => {
+                    setAnuncianteId(v);
+                    setMarcadas([]);
+                    setErrorSeleccion(null);
+                    setPage(1);
+                  }}
+                  options={(anunciantes.data ?? []).map((a) => ({
+                    value: a.anunciante_id,
+                    label: `${a.anunciante} · ${a.ordenes} órdenes`,
+                  }))}
+                  placeholder="Seleccionar Anunciante"
+                  emptyOptionLabel="Seleccionar Anunciante"
+                  emptyResultsLabel="Ningún anunciante coincide"
+                />
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <label
               className="check-box"
               style={{ marginBottom: 0 }}
-              title="Agrupa varias órdenes cerradas del mismo anunciante en una sola factura."
+              title="Agrupa varias órdenes cerradas de la misma agencia, facturadas vía agencia, en una sola factura."
             >
               <input
                 type="checkbox"
-                checked={multiple}
-                onChange={(e) => (e.target.checked ? setMultiple(true) : salirDeMultiple())}
+                checked={modoMultiple === "agencia"}
+                onChange={(e) => onElegirModo("agencia", e.target.checked)}
               />
-              <div className="check-box-title">Facturar Múltiples Órdenes</div>
+              <div className="check-box-title">Facturar Múltiples Órdenes por Agencia</div>
             </label>
 
-            {multiple && (
-              <>
-                <div className="combo-anunciante">
-                  <SearchableSelect
-                    value={anuncianteId}
-                    onChange={(v) => {
-                      setAnuncianteId(v);
-                      setMarcadas([]);
-                      setErrorSeleccion(null);
-                      setPage(1);
-                    }}
-                    options={(anunciantes.data ?? []).map((a) => ({
-                      value: a.anunciante_id,
-                      label: `${a.anunciante} · ${a.ordenes} órdenes`,
-                    }))}
-                    placeholder="Seleccionar Anunciante"
-                    emptyOptionLabel="Seleccionar Anunciante"
-                    emptyResultsLabel="Ningún anunciante coincide"
-                  />
-                </div>
-
-                <button type="button" className="btn btn-primary" onClick={generarMultiple}>
-                  Generar Factura Múltiple
-                </button>
-
-                {seleccionadas.length > 0 && (
-                  <span className="resumen-multiple">
-                    {seleccionadas.length} seleccionadas ·{" "}
-                    <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
-                  </span>
-                )}
-              </>
+            {modoMultiple === "agencia" && (
+              <div className="combo-multiple">
+                <SearchableSelect
+                  value={agenciaId}
+                  onChange={(v) => {
+                    setAgenciaId(v);
+                    setMarcadas([]);
+                    setErrorSeleccion(null);
+                    setPage(1);
+                  }}
+                  options={(agencias.data ?? []).map((a) => ({
+                    value: a.agencia_id,
+                    label: `${a.agencia} · ${a.ordenes} órdenes`,
+                  }))}
+                  placeholder="Seleccionar Agencia"
+                  emptyOptionLabel="Seleccionar Agencia"
+                  emptyResultsLabel="Ninguna agencia coincide"
+                />
+              </div>
             )}
           </div>
+
+          {multiple && (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
+              <button type="button" className="btn btn-primary" onClick={generarMultiple}>
+                Generar Factura Múltiple
+              </button>
+
+              {seleccionadas.length > 0 && (
+                <span className="resumen-multiple">
+                  {seleccionadas.length} seleccionadas ·{" "}
+                  <span className="mono">{fmtMoneda(String(totalSeleccionado))}</span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {multiple && anunciantes.isSuccess && anunciantes.data.length === 0 && (
+      {modoMultiple === "anunciante" && anunciantes.isSuccess && anunciantes.data.length === 0 && (
         <div className="state-msg" style={{ textAlign: "left" }}>
-          Ningún anunciante tiene {MINIMO_MULTIPLE} o más órdenes disponibles, así que no hay
-          nada que agrupar todavía.
+          Ningún anunciante tiene {MINIMO_MULTIPLE} o más órdenes directas disponibles, así
+          que no hay nada que agrupar todavía.
+        </div>
+      )}
+
+      {modoMultiple === "agencia" && agencias.isSuccess && agencias.data.length === 0 && (
+        <div className="state-msg" style={{ textAlign: "left" }}>
+          Ninguna agencia tiene {MINIMO_MULTIPLE} o más órdenes vía agencia disponibles, así
+          que no hay nada que agrupar todavía.
         </div>
       )}
 
@@ -265,26 +347,38 @@ export function ListasParaFacturarPage() {
       )}
 
       <div style={{ flex: 1, overflow: "auto", padding: "20px 24px" }}>
-        {esperandoAnunciante && (
+        {esperandoSeleccion && modoMultiple === "anunciante" && (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text3)" }}>
             <div style={{ fontSize: 14, marginBottom: 8 }}>
               Elige un anunciante para ver sus órdenes cerradas
             </div>
             <div style={{ fontSize: 12 }}>
-              El combo solo lista anunciantes con {MINIMO_MULTIPLE} o más órdenes por
-              facturar.
+              El combo solo lista anunciantes con {MINIMO_MULTIPLE} o más órdenes directas
+              por facturar.
             </div>
           </div>
         )}
 
-        {!esperandoAnunciante && lista.isLoading && (
+        {esperandoSeleccion && modoMultiple === "agencia" && (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text3)" }}>
+            <div style={{ fontSize: 14, marginBottom: 8 }}>
+              Elige una agencia para ver sus órdenes cerradas
+            </div>
+            <div style={{ fontSize: 12 }}>
+              El combo solo lista agencias con {MINIMO_MULTIPLE} o más órdenes vía agencia
+              por facturar.
+            </div>
+          </div>
+        )}
+
+        {!esperandoSeleccion && lista.isLoading && (
           <div className="state-msg">Cargando órdenes…</div>
         )}
-        {!esperandoAnunciante && lista.isError && (
+        {!esperandoSeleccion && lista.isError && (
           <div className="state-msg error">No se pudieron cargar las órdenes.</div>
         )}
 
-        {!esperandoAnunciante && !lista.isLoading && !lista.isError && items.length === 0 && (
+        {!esperandoSeleccion && !lista.isLoading && !lista.isError && items.length === 0 && (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text3)" }}>
             <div style={{ fontSize: 14, marginBottom: 8 }}>
               ✓ No hay órdenes pendientes de facturar
@@ -295,7 +389,7 @@ export function ListasParaFacturarPage() {
           </div>
         )}
 
-        {!esperandoAnunciante && items.length > 0 && (
+        {!esperandoSeleccion && items.length > 0 && (
           <div
             style={{
               display: "grid",
@@ -432,7 +526,7 @@ export function ListasParaFacturarPage() {
           </div>
         )}
 
-        {!esperandoAnunciante && lista.data && lista.data.total > size && (
+        {!esperandoSeleccion && lista.data && lista.data.total > size && (
           <Paginator
             page={page}
             size={size}

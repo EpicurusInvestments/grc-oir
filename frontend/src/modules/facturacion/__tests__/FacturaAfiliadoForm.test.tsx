@@ -308,6 +308,9 @@ describe("FacturaAfiliadoForm — Asignación a órdenes estación", () => {
     fireEvent.change(inputArchivo, { target: { files: [archivo] } });
 
     await waitFor(() => expect(subirMock).toHaveBeenCalledWith("factura_afiliado_pdf", archivo));
-    expect(await screen.findByText("facturacion/proveedor/afiliado/pdf/abc_factura.pdf")).toBeInTheDocument();
+    // ADR-207: el nombre se trunca a 5 letras + extensión (ya no se muestra el ref
+    // completo) — el ref completo sigue en el `title` del tooltip.
+    const texto = await screen.findByText("factu...pdf");
+    expect(texto).toHaveAttribute("title", "facturacion/proveedor/afiliado/pdf/abc_factura.pdf");
   });
 });

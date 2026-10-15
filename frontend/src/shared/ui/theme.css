@@ -2058,11 +2058,11 @@ body {
   opacity: 0.6;
 }
 
-/* ── Facturación múltiple (F2, ADR-064) ─────────────────────────────────────
-   El toggle "Facturar Múltiples Órdenes" vive dentro de un `.form-card` (mismo look que
-   "Nueva orden del cliente"); la casilla en sí reutiliza `.check-box`. Aquí solo lo que
-   es propio de esta bandeja: la casilla "Incluir en la factura" de cada tarjeta y el
-   combo de anunciante. */
+/* ── Facturación múltiple (F2, ADR-064; ADR-201 agrega el modo "por Agencia") ───────
+   Los dos toggles "Facturar Múltiples Órdenes por Anunciante/Agencia" viven dentro de un
+   `.form-card` (mismo look que "Nueva orden del cliente"); la casilla en sí reutiliza
+   `.check-box`. Aquí solo lo que es propio de esta bandeja: la casilla "Incluir en la
+   factura" de cada tarjeta y el combo de anunciante/agencia (mismo ancho para ambos). */
 .check-incluir {
   display: inline-flex;
   align-items: center;
@@ -2080,8 +2080,9 @@ body {
   accent-color: var(--blue);
 }
 
-/* Ancho fijo: el combo no debe crecer con el nombre del anunciante ni empujar al botón. */
-.combo-anunciante {
+/* Ancho fijo: el combo no debe crecer con el nombre del anunciante/agencia ni empujar al
+   botón. */
+.combo-multiple {
   min-width: 280px;
   max-width: 340px;
   flex: 1;
