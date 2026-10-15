@@ -8296,3 +8296,27 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   los dos no aparece nada; solo `xml_path` ofrece únicamente "Descargar XML"); suite
   completa de `facturacion` 104/104 sin regresiones.
 
+### ADR-207 — El nombre de archivo cargado se trunca a un largo fijo (ya no por CSS) con tooltip del nombre completo
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, con captura): al
+  cargar un XML/PDF con nombre largo (p. ej. "factura_prueba_corregida.xml") en
+  "Registrar respuesta del timbrado", el nombre desbordaba el `.dropzone` dentro del
+  grid de 2 columnas (XML/PDF) — el truncado por CSS (`text-overflow: ellipsis`) no
+  alcanzaba a contenerlo y aparecía scroll horizontal en todo el panel.
+- **Decisión:** nueva función `truncarNombreArchivo()` en `AdjuntoFacturaInput.tsx` — ya
+  no depende del ancho disponible (el bug original): corta la raíz del nombre a las
+  primeras 5 letras + `"..."` + la extensión SIN su propio punto (`"factu...xml"`, no
+  `"factu....xml"` — los `"..."` ya hacen de separador, dos puntos juntos se veía raro).
+  El nombre completo (el `ref` de almacenamiento, UUID incluido) se expone en un
+  `title` nativo sobre el mismo `<span>` — tooltip del navegador al pasar el mouse, sin
+  JS adicional. Afecta a los 4 tipos de factura (Cliente/Afiliado/Agencia/Vendedor,
+  mismo componente compartido).
+- **Consecuencia:** ninguna negativa — cambio 100% visual; 3 pruebas preexistentes
+  (`FacturaAfiliadoForm`/`FacturaAgenciaForm`/`FacturaVendedorForm`, cada una verificaba
+  que se mostrara el `ref` COMPLETO tras subir un PDF) se actualizan para esperar el
+  nombre truncado y comprobar el `title` en su lugar — ya no es el comportamiento real.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; 2 pruebas nuevas en
+  `AdjuntoFacturaInput.test.tsx` (nombre largo se trunca con el `title` correcto; nombre
+  corto —5 letras de raíz o menos— no se trunca); suite completa de `facturacion`
+  106/106 sin regresiones.
+

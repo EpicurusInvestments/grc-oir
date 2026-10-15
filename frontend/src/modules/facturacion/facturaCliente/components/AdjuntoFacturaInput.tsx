@@ -21,6 +21,23 @@ import {
 } from "../../api";
 import { ADJUNTO_FACTURACION_MAX_BYTES } from "../../constants";
 
+// ADR-207 (petición del usuario, corrige un bug real): un nombre de archivo largo
+// (p. ej. "factura_prueba_corregida.xml") desbordaba el `.dropzone` — el truncado por
+// CSS (`text-overflow: ellipsis`) no alcanzaba a contenerlo dentro del grid de 2
+// columnas (XML/PDF) y aparecía un scroll horizontal en todo el panel. En vez de
+// depender del ancho disponible, se trunca el nombre a un largo FIJO: las primeras 5
+// letras + "…" + la extensión — y se muestra el nombre completo en un tooltip nativo
+// (`title`) al pasar el mouse.
+function truncarNombreArchivo(nombre: string): string {
+  const idx = nombre.lastIndexOf(".");
+  const raiz = idx > 0 ? nombre.slice(0, idx) : nombre;
+  // Sin el punto propio de la extensión: los "..." ya hacen de separador visual: con
+  // los dos puntos juntos ("....xml") se veía raro.
+  const extension = idx > 0 ? nombre.slice(idx + 1) : "";
+  if (raiz.length <= 5) return nombre;
+  return `${raiz.slice(0, 5)}...${extension}`;
+}
+
 interface AdjuntoFacturaInputProps {
   tipo: TipoAdjuntoFacturacion;
   /** Texto de la caja vacía, p.ej. "Cargar XML del CFDI". */
@@ -113,12 +130,19 @@ export function AdjuntoFacturaInput({
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
           <path d="M7 2v6M4 5l3-3 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
         </svg>
-        {/* `minWidth: 0` es lo que de verdad activa el truncado: sin esto, un flex item
-            nunca se encoge por debajo del ancho de su contenido (min-width:auto por
-            default), así que un nombre de archivo largo empujaba el ancho del dropzone
-            —y del formulario entero— en vez de cortarse con "…". */}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {subiendo ? "Subiendo…" : value ? nombreDeAdjuntoFacturacionRef(value) : placeholder}
+        {/* ADR-207: el nombre ya viene truncado a un largo FIJO (`truncarNombreArchivo`),
+            no depende del ancho disponible — `minWidth: 0` sigue aquí como respaldo (por
+            si el placeholder, sin truncar, fuera más largo que el espacio disponible) y
+            el `title` da el nombre completo en un tooltip nativo al pasar el mouse. */}
+        <span
+          title={value ? nombreDeAdjuntoFacturacionRef(value) : undefined}
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}
+        >
+          {subiendo
+            ? "Subiendo…"
+            : value
+              ? truncarNombreArchivo(nombreDeAdjuntoFacturacionRef(value))
+              : placeholder}
         </span>
         <input
           ref={inputRef}

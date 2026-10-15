@@ -332,6 +332,12 @@ opcionales al registrar el timbrado, pueden faltar. El XML no tiene botón de "V
 es un documento visual). Mismos endpoints que ya usa `AdjuntoFacturaInput` — sin
 cambios de backend.
 
+**ADR-207 (petición del usuario, corrige un bug real):** un nombre de archivo largo
+desbordaba el `.dropzone` (scroll horizontal) — el truncado por CSS no alcanzaba dentro
+del grid de 2 columnas. `AdjuntoFacturaInput.tsx` ahora trunca a un largo FIJO (5 letras
++ "..." + extensión, p. ej. "factu...xml"), con el nombre completo en un `title` nativo
+(tooltip). Afecta a los 4 tipos de factura (mismo componente compartido).
+
 ## RBAC (confirmado en sesión)
 
 | Entidad | Quién captura | Quién solo lee |
