@@ -10,9 +10,11 @@
  */
 
 import { apiClient } from "@/shared/lib/apiClient";
+import { abrirVisorPdf } from "@/shared/lib/visorPdf";
 import type { ListParams, Page } from "@/shared/types";
 
 import type {
+  AgenciaFacturable,
   AnuncianteFacturable,
   CostoAdicional,
   CostoAdicionalCreate,
@@ -167,6 +169,18 @@ export const adjuntosFacturacionApi = {
     enlace.click();
     enlace.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+  /** ADR-203 (petición del usuario): abre un visor de PDF (pestaña nueva, `<embed>`,
+   * `shared/lib/visorPdf.ts` — mismo visor que los PDFs generados de Órdenes) para que
+   * el usuario visualice e imprima el PDF de la factura ya cargado, sin tener que
+   * descargarlo primero. Método APARTE de `ver()` (que sigue forzando descarga, para no
+   * tocar sus otros llamadores) — solo tiene sentido para `_pdf` (ver `AdjuntoFacturaInput`). */
+  async verEnVisor(ref: string): Promise<void> {
+    const { data } = await apiClient.get<Blob>(`${BASE}/adjuntos`, {
+      params: { ref },
+      responseType: "blob",
+    });
+    abrirVisorPdf(data, nombreDeAdjuntoFacturacionRef(ref));
   },
 };
 
@@ -324,7 +338,7 @@ export const costoApi = {
  *  sidebar. Cuelga de su propio prefijo, no de `/clientes/...`: ahí `{item_id}` capturaría
  *  el segmento literal e intentaría leerlo como UUID. */
 export async function ordenesPorFacturar(
-  params?: ListParams & { anunciante_id?: string },
+  params?: ListParams & { anunciante_id?: string; agencia_id?: string },
 ) {
   const { data } = await apiClient.get<Page<OrdenPorFacturar>>(`${BASE}/ordenes-por-facturar`, {
     params,
@@ -332,11 +346,22 @@ export async function ordenesPorFacturar(
   return data;
 }
 
-/** Anunciantes con al menos `minimo` órdenes disponibles: llena el combo de facturación
- *  múltiple. Sin paginar — el backend lo devuelve completo porque es un combo. */
+/** Anunciantes con al menos `minimo` órdenes DIRECTAS disponibles: llena el combo de
+ *  facturación múltiple POR ANUNCIANTE (ADR-201: ya no cuenta las "vía agencia"). Sin
+ *  paginar — el backend lo devuelve completo porque es un combo. */
 export async function anunciantesFacturables(minimo = 2): Promise<AnuncianteFacturable[]> {
   const { data } = await apiClient.get<AnuncianteFacturable[]>(
     `${BASE}/ordenes-por-facturar/anunciantes`,
+    { params: { minimo } },
+  );
+  return data;
+}
+
+/** Agencias con al menos `minimo` órdenes "vía agencia" disponibles (ADR-201): llena el
+ *  combo de facturación múltiple POR AGENCIA — espejo de `anunciantesFacturables`. */
+export async function agenciasFacturables(minimo = 2): Promise<AgenciaFacturable[]> {
+  const { data } = await apiClient.get<AgenciaFacturable[]>(
+    `${BASE}/ordenes-por-facturar/agencias`,
     { params: { minimo } },
   );
   return data;

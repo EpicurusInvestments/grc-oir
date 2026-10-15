@@ -54,16 +54,26 @@ Se suman **subtotales**, no totales: sumar importes que ya traen IVA violaría l
 
 #### La pantalla
 
-La bandeja "Listas para facturar" tiene dos modos. El **normal** factura una orden por
-tarjeta. Al marcar **«Facturar Múltiples Órdenes»** aparecen, en el orden en que se
-trabaja: el combo **«Seleccionar Anunciante»** (con búsqueda; solo lista anunciantes con 2
-o más órdenes disponibles) y el botón **«Generar Factura Múltiple»** a su derecha.
+La bandeja "Listas para facturar" tiene **tres modos**, mutuamente excluyentes (ADR-201,
+una factura múltiple no puede mezclar receptores). El **normal** factura una orden por
+tarjeta — mezcla órdenes directas y vía agencia, cada una resuelve su propio receptor al
+facturarla sola. Los otros dos son espejo uno del otro:
 
-Mientras no se elija anunciante la bandeja no lista nada: muestra la invitación a elegirlo,
-porque listar todas las órdenes en modo múltiple invitaría a marcar órdenes de anunciantes
-distintos que el backend va a rechazar. Al elegirlo, las tarjetas se acotan a ese anunciante
-y cambian su acción: en vez de «Generar factura →» llevan la casilla **«Incluir en la
-factura»**. La tarjeta marcada se distingue por borde y fondo, no solo por su casilla.
+- **«Facturar Múltiples Órdenes por Anunciante»**: combo **«Seleccionar Anunciante»** (con
+  búsqueda; solo lista anunciantes con 2 o más órdenes **directas** disponibles — las "vía
+  agencia" de ese mismo anunciante NO cuentan ni aparecen al elegirlo).
+- **«Facturar Múltiples Órdenes por Agencia»**: combo **«Seleccionar Agencia»**, mismo
+  criterio invertido — solo agencias con 2 o más órdenes **vía agencia** disponibles (las
+  directas de esa agencia no cuentan).
+
+Marcar uno de los dos checks apaga el otro. El botón **«Generar Factura Múltiple»** y el
+resumen de seleccionadas son compartidos entre ambos modos.
+
+Mientras no se elija anunciante/agencia la bandeja no lista nada: muestra la invitación a
+elegirlo, porque listar todo en modo múltiple invitaría a marcar órdenes de receptores
+distintos que el backend va a rechazar. Al elegir, las tarjetas se acotan y cambian su
+acción: en vez de «Generar factura →» llevan la casilla **«Incluir en la factura»**. La
+tarjeta marcada se distingue por borde y fondo, no solo por su casilla.
 
 El botón **no se deshabilita** con menos de dos órdenes marcadas: valida al hacer clic y
 explica qué falta («Selecciona al menos 2 órdenes… Llevas 1»). Un botón muerto sin
@@ -140,6 +150,11 @@ preparada → enviada_a_timbrado → timbrada → entregada → cobrada
 `folio_fiscal_sat`, `fecha_timbrado`, `xml_path`, `pdf_path`: NULL hasta timbrar; se
 llenan al pasar a `timbrada` (vía el mismo endpoint genérico de adjuntos que F1, ver
 "Adjuntos" abajo, para XML/PDF).
+
+**Orden de la lista (ADR-202, petición del usuario):** "Facturas al cliente" ordena por
+Fecha (`fecha_factura`) y No. factura (`numero_factura`), AMBAS descendentes — a
+diferencia de FacturaAgencia/FacturaAfiliado/FacturaVendedor (ADR-086, que ordenan por
+`created_at`, el momento del alta), aquí es explícitamente lo que pidió el usuario.
 
 ### FacturaAfiliado (13 campos spec + 2 aditivos)
 PK `factura_afiliado_id`. FK a `Afiliado`. Captura manual o carga de archivo, por **CxP**
@@ -284,6 +299,38 @@ extensiones + magic bytes), extendiéndolo con nuevos `tipo` para: XML/PDF del C
 timbrado (`FacturaCliente`), y el archivo cargado de `FacturaAfiliado`/`FacturaAgencia`/
 `FacturaVendedor`/`CostoAdicional`. No se replica el CRUD completo de Contrato — mismo
 criterio que F1.
+
+**ADR-203 (petición del usuario, corrige un bug real):** la firma de `xml` en
+`_MAGIC_POR_EXTENSION` solo contemplaba UTF-8 (con/sin BOM) — un XML guardado como
+"Unicode"/"Unicode big endian" desde Notepad (= UTF-16 LE/BE con BOM) se rechazaba. Se
+agregan ambas firmas UTF-16. Además, `AdjuntoFacturaInput.tsx` (compartido por los 4
+tipos de factura) agrega un botón **"Ver"** junto a "Descargar" para los adjuntos `_pdf`
+— abre un visor (pestaña nueva, `<embed>`, `shared/lib/visorPdf.ts`) para visualizar e
+imprimir sin descargar primero, el mismo visor que usan los PDFs de Órdenes.
+
+**ADR-204 (petición del usuario, corrige ADR-203):** el XML seguía rechazándose porque
+el prólogo `<?xml ?>` es OPCIONAL en la spec y un archivo armado a mano rara vez lo
+trae. La validación de `xml` deja de ser una tabla de firmas fijas y pasa a
+`_parece_xml()`: le quita el BOM que detecte (UTF-8/UTF-16 LE/BE) y solo exige que el
+contenido, sin espacios iniciales, empiece con `"<"` — ya NO distingue XML de HTML
+(aceptado a propósito, es un campo interno), pero sigue bloqueando binarios/ejecutables
+renombrados (ninguno arranca con ese carácter).
+
+**ADR-205 (petición del usuario, corrige un bug real):** el botón "Cargar XML del CFDI"
+dejaba elegir un PDF (u otro formato) en el explorador — `AdjuntoFacturaInput.tsx`
+(compartido por los 4 tipos de factura) usaba el mismo `accept` global de las 9
+extensiones del módulo para TODOS los campos. Ahora `accept` y la validación del front
+se derivan de `tipo.endsWith("_pdf")`: cada campo se acota a SU propia extensión
+(`.xml` o `.pdf` exclusivamente). Solo cambia el front — el backend sigue aceptando
+cualquiera de las 9 extensiones sin importar `tipo` (no se tocó).
+
+**ADR-206 (petición del usuario):** el detalle de "Facturas al cliente", en "Datos del
+timbrado", agrega **"Ver factura"** (visor de solo consulta, `verEnVisor`) y **"Descargar
+PDF"** (`ver`, fuerza descarga) cuando `pdf_path` existe, y **"Descargar XML"** cuando
+`xml_path` existe (cada botón según su propio adjunto, independientes entre sí) — ambos
+opcionales al registrar el timbrado, pueden faltar. El XML no tiene botón de "Ver" (no
+es un documento visual). Mismos endpoints que ya usa `AdjuntoFacturaInput` — sin
+cambios de backend.
 
 ## RBAC (confirmado en sesión)
 

@@ -8099,3 +8099,200 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   faltante se debe capturar en el catálogo de Anunciante/Agencia, no aquí.
 - **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; suite
   `OrdenClienteForm.test.tsx` 46/46 sin regresiones.
+
+### ADR-201 — "Facturación múltiple" se separa en dos modos mutuamente excluyentes: por Anunciante (directo) y por Agencia
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, probando en vivo con
+  2 OC — una "Facturación directa al cliente" vía `Grupo Femsa`, otra "Facturación a la
+  Agencia" vía `OMD México`): una factura múltiple no puede mezclar receptores (ya lo
+  rechazaba el alta — "no se pueden mezclar órdenes facturadas a la agencia con otras
+  facturadas directo", línea de `_receptor_de`/`create()` en `factura_cliente.py`), pero
+  la bandeja de "Facturar Múltiples Órdenes" (ADR-064) no lo anticipaba: si un anunciante
+  tenía órdenes directas Y vía agencia mezcladas, el combo las ofrecía juntas y el usuario
+  se enteraba del choque hasta que el alta lo rechazaba. Pidió, además, clonar el flujo
+  para poder agrupar por AGENCIA (no solo por anunciante).
+- **Decisión:**
+  1. **Backend (`factura_cliente.py`):** `OrdenesPorFacturarRepository.listar()` ahora,
+     cuando recibe `anunciante_id`, SOLO trae órdenes DIRECTAS de ese anunciante
+     (`facturacion_directa_cliente == True OR agencia_id IS NULL`, el mismo criterio de
+     `_receptor_de`) — las "vía agencia" de ese mismo anunciante quedan fuera. Nuevo
+     parámetro `agencia_id`, espejo invertido: solo trae las "vía agencia" de esa agencia
+     (`agencia_id == X AND facturacion_directa_cliente == False`). `anunciantes_facturables`
+     aplica el mismo filtro "solo directas" al CONTEO del combo (para que combo y bandeja
+     siempre coincidan); nuevo `agencias_facturables` (y su schema `AgenciaFacturable`,
+     endpoint `GET /ordenes-por-facturar/agencias`), espejo invertido.
+  2. **Frontend (`ListasParaFacturarPage.tsx`):** el booleano `multiple` se reemplaza por
+     `modoMultiple: "ninguno" | "anunciante" | "agencia"` — los dos checks ("Facturar
+     Múltiples Órdenes por Anunciante", renombrado, y el nuevo "...por Agencia", clon del
+     primero) son mutuamente excluyentes: marcar uno apaga el otro (`onElegirModo`). El
+     combo de Agencia usa el mismo criterio que el de Anunciante — `useAgenciasFacturables`
+     solo se activa (`enabled`) en modo "agencia"; "Seleccionar Agencia" en vez de
+     "Seleccionar Anunciante". El botón "Generar Factura Múltiple" y el resumen de
+     seleccionadas son compartidos entre ambos modos (nunca están activos los dos a la
+     vez). `.combo-anunciante` (CSS) se renombra a `.combo-multiple` — ya es compartida.
+  3. **El modo normal** (una tarjeta a la vez, sin ningún check marcado) NO cambia: sigue
+     mostrando ambos tipos de orden mezclados, porque cada tarjeta se factura sola y ya
+     resuelve su propio receptor correctamente (verificado en la sesión anterior).
+- **Consecuencia:** ninguna negativa — el modelo de datos no cambia (mismo
+  `facturacion_directa_cliente`/`agencia_id` de siempre); solo se endurece el filtro de
+  2 endpoints de solo lectura y se clona una pantalla ya existente.
+- **Verificado:** backend, `ruff check` limpio; 3 pruebas existentes de la bandeja/combo
+  por anunciante actualizadas (`_orden(..., directa=True)` — antes usaban el default
+  `directa=False`, que con el filtro nuevo las habría excluido) + 5 pruebas nuevas (bandeja
+  y combo por anunciante descartan vía-agencia; bandeja y combo por agencia descartan
+  directas; RBAC del combo de agencias) — suite completa del backend sin regresiones.
+  Frontend, `tsc --noEmit`/`eslint` limpios; `ListasParaFacturarPage.test.tsx` 12/12 (las 5
+  pruebas de facturación múltiple existentes re-etiquetadas a "por Anunciante" + 3 nuevas:
+  revela combo de agencia, filtra por agencia, mutuamente excluyentes); suite de
+  `facturacion` completa 96/96 sin regresiones.
+
+### ADR-202 — "Facturas al cliente" se ordena por Fecha y No. factura, ambas descendentes
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario): la tabla de
+  "Facturas al cliente" no tenía un orden definido con sentido de negocio —
+  `FacturaClienteRepository` nunca pasó `default_order_by` a `BaseRepository`, así que
+  caía a su *fallback* (orden por `factura_id`, un UUID sin significado cronológico).
+  Pidió orden descendente por Fecha (`fecha_factura`) y, como criterio secundario
+  también descendente, por No. factura (`numero_factura`) — desempata varias facturas
+  capturadas el mismo día (p. ej. una factura múltiple junto con otras).
+- **Decisión:** `get_factura_cliente_service()` pasa
+  `default_order_by=[FacturaCliente.fecha_factura.desc(), FacturaCliente.numero_factura.desc()]`
+  al construir el repositorio — a diferencia de `FacturaAgencia`/`FacturaAfiliado`/
+  `FacturaVendedor` (ADR-086, que ordenan por `created_at.desc()`, el momento del alta),
+  aquí se usa literalmente lo que pidió el usuario: Fecha y No. factura, no la fecha de
+  captura en el sistema. Sin cambios en frontend: la tabla ya pinta `items` tal cual los
+  entrega el backend, sin re-ordenar localmente.
+- **Consecuencia:** ninguna negativa — cambio de solo lectura, no toca el modelo de
+  datos ni el alta.
+- **Verificado:** backend, `ruff check` limpio; prueba nueva (3 facturas con fechas y
+  números distintos, confirma el orden exacto `fecha desc, numero_factura desc`); suite
+  completa del backend sin regresiones.
+
+### ADR-203 — Fix del adjunto XML (acepta UTF-16) y nuevo visor de PDF para "Facturas al cliente"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, con captura): al
+  cargar un XML de prueba (editado a mano en Notepad) en "Cargar XML del CFDI", el
+  backend lo rechazaba con "El contenido del archivo no corresponde a la extensión
+  declarada." — bug real. Pidió además poder DESCARGAR y, sobre todo, VER/IMPRIMIR el
+  PDF ya cargado con un visor como el de los PDFs de Órdenes, no solo descargarlo.
+- **Causa del rechazo de XML:** `_MAGIC_POR_EXTENSION["xml"]` solo contemplaba la
+  declaración `<?xml` en UTF-8 (con o sin BOM) — Notepad en Windows, en su diálogo
+  "Guardar como", ofrece una opción histórica "Unicode" que en realidad escribe
+  **UTF-16 LE con BOM** (y "Unicode big endian" = UTF-16 BE); en UTF-16 cada carácter
+  ocupa 2 bytes, así que los bytes de "<?xml" son completamente distintos a los de
+  UTF-8 — la firma nunca podía casar.
+- **Decisión:**
+  1. **Backend (`documentos.py`):** `_MAGIC_POR_EXTENSION["xml"]` agrega las firmas
+     `BOM_UTF16_LE + "<?xml".encode("utf-16-le")` y `BOM_UTF16_BE + "<?xml".encode("utf-16-be")`
+     — sigue sin aceptar un "<" suelto (HTML/texto plano con extensión `.xml` renombrada
+     sigue rechazándose, prueba nueva lo confirma), solo amplía las codificaciones
+     válidas de un XML real.
+  2. **Frontend — visor de PDF (ADR-201 en espíritu, nuevo aquí):** se extrae la lógica
+     del visor de `ordenes/adapters/pdfsApi.ts` (pestaña nueva, `<embed>`, barra con
+     "Cerrar" — el visor nativo del navegador ya trae imprimir/descargar) a
+     `shared/lib/visorPdf.ts` (`abrirVisorPdf(blob, titulo)`), reusada por AMBOS módulos
+     en vez de duplicar el HTML del visor. Nuevo método
+     `adjuntosFacturacionApi.verEnVisor(ref)` (aparte de `ver()`, que se queda igual y
+     sigue forzando descarga — no se tocan sus otros 3 llamadores en
+     FacturaAfiliado/Agencia/Vendedor). `AdjuntoFacturaInput.tsx` (compartido por los 4
+     tipos de factura) agrega un botón "Ver" junto a "Descargar", SOLO para adjuntos
+     `_pdf` (`tipo.endsWith("_pdf")`) — un XML no tiene un visor visual equivalente con
+     sentido.
+- **Consecuencia:** ninguna negativa — el fix de XML es aditivo (más codificaciones
+  válidas, no menos seguridad); el visor reusa exactamente el mismo mecanismo ya
+  verificado en Órdenes.
+- **Verificado:** backend, `ruff check` limpio; 3 pruebas nuevas en
+  `test_facturacion_adjuntos.py` (XML UTF-16 LE/BE aceptado; un XML falso con extensión
+  `.xml` sigue rechazado); suite completa del backend sin regresiones. Frontend,
+  `tsc --noEmit`/`eslint` limpios; suite de `facturacion` 96/96 y
+  `OrdenEstacionDetailPanel.test.tsx` 14/14 (confirma que refactorizar el visor a
+  `shared/lib/visorPdf.ts` no rompió el de Órdenes) sin regresiones.
+
+### ADR-204 — El adjunto XML ya no exige la declaración `<?xml ...?>` (corrige ADR-203, sigue sin pasar binarios)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, con captura): tras
+  ADR-203 (que amplió la firma a UTF-16), un XML de prueba armado a mano en Notepad
+  SEGUÍA rechazándose — "quiero que cargue solo archivos xml". La causa: el archivo de
+  prueba no traía el prólogo `<?xml version="1.0"?>` (el usuario escribió directo el
+  elemento raíz), y la validación de ADR-203 seguía exigiendo ESA declaración exacta en
+  alguna de sus 4 codificaciones — nunca contempló que el prólogo es **opcional** en la
+  especificación XML.
+- **Decisión:** se reemplaza la tabla de firmas fijas por `_parece_xml(contenido)`: le
+  quita el BOM si lo detecta (UTF-8 o UTF-16 LE/BE — las 3 codificaciones reales vistas
+  hasta ahora), decodifica un fragmento inicial con la codificación correspondiente,
+  recorta espacios en blanco iniciales y solo exige que lo que quede empiece con `"<"`.
+  Ya no importa si el documento trae o no el prólogo `<?xml ?>` — un XML que arranca
+  directo con `<cfdi:Comprobante>` (o cualquier otro elemento raíz) pasa igual.
+- **Qué se pierde (aceptado a propósito):** esta heurística ya NO distingue XML de HTML
+  u otro texto plano que también empiece con `<` — se vuelve a la frontera de seguridad
+  real que de verdad importa aquí (bloquear binarios/ejecutables disfrazados de `.xml`,
+  ninguno de los cuales arranca con ese carácter), no "es XML válido" en sentido
+  estricto. Aceptable: es un campo interno de captura de un documento de negocio (el XML
+  del CFDI), no una superficie que se ejecuta o renderiza en ningún lado peligroso.
+- **Consecuencia:** `test_subir_xml_falso_sigue_rechazado` (ADR-203, probaba HTML) se
+  reemplaza por `test_subir_binario_renombrado_a_xml_sigue_rechazado` (prueba con la
+  firma `MZ` de un ejecutable) — HTML ya NO es el caso de rechazo correcto bajo el nuevo
+  criterio, documentado explícitamente arriba.
+- **Verificado:** backend, `ruff check` limpio; prueba nueva (XML sin prólogo se acepta)
+  + prueba reemplazada (binario con firma `MZ` sigue rechazado); suite completa del
+  backend sin regresiones (13/13 en `test_facturacion_adjuntos.py`).
+
+### ADR-205 — Cada campo de adjunto de Facturación (XML/PDF) solo admite SU propia extensión en el selector de archivos
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, con captura): el
+  botón "Cargar XML del CFDI" dejaba elegir un PDF (o cualquier otro formato) desde el
+  explorador de Windows — "corrige el botón para [que] solo admita [su propia extensión,
+  en vez de] admitir pdf [también]".
+- **Causa:** `AdjuntoFacturaInput.tsx` (compartido por los 4 tipos de factura —
+  Cliente/Afiliado/Agencia/Vendedor, 8 variantes de `tipo`, todas terminadas en
+  `_pdf`/`_xml`) usaba el MISMO `accept` global (`ADJUNTO_FACTURACION_ACCEPT`, las 9
+  extensiones de TODO el módulo: pdf/doc/docx/xls/xlsx/jpg/jpeg/png/xml) para los dos
+  campos de cada formulario, sin importar si el campo era de XML o de PDF — y la
+  validación del front (antes de llegar al backend) tampoco distinguía, aceptando
+  cualquiera de las 9.
+- **Decisión:** `accept` y la validación de extensión del front ahora se derivan de
+  `tipo.endsWith("_pdf")` — cada campo se acota a SU propia extensión
+  (`accept=".xml"` o `accept=".pdf"`, exclusivamente), igual en los 4 módulos que
+  reusan el componente. El backend (`leer_adjunto`) NO se tocó: sigue aceptando
+  cualquiera de las 9 extensiones del módulo sin importar `tipo` (el router genérico de
+  adjuntos no vincula `extensiones_permitidas` a `tipo` — tocar eso es un cambio
+  estructural más grande, fuera de lo pedido, que es específicamente sobre el selector).
+- **Consecuencia:** ninguna negativa — cambio 100% de UX en el front; el backend sigue
+  siendo la validación real y no cambia.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; 5 pruebas nuevas en
+  `AdjuntoFacturaInput.test.tsx` (accept correcto por tipo, un PDF se rechaza en el
+  campo de XML sin llegar a `subir()`, un XML válido sí sube, un DOCX se rechaza en el
+  campo de PDF); suite completa de `facturacion` 101/101 sin regresiones.
+
+### ADR-206 — El detalle de "Facturas al cliente" permite ver/descargar el PDF ya timbrado
+
+- **Estado:** aceptada · **Fecha:** 2026-10-15 (petición del usuario, con captura): una
+  vez que la factura está `timbrada` (o más adelante en el flujo: `entregada`/`cobrada`),
+  el panel de detalle ("Datos del timbrado") no ofrecía forma de ver ni descargar el PDF
+  ya cargado durante el registro del timbrado (`RegistrarTimbradoForm.tsx`) — solo se
+  podía desde la propia pantalla de captura. Pidió un botón de descarga y otro de visor
+  de solo consulta.
+- **Decisión:** en la sección "Datos del timbrado" de `FacturasClientePage.tsx`, cuando
+  `selected.pdf_path` existe (es opcional al registrar el timbrado — "la pantalla
+  aprobada no lo marca como obligatorio", así que puede faltar), se agregan dos botones:
+  **"Ver factura"** (`adjuntosFacturacionApi.verEnVisor`, el mismo visor de solo
+  consulta —pestaña nueva, `<embed>`, imprimible desde ahí— que ya usa
+  `AdjuntoFacturaInput`, ADR-203) y **"Descargar PDF"** (`adjuntosFacturacionApi.ver`,
+  fuerza la descarga). Mismos endpoints de siempre, sin cambios de backend — ambos
+  reciben directamente `selected.pdf_path` como `ref`.
+- **Ajuste (mismo día, petición del usuario):** "quiero que también pueda descargar
+  tanto el PDF como el XML, aunque solo pueda visualizar el PDF" — se agrega un tercer
+  botón, **"Descargar XML"**, condicionado a `selected.xml_path` (independiente de si
+  hay o no `pdf_path` — cada botón aparece según su propio adjunto exista). El XML
+  sigue SIN botón de "Ver" (ADR-203: no es un documento visual, no tiene un visor con
+  sentido) — se reutiliza la misma función genérica `descargarAdjuntoFactura(ref)` para
+  PDF y XML, ya que ambas descargas son idénticas (`adjuntosFacturacionApi.ver`), solo
+  cambia qué `ref` reciben.
+- **Consecuencia:** ninguna negativa — cambio 100% de lectura, reusa infraestructura ya
+  existente.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; 3 pruebas en
+  `FacturasClientePage.test.tsx` (con `pdf_path` Y `xml_path` ofrece los 3 botones y cada
+  uno llama a la función correcta con el `ref` correcto, sin "Ver XML"; sin ninguno de
+  los dos no aparece nada; solo `xml_path` ofrece únicamente "Descargar XML"); suite
+  completa de `facturacion` 104/104 sin regresiones.
+

@@ -1366,7 +1366,22 @@ class FacturaClienteService(
 
 # ── Dependencia + router ──────────────────────────────────────────────────────
 def get_factura_cliente_service(db: Session = Depends(get_db)) -> FacturaClienteService:
-    return FacturaClienteService(FacturaClienteRepository(db, FacturaCliente))
+    # ADR-202 (petición del usuario): la bandeja "Facturas al cliente" se ordena por
+    # Fecha y No. factura, AMBAS descendentes — antes no tenía `default_order_by`
+    # propio y caía al fallback de `BaseRepository` (orden por `factura_id`, un UUID sin
+    # significado cronológico). `numero_factura` como segundo criterio desempata las
+    # facturas de una misma fecha (p.ej. una factura múltiple capturada junto con otras
+    # ese mismo día).
+    return FacturaClienteService(
+        FacturaClienteRepository(
+            db,
+            FacturaCliente,
+            default_order_by=[
+                FacturaCliente.fecha_factura.desc(),
+                FacturaCliente.numero_factura.desc(),
+            ],
+        )
+    )
 
 
 router_clientes = APIRouter(prefix="/clientes", tags=["facturacion:clientes"])
@@ -1551,6 +1566,17 @@ class AnuncianteFacturable(BaseModel):
     ordenes: int
 
 
+class AgenciaFacturable(BaseModel):
+    """Opción del combo de facturación múltiple POR AGENCIA (ADR-201): agencia + cuántas
+    órdenes "vía agencia" (no directas) tiene listas. Espejo de `AnuncianteFacturable`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    agencia_id: uuid.UUID
+    agencia: str
+    ordenes: int
+
+
 class OrdenPorFacturarRead(BaseModel):
     """Los datos que la tarjeta de la bandeja necesita, ya resueltos.
 
@@ -1601,6 +1627,7 @@ class OrdenesPorFacturarRepository:
         size: int,
         q: str | None,
         anunciante_id: uuid.UUID | None = None,
+        agencia_id: uuid.UUID | None = None,
     ) -> tuple[list[Any], int]:
         from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
@@ -1677,7 +1704,24 @@ class OrdenesPorFacturarRepository:
             )
         )
         if anunciante_id is not None:
-            base = base.where(OrdenCliente.anunciante_id == anunciante_id)
+            # ADR-201 (petición del usuario): una factura múltiple no puede mezclar
+            # receptores (ya lo valida `_receptor_de` al crear) — la bandeja de "por
+            # Anunciante" ahora descarta de raíz las órdenes "vía agencia" de ese
+            # anunciante, en vez de dejar que el usuario las marque y se entere del
+            # choque hasta que el alta las rechace. Mismo criterio que `_receptor_de`.
+            base = base.where(
+                OrdenCliente.anunciante_id == anunciante_id,
+                (OrdenCliente.facturacion_directa_cliente == True)  # noqa: E712 — BIT en SQL Server (ADR-014)
+                | (OrdenCliente.agencia_id.is_(None)),
+            )
+        if agencia_id is not None:
+            # Espejo: "por Agencia" solo trae las órdenes que de verdad se facturan a ESA
+            # agencia (nunca las de trato directo, aunque compartan agencia_id capturada
+            # como referencia).
+            base = base.where(
+                OrdenCliente.agencia_id == agencia_id,
+                OrdenCliente.facturacion_directa_cliente == False,  # noqa: E712 — BIT en SQL Server (ADR-014)
+            )
         if q:
             patron = f"%{q.strip()}%"
             base = base.where(
@@ -1694,11 +1738,14 @@ class OrdenesPorFacturarRepository:
 
 
     def anunciantes_facturables(self, minimo: int) -> list[Any]:
-        """Anunciantes con al menos `minimo` órdenes DISPONIBLES para facturar.
+        """Anunciantes con al menos `minimo` órdenes DISPONIBLES para facturar DIRECTO
+        (no vía agencia — ADR-201).
 
         "Disponibles" y no "cerradas" a secas: si contara las ya facturadas, el combo
         ofrecería anunciantes cuya bandeja sale vacía al seleccionarlos. Reproduce por eso
-        las mismas condiciones que `listar()`.
+        las mismas condiciones que `listar()`, incluido el filtro de receptor directo: una
+        orden "vía agencia" de este anunciante no cuenta aquí ni aparece al elegirlo (va en
+        `agencias_facturables`, agrupada por agencia).
         """
         from app.modules.catalogos.anunciante import Anunciante
         from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
@@ -1713,10 +1760,38 @@ class OrdenesPorFacturarRepository:
             .where(
                 OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
                 ~_tiene_factura_vigente(OrdenCliente.orden_id),
+                (OrdenCliente.facturacion_directa_cliente == True)  # noqa: E712 — BIT en SQL Server (ADR-014)
+                | (OrdenCliente.agencia_id.is_(None)),
             )
             .group_by(OrdenCliente.anunciante_id, Anunciante.nombre_comercial)
             .having(func.count() >= minimo)
             .order_by(Anunciante.nombre_comercial)
+        )
+        return list(self.db.execute(stmt).all())
+
+    def agencias_facturables(self, minimo: int) -> list[Any]:
+        """Agencias con al menos `minimo` órdenes "vía agencia" DISPONIBLES para facturar
+        (ADR-201) — espejo de `anunciantes_facturables`, invertido: aquí NO cuentan las
+        órdenes de trato directo, aunque la orden tenga una agencia capturada como
+        referencia (`facturacion_directa_cliente = True` las excluye igual)."""
+        from app.modules.catalogos.agencia import Agencia
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        stmt = (
+            select(
+                OrdenCliente.agencia_id,
+                Agencia.nombre_agencia.label("agencia"),
+                func.count().label("ordenes"),
+            )
+            .join(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
+            .where(
+                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+                ~_tiene_factura_vigente(OrdenCliente.orden_id),
+                OrdenCliente.facturacion_directa_cliente == False,  # noqa: E712 — BIT en SQL Server (ADR-014)
+            )
+            .group_by(OrdenCliente.agencia_id, Agencia.nombre_agencia)
+            .having(func.count() >= minimo)
+            .order_by(Agencia.nombre_agencia)
         )
         return list(self.db.execute(stmt).all())
 
@@ -1733,8 +1808,9 @@ class OrdenesPorFacturarService:
         size: int,
         q: str | None,
         anunciante_id: uuid.UUID | None = None,
+        agencia_id: uuid.UUID | None = None,
     ) -> Page[OrdenPorFacturarRead]:
-        filas, total = self._repo.listar(page, size, q, anunciante_id)
+        filas, total = self._repo.listar(page, size, q, anunciante_id, agencia_id)
         return Page[OrdenPorFacturarRead](
             items=[OrdenPorFacturarRead.model_validate(f._mapping) for f in filas],
             total=total,
@@ -1748,6 +1824,12 @@ class OrdenesPorFacturarService:
         return [
             AnuncianteFacturable.model_validate(f._mapping)
             for f in self._repo.anunciantes_facturables(minimo)
+        ]
+
+    def agencias_facturables(self, minimo: int) -> list[AgenciaFacturable]:
+        return [
+            AgenciaFacturable.model_validate(f._mapping)
+            for f in self._repo.agencias_facturables(minimo)
         ]
 
 
@@ -1768,7 +1850,12 @@ def listar_ordenes_por_facturar(
     size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None, description="Busca en folio, número de orden y anunciante"),
     anunciante_id: uuid.UUID | None = Query(
-        None, description="Solo las órdenes de este anunciante (facturación múltiple)"
+        None,
+        description="Solo las órdenes DIRECTAS de este anunciante (múltiple por anunciante)",
+    ),
+    agencia_id: uuid.UUID | None = Query(
+        None,
+        description="Solo las órdenes VÍA AGENCIA de esta agencia (múltiple por agencia)",
     ),
     usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
     svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
@@ -1776,9 +1863,11 @@ def listar_ordenes_por_facturar(
     """Órdenes en `orden_cerrada` que aún no tienen `FacturaCliente`.
 
     El `total` de la respuesta SIN filtros es el contador que la pantalla muestra en el
-    sidebar; con `anunciante_id` es la bandeja acotada de la facturación múltiple.
+    sidebar; con `anunciante_id`/`agencia_id` es la bandeja acotada de la facturación
+    múltiple (mutuamente excluyentes: una factura múltiple no puede mezclar receptores,
+    ADR-201).
     """
-    return svc.listar(page, size, q, anunciante_id)
+    return svc.listar(page, size, q, anunciante_id, agencia_id)
 
 
 @router_por_facturar.get("/anunciantes", response_model=list[AnuncianteFacturable])
@@ -1787,10 +1876,23 @@ def listar_anunciantes_facturables(
     usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
     svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
 ) -> list[AnuncianteFacturable]:
-    """Llena el combo de facturación múltiple.
+    """Llena el combo de facturación múltiple POR ANUNCIANTE.
 
-    Por defecto solo los anunciantes con **2 o más** órdenes disponibles: con una sola no
+    Por defecto solo los anunciantes con **2 o más** órdenes DIRECTAS disponibles (ADR-201
+    — las "vía agencia" de este anunciante no cuentan, van en `/agencias`): con una sola no
     hay nada que agrupar y ofrecerlo sería una vía muerta. Sin paginar a propósito — es un
     combo con búsqueda en el cliente, no una lista.
     """
     return svc.anunciantes_facturables(minimo)
+
+
+@router_por_facturar.get("/agencias", response_model=list[AgenciaFacturable])
+def listar_agencias_facturables(
+    minimo: int = Query(2, ge=1, description="Mínimo de órdenes disponibles para aparecer"),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: OrdenesPorFacturarService = Depends(get_ordenes_por_facturar_service),
+) -> list[AgenciaFacturable]:
+    """Llena el combo de facturación múltiple POR AGENCIA (ADR-201) — espejo de
+    `/anunciantes`: solo agencias con **2 o más** órdenes "vía agencia" disponibles.
+    """
+    return svc.agencias_facturables(minimo)

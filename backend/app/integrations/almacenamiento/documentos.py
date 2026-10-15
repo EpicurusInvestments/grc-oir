@@ -25,7 +25,7 @@ servicio y el router usen una sola fuente de verdad:
 from __future__ import annotations
 
 import re
-from codecs import BOM_UTF8
+from codecs import BOM_UTF8, BOM_UTF16_BE, BOM_UTF16_LE
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -159,10 +159,11 @@ _MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
     "xlsx": (b"PK\x03\x04",),
     "doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
     "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
-    # XML del CFDI timbrado (F2). Se acepta la declaracion con y sin BOM UTF-8:
-    # los PAC entregan ambas variantes. NO se acepta un "<" suelto, seria tan laxo
-    # que dejaria pasar cualquier HTML o texto plano que empiece con ese caracter.
-    "xml": (b"<?xml", BOM_UTF8 + b"<?xml"),
+    # XML del CFDI timbrado (F2): NO lleva firma aquí — ver `_parece_xml()`, un chequeo
+    # aparte (ADR-203/ADR-204) porque el prólogo `<?xml ...?>` es OPCIONAL en la spec XML
+    # (un documento puede arrancar directo con su elemento raíz) y la codificación puede
+    # ser UTF-8 o UTF-16 — un `startswith` de bytes fijos no alcanza para cubrir ambos
+    # casos a la vez.
     # ADR-103 ("Material a Transmitir"): mp3/wav/ogg — los 3 formatos de audio cuya
     # firma cae en los primeros bytes del archivo (verificable con el mismo chequeo
     # `startswith` de abajo). mp3 no siempre trae el tag ID3 (algunos encoders escriben
@@ -252,6 +253,29 @@ def content_type_de_extension(extension: str) -> str:
     return _CONTENT_TYPE_POR_EXTENSION.get(extension.lower(), "application/octet-stream")
 
 
+def _parece_xml(contenido: bytes) -> bool:
+    """Heurística PERMISIVA para "¿esto es texto XML?" (ADR-203/ADR-204, corrige un bug
+    real): NO exige la declaración `<?xml ...?>` — es OPCIONAL en la spec XML, un
+    documento válido puede arrancar directo con su elemento raíz (p. ej.
+    `<cfdi:Comprobante ...>`), y un archivo armado a mano (una prueba en Notepad) rara
+    vez la incluye. Solo verifica que el contenido, ya sin su BOM (UTF-8 o UTF-16 LE/BE —
+    las 3 codificaciones reales que se han visto: PAC en UTF-8, Notepad "Unicode"/"Unicode
+    big endian" en UTF-16) y sin espacios en blanco iniciales, empiece con "<". Sigue
+    bloqueando lo que de verdad importa: ningún binario/ejecutable arranca con ese
+    carácter, así que un PDF/imagen/EXE renombrado a ".xml" se sigue rechazando.
+    """
+    cabecera = contenido[:512]
+    if cabecera.startswith(BOM_UTF8):
+        texto = cabecera[len(BOM_UTF8) :].decode("utf-8", errors="ignore")
+    elif cabecera.startswith(BOM_UTF16_LE):
+        texto = cabecera[len(BOM_UTF16_LE) :].decode("utf-16-le", errors="ignore")
+    elif cabecera.startswith(BOM_UTF16_BE):
+        texto = cabecera[len(BOM_UTF16_BE) :].decode("utf-16-be", errors="ignore")
+    else:
+        texto = cabecera.decode("utf-8", errors="ignore")
+    return texto.lstrip().startswith("<")
+
+
 def leer_adjunto(
     archivo: UploadFile, *, max_bytes: int, extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES
 ) -> tuple[bytes, str, str]:
@@ -282,14 +306,24 @@ def leer_adjunto(
     if not contenido:
         raise ArchivoNoPermitidoError("El archivo está vacío.")
 
-    # Tupla vacía (csv/txt) = sin firma binaria conocida — se acepta cualquier contenido
-    # para esa extensión (no hay nada verificable); ver comentario en `_MAGIC_POR_EXTENSION`.
-    firmas = _MAGIC_POR_EXTENSION[extension]
-    if firmas and not any(contenido.startswith(firma) for firma in firmas):
-        raise ArchivoNoPermitidoError(
-            "El contenido del archivo no corresponde a la extensión declarada.",
-            detalles={"extension": extension},
-        )
+    # XML aparte (ADR-203/ADR-204): heurística propia (`_parece_xml`), no una firma de
+    # bytes fija — ver su docstring.
+    if extension == "xml":
+        if not _parece_xml(contenido):
+            raise ArchivoNoPermitidoError(
+                "El contenido del archivo no corresponde a la extensión declarada.",
+                detalles={"extension": extension},
+            )
+    else:
+        # Tupla vacía (csv/txt) = sin firma binaria conocida — se acepta cualquier
+        # contenido para esa extensión (no hay nada verificable); ver comentario en
+        # `_MAGIC_POR_EXTENSION`.
+        firmas = _MAGIC_POR_EXTENSION[extension]
+        if firmas and not any(contenido.startswith(firma) for firma in firmas):
+            raise ArchivoNoPermitidoError(
+                "El contenido del archivo no corresponde a la extensión declarada.",
+                detalles={"extension": extension},
+            )
 
     nombre_sano = _CHARS_INVALIDOS.sub("-", raiz).strip("-. ")[:_MAX_NOMBRE] or "documento"
     return contenido, f"{nombre_sano}.{extension}", extension

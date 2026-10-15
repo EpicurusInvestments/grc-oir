@@ -19,7 +19,7 @@ import {
   nombreDeAdjuntoFacturacionRef,
   type TipoAdjuntoFacturacion,
 } from "../../api";
-import { ADJUNTO_FACTURACION_ACCEPT, ADJUNTO_FACTURACION_MAX_BYTES, EXTENSIONES_ADJUNTO_FACTURACION } from "../../constants";
+import { ADJUNTO_FACTURACION_MAX_BYTES } from "../../constants";
 
 interface AdjuntoFacturaInputProps {
   tipo: TipoAdjuntoFacturacion;
@@ -42,6 +42,17 @@ export function AdjuntoFacturaInput({
   const [error, setError] = useState<string | null>(null);
   const [verError, setVerError] = useState<string | null>(null);
 
+  // ADR-205 (petición del usuario, corrige un bug real): cada campo es XML o PDF del
+  // CFDI, NUNCA ambos — pero el selector nativo de archivos (y la validación del
+  // front) aceptaba las 9 extensiones de TODO el módulo de Facturación por igual
+  // (`ADJUNTO_FACTURACION_ACCEPT`/`EXTENSIONES_ADJUNTO_FACTURACION`, pensadas para los
+  // adjuntos de FacturaAfiliado/Agencia/Vendedor, que sí admiten varios formatos) — el
+  // botón "Cargar XML del CFDI" dejaba elegir un PDF (o un DOCX, una imagen…) desde el
+  // explorador de Windows. Ahora cada campo se acota a SU propia extensión según el
+  // sufijo de `tipo` (todas las variantes de esta pantalla terminan en "_pdf"/"_xml").
+  const esPdf = tipo.endsWith("_pdf");
+  const extensionEsperada = esPdf ? "pdf" : "xml";
+
   const onElegir = async (archivo: File | undefined) => {
     setError(null);
     if (!archivo) return;
@@ -49,8 +60,8 @@ export function AdjuntoFacturaInput({
     // Validación en el front (UX inmediata): el backend SIEMPRE revalida extensión,
     // magic bytes y tamaño — esto no reemplaza esa validación, la anticipa.
     const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!(EXTENSIONES_ADJUNTO_FACTURACION as readonly string[]).includes(ext)) {
-      setError(`Extensión no permitida. Usa: ${EXTENSIONES_ADJUNTO_FACTURACION.join(", ")}.`);
+    if (ext !== extensionEsperada) {
+      setError(`Extensión no permitida. Usa: .${extensionEsperada}.`);
       if (inputRef.current) inputRef.current.value = "";
       return;
     }
@@ -72,11 +83,25 @@ export function AdjuntoFacturaInput({
     }
   };
 
-  const onVer = async () => {
+  const onDescargar = async () => {
     if (!value) return;
     setVerError(null);
     try {
       await adjuntosFacturacionApi.ver(value);
+    } catch (e) {
+      setVerError(e instanceof ApiRequestError ? e.message : "No se pudo descargar el documento.");
+    }
+  };
+
+  // ADR-203 (petición del usuario): además de descargar, un PDF ya cargado se puede
+  // VER en un visor (pestaña nueva, imprimible desde ahí) — mismo visor que los PDFs
+  // de Órdenes. XML no tiene un visor equivalente con sentido (no es un documento
+  // visual), así que el botón solo aparece para los tipos "_pdf" (`esPdf` de arriba).
+  const onVer = async () => {
+    if (!value) return;
+    setVerError(null);
+    try {
+      await adjuntosFacturacionApi.verEnVisor(value);
     } catch (e) {
       setVerError(e instanceof ApiRequestError ? e.message : "No se pudo abrir el documento.");
     }
@@ -98,15 +123,22 @@ export function AdjuntoFacturaInput({
         <input
           ref={inputRef}
           type="file"
-          accept={ADJUNTO_FACTURACION_ACCEPT}
+          accept={`.${extensionEsperada}`}
           disabled={disabled || subiendo}
           onChange={(e) => void onElegir(e.target.files?.[0])}
         />
       </label>
       {!subiendo && value && (
-        <button type="button" className="btn btn-sm" onClick={() => void onVer()}>
-          Descargar
-        </button>
+        <>
+          {esPdf && (
+            <button type="button" className="btn btn-sm" onClick={() => void onVer()}>
+              Ver
+            </button>
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => void onDescargar()}>
+            Descargar
+          </button>
+        </>
       )}
       {error && <div className="fe">{error}</div>}
       {verError && <div className="fe">{verError}</div>}

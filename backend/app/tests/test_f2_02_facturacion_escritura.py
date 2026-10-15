@@ -35,6 +35,9 @@ from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
 from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
+from app.modules.cobranza.cobranza_factura import (
+    CobranzaFactura,  # noqa: F401 — registra la tabla: `timbrar()` crea su CobranzaFactura (F3)
+)
 from app.modules.facturacion.factura_cliente import FacturaCliente, _serie_desde_numero
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.orden_cliente import OrdenCliente
@@ -2021,6 +2024,34 @@ def test_costo_general_sin_orden_y_periodo_invalido(
         assert r.status_code == 422, periodo
 
 
+# ── Lista "Facturas al cliente" — orden (ADR-202, petición del usuario) ───────────
+def test_lista_facturas_cliente_ordena_por_fecha_y_numero_descendente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia de Agencia/Afiliado/Vendedor (ADR-086, ordenan por `created_at`), el
+    usuario pidió explícitamente Fecha y No. factura, AMBAS descendentes — sin
+    `default_order_by` propio caía al fallback de `BaseRepository` (orden por
+    `factura_id`, un UUID sin significado)."""
+
+    def crear(numero: str, fecha: str) -> None:
+        orden_id = _orden(db, cat, "orden_cerrada", f"OC-{numero}")
+        db.commit()
+        payload = _payload_factura(orden_id, cat["cuenta_id"], numero)
+        payload["fecha_factura"] = fecha
+        r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+        assert r.status_code == 201, r.text
+
+    # Dos facturas del 2026-03-01 (desempatadas por numero_factura) y una posterior.
+    crear("F-1001", "2026-03-01")
+    crear("F-1002", "2026-03-01")
+    crear("F-1003", "2026-03-15")
+
+    r = client.get("/api/v1/facturacion/clientes", headers=_hdr("facturacion"))
+    assert r.status_code == 200, r.text
+    numeros = [f["numero_factura"] for f in r.json()["items"]]
+    assert numeros == ["F-1003", "F-1002", "F-1001"]
+
+
 # ── Bandeja "Listas para facturar" ────────────────────────────────────────────
 def test_bandeja_lista_ordenes_cerradas_sin_factura(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
@@ -2462,9 +2493,12 @@ def test_la_bandeja_se_filtra_por_anunciante(
         )
     )
     db.flush()
-    _orden(db, cat, "orden_cerrada", "OC-A1")
-    _orden(db, cat, "orden_cerrada", "OC-A2")
-    _orden(db, cat, "orden_cerrada", "OC-B1", anunciante_id=otro_anunciante)
+    # `directa=True` (ADR-201): la bandeja filtrada por `anunciante_id` ahora solo trae
+    # órdenes DIRECTAS — sin esto, el default `directa=False` las clasifica como "vía
+    # agencia" y el nuevo filtro las descartaría, vaciando la prueba.
+    _orden(db, cat, "orden_cerrada", "OC-A1", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-A2", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-B1", anunciante_id=otro_anunciante, directa=True)
     db.commit()
 
     r = client.get(
@@ -2489,8 +2523,9 @@ def test_el_combo_solo_ofrece_anunciantes_con_dos_o_mas_ordenes_disponibles(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """Con una sola orden no hay nada que agrupar; y las ya facturadas no cuentan."""
-    a = _orden(db, cat, "orden_cerrada", "OC-C1")
-    _orden(db, cat, "orden_cerrada", "OC-C2")
+    # `directa=True` (ADR-201): el combo de "por Anunciante" solo cuenta órdenes directas.
+    a = _orden(db, cat, "orden_cerrada", "OC-C1", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-C2", directa=True)
     db.commit()
 
     r = client.get(
@@ -2558,8 +2593,9 @@ def test_el_combo_no_cuenta_dos_veces_una_orden_con_varias_canceladas(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """El mismo defecto inflaba el conteo del combo: contaba filas, no órdenes."""
-    a = _orden(db, cat, "orden_cerrada", "OC-N1")
-    _orden(db, cat, "orden_cerrada", "OC-N2")
+    # `directa=True` (ADR-201): el combo de "por Anunciante" solo cuenta órdenes directas.
+    a = _orden(db, cat, "orden_cerrada", "OC-N1", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-N2", directa=True)
     db.commit()
 
     fid = client.post(
@@ -2598,6 +2634,112 @@ def test_una_orden_con_su_factura_cancelada_vuelve_a_la_bandeja(
         "/api/v1/facturacion/ordenes-por-facturar", headers=_hdr("facturacion")
     ).json()
     assert [o["folio_orden"] for o in despues_de_cancelar["items"]] == ["OC-VUELVE"]
+
+
+# ── Facturación múltiple por Agencia (ADR-201, petición del usuario) ─────────────
+# Una factura múltiple no puede mezclar receptores (ya lo valida `_receptor_de` al
+# crear — "Todas las órdenes de una misma factura deben tener el mismo receptor"). Antes
+# de esto, la bandeja de "por Anunciante" no distinguía: si un anunciante tenía órdenes
+# directas Y vía agencia, el combo las mezclaba y el usuario se enteraba del choque hasta
+# que el alta lo rechazaba. Estas pruebas cubren el filtro nuevo (solo directas en "por
+# Anunciante") y el combo/bandeja espejo "por Agencia" (solo vía agencia).
+def test_la_bandeja_por_anunciante_descarta_las_ordenes_via_agencia_del_mismo_anunciante(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    directa = _orden(db, cat, "orden_cerrada", "OC-DIRECTA", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-VIA-AGENCIA")  # directa=False (default)
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar",
+        params={"anunciante_id": str(cat["anunciante_id"])},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert [o["folio_orden"] for o in items] == ["OC-DIRECTA"]
+    assert items[0]["orden_id"] == str(directa)
+
+
+def test_el_combo_de_anunciantes_no_cuenta_las_ordenes_via_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """2 directas (sí cuentan) + 3 vía agencia (NO deben inflar el conteo)."""
+    _orden(db, cat, "orden_cerrada", "OC-D1", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-D2", directa=True)
+    _orden(db, cat, "orden_cerrada", "OC-VA1")
+    _orden(db, cat, "orden_cerrada", "OC-VA2")
+    _orden(db, cat, "orden_cerrada", "OC-VA3")
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar/anunciantes", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    combos = [(x["anunciante"], x["ordenes"]) for x in r.json()]
+    assert combos == [("Anunciante Uno", 2)]
+
+
+def test_la_bandeja_por_agencia_solo_trae_ordenes_via_agencia_de_esa_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    from app.modules.catalogos.agencia import Agencia
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
+    via_agencia = _orden(db, cat, "orden_cerrada", "OC-VIA-AG")  # directa=False (default)
+    _orden(db, cat, "orden_cerrada", "OC-DIRECTA-MISMA-AGENCIA", directa=True)  # no debe aparecer
+
+    otra_agencia_id = uuid.uuid4()
+    db.add(
+        Agencia(
+            agencia_id=otra_agencia_id,
+            nombre_agencia="Agencia Dos",
+            rfc_agencia="ADS900101AB4",
+            porcentaje_comision_agencia_default=Decimal("12.50"),
+        )
+    )
+    db.flush()
+    de_otra_agencia = _orden(db, cat, "orden_cerrada", "OC-OTRA-AGENCIA")
+    oc = db.get(OrdenCliente, de_otra_agencia)
+    assert oc is not None
+    oc.agencia_id = otra_agencia_id
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar",
+        params={"agencia_id": str(cat["agencia_id"])},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert [o["folio_orden"] for o in items] == ["OC-VIA-AG"]
+    assert items[0]["orden_id"] == str(via_agencia)
+
+
+def test_el_combo_de_agencias_solo_cuenta_ordenes_via_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """2 vía agencia (sí cuentan) + 1 directa de la misma agencia (NO debe inflar)."""
+    _orden(db, cat, "orden_cerrada", "OC-VA1")
+    _orden(db, cat, "orden_cerrada", "OC-VA2")
+    _orden(db, cat, "orden_cerrada", "OC-DIR", directa=True)
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/ordenes-por-facturar/agencias", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    combos = [(x["agencia"], x["ordenes"]) for x in r.json()]
+    assert combos == [("Agencia Uno", 2)]
+
+
+def test_el_combo_de_agencias_exige_permiso_de_facturacion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo RBAC que la bandeja y que el combo de anunciantes."""
+    ruta = "/api/v1/facturacion/ordenes-por-facturar/agencias"
+    assert client.get(ruta, headers=_hdr("ventas")).status_code == 200
+    assert client.get(ruta, headers=_hdr("marketing")).status_code in (401, 403, 422)
 
 
 # ── FacturaAfiliado: combo "Folio de la Orden Interna" + auto-asignación ──────────

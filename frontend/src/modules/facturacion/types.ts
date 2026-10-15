@@ -69,6 +69,14 @@ export interface AnuncianteFacturable {
   ordenes: number;
 }
 
+/** Opción del combo de facturación múltiple POR AGENCIA (ADR-201) — espejo de
+ *  `AnuncianteFacturable`. */
+export interface AgenciaFacturable {
+  agencia_id: string;
+  agencia: string;
+  ordenes: number;
+}
+
 export interface FacturaCliente {
   factura_id: string;
   numero_factura: string;
