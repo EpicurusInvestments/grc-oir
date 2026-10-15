@@ -18,6 +18,7 @@ env:
   ECR_REGISTRY: 272379234020.dkr.ecr.us-west-2.amazonaws.com
   ECS_CLUSTER: grc-oir-dev
   ECS_SERVICE: grc-oir-backend-dev
+  TASK_FAMILY: grc-oir-backend-dev
 
 jobs:
   test:
@@ -59,17 +60,26 @@ jobs:
       - name: Login a ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build y push de la imagen
+      - name: Build y push de la imagen (etiquetada con el SHA del commit)
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest ./backend
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Desplegar a ECS (forzar nuevo despliegue)
+      - name: Registrar nueva task definition y desplegar a ECS
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment
+          # Obtener la task definition actual (en JSON)
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query 'taskDefinition' --output json)
+          # Reemplazar la imagen por la nueva (con el SHA) y quitar campos que no se pueden re-registrar
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMG "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            '.containerDefinitions[0].image = $IMG
+             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          # Registrar la nueva revisión de la task definition
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Nueva task definition registrada: $NEW_ARN"
+          # Actualizar el servicio para usar la nueva revisión
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition "$NEW_ARN"
+          echo "Despliegue iniciado con la imagen $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
