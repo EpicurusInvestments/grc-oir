@@ -17,8 +17,8 @@ import { makeRow } from "./fixtures";
 
 const RANGO = { inicio: "2025-06-01", fin: "2025-06-30" };
 const AUDIOS: OrdenEstacionAudio[] = [
-  { id: "au-1", nombre_archivo: "spot-verano.mp3", orden: 0 },
-  { id: "au-2", nombre_archivo: "spot-invierno.mp3", orden: 1 },
+  { id: "au-1", nombre_archivo: "spot-verano.mp3", orden: 0, ref: "orden_estacion/audios/au-1" },
+  { id: "au-2", nombre_archivo: "spot-invierno.mp3", orden: 1, ref: "orden_estacion/audios/au-2" },
 ];
 
 describe("Hora Inicio/Hora Fin — columnas independientes (ADR-185, revierte ADR-107/108)", () => {
@@ -271,7 +271,12 @@ describe("Material a Transmitir — 1 material por spot, multi-select (ADR-187, 
 
   it("ADR-187 (petición del usuario): un nombre de archivo largo se abrevia a 20 caracteres + '…', tanto en el campo cerrado como en la casilla de la lista", () => {
     const audioLargo: OrdenEstacionAudio[] = [
-      { id: "au-largo", nombre_archivo: "Audio_3_30-Second-Timer-Bomb-MISSION-IMPOSSIBLE.mp3", orden: 0 },
+      {
+        id: "au-largo",
+        nombre_archivo: "Audio_3_30-Second-Timer-Bomb-MISSION-IMPOSSIBLE.mp3",
+        orden: 0,
+        ref: "orden_estacion/audios/au-largo",
+      },
     ];
     render(
       <PeriodoTransmisionGrid

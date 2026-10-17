@@ -4,6 +4,7 @@
  * OrdenEstacionListPage.tsx para "Ver orden interna →").
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,17 +12,28 @@ import { OrdenClienteListPage } from "../ordenCliente/pages/OrdenClienteListPage
 import { OrdenesProvider } from "../state/OrdenesContext";
 import { makeOC } from "./fixtures";
 
+// ADR-208: el detalle de OrdenCliente ahora pide su FacturaCliente (React Query) —
+// mismo mock que OrdenClienteDetailPanel.test.tsx (ninguna OC de este archivo llega a
+// "facturada", así que no se usa de verdad; solo evita "No QueryClient set").
+vi.mock("@/modules/facturacion/api", () => ({
+  facturaClienteApi: { list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 10, pages: 0 }) },
+  adjuntosFacturacionApi: { ver: vi.fn(), verEnVisor: vi.fn() },
+}));
+
 function renderPage(ocIdPreseleccionada?: string) {
   const oc1 = makeOC({ id: "oc-1", folio_orden: "OC-2026-0041" });
   const oc2 = makeOC({ id: "oc-2", folio_orden: "OC-2026-0042" });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <OrdenesProvider initialState={{ ordenesCliente: [oc1, oc2], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-      <OrdenClienteListPage
-        ocIdPreseleccionada={ocIdPreseleccionada}
-        onSeleccionarOE={vi.fn()}
-        onAsignarEstaciones={vi.fn()}
-      />
-    </OrdenesProvider>,
+    <QueryClientProvider client={qc}>
+      <OrdenesProvider initialState={{ ordenesCliente: [oc1, oc2], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+        <OrdenClienteListPage
+          ocIdPreseleccionada={ocIdPreseleccionada}
+          onSeleccionarOE={vi.fn()}
+          onAsignarEstaciones={vi.fn()}
+        />
+      </OrdenesProvider>
+    </QueryClientProvider>,
   );
   const tabla = utils.container.querySelector("table") as HTMLTableElement;
   return { ...utils, tabla };
@@ -53,10 +65,13 @@ describe("Fix: la tabla muestra columna Fecha y ordena por folio descendente", (
     // folio es mayor — debe aparecer primero: el orden es por folio, no por fecha de alta.
     const ocFolioMenor = makeOC({ id: "oc-folio-menor", folio_orden: "OC-2026-0041", created_at: "2026-06-15" });
     const ocFolioMayor = makeOC({ id: "oc-folio-mayor", folio_orden: "OC-2026-0050", created_at: "2026-01-01" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [ocFolioMenor, ocFolioMayor], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
-        <OrdenClienteListPage onSeleccionarOE={vi.fn()} onAsignarEstaciones={vi.fn()} />
-      </OrdenesProvider>,
+      <QueryClientProvider client={qc}>
+        <OrdenesProvider initialState={{ ordenesCliente: [ocFolioMenor, ocFolioMayor], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenClienteListPage onSeleccionarOE={vi.fn()} onAsignarEstaciones={vi.fn()} />
+        </OrdenesProvider>
+      </QueryClientProvider>,
     );
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
 

@@ -65,6 +65,19 @@ export function OrdenEstacionListPage({
   // no hace falta desde que ADR-109 permite subir material DURANTE el alta), se pregunta
   // si se quiere capturar otra — la OE recién creada se guarda aquí mientras se decide.
   const [oeReciente, setOeReciente] = useState<OrdenEstacion | null>(null);
+  // ADR-210 (petición del usuario): "Clonar" — la OE de origen a precargar en el
+  // siguiente alta (`<OrdenEstacionForm clonarDesde={...}>`). Se limpia al entrar a
+  // "new" por cualquier otro camino (generar otra en blanco, cancelar) para que no se
+  // arrastre a un alta que no pidió clonar nada.
+  const [clonarDesde, setClonarDesde] = useState<OrdenEstacion | null>(null);
+  // ADR-210 (fix, petición del usuario): "Cancelar" en el alta normalmente regresa a
+  // "Órdenes de Servicio" (ver `onCancelar` abajo) — tiene sentido cuando se llegó aquí
+  // DESDE esa pantalla (p.ej. "+ Asignar estaciones"). Pero la manera 2 de clonar arranca
+  // desde ESTA MISMA lista (botón "📋 Clonar" de la tabla) con una OC ya fija
+  // (`ocParaNuevaActual`), así que ese mismo "Cancelar" terminaba expulsando al usuario a
+  // Órdenes de Servicio aunque nunca estuvo ahí. Esta bandera marca que el alta actual
+  // viene de la lista, para que "Cancelar" se quede aquí en vez de navegar afuera.
+  const [clonadoDesdeLista, setClonadoDesdeLista] = useState(false);
   // Cambia en cada "Sí, generar otra" para forzar que `<OrdenEstacionForm>` se remonte en
   // blanco (si se reusara la misma key, se quedaría con los datos de la OE anterior).
   const [intentoNuevo, setIntentoNuevo] = useState(0);
@@ -127,12 +140,22 @@ export function OrdenEstacionListPage({
           key={modo === "edit" ? (selected?.id ?? "edit") : `new-${intentoNuevo}`}
           ocIdFijo={modo === "edit" ? undefined : ocParaNuevaActual}
           oe={modo === "edit" ? (selected ?? undefined) : undefined}
+          clonarDesde={modo === "new" ? (clonarDesde ?? undefined) : undefined}
           submitError={submitError}
           submitting={submitting}
           onGuardar={onGuardar}
           onCancelar={(ocId) => {
             setSubmitError(null);
+            setClonarDesde(null);
             if (modo === "new") {
+              // ADR-210 (fix, petición del usuario): si se llegó aquí clonando desde ESTA
+              // lista (botón "📋 Clonar" de la tabla), "Cancelar" se queda en "Órdenes de
+              // Transmisión" — nunca estuvo en "Órdenes de Servicio" como para regresar ahí.
+              if (clonadoDesdeLista) {
+                setClonadoDesdeLista(false);
+                setModo("view");
+                return;
+              }
               // ADR-116 (petición del usuario): cancelar el alta regresa a "Órdenes de
               // Servicio" — a la OC elegida si ya se había seleccionado una, o a la lista
               // suelta si el usuario canceló antes de elegir ninguna.
@@ -146,19 +169,30 @@ export function OrdenEstacionListPage({
         {/* ADR-116: se pregunta DESPUÉS de guardar (no antes) — "Sí" limpia el formulario
             para la siguiente OE de la misma OC; "No" va a la lista con la recién creada
             arriba (orden ya la antepone, ver REEMPLAZAR_OE en OrdenesContext.tsx). Nunca
-            aparece en edición: ahí "Guardar" solo guarda, sin preguntar nada más. */}
+            aparece en edición: ahí "Guardar" solo guarda, sin preguntar nada más.
+            ADR-210 (petición del usuario): tercer botón "Clonar" — precarga la OE recién
+            guardada en el siguiente alta (ver `clonarDesde` arriba). */}
         <ConfirmDialog
           visible={oeReciente !== null}
           title="Orden de Transmisión guardada"
           message="¿Deseas generar otra Orden de Transmisión para esta misma Orden de Servicio?"
           confirmLabel="Sí, generar otra"
           cancelLabel="No, ir a la lista"
+          extraLabel="Clonar"
+          onExtra={() => {
+            setClonarDesde(oeReciente);
+            setOeReciente(null);
+            setIntentoNuevo((n) => n + 1);
+          }}
           onConfirm={() => {
+            setClonarDesde(null);
             setOeReciente(null);
             setIntentoNuevo((n) => n + 1);
           }}
           onCancel={() => {
             if (oeReciente) setSelectedId(oeReciente.id);
+            setClonarDesde(null);
+            setClonadoDesdeLista(false);
             setOeReciente(null);
             setModo("view");
           }}
@@ -210,8 +244,11 @@ export function OrdenEstacionListPage({
           onClick={() => {
             setSubmitError(null);
             // Sesión nueva y suelta: no debe arrastrar la OC de una sesión anterior de
-            // "generar otra" (ADR-116) si el usuario ya había dicho que no quería más.
+            // "generar otra" (ADR-116), ni una OE de un "Clonar" (ADR-210) que el usuario
+            // ya haya descartado, si el usuario ya había dicho que no quería más.
             setOcParaNuevaActual(ocIdParaNueva);
+            setClonarDesde(null);
+            setClonadoDesdeLista(false);
             setModo("new");
           }}
         >
@@ -254,6 +291,13 @@ export function OrdenEstacionListPage({
                 <th className="td-center" style={{ width: "15%" }}>
                   Sub-estado
                 </th>
+                {/* ADR-210 (petición del usuario, "manera 2"): columna de acciones — por
+                    ahora solo "Clonar", y solo en 2.1 "Asignada al afiliado" (antes de que
+                    la OE avance de sub-estado tiene más sentido partir de ella para
+                    capturar otra igual). */}
+                <th className="td-center" style={{ width: "9%" }}>
+                  Acciones
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -284,12 +328,30 @@ export function OrdenEstacionListPage({
                     <td className="td-center">
                       <EstadoOIBadge estatus={oe.estatus} />
                     </td>
+                    <td className="td-center">
+                      {oe.estatus === "asignada_afiliado" && (
+                        <button
+                          type="button"
+                          className="btn btn-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSubmitError(null);
+                            setClonarDesde(oe);
+                            setOcParaNuevaActual(oe.orden_id);
+                            setClonadoDesdeLista(true);
+                            setModo("new");
+                          }}
+                        >
+                          📋 Clonar
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="state-msg">
+                  <td colSpan={11} className="state-msg">
                     No hay Órdenes de Transmisión para los filtros seleccionados.
                   </td>
                 </tr>

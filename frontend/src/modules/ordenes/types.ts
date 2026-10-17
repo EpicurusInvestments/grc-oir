@@ -109,6 +109,9 @@ export interface OrdenEstacionAudio {
   id: string;
   nombre_archivo: string;
   orden: number;
+  /** ADR-210 (petición del usuario): referencia de almacenamiento (S3) — permite
+   *  "Clonar" este audio en una OE nueva (ver `clonarDesde` en `OrdenEstacionForm.tsx`). */
+  ref: string;
 }
 
 /** Un audio de "Evidencias de lo Transmitido" (ADR-119, "Capturar Reales") — lista

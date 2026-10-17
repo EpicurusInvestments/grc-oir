@@ -5,8 +5,9 @@
  * los cambios de fecha de campaña (comparten `entidad_id`, no se pueden separar).
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verAdjuntoOrden } from "../adapters/adjuntosApi";
 import { OrdenClienteDetailPanel } from "../ordenCliente/components/OrdenClienteDetailPanel";
@@ -18,18 +19,38 @@ vi.mock("../adapters/adjuntosApi", () => ({
   verAdjuntoOrden: vi.fn().mockResolvedValue(undefined),
 }));
 
+// ADR-208: el panel ahora pide la FacturaCliente de la orden (solo si ya está
+// "facturada" o más — `enabled`), vía React Query.
+const listFacturaMock = vi.fn();
+const verMock = vi.fn();
+const verEnVisorMock = vi.fn();
+vi.mock("@/modules/facturacion/api", () => ({
+  facturaClienteApi: { list: (p: unknown) => listFacturaMock(p) },
+  adjuntosFacturacionApi: { ver: (ref: string) => verMock(ref), verEnVisor: (ref: string) => verEnVisorMock(ref) },
+}));
+
+beforeEach(() => {
+  listFacturaMock.mockReset();
+  listFacturaMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 10, pages: 0 });
+  verMock.mockReset();
+  verEnVisorMock.mockReset();
+});
+
 function renderPanel(oc: ReturnType<typeof makeOC>, historialComisiones: HistorialComision[] = []) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <OrdenClienteDetailPanel
-      oc={oc}
-      ordenesEstacion={[]}
-      incidencias={[]}
-      historialComisiones={historialComisiones}
-      onSeleccionarOE={vi.fn()}
-      onEditar={vi.fn()}
-      onAsignarEstaciones={vi.fn()}
-      onCerrar={vi.fn()}
-    />,
+    <QueryClientProvider client={qc}>
+      <OrdenClienteDetailPanel
+        oc={oc}
+        ordenesEstacion={[]}
+        incidencias={[]}
+        historialComisiones={historialComisiones}
+        onSeleccionarOE={vi.fn()}
+        onEditar={vi.fn()}
+        onAsignarEstaciones={vi.fn()}
+        onCerrar={vi.fn()}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -121,5 +142,76 @@ describe("Fix: sección Documentos muestra el nombre original, sin el UUID de la
 
     fireEvent.click(screen.getByText(/PRUEBA-DE-ARCHIVO\.docx/));
     expect(verAdjuntoOrden).toHaveBeenCalledWith(oc.odc_cerrada_ref);
+  });
+});
+
+// ── ADR-208 (petición del usuario): sección "Factura" con Ver/Descargar ──────────────
+describe('Sección "Factura": Ver/Descargar PDF/XML cuando la orden ya está facturada', () => {
+  it("antes de 'facturada' no muestra la sección ni pide la factura", () => {
+    renderPanel(makeOC({ estatus_orden: "orden_cerrada" }));
+    expect(screen.queryByText("Factura")).not.toBeInTheDocument();
+    expect(listFacturaMock).not.toHaveBeenCalled();
+  });
+
+  it("'facturada_timbrada' con pdf_path Y xml_path ofrece 'Ver factura', 'Descargar PDF' y 'Descargar XML'", async () => {
+    listFacturaMock.mockResolvedValue({
+      items: [
+        {
+          factura_id: "f-1",
+          estado_facturacion: "timbrada",
+          pdf_path: "facturacion/clientes/pdf/abc_factura.pdf",
+          xml_path: "facturacion/clientes/xml/abc_factura.xml",
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 10,
+      pages: 1,
+    });
+    renderPanel(makeOC({ estatus_orden: "facturada_timbrada" }));
+
+    expect(await screen.findByText("Ver factura")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Ver factura"));
+    await waitFor(() =>
+      expect(verEnVisorMock).toHaveBeenCalledWith("facturacion/clientes/pdf/abc_factura.pdf"),
+    );
+
+    fireEvent.click(screen.getByText("Descargar PDF"));
+    await waitFor(() => expect(verMock).toHaveBeenCalledWith("facturacion/clientes/pdf/abc_factura.pdf"));
+
+    fireEvent.click(screen.getByText("Descargar XML"));
+    await waitFor(() => expect(verMock).toHaveBeenCalledWith("facturacion/clientes/xml/abc_factura.xml"));
+  });
+
+  it("'facturada_archivo_plano' sin pdf_path ni xml_path explica que aún no hay nada que descargar", async () => {
+    listFacturaMock.mockResolvedValue({
+      items: [{ factura_id: "f-1", estado_facturacion: "preparada", pdf_path: null, xml_path: null }],
+      total: 1,
+      page: 1,
+      size: 10,
+      pages: 1,
+    });
+    renderPanel(makeOC({ estatus_orden: "facturada_archivo_plano" }));
+
+    expect(await screen.findByText("Factura generada, sin PDF ni XML cargados todavía.")).toBeInTheDocument();
+    expect(screen.queryByText("Ver factura")).not.toBeInTheDocument();
+  });
+
+  it("ignora una factura CANCELADA y usa la vigente (ADR-047: se puede refacturar)", async () => {
+    listFacturaMock.mockResolvedValue({
+      items: [
+        { factura_id: "f-vieja", estado_facturacion: "cancelada", pdf_path: "facturacion/clientes/pdf/VIEJA.pdf", xml_path: null },
+        { factura_id: "f-nueva", estado_facturacion: "timbrada", pdf_path: "facturacion/clientes/pdf/NUEVA.pdf", xml_path: null },
+      ],
+      total: 2,
+      page: 1,
+      size: 10,
+      pages: 1,
+    });
+    renderPanel(makeOC({ estatus_orden: "cobrada" }));
+
+    fireEvent.click(await screen.findByText("Descargar PDF"));
+    await waitFor(() => expect(verMock).toHaveBeenCalledWith("facturacion/clientes/pdf/NUEVA.pdf"));
+    expect(verMock).not.toHaveBeenCalledWith("facturacion/clientes/pdf/VIEJA.pdf");
   });
 });

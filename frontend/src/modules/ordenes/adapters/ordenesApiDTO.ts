@@ -124,6 +124,11 @@ export interface OrdenEstacionAudioApiDTO {
   nombre_archivo: string;
   orden: number;
   created_at: string;
+  /** ADR-210 (petición del usuario): referencia de almacenamiento (S3) — permite "Clonar"
+   *  este audio en una OE nueva pasándolo de vuelta como `audios_staging` al crear, sin
+   *  descargar/re-subir el archivo (mismo `ref` que ya devuelve `MaterialStagingApiDTO`
+   *  al subir uno nuevo). */
+  ref: string;
 }
 
 /** ADR-109: respuesta de `POST /ordenes/material-staging` — un audio YA subido a S3

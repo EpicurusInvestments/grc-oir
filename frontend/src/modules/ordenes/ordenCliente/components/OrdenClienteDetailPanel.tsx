@@ -5,12 +5,22 @@
 
 import { useState } from "react";
 
+import { ApiRequestError } from "@/shared/lib/apiClient";
+// ADR-208 (petición del usuario): "Ver factura"/"Descargar PDF"/"Descargar XML" en el
+// detalle de Órdenes de Servicio reusan el mismo adaptador/hook que ya usa Facturación
+// (F2) — Ordenes (F1) depende de Facturación aquí a propósito, en el mismo sentido que
+// ya depende el backend (facturacion importa de ordenes, nunca al revés): es Facturación
+// quien conoce el modelo de `FacturaCliente`/sus adjuntos, Ordenes solo los consulta de
+// solo lectura por `orden_id`.
+import { adjuntosFacturacionApi } from "@/modules/facturacion/api";
+import { useFacturaDeOrden } from "@/modules/facturacion/hooks";
+
 import { nombreDeAdjuntoRef, verAdjuntoOrden } from "../../adapters/adjuntosApi";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { CommissionSnapshotBlock } from "../../components/CommissionSnapshotBlock";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { Timeline } from "../../components/Timeline";
-import { FROZEN_STATES, STATUS_LABELS } from "../../constants";
+import { FROZEN_STATES, STATUS_LABELS, rootState } from "../../constants";
 import { fmtMonto, fmtRangoFechas, oGuion } from "../../format";
 import {
   findAfiliado,
@@ -82,6 +92,35 @@ export function OrdenClienteDetailPanel({
 
   const allClosed = oes.length > 0 && oes.every((oe) => oe.estatus === "reales_conciliados");
   const puedeCerrar = oc.estatus_orden === "orden_interna" && allClosed;
+
+  // ADR-208 (petición del usuario): "ya que esté en Facturada, mostrar los mismos
+  // botones de ver/descargar que Facturas al cliente". Se pide la factura solo a
+  // partir de la raíz 4 ("Facturada", cubre 4.1 archivo plano / 4.2 timbrada) y 5
+  // ("Cobrada") — antes de eso no existe ninguna `FacturaCliente` para esta orden.
+  const yaFacturada = (rootState(oc.estatus_orden) ?? 0) >= 4;
+  const facturaQuery = useFacturaDeOrden(yaFacturada ? oc.id : undefined);
+  // Una orden puede tener una factura CANCELADA de un intento previo (ADR-047 permite
+  // volver a facturar); la vigente es la única que importa mostrar aquí.
+  const factura = facturaQuery.data?.items.find((f) => f.estado_facturacion !== "cancelada");
+  const [errorFactura, setErrorFactura] = useState<string | null>(null);
+  const mensajeDeErrorFactura = (e: unknown): string =>
+    e instanceof ApiRequestError ? e.message : "No se pudo abrir el documento.";
+  const verPdfFactura = async (ref: string) => {
+    setErrorFactura(null);
+    try {
+      await adjuntosFacturacionApi.verEnVisor(ref);
+    } catch (e) {
+      setErrorFactura(mensajeDeErrorFactura(e));
+    }
+  };
+  const descargarAdjuntoFactura = async (ref: string) => {
+    setErrorFactura(null);
+    try {
+      await adjuntosFacturacionApi.ver(ref);
+    } catch (e) {
+      setErrorFactura(mensajeDeErrorFactura(e));
+    }
+  };
 
   return (
     <>
@@ -277,6 +316,52 @@ export function OrdenClienteDetailPanel({
                 </div>
               </div>
             ))}
+          </>
+        )}
+
+        {yaFacturada && (
+          <>
+            <div className="sec">Factura</div>
+            {factura?.pdf_path || factura?.xml_path ? (
+              <>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                  {factura.pdf_path && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void verPdfFactura(factura.pdf_path!)}
+                      >
+                        Ver factura
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void descargarAdjuntoFactura(factura.pdf_path!)}
+                      >
+                        <i className="pi pi-download" aria-hidden="true" /> Descargar PDF
+                      </button>
+                    </>
+                  )}
+                  {factura.xml_path && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => void descargarAdjuntoFactura(factura.xml_path!)}
+                    >
+                      <i className="pi pi-download" aria-hidden="true" /> Descargar XML
+                    </button>
+                  )}
+                </div>
+                {errorFactura && <div className="fe">{errorFactura}</div>}
+              </>
+            ) : (
+              <div className="fv muted" style={{ fontSize: 12 }}>
+                {facturaQuery.isLoading
+                  ? "Buscando la factura de esta orden…"
+                  : "Factura generada, sin PDF ni XML cargados todavía."}
+              </div>
+            )}
           </>
         )}
 

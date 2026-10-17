@@ -8320,3 +8320,229 @@ Los actores externos (clientes, agencias, afiliados) no acceden al sistema.
   corto —5 letras de raíz o menos— no se trunca); suite completa de `facturacion`
   106/106 sin regresiones.
 
+### ADR-208 — El detalle de "Órdenes de Servicio" (F1) agrega una sección "Factura" con Ver/Descargar, una vez facturada
+
+- **Estado:** aceptada · **Fecha:** 2026-10-16 (petición del usuario, con 3 capturas): en
+  "Facturas al cliente" (F2) ya existían "Ver factura"/"Descargar PDF"/"Descargar XML"
+  (ADR-206/207), pero una vez que la Orden de Servicio llega a "Facturada" (o "Cobrada")
+  no había forma de verlos desde SU PROPIO detalle en Órdenes (F1) — había que ir a
+  buscar la factura en Facturación. Pidió los mismos botones, en una sección propia,
+  directo en el detalle de la orden.
+- **Decisión:**
+  1. **Nuevo hook `useFacturaDeOrden(ordenId)`** (`facturacion/hooks.ts`) — reusa
+     `facturaClienteApi.list({ orden_id })` (el filtro ya existía en el backend, sin
+     cambios). Puede traer más de una factura (una cancelada de un intento previo,
+     ADR-047 permite refacturar): el llamador se queda con la primera cuyo
+     `estado_facturacion !== "cancelada"`.
+  2. **`OrdenClienteDetailPanel.tsx`** importa este hook y `adjuntosFacturacionApi`
+     DIRECTO del módulo de Facturación — Ordenes (F1) depende de Facturación (F2) aquí a
+     propósito, en el MISMO sentido que ya depende el backend (`factura_cliente.py`
+     importa de `orden_cliente.py`, nunca al revés): es Facturación quien conoce el
+     modelo de `FacturaCliente`, Ordenes solo lo consulta de solo lectura por
+     `orden_id`. La consulta solo se activa (`enabled`) cuando `rootState(estatus_orden)
+     >= 4` ("Facturada" 4.1/4.2 o "Cobrada" 5) — antes de eso no existe ninguna factura
+     para esa orden, pedirla sería una consulta inútil.
+  3. **Sección "Factura"** nueva (separada de "Documentos", que es sobre ODC/carta de
+     conciliación de cierre) — mismo patrón que `FacturasClientePage.tsx`: "Ver
+     factura"/"Descargar PDF" si hay `pdf_path`, "Descargar XML" si hay `xml_path`
+     (independientes); si la orden ya factura pero ningún adjunto se cargó todavía, un
+     mensaje muted lo explica en vez de no mostrar nada.
+- **Consecuencia:** ninguna negativa — cambio de solo lectura; introduce la PRIMERA
+  dependencia de Ordenes hacia Facturación en el frontend (documentada arriba, con
+  justificación explícita de por qué es el sentido correcto).
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios. `OrdenClienteDetailPanel`
+  y `OrdenClienteListPage` ahora usan `useQuery` (vía el nuevo hook) y sus pruebas
+  necesitaban `QueryClientProvider` + mock de `@/modules/facturacion/api` (antes no lo
+  llevaban, el panel no tenía ninguna consulta de red) — se agregó a ambos archivos. 4
+  pruebas nuevas en `OrdenClienteDetailPanel.test.tsx` (antes de "facturada" no pide
+  nada; con PDF y XML ofrece los 3 botones y cada uno llama lo correcto; sin ningún
+  adjunto explica que falta cargarlos; una factura cancelada se ignora y se usa la
+  vigente); suites completas de `ordenes` y `facturacion` 365/365 sin regresiones.
+
+### ADR-209 — "Cerrar orden" quita la casilla de confirmación: cargar los documentos (o no) y el botón ya es suficiente
+
+- **Estado:** aceptada · **Fecha:** 2026-10-16 (petición del usuario, con captura): la
+  pantalla "Cerrar orden" (estado 2 → 3 de la OC) tenía una casilla "Confirmo que la
+  información de cierre es correcta." que bloqueaba el botón "Cerrar orden → Estado 3"
+  hasta marcarla — un paso extra que ya no se usará: con cargar los documentos (o
+  aceptar cerrarla sin ellos, la advertencia ámbar existente ya avisa de eso) y darle al
+  botón es suficiente.
+- **Decisión:** `CierreOCForm.tsx` quita el estado `confirmado`, la casilla y su
+  `<label>`, y el botón "Cerrar orden → Estado 3" deja de depender de él
+  (`disabled={submitting}` a secas, sin el `title` explicativo que ya no aplica). Nada
+  más cambia: la advertencia ámbar de documentos faltantes, el resumen de
+  transmitido/vendido y los montos de comisión siguen igual.
+- **Consecuencia:** ninguna negativa — no había ninguna prueba que cubriera este
+  formulario todavía (hueco preexistente, cerrado de paso con esta misma tarea).
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios; nuevo
+  `CierreOCForm.test.tsx` (2 pruebas: la casilla ya no aparece; el botón está habilitado
+  desde el inicio, incluso sin documentos cargados, y `onConfirmar` recibe
+  `documentosFaltantes: ["odc_cerrada", "carta_conciliacion"]`); suite completa de
+  `ordenes` 261/261 sin regresiones.
+
+### ADR-210 — "Clonar" una Orden de Transmisión (manera 1: desde el modal post-guardado; manera 2: desde la lista, solo en 2.1)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-16 (petición del usuario): al guardar una
+  Orden de Transmisión (OE), el modal "¿Deseas generar otra...?" (ADR-116) ofrecía solo
+  "Sí, generar otra" (en blanco) y "No, ir a la lista". Se agrega un tercer botón
+  "Clonar": regresa al mismo formulario de ALTA, pero precargado con los datos de la OE
+  que se acaba de guardar, para que el usuario le dé un vistazo rápido y solo "Guardar"
+  o ajuste lo que cambie (p.ej. otra estación de la misma plaza con fechas/spots
+  idénticos).
+- **Qué SÍ se clona:** Estación, Producto, Duración, Tarifa por spot, Spots
+  bonificables, Observaciones de la estación, el Período de transmisión completo
+  (fecha/hora inicio/hora fin/spots de cada día ya capturado — se ve de inmediato en la
+  tabla, sin que el usuario tenga que volver a teclearlo) y, desde el Fix 3 (abajo), el
+  Material a Transmitir.
+- **Qué NO se clona — y por qué:**
+  - **El motivo del cambio de tarifa** (texto/selección de "Motivo del cambio de
+    tarifa"): es un campo transitorio (`OrdenEstacionInput.motivo_cambio_tarifa`, "no
+    persiste como campo propio") que el backend tampoco expone de vuelta — no hay de
+    dónde copiarlo. Ver Fix 2 (abajo): si la tarifa clonada diverge del catálogo, el
+    selector igual aparece de inmediato para que el usuario lo vuelva a elegir.
+  - **`orden_estacion_dia_id` / `orden_estacion_audio_id` / `cancelada` / `hora_real`**
+    de cada fila del período: pertenecen a la OE anterior (historial, asignación de
+    audio ya resuelta) — las filas clonadas nacen como días NUEVOS, sin ese equipaje.
+- **Decisión (implementación):**
+  - `OrdenEstacionForm` gana una prop `clonarDesde?: OrdenEstacion`, **separada** de `oe`
+    (edición) — `isEdit = oe != null` no cambia. `const origen = oe ?? (!isEdit ?
+    clonarDesde : undefined)` es la única fuente de los valores iniciales de los campos
+    simples; el período se inicializa aparte, despojando los 4 campos de historial
+    mencionados arriba. Si llegan `oe` y `clonarDesde` a la vez, `oe` manda (no debería
+    pasar en la práctica: la pantalla nunca los pasa juntos).
+  - `ConfirmDialog` (`shared/ui`) gana un tercer botón opcional (`extraLabel`/`onExtra`,
+    entre Cancelar y Confirmar) — los 8 llamadores existentes no los pasan, así que no
+    cambia nada para ellos.
+  - `OrdenEstacionListPage` guarda la OE de origen en un estado `clonarDesde`, lo pasa al
+    formulario, y lo limpia (`null`) en cualquier otro camino de salida de "new"
+    (generar otra en blanco, cancelar, el botón "+ Nueva Orden de Transmisión" del
+    toolbar) para que nunca se arrastre a un alta que no pidió clonar nada.
+  - Verificado explícitamente que esto no rompe reglas existentes: ADR-199 (cambiar de
+    estación limpia Producto/Duración/Tarifa) sigue funcionando porque el clon arranca
+    con `estacionId` ya lleno, así que un cambio posterior de estación limpia
+    correctamente la tarifa heredada; el auto-sugerido de tarifa (ADR-183b) no
+    sobrescribe la tarifa clonada al montar (`ultimaSugeridaRef` nace `null`).
+- **Manera 2 (petición del usuario, agregada el mismo día): clonar desde la lista.** La
+  tabla de "Órdenes de Transmisión" (`OrdenEstacionListPage.tsx`) gana una columna
+  "Acciones" al final, con un botón "📋 Clonar" — **visible solo en los renglones en
+  sub-estado 2.1 "Asignada al afiliado"** (`oe.estatus === "asignada_afiliado"`; antes de
+  que la OE avance de sub-estado tiene más sentido partir de ella para capturar otra
+  igual). El clic lleva `e.stopPropagation()` (no selecciona la fila ni abre el panel de
+  detalle) y reutiliza el mismo mecanismo de la manera 1: fija la OC de origen
+  (`ocParaNuevaActual = oe.orden_id`, de solo lectura, igual que el resto de altas con OC
+  ya elegida) y manda `clonarDesde = oe` al formulario de alta. A diferencia de lo que
+  parecía sugerir la captura que trajo el usuario (Estación en gris), el selector de
+  Estación YA estaba completamente editable al clonar desde la manera 1 — se bloquea
+  solo en modo EDICIÓN (`disabled={isEdit}`), que un clon nunca activa; no hizo falta
+  ningún cambio ahí, solo confirmarlo con una prueba.
+- **Verificado:** frontend, `tsc --noEmit`/`eslint` limpios. Pruebas nuevas: 4 en
+  `OrdenEstacionForm.test.tsx` (precarga de campos simples y del período sin ids de
+  historial; `isEdit` permanece `false`, `onGuardar` se llama con la firma de alta
+  —`(ocId, input)`—, nunca la de edición; si llegan `oe` y `clonarDesde` juntos, `oe`
+  manda) y 4 en `OrdenEstacionListPage.test.tsx` (manera 1: el botón "Clonar" del modal
+  deja al usuario en el alta con los datos precargados, "Sí, generar otra" tras un clon
+  no arrastra la clonación al siguiente alta en blanco; manera 2: el botón de la tabla
+  solo aparece en 2.1, y al usarlo el selector de Estación sigue editable). Suite
+  `ordenEstacion`/`ordenes` sin regresiones (71/71 en los 3 archivos de este módulo,
+  repetida 3 veces para descartar flakiness).
+
+**Fix (mismo día, reportado por el usuario en vivo): "Cancelar" tras clonar desde la
+lista (manera 2) expulsaba a "Órdenes de Servicio" en vez de quedarse en "Órdenes de
+Transmisión".** Causa: `onCancelar` del alta reusa la regla de ADR-116 ("si hay una OC
+fija, cancelar regresa a Órdenes de Servicio") — correcta para el flujo que SÍ viene de
+ahí ("+ Asignar estaciones"), pero la manera 2 también fija la OC (`ocParaNuevaActual =
+oe.orden_id`) sin haber pasado nunca por esa pantalla. Se agrega un estado
+`clonadoDesdeLista` (true solo cuando el alta se originó con el botón "📋 Clonar" de la
+tabla; se resetea en cualquier otra entrada a "new" — toolbar, "generar otra", "no ir a
+la lista"), que hace que "Cancelar" se quede en `setModo("view")` en vez de navegar
+afuera. **Verificado:** `tsc`/`eslint` limpios; nueva prueba en
+`OrdenEstacionListPage.test.tsx` (clonar desde la tabla y cancelar se queda en "Órdenes
+de Transmisión", `onVerOC` nunca se llama) — confirma además que el comportamiento
+ORIGINAL de ADR-116 (cancelar con OC fija vía "+ Asignar estaciones" SÍ regresa a
+Órdenes de Servicio) sigue intacto. Suite `ordenes` 270/270 sin regresiones.
+
+**Fix 2 (mismo día, reportado por el usuario en vivo): al clonar una OE cuya tarifa ya
+diverge de la sugerida del catálogo, el guardado fallaba contra el backend sin forma de
+corregirlo — el selector de "Motivo del cambio de tarifa" nunca aparecía.** Causa:
+`requiereMotivoTarifa` (ADR-183b) depende de `tarifaEsUltimoCampoTocado` — una bandera
+que solo se activa cuando el USUARIO edita la tarifa a mano; al clonar, el valor llega
+precargado programáticamente, así que nada cuenta como "tocado" y la bandera se queda en
+`false`. El backend, en cambio, exige el motivo en TODO alta (`OrdenEstacionCreate`) con
+tarifa divergente, sin la excepción de "no tocaste nada" que sí aplica al editar (ADR-162
+— ahí la divergencia ya quedó auditada en el registro existente; un clon es una entidad
+NUEVA, sin ese registro previo). Resultado: Guardar pasaba la validación del frontend,
+pero el backend lo rechazaba con un mensaje crudo y el campo para corregirlo seguía
+oculto. **Decisión:** nuevo efecto en `OrdenEstacionForm.tsx`, solo al montar un clon,
+que marca la tarifa como "tocada" si YA diverge de la sugerida en cuanto el catálogo
+resuelve (`tarifaSugerida`) — así el selector aparece desde el primer render y la
+validación del frontend coincide con la del backend. El motivo en sí (texto/selección)
+nunca se clona — es un campo transitorio (`OrdenEstacionInput.motivo_cambio_tarifa`, "no
+persiste como campo propio") que el backend tampoco expone de vuelta, así que no hay de
+dónde copiarlo; el usuario simplemente vuelve a elegirlo para la OE nueva. **Verificado:**
+`tsc`/`eslint` limpios; nueva prueba en `OrdenEstacionForm.test.tsx` (clonar con tarifa
+divergente muestra el selector sin tocar nada, bloquea Guardar hasta elegir un motivo, y
+lo manda al backend). Suite `ordenes` 271/271 sin regresiones.
+
+**Fix 3 (mismo día, a petición del usuario): el Material a Transmitir SÍ se clona.**
+El usuario preguntó por qué los audios no se podían clonar; se le explicaron 2 opciones
+(exponer la referencia de S3 en el backend vs. descargar+re-subir solo desde el
+frontend) y eligió la primera. **Backend:** `OrdenEstacionAudioRead`
+(`backend/app/modules/ordenes/orden_estacion.py`) agrega el campo `ref: str` — ya
+existía en el modelo ORM (`OrdenEstacionAudio.ref`, `Unicode(500)`), así que no hizo
+falta ninguna migración, solo exponerlo en el schema de respuesta de
+`GET /ordenes/estaciones/{id}/audios` (`from_attributes=True` lo toma automático). No es
+un dato sensible: el mismo `ref` ya viaja al cliente desde
+`POST /ordenes/material-staging` al subir un audio nuevo. **Frontend:** el `ref` se
+agrega a `OrdenEstacionAudioApiDTO`/`OrdenEstacionAudio` (`types.ts`) y a
+`ordenEstacionAudioFromApi`; `OrdenEstacionForm.tsx` gana un efecto (solo al montar un
+clon) que llama `listarAudiosOrdenEstacionApi(clonarDesde.id)` y precarga
+`audiosStaging` con esos mismos `ref` — CERO descarga/re-subida del archivo, mismo
+mecanismo que ya usa ADR-109 para material recién elegido en esta misma captura. Un
+mensaje "Cargando material de la Orden de Transmisión clonada…" cubre el breve instante
+de la consulta; si falla, el material simplemente queda vacío (el usuario lo sube a
+mano, como en cualquier alta) en vez de bloquear el formulario. El input de archivo se
+deshabilita mientras esa consulta está en vuelo, para que no se pise con algo que el
+usuario suba manualmente justo en ese momento. **Verificado:** backend —
+`ruff` limpio, suite `pytest -k orden` 206/206 sin regresiones (incluye los 22 tests de
+`test_f1_07_material_a_transmitir.py`, que no asumían un set cerrado de campos en la
+respuesta). Frontend — `tsc`/`eslint` limpios; nueva prueba en `OrdenEstacionForm.test.tsx`
+(clona el material vía `ref`, en el orden correcto, sin pasar por "Sin audios elegidos
+todavía." ni por el input de archivo, y manda exactamente esos `ref` al backend); las
+pruebas existentes de clonado que asumían "el material nunca se clona" se actualizaron
+para esperar (`findByText`) a que se resuelva esa consulta antes de revisar el estado del
+Material a Transmitir. Suite `ordenes` 272/272 sin regresiones (repetida 3 veces para
+descartar flakiness). Nota aparte: la corrida completa de Vitest del frontend mostró 12
+pruebas fallando en `apiClient`/`LoginPage`/`RequireSession`/`RequireArea` — confirmado
+que son preexistentes y no relacionadas (fallan igual en aislamiento, sin tocar ningún
+archivo de este cambio).
+
+**Fix 4 (mismo día, reportado por el usuario en vivo): el material clonado aparecía en
+la lista de "Material a Transmitir", pero ningún día de la tabla lo traía YA elegido en
+su columna "Material a Transmitir".** Causa: las filas clonadas nacen sin
+`orden_estacion_audio_id` (son días nuevos — ver arriba) y esa columna, en la vista
+EDITABLE (`permiteAsignacionLocal`, que un alta siempre pasa), nunca calcula un default
+por posición — a propósito, para no inventarle una selección al usuario en una captura
+normal (`materialesAsignados` en `PeriodoTransmisionGrid.tsx`; el cálculo por posición,
+`materialesConVistaPrevia`, es solo para la vista de SOLO LECTURA). **Decisión:** en el
+mismo efecto del Fix 3, tras clonar los audios, se arma un mapa
+`orden_estacion_audio_id` (REAL, de la OE anterior) → `ref` (del mismo audio ya clonado)
+y se remapea cada día clonado por índice posicional — el período clonado es un mapeo 1:1
+de `clonarDesde.periodo_transmision`, así que el índice `i` identifica al mismo día en
+ambos arreglos. Esto preserva la asignación EXACTA que tenía la OE original (no un
+reparto genérico por posición).
+
+**Fix 4b (mismo día, reportado por el usuario sobre una OE real en vivo): el fix anterior
+no bastaba — el caso MÁS COMÚN es justo el que se asumió "infrecuente".** Un día sin
+`orden_estacion_audio_id` propio (p.ej. un solo spot con un solo material disponible, que
+nunca necesitó elegirse a mano porque ADR-107 ya lo resuelve por default en la vista de
+solo lectura) se clonaba igual de vacío, porque el remapeo del Fix 4 solo cubre
+asignaciones EXPLÍCITAS. **Decisión:** mismo efecto, segunda pasada — los días que
+siguen sin material tras el remapeo se agrupan por `fecha` (igual que la tabla) y se les
+aplica `asignarPorPosicion` (la misma función que ya usa "Generar desde calendario" al
+generar, importada de `CalendarioPeriodoTransmision.tsx`) sobre los `ref` recién clonados,
+horneando así el mismo default que la vista de solo lectura ya calculaba al vuelo.
+**Verificado:** `tsc`/`eslint` limpios; nueva prueba en `OrdenEstacionForm.test.tsx`
+(reproduce el caso real reportado: un día sin asignación propia y un solo material
+disponible — deja de mostrar "Elige material…") más la del Fix 4 original (una elección
+puntual —no el default— se preserva tal cual, no se pisa con el reparto por posición).
+Suite `ordenes` 274/274 sin regresiones.

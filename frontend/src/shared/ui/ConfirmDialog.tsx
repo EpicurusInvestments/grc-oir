@@ -14,6 +14,11 @@ interface ConfirmDialogProps {
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** ADR-210 (petición del usuario): tercer botón opcional (p.ej. "Clonar") — entre
+   *  Cancelar y Confirmar. Ambos (`extraLabel`/`onExtra`) deben venir juntos o ninguno;
+   *  los 8 llamadores existentes no los pasan, así que no cambia nada para ellos. */
+  extraLabel?: string;
+  onExtra?: () => void;
 }
 
 export function ConfirmDialog({
@@ -26,12 +31,19 @@ export function ConfirmDialog({
   loading = false,
   onConfirm,
   onCancel,
+  extraLabel,
+  onExtra,
 }: ConfirmDialogProps) {
   const footer = (
     <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", padding: "4px 24px 20px" }}>
       <button type="button" className="btn btn-sm" onClick={onCancel} disabled={loading}>
         {cancelLabel}
       </button>
+      {extraLabel && onExtra && (
+        <button type="button" className="btn btn-sm" onClick={onExtra} disabled={loading}>
+          {extraLabel}
+        </button>
+      )}
       <Button
         label={confirmLabel}
         severity={danger ? "danger" : undefined}
