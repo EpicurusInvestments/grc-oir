@@ -186,6 +186,7 @@ export function ordenEstacionAudioFromApi(dto: OrdenEstacionAudioApiDTO): OrdenE
     id: dto.orden_estacion_audio_id,
     nombre_archivo: dto.nombre_archivo,
     orden: dto.orden,
+    ref: dto.ref,
   };
 }
 

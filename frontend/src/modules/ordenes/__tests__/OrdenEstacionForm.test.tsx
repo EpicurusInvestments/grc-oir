@@ -18,9 +18,14 @@ import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE } from "./fixtures";
+import { listarAudiosOrdenEstacionApi } from "../adapters/escrituraApi";
 
 // ADR-109: sube el material a S3 en cuanto se elige (antes de guardar la OE) — se mockea
 // para no pegarle a la red real desde jsdom; el resto de `escrituraApi` sigue real.
+// ADR-210: `listarAudiosOrdenEstacionApi` también se mockea — al CLONAR, el formulario la
+// llama para precargar el Material a Transmitir (ver `OrdenEstacionForm.tsx`); por
+// default no devuelve nada (la mayoría de las pruebas no clonan material), las que sí lo
+// verifican la sobreescriben con `mockResolvedValueOnce`.
 vi.mock("../adapters/escrituraApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../adapters/escrituraApi")>();
   return {
@@ -30,6 +35,7 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => {
       .mockImplementation((archivo: File) =>
         Promise.resolve({ ref: `orden_estacion/audios/abc_${archivo.name}`, nombre_archivo: archivo.name }),
       ),
+    listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -96,23 +102,35 @@ estaciones.push({ id: "es2", afiliado_id: "af1", plaza_id: "pl2", nombre_estacio
 estaciones.push({ id: "es-inactiva", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-FM (baja)", frecuencia: "88.1", tipo_senal: "fm", activo: false });
 
 function renderForm(
-  opts: { oc?: Partial<OrdenCliente>; oesPrevias?: Partial<OrdenEstacion>[]; oe?: Partial<OrdenEstacion> } = {},
+  opts: {
+    oc?: Partial<OrdenCliente>;
+    oesPrevias?: Partial<OrdenEstacion>[];
+    oe?: Partial<OrdenEstacion>;
+    clonarDesde?: Partial<OrdenEstacion>;
+  } = {},
 ) {
   const onGuardar = vi.fn();
   const onCancelar = vi.fn();
   const oc = makeOC(opts.oc);
   const oesPrevias = (opts.oesPrevias ?? []).map((oe) => makeOE({ ...oe, orden_id: oc.id }));
   const oe = opts.oe ? makeOE({ ...opts.oe, orden_id: oc.id }) : undefined;
+  const clonarDesde = opts.clonarDesde ? makeOE({ ...opts.clonarDesde, orden_id: oc.id }) : undefined;
   const ordenesEstacion = oe ? [...oesPrevias, oe] : oesPrevias;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={qc}>
       <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion, incidencias: [], historialComisiones: [] }}>
-        <OrdenEstacionForm ocIdFijo={oc.id} oe={oe} onGuardar={onGuardar} onCancelar={onCancelar} />
+        <OrdenEstacionForm
+          ocIdFijo={oc.id}
+          oe={oe}
+          clonarDesde={clonarDesde}
+          onGuardar={onGuardar}
+          onCancelar={onCancelar}
+        />
       </OrdenesProvider>
     </QueryClientProvider>,
   );
-  return { ...utils, onGuardar, onCancelar, oc, oe };
+  return { ...utils, onGuardar, onCancelar, oc, oe, clonarDesde };
 }
 
 // ADR-110: "Material a Transmitir" es obligatorio para CREAR — antes de poder usar
@@ -173,6 +191,229 @@ describe("ADR-182: la tarjeta 'Orden de Servicio de origen' muestra el Anunciant
     fireEvent.mouseDown(screen.getByText(`${oc.folio_orden} — ${oc.numero_orden_cliente}`));
 
     expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+  });
+});
+
+describe("ADR-210: 'Clonar' precarga una OE nueva con los datos de otra, sin activar edición", () => {
+  it("precarga Estación, Producto, Duración, Tarifa, Spots bonificables y Observaciones", () => {
+    const { container } = renderForm({
+      clonarDesde: {
+        folio_orden_interna: "OE-2025-0009A",
+        estacion_id: "es1",
+        producto_tarifa: "spot",
+        duracion_spot: "30s",
+        precio_spot: 950,
+        cantidad_spots_bonificables: 3,
+        observaciones_estacion: "Observación de la OE original",
+      },
+    });
+
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Estación").value).toBe("es1");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("950.00");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Spots bonificables del afiliado").value).toBe("3");
+    expect(fieldByLabelText<HTMLTextAreaElement>(container, "Observaciones de la estación").value).toBe(
+      "Observación de la OE original",
+    );
+    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2025-0009A)")).toBeInTheDocument();
+  });
+
+  it("no activa modo edición: sigue pidiendo Material a Transmitir y guarda con la OC como alta nueva (no PATCH)", async () => {
+    const { container, onGuardar, oc } = renderForm({
+      clonarDesde: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "30s", precio_spot: 950 },
+    });
+
+    // ADR-210: se clona el material (vía `listarAudiosOrdenEstacionApi`, mockeada arriba
+    // con `[]` por default) — la OE de origen de este caso no tenía ninguno, así que
+    // sigue pidiéndolo (ADR-110), pero solo DESPUÉS de resolver esa consulta.
+    await screen.findByText("Sin audios elegidos todavía.");
+    await asegurarMaterial(container);
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+    // `onGuardar(ocId, input)` — firma de ALTA, nunca la de edición (que no recibe ocId).
+    expect(onGuardar).toHaveBeenCalledWith(oc.id, expect.anything());
+  });
+
+  it("fix (petición del usuario): clona el Material a Transmitir vía `ref` de S3, sin descargar/re-subir el archivo", async () => {
+    vi.mocked(listarAudiosOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        orden_estacion_audio_id: "au-1",
+        orden_estacion_id: "oe-vieja",
+        nombre_archivo: "uno.mp3",
+        orden: 1,
+        created_at: "2025-06-01",
+        ref: "orden_estacion/audios/uno.mp3",
+      },
+      {
+        orden_estacion_audio_id: "au-0",
+        orden_estacion_id: "oe-vieja",
+        nombre_archivo: "cero.mp3",
+        orden: 0,
+        created_at: "2025-06-01",
+        ref: "orden_estacion/audios/cero.mp3",
+      },
+    ]);
+    const { onGuardar } = renderForm({
+      clonarDesde: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "30s", precio_spot: 950 },
+    });
+
+    // Se ven de inmediato, YA EN ORDEN (`orden`, no el orden en que llegó la respuesta) —
+    // sin pasar por "Sin audios elegidos todavía." ni por el input de archivo. "cero.mp3"
+    // aparece 2 veces: en la lista de material subido Y en la columna "Material a
+    // Transmitir" del único día (sin asignación propia, le toca por posición — ADR-107).
+    await waitFor(() => expect(screen.getAllByText("cero.mp3").length).toBeGreaterThan(0));
+    expect(screen.getByText("uno.mp3")).toBeInTheDocument();
+    expect(screen.queryByText("Sin audios elegidos todavía.")).toBeNull();
+    expect(screen.queryByText("Cargando material de la Orden de Transmisión clonada…")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+    const [, input] = onGuardar.mock.calls[0];
+    // Exactamente los `ref` que ya traía la OE de origen — ninguna subida nueva.
+    expect(input.audios_staging).toEqual([
+      { ref: "orden_estacion/audios/cero.mp3", nombre_archivo: "cero.mp3" },
+      { ref: "orden_estacion/audios/uno.mp3", nombre_archivo: "uno.mp3" },
+    ]);
+  });
+
+  it("fix (reportado por el usuario): el material clonado también queda YA ELEGIDO en la columna 'Material a Transmitir' de cada día, no solo en la lista de arriba", async () => {
+    vi.mocked(listarAudiosOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        orden_estacion_audio_id: "au-0",
+        orden_estacion_id: "oe-vieja",
+        nombre_archivo: "cero.mp3",
+        orden: 0,
+        created_at: "2025-06-01",
+        ref: "orden_estacion/audios/cero.mp3",
+      },
+      {
+        orden_estacion_audio_id: "au-1",
+        orden_estacion_id: "oe-vieja",
+        nombre_archivo: "uno.mp3",
+        orden: 1,
+        created_at: "2025-06-01",
+        ref: "orden_estacion/audios/uno.mp3",
+      },
+    ]);
+    const { onGuardar } = renderForm({
+      clonarDesde: {
+        estacion_id: "es1",
+        producto_tarifa: "spot",
+        duracion_spot: "30s",
+        precio_spot: 950,
+        periodo_transmision: [
+          // Este día, en la OE original, ya tenía "uno.mp3" elegido a mano (no el
+          // default por posición) — el clon debe respetar ESA elección puntual, no
+          // simplemente repartir por posición desde cero.
+          {
+            fecha: "2025-06-10",
+            hora_inicio: "09:00",
+            hora_termino: "10:00",
+            spots_diarios: 1,
+            orden_estacion_dia_id: "dia-vieja-1",
+            orden_estacion_audio_id: "au-1",
+          },
+        ],
+      },
+    });
+
+    // Antes del fix, la columna de la tabla se quedaba en "Elige material…" aunque la
+    // lista de arriba (Material a Transmitir) ya mostrara "uno.mp3"/"cero.mp3" clonados.
+    await waitFor(() =>
+      expect(screen.queryByText("Cargando material de la Orden de Transmisión clonada…")).toBeNull(),
+    );
+    expect(screen.queryByText("Elige material…")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+    const [, input] = onGuardar.mock.calls[0];
+    // El día clonado manda el `ref` (id de staging) del audio que correspondía al id
+    // REAL ("au-1") que tenía en la OE anterior — no el default por posición ("au-0").
+    expect(input.periodo_transmision[0].orden_estacion_audio_id).toBe("orden_estacion/audios/uno.mp3");
+  });
+
+  it("fix (reportado por el usuario, caso real): un día SIN `orden_estacion_audio_id` propio (usaba el default por posición, ADR-107) también queda elegido al clonar", async () => {
+    vi.mocked(listarAudiosOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        orden_estacion_audio_id: "au-0",
+        orden_estacion_id: "oe-vieja",
+        nombre_archivo: "Audio_2_30-Second-Timer-Bomb-MISSION-IMPOSSIBLE.mp3",
+        orden: 0,
+        created_at: "2025-06-01",
+        ref: "orden_estacion/audios/Audio_2_30-Second-Timer-Bomb-MISSION-IMPOSSIBLE.mp3",
+      },
+    ]);
+    renderForm({
+      clonarDesde: {
+        estacion_id: "es1",
+        producto_tarifa: "spot",
+        duracion_spot: "30s",
+        precio_spot: 950,
+        periodo_transmision: [
+          // Como la OE real reportada por el usuario: un solo día, sin
+          // `orden_estacion_audio_id` propio — en la vista de solo lectura "usaba" el
+          // único audio disponible por el default de posición (ADR-107), no una
+          // elección explícita.
+          { fecha: "2026-10-11", hora_inicio: "07:00", hora_termino: "07:00", spots_diarios: 1 },
+        ],
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText("Cargando material de la Orden de Transmisión clonada…")).toBeNull(),
+    );
+    // Antes de este fix, un día sin asignación EXPLÍCITA se clonaba igual de vacío —
+    // aunque hubiera un solo material disponible (el caso más común de todos).
+    expect(screen.queryByText("Elige material…")).toBeNull();
+  });
+
+  it("copia el período (fecha/hora/spots) pero SIN ids ni historial de la OE anterior", async () => {
+    const { container, onGuardar } = renderForm({
+      clonarDesde: {
+        estacion_id: "es1",
+        producto_tarifa: "spot",
+        duracion_spot: "30s",
+        precio_spot: 950,
+        periodo_transmision: [
+          {
+            fecha: "2025-06-15",
+            hora_inicio: "09:00",
+            hora_termino: "10:00",
+            spots_diarios: 15,
+            orden_estacion_dia_id: "dia-vieja-1",
+            orden_estacion_audio_id: "audio-viejo-1",
+            cancelada: true,
+            hora_real: "09:05",
+          },
+        ],
+      },
+    });
+
+    // La fila se ve de inmediato (no hace falta volver a capturarla).
+    expect(screen.getByDisplayValue("2025-06-15")).toBeInTheDocument();
+
+    // ADR-210: espera a que se resuelva la consulta de material clonado (vacía en este
+    // caso, mock por default) antes de subir uno a mano.
+    await screen.findByText("Sin audios elegidos todavía.");
+    await asegurarMaterial(container);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
+
+    const input = onGuardar.mock.calls[0][1];
+    expect(input.periodo_transmision).toEqual([
+      { fecha: "2025-06-15", hora_inicio: "09:00", hora_termino: "10:00", spots_diarios: 15 },
+    ]);
+  });
+
+  it("si además viene `oe` (edición), `oe` manda y `clonarDesde` se ignora", () => {
+    const { container } = renderForm({
+      oe: { folio_orden_interna: "OE-2025-EDITANDO", estacion_id: "es2", precio_spot: 500 },
+      clonarDesde: { folio_orden_interna: "OE-2025-CLONADA", estacion_id: "es1", precio_spot: 950 },
+    });
+
+    expect(screen.getByText("Editar: OE-2025-EDITANDO")).toBeInTheDocument();
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Estación").value).toBe("es2");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("500.00");
   });
 });
 
@@ -430,6 +671,37 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    const [, input] = onGuardar.mock.calls[0];
+    expect(input.motivo_cambio_tarifa).toBe("Por incremento de tarifa");
+  });
+
+  it("fix (reportado por el usuario): al CLONAR con una tarifa que ya diverge del catálogo, el selector de motivo aparece de inmediato (sin tocar nada) y exige elegirlo", async () => {
+    const { container, onGuardar } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000 },
+      // La OE original ya traía la tarifa ajustada a mano (1500 vs. los 1000 de
+      // `ta-am-60-spot`) — nada se "toca" al clonar, así que antes del fix
+      // `requiereMotivoTarifa` se quedaba en `false` y el selector ni se mostraba,
+      // aunque el backend igual exige el motivo en todo alta con tarifa divergente.
+      clonarDesde: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "60s", precio_spot: 1500 },
+    });
+
+    await screen.findByText("Por oferta de la emisora");
+    expect(
+      screen.getByText(/El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio\./),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeDisabled();
+
+    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    expect(motivoSelect).toBeEnabled();
+    fireEvent.change(motivoSelect, { target: { value: "Por incremento de tarifa" } });
+    // El período clonado (1 día, dentro de la campaña de la OC) ya alcanza para guardar
+    // — solo falta el material (mock por default sin ninguno clonado, ADR-210).
+    await screen.findByText("Sin audios elegidos todavía.");
+    await asegurarMaterial(container);
+    expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalled());
     const [, input] = onGuardar.mock.calls[0];
     expect(input.motivo_cambio_tarifa).toBe("Por incremento de tarifa");
   });

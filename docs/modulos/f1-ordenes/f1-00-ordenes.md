@@ -189,6 +189,39 @@ para "otra alta más"); "No" va a la lista con la recién creada arriba (orden p
 de Servicio" (la OC elegida, si ya había una). Este flujo es EXCLUSIVO del alta — en
 edición, "Guardar" solo guarda y vuelve al detalle, sin preguntar nada.
 
+**"Clonar" (ADR-210, petición del usuario — 2 entradas al mismo mecanismo):** precarga el
+formulario de ALTA (no edición) con los datos de otra OE: Estación, Producto, Duración,
+Tarifa por spot, Spots bonificables, Observaciones, el Período de transmisión completo
+(visible de inmediato en la tabla) y el **Material a Transmitir** (los audios se clonan
+vía su referencia de almacenamiento S3, `ref` — el backend la expone desde el Fix 3 de
+ADR-210; cero descarga/re-subida del archivo), con cada día de la tabla ya trayendo
+elegido el material que le correspondía en la OE original (Fix 4 — no un reparto
+genérico por posición, la asignación EXACTA que tenía). Pensado para capturar varias OE
+casi idénticas seguidas (p.ej. la misma campaña en estaciones distintas) sin volver a
+teclear nada. Mientras se resuelve esa consulta se muestra "Cargando material de la
+Orden de Transmisión clonada…"; si falla, el material queda vacío y el usuario lo sube a
+mano, como en cualquier alta (ADR-110 sigue aplicando: sin material, el período se ve
+pero queda sin editar). Tampoco se clonan `orden_estacion_dia_id` ni `cancelada`/
+`hora_real` de cada día (pertenecen al historial de la OE anterior) — las
+filas clonadas nacen como días nuevos; ni el motivo del cambio de tarifa (campo
+transitorio, el backend no lo expone de vuelta) — si la tarifa clonada diverge del
+catálogo, el selector igual aparece de inmediato (Fix 2) para que el usuario lo vuelva a
+elegir. Dos formas de llegar a esto:
+- **Manera 1 — modal post-guardado:** al guardar una OE nueva, el modal "¿generar
+  otra?" (ADR-116) tiene un tercer botón "Clonar" que precarga la OE recién guardada.
+- **Manera 2 — desde la lista:** la tabla de "Órdenes de Transmisión" tiene una columna
+  "Acciones" con un botón "📋 Clonar", **visible solo en renglones en sub-estado 2.1
+  "Asignada al afiliado"** — antes de que la OE avance de sub-estado tiene más sentido
+  partir de ella para capturar otra igual. El clic no selecciona la fila ni abre el
+  panel de detalle. "Cancelar" en ese alta se queda en "Órdenes de Transmisión" (nunca en
+  "Órdenes de Servicio") — fix: la manera 2 fija la OC igual que "+ Asignar estaciones",
+  pero nunca pasó por esa pantalla, así que no debe regresar ahí.
+
+Implementación: prop `clonarDesde` en `OrdenEstacionForm` (separada de `oe`/edición, el
+Selector de Estación sigue totalmente editable — solo se bloquea en modo edición) y
+tercer botón opcional en `ConfirmDialog` (`extraLabel`/`onExtra`) para la manera 1 —
+detalle técnico en `docs/arquitectura.md` (ADR-210).
+
 **ADR-113 (fix, sigue vigente):** cualquier transición de identidad del formulario que no
 remonte el componente (`<OrdenEstacionForm>` reusa la misma instancia de React) deja su
 estado local (`periodo`, `estacionId`, etc. — inicializado con `useState(prop ?? default)`,
@@ -474,6 +507,23 @@ congelada) — `readOnly`, no `disabled`, para que los `setValue` programáticos
 ADR-181 sigan funcionando y el valor se siga mandando con React Hook Form. Se pierde la
 captura manual cuando el catálogo no tiene domicilio (decisión explícita del usuario):
 ese caso se corrige en el catálogo de Anunciante/Agencia, no aquí.
+
+**ADR-208 (petición del usuario) — el detalle de "Órdenes de Servicio" agrega una
+sección "Factura" (Ver/Descargar) una vez facturada:** nuevo hook
+`useFacturaDeOrden(ordenId)` en `facturacion/hooks.ts` (reusa el filtro `orden_id` ya
+existente de `GET /facturacion/clientes`); `OrdenClienteDetailPanel.tsx` lo importa
+DIRECTO de Facturación (F1 depende de F2 aquí a propósito, mismo sentido que ya depende
+el backend) y solo lo activa cuando `rootState(estatus_orden) >= 4` ("Facturada"/
+"Cobrada"). Nueva sección "Factura" (separada de "Documentos", que es de cierre):
+"Ver factura"/"Descargar PDF" si hay `pdf_path`, "Descargar XML" si hay `xml_path` —
+mismo patrón que `FacturasClientePage.tsx` (ADR-206). Una factura cancelada de un
+intento previo (ADR-047) se ignora, se usa la vigente.
+
+**ADR-209 (petición del usuario) — "Cerrar orden" quita la casilla de confirmación:**
+"Confirmo que la información de cierre es correcta." se quita de `CierreOCForm.tsx` —
+cargar los documentos (o aceptar cerrarla sin ellos, la advertencia ámbar ya existente
+sigue avisando) y darle a "Cerrar orden → Estado 3" ya es suficiente, sin el paso extra
+de confirmación que antes bloqueaba el botón.
 
 **Envío de los PDFs por correo — `LogEnvioCorreoOrdenEstacion`** (ADR-105, Fase 5 del
 rediseño): tabla nueva, fuera de la spec BD v2 — bitácora de cada intento de envío

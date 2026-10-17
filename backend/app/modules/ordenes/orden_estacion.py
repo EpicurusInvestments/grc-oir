@@ -663,6 +663,12 @@ class OrdenEstacionAudioRead(BaseModel):
     nombre_archivo: str
     orden: int
     created_at: datetime
+    # ADR-210 (petición del usuario): se expone la referencia de almacenamiento (S3) para
+    # que el frontend pueda "clonar" el Material a Transmitir de una OE a otra pasándola
+    # de vuelta como `audios_staging` al crear — sin descargar/re-subir el archivo. No es
+    # un dato sensible: ya viaja al cliente desde `POST /ordenes/material-staging` (el
+    # propio alta de un audio nuevo) y el permiso de la ruta sigue siendo `ordenes:leer`.
+    ref: str
 
 
 class OrdenEstacionEvidenciaRead(BaseModel):

@@ -67,7 +67,7 @@ import {
   subirMaterialStagingApi,
 } from "../../adapters/escrituraApi";
 import { ordenEstacionAudioFromApi } from "../../adapters/fromApi";
-import { CalendarioPeriodoTransmision } from "../../components/CalendarioPeriodoTransmision";
+import { asignarPorPosicion, CalendarioPeriodoTransmision } from "../../components/CalendarioPeriodoTransmision";
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { AUDIO_ORDEN_ACCEPT, AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_AUDIO_ORDENES } from "../../constants";
@@ -105,6 +105,17 @@ interface OrdenEstacionFormProps {
    *  bloquea OC/estación — el backend real no permite reasignarlas por esta vía, solo
    *  corregir tarifa/días/observaciones (ver `FROZEN_STATES_OE` del backend). */
   oe?: OrdenEstacion;
+  /** ADR-210 (petición del usuario): "Clonar" — al CREAR, precarga todos los campos con
+   *  los de esta OE (Estación, Producto, Duración, Tarifa, Spots bonificables,
+   *  Observaciones, el Período de transmisión completo y el Material a Transmitir), pero
+   *  SIN activar modo edición (se crea una OE NUEVA, con su propio id). Ignorado si `oe`
+   *  también viene (edición tiene prioridad — no debería pasar ambos a la vez). El
+   *  Material a Transmitir se clona vía `audios_staging` (mismo mecanismo de ADR-109):
+   *  se piden sus `ref` de S3 con `listarAudiosOrdenEstacionApi(clonarDesde.id)` y se
+   *  mandan de vuelta tal cual al crear — SIN descargar/re-subir el archivo. Si esa
+   *  consulta falla, el material simplemente se queda vacío (como cualquier alta nueva,
+   *  el usuario lo sube a mano) en vez de bloquear el formulario. */
+  clonarDesde?: OrdenEstacion;
   submitting?: boolean;
   submitError?: string | null;
   /** ADR-109: devuelve la OE creada/actualizada (con su id REAL) para que el propio
@@ -121,11 +132,15 @@ interface OrdenEstacionFormProps {
 
 const OC_ELEGIBLE = (oc: OrdenCliente) => oc.estatus_orden === "orden_cliente_con_vobo" || oc.estatus_orden === "orden_interna";
 
-export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGuardar, onCancelar }: OrdenEstacionFormProps) {
+export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submitError, onGuardar, onCancelar }: OrdenEstacionFormProps) {
   const isEdit = oe != null;
+  // ADR-210: fuente de los valores iniciales — al editar, la propia OE; al clonar (solo
+  // si NO se está editando), la OE de origen de "Clonar". `periodo` se trata aparte más
+  // abajo (las filas clonadas no pueden traer ids/audio de la OE anterior).
+  const origen = oe ?? (!isEdit ? clonarDesde : undefined);
   const { state, cancelarDia } = useOrdenes();
-  const [ocId, setOcId] = useState<string>(ocIdFijo ?? oe?.orden_id ?? "");
-  const [estacionId, setEstacionId] = useState(oe?.estacion_id ?? "");
+  const [ocId, setOcId] = useState<string>(ocIdFijo ?? origen?.orden_id ?? "");
+  const [estacionId, setEstacionId] = useState(origen?.estacion_id ?? "");
   // ADR-173 (petición del usuario): al CREAR una OE ya amarrada a una OC (llega con
   // `ocIdFijo`, el flujo normal desde "+ Asignar estaciones" de la Orden de Servicio),
   // Producto/Duración se precargan con los que esa OC capturó — el usuario los puede
@@ -134,21 +149,36 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   // deshabilite o no sigue siendo el mismo criterio de siempre (si el producto tiene
   // duraciones reales en el catálogo), sin ningún cambio ahí.
   const ocOrigen = !isEdit && ocIdFijo ? state.ordenesCliente.find((o) => o.id === ocIdFijo) : undefined;
-  const [productoTarifa, setProductoTarifa] = useState(oe?.producto_tarifa ?? ocOrigen?.producto_tarifa ?? "");
-  const duracionInicial = oe?.duracion_spot ?? ocOrigen?.duracion_spot ?? "";
+  const [productoTarifa, setProductoTarifa] = useState(origen?.producto_tarifa ?? ocOrigen?.producto_tarifa ?? "");
+  const duracionInicial = origen?.duracion_spot ?? ocOrigen?.duracion_spot ?? "";
   const [duracionSpot, setDuracionSpot] = useState(
     duracionInicial && !esSinResultado(duracionInicial) ? duracionInicial : "",
   );
-  const [precioSpot, setPrecioSpot] = useState(oe ? String(oe.precio_spot) : "");
+  const [precioSpot, setPrecioSpot] = useState(origen ? String(origen.precio_spot) : "");
   const [motivoCambioTarifa, setMotivoCambioTarifa] = useState("");
   // ADR-183b (petición del usuario): "Motivo del cambio de tarifa" solo se MUESTRA si lo
   // último que el usuario tocó fue la tarifa misma (y de verdad diverge) — tocar después
   // cualquier otro campo de esta sección (Estación, Producto, Duración, Spots
   // bonificables) lo OCULTA, aunque el precio siga divergiendo numéricamente.
   const [tarifaEsUltimoCampoTocado, setTarifaEsUltimoCampoTocado] = useState(false);
-  const [spotsBonificables, setSpotsBonificables] = useState(oe ? String(oe.cantidad_spots_bonificables) : "0");
-  const [observaciones, setObservaciones] = useState(oe?.observaciones_estacion ?? "");
-  const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(oe?.periodo_transmision ?? []);
+  const [spotsBonificables, setSpotsBonificables] = useState(origen ? String(origen.cantidad_spots_bonificables) : "0");
+  const [observaciones, setObservaciones] = useState(origen?.observaciones_estacion ?? "");
+  // ADR-210: al clonar, las filas se copian SIN `orden_estacion_dia_id` (no existen
+  // todavía — son días NUEVOS), SIN `orden_estacion_audio_id` (el audio de la OE
+  // anterior no aplica aquí) y SIN `cancelada`/`hora_real` (historial de la OE
+  // anterior, no de esta). Al editar, se usa la propia OE tal cual, como siempre.
+  const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(() => {
+    if (oe) return oe.periodo_transmision;
+    if (clonarDesde) {
+      return clonarDesde.periodo_transmision.map((p) => ({
+        fecha: p.fecha,
+        hora_inicio: p.hora_inicio,
+        hora_termino: p.hora_termino,
+        spots_diarios: p.spots_diarios,
+      }));
+    }
+    return [];
+  });
   // ADR-103: "Material a Transmitir" solo existe en edición (subir un audio necesita un
   // orden_estacion_id real) — se recarga cada vez que cambia la OE en edición.
   const [audios, setAudios] = useState<OrdenEstacionAudio[]>([]);
@@ -177,6 +207,83 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   const [errorAudioStaging, setErrorAudioStaging] = useState<string | null>(null);
   const [subiendoAudioStaging, setSubiendoAudioStaging] = useState(false);
   const audiosInputRef = useRef<HTMLInputElement>(null);
+
+  // ADR-210 (petición del usuario): al CLONAR, el Material a Transmitir de la OE de
+  // origen se clona también — se piden sus `ref` de S3 (ya expuestos por el backend,
+  // mismo campo que devuelve el alta de un audio nuevo) y se precargan en
+  // `audiosStaging`, igual que si el usuario los acabara de subir él mismo en ESTA
+  // captura (incluido el orden — `OrdenEstacionAudioRead.orden`/posición de la lista).
+  // No se descarga ni re-sube ningún archivo. Si la consulta falla, el material
+  // simplemente se queda vacío — no bloquea el formulario, el usuario lo sube a mano.
+  const [cargandoAudiosClon, setCargandoAudiosClon] = useState(() => clonarDesde != null);
+  useEffect(() => {
+    if (!clonarDesde) return;
+    let cancelado = false;
+    listarAudiosOrdenEstacionApi(clonarDesde.id)
+      .then((dtos) => {
+        if (cancelado) return;
+        const ordenados = [...dtos].sort((a, b) => a.orden - b.orden);
+        setAudiosStaging(ordenados.map((dto) => ({ ref: dto.ref, nombre_archivo: dto.nombre_archivo })));
+        // Fix (reportado por el usuario): el material clonado aparecía en la lista de
+        // arriba, pero ningún día de la tabla lo traía YA elegido en su columna "Material
+        // a Transmitir" — las filas clonadas nacen sin `orden_estacion_audio_id` (son
+        // días nuevos, ver más arriba) y esta columna, a diferencia de la vista de solo
+        // lectura, NO calcula un default por posición cuando se puede editar
+        // (`materialesAsignados`, `PeriodoTransmisionGrid.tsx` — a propósito, para no
+        // inventarle una selección al usuario en una captura normal). Al clonar sí hay
+        // algo que traer, en 2 pasos:
+        //  1) El `orden_estacion_audio_id` (id REAL, de la OE anterior) de cada día
+        //     clonado se remapea al `ref` (id de staging) del MISMO audio ya clonado
+        //     arriba — por índice posicional, ya que el período clonado es un mapeo 1:1
+        //     de `clonarDesde.periodo_transmision`.
+        //  2) ADR-107: un día SIN `orden_estacion_audio_id` propio no significa "sin
+        //     material" — usa el DEFAULT por posición (mismo criterio que
+        //     `materialesConVistaPrevia`, la vista de solo lectura, y que "Generar desde
+        //     calendario" ya hornea al generar). Como la vista EDITABLE nunca lo calcula
+        //     sola, se hornea aquí también — agrupado por fecha, igual que la tabla.
+        const refPorAudioIdViejo = new Map(dtos.map((dto) => [dto.orden_estacion_audio_id, dto.ref]));
+        const refsOrdenados = ordenados.map((dto) => dto.ref);
+        setPeriodo((prev) => {
+          if (prev.length !== clonarDesde.periodo_transmision.length) return prev;
+          const remapeado = prev.map((row, i) => {
+            const audioIdViejo = clonarDesde.periodo_transmision[i]?.orden_estacion_audio_id;
+            const ref = audioIdViejo ? refPorAudioIdViejo.get(audioIdViejo) : undefined;
+            return ref ? { ...row, orden_estacion_audio_id: ref } : row;
+          });
+          if (refsOrdenados.length === 0) return remapeado;
+          const indicesSinMaterialPorFecha = new Map<string, number[]>();
+          remapeado.forEach((row, i) => {
+            if (row.orden_estacion_audio_id) return;
+            const indices = indicesSinMaterialPorFecha.get(row.fecha) ?? [];
+            indices.push(i);
+            indicesSinMaterialPorFecha.set(row.fecha, indices);
+          });
+          if (indicesSinMaterialPorFecha.size === 0) return remapeado;
+          const resultado = [...remapeado];
+          for (const indices of indicesSinMaterialPorFecha.values()) {
+            const porPosicion = asignarPorPosicion(refsOrdenados, indices.length);
+            indices.forEach((idx, pos) => {
+              const ref = porPosicion[pos];
+              if (ref) resultado[idx] = { ...resultado[idx], orden_estacion_audio_id: ref };
+            });
+          }
+          return resultado;
+        });
+      })
+      .catch(() => {
+        /* El material clonado queda vacío; el usuario lo sube de nuevo, como en cualquier alta. */
+      })
+      .finally(() => {
+        if (!cancelado) setCargandoAudiosClon(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+    // Solo al montar: `clonarDesde` es estable durante toda la vida de este formulario
+    // (ver `OrdenEstacionListPage.tsx`, que remonta con una `key` distinta en vez de
+    // cambiar la prop sobre la misma instancia).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ADR-197 (petición del usuario, mismo criterio que `MaterialATransmitir.tsx`): se
   // pueden elegir varios archivos de un jalón en vez de uno por uno; se suben EN ORDEN
@@ -221,7 +328,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
   // vea de inmediato, sin esperar a guardar la orden.
   const audiosVistaPrevia: OrdenEstacionAudio[] = isEdit
     ? audios
-    : audiosStaging.map((a, i) => ({ id: a.ref, nombre_archivo: a.nombre_archivo, orden: i }));
+    : audiosStaging.map((a, i) => ({ id: a.ref, nombre_archivo: a.nombre_archivo, orden: i, ref: a.ref }));
   // ADR-110 (petición del usuario): "Material a Transmitir" pasa a ser OBLIGATORIO
   // para CREAR — se necesita al menos un audio subido antes de poder generar/capturar
   // fechas. Editar una OE que ya tenía días capturados de ANTES de esta regla no debe
@@ -364,6 +471,24 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
     ultimaSugeridaRef.current = sugerida;
   }, [tarifaSugerida]);
 
+  // ADR-210 (fix, reportado por el usuario): al CLONAR una OE cuya tarifa ya diverge de
+  // la sugerida del catálogo (la OE original la tenía ajustada a mano, con su propio
+  // motivo ya auditado), nada cuenta como "tocado" al montar — `requiereMotivoTarifa`
+  // seguía en `false`, así que el selector de motivo ni siquiera se mostraba, pero el
+  // backend SÍ exige el motivo en todo alta con tarifa divergente (a diferencia de
+  // editar, aquí no hay un motivo previo en el registro que ya la justifique) y
+  // rechazaba el guardado con un error sin forma de corregirlo. Se marca la tarifa como
+  // "tocada" en cuanto se detecta la divergencia al clonar, para que el selector
+  // aparezca desde el primer render — SOLO al montar, nunca en renders posteriores
+  // (los cambios del usuario ya los maneja la lógica normal de "último campo tocado").
+  const clonoTarifaDivergenteRef = useRef(false);
+  useEffect(() => {
+    if (clonoTarifaDivergenteRef.current) return;
+    if (!clonarDesde || !tarifaSugerida) return;
+    clonoTarifaDivergenteRef.current = true;
+    if ((Number(precioSpot) || 0) !== tarifaSugerida.tarifa_neta) setTarifaEsUltimoCampoTocado(true);
+  }, [clonarDesde, tarifaSugerida, precioSpot]);
+
   // Al editar, la propia OE ya está en `state.ordenesEstacion` con su periodo VIEJO — sin
   // excluirla aquí, el balance en vivo la contaría dos veces (una vez como "ya asignado",
   // otra vez como `totalEstaOI` con el periodo nuevo que se está editando). Mismo criterio
@@ -490,7 +615,13 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <SavingOverlay visible={submitting} />
       <div className="cat-header">
-        <div className="cat-title">{oe ? `Editar: ${oe.folio_orden_interna}` : "Nueva Orden de Transmisión"}</div>
+        <div className="cat-title">
+          {oe
+            ? `Editar: ${oe.folio_orden_interna}`
+            : clonarDesde
+              ? `Nueva Orden de Transmisión (clonada de ${clonarDesde.folio_orden_interna})`
+              : "Nueva Orden de Transmisión"}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignContent: "start" }}>
@@ -767,7 +898,12 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                     Transmitir" en la tabla de abajo. Es obligatorio: se necesita al menos un material subido
                     para habilitar el calendario.
                   </div>
-                  {audiosStaging.length === 0 && (
+                  {cargandoAudiosClon && (
+                    <div className="fv muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                      Cargando material de la Orden de Transmisión clonada…
+                    </div>
+                  )}
+                  {!cargandoAudiosClon && audiosStaging.length === 0 && (
                     <div className="fv muted" style={{ fontSize: 12, marginBottom: 8 }}>
                       Sin audios elegidos todavía.
                     </div>
@@ -789,7 +925,11 @@ export function OrdenEstacionForm({ ocIdFijo, oe, submitting, submitError, onGua
                     type="file"
                     multiple
                     accept={AUDIO_ORDEN_ACCEPT}
-                    disabled={subiendoAudioStaging}
+                    // ADR-210: mientras se clona el material (`cargandoAudiosClon`), no se
+                    // deja agregar uno nuevo — la respuesta de esa consulta REEMPLAZA
+                    // `audiosStaging` entero, y perdería lo que el usuario acabara de subir
+                    // si llegara después.
+                    disabled={subiendoAudioStaging || cargandoAudiosClon}
                     onChange={(e) => void onElegirAudioStaging(e.target.files)}
                   />
                   {subiendoAudioStaging && (

@@ -389,3 +389,16 @@ export const useFacturasDelAnunciante = (anuncianteId: string | null | undefined
     queryFn: () => facturaClienteApi.list({ anunciante_id: anuncianteId as string, size: 100 }),
     enabled: !!anuncianteId,
   });
+
+/** ADR-208 (petición del usuario): la(s) `FacturaCliente` de una orden — para que el
+ *  detalle de "Órdenes de Servicio" (F1) pueda mostrar "Ver factura"/"Descargar
+ *  PDF"/"Descargar XML" sin repetir el flujo de "Facturas al cliente" (F2). `orden_id`
+ *  puede traer más de una factura (una cancelada y una vigente, ADR-047): el llamador
+ *  filtra la vigente (`estado_facturacion !== "cancelada"`). Solo se pide cuando la
+ *  orden ya llegó a un estado "facturada" o más — `enabled` lo controla desde fuera. */
+export const useFacturaDeOrden = (ordenId: string | null | undefined) =>
+  useQuery({
+    queryKey: [K_CLIENTES, "por-orden", ordenId],
+    queryFn: () => facturaClienteApi.list({ orden_id: ordenId as string, size: 10 }),
+    enabled: !!ordenId,
+  });

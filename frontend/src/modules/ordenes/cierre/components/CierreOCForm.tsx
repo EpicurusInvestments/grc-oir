@@ -1,8 +1,12 @@
 /** Cierre de la OrdenCliente (estado 2 → 3): resumen de lo transmitido vs. lo vendido,
  * ajuste neto por incidencias, montos de comisión (con auto-fill visible si algún % de
  * comisión seguía vacío) y carga (real) de dos documentos. Se permite cerrar sin ellos,
- * con advertencia ámbar y registro de qué faltó — nunca bloqueado por los documentos, solo
- * por la casilla de confirmación.
+ * con advertencia ámbar y registro de qué faltó.
+ *
+ * ADR-209 (petición del usuario): "Confirmo que la información de cierre es correcta."
+ * se quita — cargar los documentos (o aceptar cerrarla sin ellos, con la advertencia de
+ * arriba) y darle a "Cerrar orden → Estado 3" ya es suficiente, sin un paso extra de
+ * confirmación.
  *
  * La precondición (al menos una OI, todas en 2.3) la valida quien abre este formulario
  * (el botón "Cerrar orden →" del detalle de la OC solo aparece cuando ya se cumple).
@@ -33,7 +37,6 @@ interface CierreOCFormProps {
 export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitError, onConfirmar, onCancelar }: CierreOCFormProps) {
   const [odcCerradaRef, setOdcCerradaRef] = useState<string | null>(oc.odc_cerrada_ref ?? null);
   const [cartaRef, setCartaRef] = useState<string | null>(oc.carta_conciliacion_ref ?? null);
-  const [confirmado, setConfirmado] = useState(false);
 
   const vp = findVendedor(oc.vendedor_principal_id);
   const vs = findVendedor(oc.vendedor_secundario_id);
@@ -110,11 +113,6 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
                 </div>
               )}
             </div>
-
-            <label className="check-box" style={{ marginBottom: 0 }}>
-              <input type="checkbox" checked={confirmado} onChange={(e) => setConfirmado(e.target.checked)} />
-              <div className="check-box-title">Confirmo que la información de cierre es correcta.</div>
-            </label>
           </div>
 
           <div>
@@ -191,8 +189,7 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
             type="button"
             className="btn btn-sm btn-teal"
             onClick={confirmar}
-            disabled={submitting || !confirmado}
-            title={confirmado ? undefined : "Marca la confirmación para habilitar el cierre."}
+            disabled={submitting}
           >
             Cerrar orden → Estado 3
           </button>
