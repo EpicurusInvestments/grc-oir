@@ -1130,6 +1130,11 @@ describe("Edición de OE existente (corrección de errores de captura, antes de 
     expect(fieldByLabelText<HTMLSelectElement>(container, "Estación").disabled).toBe(true);
   });
 
+  it("ADR-211: a diferencia del detalle, aquí SÍ se permite subir material nuevo (selector de archivos visible)", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
+    expect(container.querySelector('input[type="file"][accept*=".mp3"]')).not.toBeNull();
+  });
+
   it("el balance en vivo no cuenta dos veces la propia OE que se está editando", async () => {
     // makeOE() por defecto trae un solo día con 10 spots — son "la propia OE", no "otra".
     renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });

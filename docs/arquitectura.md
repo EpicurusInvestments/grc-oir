@@ -8546,3 +8546,39 @@ horneando así el mismo default que la vista de solo lectura ya calculaba al vue
 disponible — deja de mostrar "Elige material…") más la del Fix 4 original (una elección
 puntual —no el default— se preserva tal cual, no se pisa con el reparto por posición).
 Suite `ordenes` 274/274 sin regresiones.
+
+### ADR-211 — El detalle de la Orden de Transmisión ya no permite subir material nuevo, solo ver/descargar/quitar
+
+- **Estado:** aceptada · **Fecha:** 2026-10-17 (petición del usuario, con captura): la
+  sección "Material a Transmitir" del detalle de una OE (`OrdenEstacionDetailPanel.tsx`)
+  tenía el mismo componente compartido que el formulario de edición, incluido el selector
+  de archivos ("Elegir archivos") para subir un audio nuevo directamente desde ahí. El
+  usuario pidió quitar ese botón específicamente del detalle — para agregar material
+  nuevo hay que entrar a "Editar".
+- **Decisión:** `MaterialATransmitir.tsx` (compartido entre
+  `OrdenEstacionDetailPanel.tsx` y `OrdenEstacionForm.tsx` en edición) gana una prop
+  `permitirSubir?: boolean` (default `true`, así que la edición no cambia en nada) — en
+  `false` oculta el `<input type="file">` y el indicador "Subiendo…", sin tocar la lista
+  de audios ya subidos ni los botones "Descargar"/"Quitar" (el usuario solo pidió quitar
+  el de subir). El detalle pasa `permitirSubir={false}`.
+- **Verificado:** frontend, `tsc`/`eslint` limpios; nueva prueba en
+  `OrdenEstacionDetailPanel.test.tsx` (el detalle muestra "Material a Transmitir" pero
+  sin ningún `<input type="file">`) y otra en `OrdenEstacionForm.test.tsx` (la edición
+  SÍ sigue mostrando el selector de archivos, sin regresión). Suite `ordenes` 276/276
+  sin regresiones.
+
+### ADR-212 — "Generar desde calendario" ya no cuenta el número de registros en el botón
+
+- **Estado:** aceptada · **Fecha:** 2026-10-17 (petición del usuario, con captura): el
+  botón de "Generar días desde calendario" (`CalendarioPeriodoTransmision.tsx`) decía
+  "+ Generar N registros" (`fechasElegidas.length * spots`, con su propia pluralización)
+  — el usuario pidió quitar ese contador.
+- **Decisión:** el botón pasa a decir siempre "+ Generar registros", sin el cálculo ni la
+  pluralización. No cambia nada más de la función `generar()` ni de la validación
+  (`disabled` sigue dependiendo de `fechasElegidas.length === 0 || rangoInvalido`); el
+  contador "N fecha(s) seleccionada(s)" arriba del botón tampoco cambia — el usuario
+  solo pidió quitar el del botón mismo.
+- **Verificado:** frontend, `tsc`/`eslint` limpios; las pruebas existentes de
+  `CalendarioPeriodoTransmision.test.tsx` ya matcheaban el botón por
+  `{ name: /Generar/ }` (regex genérico), así que no hizo falta tocarlas. Suite
+  `ordenes` 276/276 sin regresiones.

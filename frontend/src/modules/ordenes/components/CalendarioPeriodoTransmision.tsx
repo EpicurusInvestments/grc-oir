@@ -336,8 +336,7 @@ export function CalendarioPeriodoTransmision({
             disabled={fechasElegidas.length === 0 || rangoInvalido}
             onClick={generar}
           >
-            + Generar {fechasElegidas.length * spots || ""} registro
-            {fechasElegidas.length * spots === 1 ? "" : "s"}
+            + Generar registros
           </button>
         </div>
       </div>

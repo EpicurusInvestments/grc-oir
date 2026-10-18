@@ -8,6 +8,10 @@
  * la par de los PDFs — petición del usuario tras revisar el flujo en vivo) y también en
  * `OrdenEstacionForm.tsx` cuando `oe` ya existe (edición), con su propio estado
  * independiente en cada lugar.
+ *
+ * ADR-211 (petición del usuario): en el detalle ya NO se permite subir material nuevo
+ * desde ahí (`permitirSubir={false}`) — solo ver/descargar/quitar lo que ya existe; para
+ * agregar más hay que entrar a "Editar". En el formulario de edición sigue permitido.
  */
 
 import { useRef, useState } from "react";
@@ -28,9 +32,19 @@ interface MaterialATransmitirProps {
   ordenEstacionId: string;
   audios: OrdenEstacionAudio[];
   onAudiosChange: (audios: OrdenEstacionAudio[]) => void;
+  /** ADR-211 (petición del usuario): `false` oculta el selector de archivos para subir
+   *  material nuevo — usado en el detalle de la OE (`OrdenEstacionDetailPanel.tsx`),
+   *  donde ya no se permite agregar material desde ahí (solo ver/descargar/quitar). En
+   *  edición (`OrdenEstacionForm.tsx`) sigue permitido — default `true`. */
+  permitirSubir?: boolean;
 }
 
-export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }: MaterialATransmitirProps) {
+export function MaterialATransmitir({
+  ordenEstacionId,
+  audios,
+  onAudiosChange,
+  permitirSubir = true,
+}: MaterialATransmitirProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,19 +144,23 @@ export function MaterialATransmitir({ ordenEstacionId, audios, onAudiosChange }:
         </div>
       ))}
 
-      <input
-        ref={inputRef}
-        className="file-input"
-        type="file"
-        multiple
-        accept={AUDIO_ORDEN_ACCEPT}
-        disabled={subiendo}
-        onChange={(e) => void onElegir(e.target.files)}
-      />
-      {subiendo && (
-        <span className="fv muted" style={{ marginLeft: 8, fontSize: 11 }}>
-          Subiendo…
-        </span>
+      {permitirSubir && (
+        <>
+          <input
+            ref={inputRef}
+            className="file-input"
+            type="file"
+            multiple
+            accept={AUDIO_ORDEN_ACCEPT}
+            disabled={subiendo}
+            onChange={(e) => void onElegir(e.target.files)}
+          />
+          {subiendo && (
+            <span className="fv muted" style={{ marginLeft: 8, fontSize: 11 }}>
+              Subiendo…
+            </span>
+          )}
+        </>
       )}
       {error && <div className="fe">{error}</div>}
     </div>
