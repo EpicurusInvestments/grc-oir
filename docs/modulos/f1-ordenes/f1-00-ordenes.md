@@ -175,7 +175,10 @@ sección "Material a Transmitir" requiere el `orden_estacion_id` ya creado — v
 usuario no la encontraba porque solo vivía en el formulario de edición, no en la vista de
 detalle donde se navega normalmente) y también en `OrdenEstacionForm.tsx` cuando `oe` ya
 existe (edición), donde además alimenta el selector de audio POR DÍA de
-`PeriodoTransmisionGrid.tsx`.
+`PeriodoTransmisionGrid.tsx`. **ADR-211 (petición del usuario):** en el detalle ya no se
+permite subir material nuevo desde ahí — solo ver/descargar/quitar lo que ya existe; para
+agregar más hay que entrar a "Editar" (`MaterialATransmitir` gana `permitirSubir`,
+`false` en el detalle, `true` —default— en edición).
 
 **Flujo tras guardar el alta — pregunta "¿generar otra?"** (ADR-116, reemplaza el
 comportamiento original de ADR-103): al guardar una OE nueva, YA NO pasa directo a modo

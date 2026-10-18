@@ -364,7 +364,14 @@ export function OrdenEstacionDetailPanel({
           </>
         )}
 
-        <MaterialATransmitir ordenEstacionId={oe.id} audios={audios} onAudiosChange={setAudios} />
+        {/* ADR-211 (petición del usuario): en el detalle ya no se permite subir material
+            nuevo — solo ver/descargar/quitar; para agregar más hay que entrar a "Editar". */}
+        <MaterialATransmitir
+          ordenEstacionId={oe.id}
+          audios={audios}
+          onAudiosChange={setAudios}
+          permitirSubir={false}
+        />
       </div>
 
       <div className="df" style={{ flexWrap: "wrap" }}>

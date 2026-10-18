@@ -82,6 +82,16 @@ function renderPanel(
   );
 }
 
+describe("ADR-211 (petición del usuario): el detalle ya no permite subir material nuevo", () => {
+  it("'Material a Transmitir' se ve (título, texto de ayuda) pero sin el selector de archivos", async () => {
+    const oe = makeOE();
+    const { container } = renderPanel(oe, makeOC());
+
+    await screen.findByText("Material a Transmitir");
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+});
+
 describe("Desglose económico OIR / emisora — 1.4", () => {
   it("calcula importe, % OIR, IVA y totales de cada lado correctamente (25 spots × $800, 20% OIR)", () => {
     const oe = makeOE({
