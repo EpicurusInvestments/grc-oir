@@ -364,13 +364,14 @@ export function OrdenEstacionDetailPanel({
           </>
         )}
 
-        {/* ADR-211 (petición del usuario): en el detalle ya no se permite subir material
-            nuevo — solo ver/descargar/quitar; para agregar más hay que entrar a "Editar". */}
+        {/* ADR-211/ADR-213 (petición del usuario): en el detalle ya no se permite subir
+            ni quitar material — solo ver/descargar; para eso hay que entrar a "Editar". */}
         <MaterialATransmitir
           ordenEstacionId={oe.id}
           audios={audios}
           onAudiosChange={setAudios}
           permitirSubir={false}
+          permitirQuitar={false}
         />
       </div>
 

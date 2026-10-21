@@ -375,6 +375,16 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
     fireEvent.click(screen.getByRole("button", { name: "Clonar" }));
     expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-9999A)")).toBeInTheDocument();
 
+    // ADR-210 Fix 3/4 (corrige una prueba intermitente real, vista en CI): clonar dispara
+    // una consulta async para precargar el Material a Transmitir
+    // (`listarAudiosOrdenEstacionApi`, mockeada arriba) — hay que esperar a que resuelva
+    // ANTES de seguir, o una corrida lenta (como un runner de CI) puede dejar
+    // `asegurarMaterialListPage` (abajo) actuando sobre un estado "Cargando…" todavía en
+    // vuelo y saltarse la subida por completo.
+    await waitFor(() =>
+      expect(screen.queryByText("Cargando material de la Orden de Transmisión clonada…")).toBeNull(),
+    );
+
     // La OE clonada ("OE-2026-9999A", mock de `refrescarOrdenEstacion` arriba) no
     // corresponde a ningún dato real de este test (su `estacion_id` default no está en
     // el catálogo de este archivo y la fecha de su período cae fuera del rango de

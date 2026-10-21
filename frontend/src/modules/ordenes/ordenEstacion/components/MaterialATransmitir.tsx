@@ -12,6 +12,10 @@
  * ADR-211 (petición del usuario): en el detalle ya NO se permite subir material nuevo
  * desde ahí (`permitirSubir={false}`) — solo ver/descargar/quitar lo que ya existe; para
  * agregar más hay que entrar a "Editar". En el formulario de edición sigue permitido.
+ *
+ * ADR-213 (petición del usuario): en el detalle tampoco se permite QUITAR material
+ * (`permitirQuitar={false}`) — ahí solo se ve/descarga; para eliminar uno hay que entrar
+ * a "Editar". En edición sigue permitido.
  */
 
 import { useRef, useState } from "react";
@@ -37,6 +41,10 @@ interface MaterialATransmitirProps {
    *  donde ya no se permite agregar material desde ahí (solo ver/descargar/quitar). En
    *  edición (`OrdenEstacionForm.tsx`) sigue permitido — default `true`. */
   permitirSubir?: boolean;
+  /** ADR-213 (petición del usuario): `false` oculta el botón "Quitar" de cada audio —
+   *  mismo criterio que `permitirSubir`, usado en el detalle de la OE. En edición sigue
+   *  permitido — default `true`. */
+  permitirQuitar?: boolean;
 }
 
 export function MaterialATransmitir({
@@ -44,6 +52,7 @@ export function MaterialATransmitir({
   audios,
   onAudiosChange,
   permitirSubir = true,
+  permitirQuitar = true,
 }: MaterialATransmitirProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -138,9 +147,11 @@ export function MaterialATransmitir({
           <button type="button" className="btn btn-xs" onClick={() => void onDescargar(audio)}>
             Descargar
           </button>
-          <button type="button" className="btn btn-xs btn-danger" onClick={() => void onEliminar(audio)}>
-            Quitar
-          </button>
+          {permitirQuitar && (
+            <button type="button" className="btn btn-xs btn-danger" onClick={() => void onEliminar(audio)}>
+              Quitar
+            </button>
+          )}
         </div>
       ))}
 
