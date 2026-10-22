@@ -8625,3 +8625,24 @@ Suite `ordenes` 274/274 sin regresiones.
   `OrdenEstacionDetailPanel.test.tsx` (un audio existente muestra "Descargar" pero no
   "Quitar") y otra en `OrdenEstacionForm.test.tsx` (la edición SÍ sigue mostrando
   "Quitar", sin regresión). Suite `ordenes` 278/278 sin regresiones.
+
+### Fix (reportado por el usuario): warning de CI — "Node.js 20 is deprecated" en `actions/checkout`/`actions/setup-node`
+
+- **Estado:** aceptada · **Fecha:** 2026-10-21. El resumen del workflow de GitHub Actions
+  mostraba el warning "Node.js 20 is deprecated... actions/checkout@v4,
+  actions/setup-node@v4... being forced to run on Node.js 24". **No es el `node-version:
+  '20'` del proyecto** (ese sigue siendo la versión fijada en `.github/workflows/` y en
+  `backend/CLAUDE.md`/`frontend/CLAUDE.md` para construir la app, no cambia) — es el
+  runtime interno con el que GitHub ejecuta el CÓDIGO de la propia acción
+  `actions/checkout`/`actions/setup-node`, que en `@v4` todavía está compilado contra
+  Node 20; GitHub ya empezó a forzar Node 24 para correrlas de todos modos (y Node 20 se
+  retira de los runners más adelante en 2026).
+- **Decisión:** `actions/checkout@v4` → `@v6` y `actions/setup-node@v4` → `@v6` en
+  `.github/workflows/backend.yml` y `frontend.yml` (las únicas 2 acciones que
+  mencionaba el warning) — `@v6` ya está compilada nativamente sobre Node 24. No se tocó
+  nada más: ni `node-version: '20'`, ni `astral-sh/setup-uv@v3`, ni las acciones de AWS
+  (`aws-actions/*`), que no estaban en el warning.
+- **Verificado:** diff mínimo (solo los 6 pines de versión, revisado a mano); no se puede
+  correr GitHub Actions localmente, así que la verificación real queda pendiente del
+  próximo push/merge a `main` — si algo rompiera, sería visible de inmediato en el
+  resumen del workflow.

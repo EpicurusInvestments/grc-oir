@@ -25,7 +25,7 @@ jobs:
     name: Pruebas y linters
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Instalar uv
         uses: astral-sh/setup-uv@v3
       - name: Instalar dependencias
@@ -49,7 +49,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configurar credenciales AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
