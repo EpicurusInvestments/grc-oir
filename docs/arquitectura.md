@@ -8582,3 +8582,67 @@ Suite `ordenes` 274/274 sin regresiones.
   `CalendarioPeriodoTransmision.test.tsx` ya matcheaban el botón por
   `{ name: /Generar/ }` (regex genérico), así que no hizo falta tocarlas. Suite
   `ordenes` 276/276 sin regresiones.
+
+### Fix (reportado por el usuario): prueba intermitente de "Clonar" en CI (GitHub Actions, PR #47) — timeout genérico de `waitFor`/`findBy*` bajo carga
+
+- **Estado:** aceptada · **Fecha:** 2026-10-19. El usuario compartió el resultado de dos
+  corridas de CI: la del PR #47 (merge de ADR-208 a ADR-210) falló en
+  `OrdenEstacionListPage.test.tsx > ... > ADR-210: tras clonar, "Sí, generar otra" en el
+  siguiente guardado ya no arrastra la clonación` ("Unable to find ... role 'button' and
+  name 'Sí, generar otra'"); la del PR #48 (merge de ADR-211/ADR-212, mismo archivo de
+  prueba sin cambios) pasó limpia. **No es que el PR #48 "arreglara" nada** — es la misma
+  prueba, intermitente por diseño: el clonado dispara una consulta async
+  (`listarAudiosOrdenEstacionApi`, ADR-210 Fix 3) que compite por CPU con el resto de la
+  suite; en una corrida local aislada siempre pasa, pero bajo la carga de un runner de CI
+  (menos núcleos que una máquina de desarrollo, corriendo ~16 archivos de `ordenes` en
+  paralelo) puede tardar más de los 1000ms default de `waitFor` en resolver — la
+  aserción es correcta, solo tarda un poco más en cumplirse.
+- **Decisión (2 cambios, uno puntual y uno general):**
+  1. La prueba específica del PR #47 gana una espera explícita
+     (`await waitFor(() => expect(screen.queryByText("Cargando material de la Orden de
+     Transmisión clonada…")).toBeNull())`) justo después de clonar, antes de seguir
+     capturando — elimina la carrera puntual de raíz en vez de solo subirle el timeout.
+  2. `vitest.setup.ts` sube el timeout default de `waitFor`/`findBy*` de TODO el repo de
+     1000ms a 5000ms (`configure({ asyncUtilTimeout: 5000 })`, de
+     `@testing-library/dom`) — más barato y más robusto que ir afinando prueba por
+     prueba cada vez que la carga de CI exponga una aserción genuina pero lenta; no
+     cambia ninguna prueba, solo cuánto esperan antes de darse por vencidas.
+- **Verificado:** frontend, `tsc`/`eslint` limpios; suite `ordenes` 276/276 sin
+  regresiones, repetida varias veces (incluida la prueba puntual del fix, 5 veces
+  seguida) para confirmar que ya no es intermitente.
+
+### ADR-213 — El detalle de la Orden de Transmisión ya no permite quitar material
+
+- **Estado:** aceptada · **Fecha:** 2026-10-21 (petición del usuario, con captura): mismo
+  criterio que ADR-211 — el usuario pidió quitar también el botón "Quitar" de cada audio
+  en el detalle de la OE; ahí solo se ve/descarga, para eliminar uno hay que entrar a
+  "Editar".
+- **Decisión:** `MaterialATransmitir.tsx` gana una prop `permitirQuitar?: boolean`
+  (default `true`, la edición no cambia en nada) — en `false` oculta el botón "Quitar" de
+  cada renglón, sin tocar "Descargar" ni la lista en sí. El detalle pasa
+  `permitirQuitar={false}` (junto a `permitirSubir={false}`, ya existente).
+- **Verificado:** frontend, `tsc`/`eslint` limpios; nueva prueba en
+  `OrdenEstacionDetailPanel.test.tsx` (un audio existente muestra "Descargar" pero no
+  "Quitar") y otra en `OrdenEstacionForm.test.tsx` (la edición SÍ sigue mostrando
+  "Quitar", sin regresión). Suite `ordenes` 278/278 sin regresiones.
+
+### Fix (reportado por el usuario): warning de CI — "Node.js 20 is deprecated" en `actions/checkout`/`actions/setup-node`
+
+- **Estado:** aceptada · **Fecha:** 2026-10-21. El resumen del workflow de GitHub Actions
+  mostraba el warning "Node.js 20 is deprecated... actions/checkout@v4,
+  actions/setup-node@v4... being forced to run on Node.js 24". **No es el `node-version:
+  '20'` del proyecto** (ese sigue siendo la versión fijada en `.github/workflows/` y en
+  `backend/CLAUDE.md`/`frontend/CLAUDE.md` para construir la app, no cambia) — es el
+  runtime interno con el que GitHub ejecuta el CÓDIGO de la propia acción
+  `actions/checkout`/`actions/setup-node`, que en `@v4` todavía está compilado contra
+  Node 20; GitHub ya empezó a forzar Node 24 para correrlas de todos modos (y Node 20 se
+  retira de los runners más adelante en 2026).
+- **Decisión:** `actions/checkout@v4` → `@v6` y `actions/setup-node@v4` → `@v6` en
+  `.github/workflows/backend.yml` y `frontend.yml` (las únicas 2 acciones que
+  mencionaba el warning) — `@v6` ya está compilada nativamente sobre Node 24. No se tocó
+  nada más: ni `node-version: '20'`, ni `astral-sh/setup-uv@v3`, ni las acciones de AWS
+  (`aws-actions/*`), que no estaban en el warning.
+- **Verificado:** diff mínimo (solo los 6 pines de versión, revisado a mano); no se puede
+  correr GitHub Actions localmente, así que la verificación real queda pendiente del
+  próximo push/merge a `main` — si algo rompiera, sería visible de inmediato en el
+  resumen del workflow.

@@ -7,6 +7,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { listarAudiosOrdenEstacionApi } from "../adapters/escrituraApi";
 import { previsualizarPdfOrdenEstacion } from "../adapters/pdfsApi";
 import { OrdenEstacionDetailPanel } from "../ordenEstacion/components/OrdenEstacionDetailPanel";
 import { afiliados, anunciantes, estaciones, tarifas } from "../state/catalogosCache";
@@ -89,6 +90,27 @@ describe("ADR-211 (petición del usuario): el detalle ya no permite subir materi
 
     await screen.findByText("Material a Transmitir");
     expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+});
+
+describe("ADR-213 (petición del usuario): el detalle tampoco permite quitar material", () => {
+  it("un audio existente muestra 'Descargar' pero no 'Quitar'", async () => {
+    vi.mocked(listarAudiosOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        orden_estacion_audio_id: "au-1",
+        orden_estacion_id: "oe-1",
+        nombre_archivo: "spot.mp3",
+        orden: 0,
+        created_at: "2026-10-01",
+        ref: "orden_estacion/audios/spot.mp3",
+      },
+    ]);
+    const oe = makeOE();
+    renderPanel(oe, makeOC());
+
+    await screen.findByText("spot.mp3");
+    expect(screen.getByRole("button", { name: "Descargar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quitar" })).toBeNull();
   });
 });
 

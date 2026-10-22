@@ -1135,6 +1135,22 @@ describe("Edición de OE existente (corrección de errores de captura, antes de 
     expect(container.querySelector('input[type="file"][accept*=".mp3"]')).not.toBeNull();
   });
 
+  it("ADR-213: a diferencia del detalle, aquí SÍ se permite quitar material (botón 'Quitar' visible)", async () => {
+    vi.mocked(listarAudiosOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        orden_estacion_audio_id: "au-1",
+        orden_estacion_id: "oe-1",
+        nombre_archivo: "spot.mp3",
+        orden: 0,
+        created_at: "2026-10-01",
+        ref: "orden_estacion/audios/spot.mp3",
+      },
+    ]);
+    renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
+    await screen.findByText("spot.mp3");
+    expect(screen.getByRole("button", { name: "Quitar" })).toBeInTheDocument();
+  });
+
   it("el balance en vivo no cuenta dos veces la propia OE que se está editando", async () => {
     // makeOE() por defecto trae un solo día con 10 spots — son "la propia OE", no "otra".
     renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
