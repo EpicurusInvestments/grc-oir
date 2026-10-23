@@ -3,7 +3,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RequisicionesPage } from "../requisicion/pages/RequisicionesPage";
@@ -27,6 +27,7 @@ vi.mock("../api", () => ({
   vendedoresInfo: vi.fn().mockResolvedValue([]),
   facturasAfiliadoPagables: vi.fn().mockResolvedValue([]),
   facturasAgenciaPagables: vi.fn().mockResolvedValue([]),
+  facturasVendedorPagables: vi.fn().mockResolvedValue([]),
   ordenesInfo: vi.fn().mockResolvedValue([]),
 }));
 
@@ -37,6 +38,7 @@ const base: Requisicion = {
   tipo_requisicion: "pago_afiliado",
   factura_afiliado_id: null,
   factura_agencia_id: null,
+  factura_vendedor_id: null,
   orden_id: null,
   afiliado_id: "af-1",
   agencia_id: null,
@@ -117,5 +119,75 @@ describe("RequisicionesPage", () => {
     renderCon({ ...base, diferencia_afiliada: "-500.00" });
     (await screen.findByText("REQ-2026-0001")).click();
     await waitFor(() => expect(screen.getByText(/-\$500\.00/)).toBeInTheDocument());
+  });
+
+  describe("bug reportado por el usuario: los pills de 'Estado' no filtraban la tabla", () => {
+    // A diferencia de `renderCon` (arriba, `mockResolvedValue` fijo), aquí `listMock`
+    // SÍ filtra según `params.estatus_requisicion` — igual que el backend real — para
+    // poder detectar si el componente de verdad vuelve a pedir la lista filtrada al
+    // cambiar de pill, en vez de quedarse mostrando todo.
+    function renderConVariasRequisiciones() {
+      const pendiente = { ...base, requisicion_id: "rq-1", numero_requisicion: "REQ-PENDIENTE", estatus_requisicion: "pendiente" as const };
+      const autorizada = { ...base, requisicion_id: "rq-2", numero_requisicion: "REQ-AUTORIZADA", estatus_requisicion: "autorizada" as const };
+      const pagada = { ...base, requisicion_id: "rq-3", numero_requisicion: "REQ-PAGADA", estatus_requisicion: "pagada" as const };
+      const todas = [pendiente, autorizada, pagada];
+      listMock.mockImplementation((params: { estatus_requisicion?: string }) => {
+        const items = params.estatus_requisicion
+          ? todas.filter((r) => r.estatus_requisicion === params.estatus_requisicion)
+          : todas;
+        return Promise.resolve({ items, total: items.length, page: 1, size: 20, pages: 1 });
+      });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={qc}>
+          <RequisicionesPage />
+        </QueryClientProvider>,
+      );
+    }
+
+    it("clic en 'Por autorizar' vuelve a pedir la lista con `estatus_requisicion: 'pendiente'` y solo muestra esa fila", async () => {
+      renderConVariasRequisiciones();
+      await screen.findByText("REQ-PENDIENTE");
+      expect(screen.getByText("REQ-AUTORIZADA")).toBeInTheDocument();
+      expect(screen.getByText("REQ-PAGADA")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Por autorizar" }));
+
+      await waitFor(() =>
+        expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ estatus_requisicion: "pendiente" })),
+      );
+      await waitFor(() => expect(screen.queryByText("REQ-AUTORIZADA")).not.toBeInTheDocument());
+      expect(screen.getByText("REQ-PENDIENTE")).toBeInTheDocument();
+      expect(screen.queryByText("REQ-PAGADA")).not.toBeInTheDocument();
+    });
+
+    it("clic en 'Por pagar' y luego 'Pagadas' cambia la lista cada vez (no se queda pegado en un filtro)", async () => {
+      renderConVariasRequisiciones();
+      await screen.findByText("REQ-PENDIENTE");
+
+      fireEvent.click(screen.getByRole("button", { name: "Por pagar" }));
+      await waitFor(() =>
+        expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ estatus_requisicion: "autorizada" })),
+      );
+      await waitFor(() => expect(screen.queryByText("REQ-PENDIENTE")).not.toBeInTheDocument());
+      expect(screen.getByText("REQ-AUTORIZADA")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Pagadas" }));
+      await waitFor(() =>
+        expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ estatus_requisicion: "pagada" })),
+      );
+      await waitFor(() => expect(screen.queryByText("REQ-AUTORIZADA")).not.toBeInTheDocument());
+      expect(screen.getByText("REQ-PAGADA")).toBeInTheDocument();
+
+      // "Todas" existe en los 2 grupos de pills (Estado y Tipo) — el de Estado es el
+      // primero en el DOM (`filters` se renderiza antes que `filters2`).
+      fireEvent.click(screen.getAllByRole("button", { name: "Todas" })[0]);
+      await waitFor(() =>
+        expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ estatus_requisicion: undefined })),
+      );
+      await screen.findByText("REQ-PENDIENTE");
+      expect(screen.getByText("REQ-AUTORIZADA")).toBeInTheDocument();
+      expect(screen.getByText("REQ-PAGADA")).toBeInTheDocument();
+    });
   });
 });

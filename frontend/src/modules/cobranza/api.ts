@@ -24,6 +24,7 @@ import type {
   FacturaAfiliadoInfo,
   FacturaAgenciaInfo,
   FacturaClienteResumen,
+  FacturaVendedorInfo,
   MovimientoBancario,
   MovimientoBancarioCreate,
   OpcionCatalogo,
@@ -270,6 +271,15 @@ export async function facturasAfiliadoPagables(): Promise<FacturaAfiliadoInfo[]>
 export async function facturasAgenciaPagables(): Promise<FacturaAgenciaInfo[]> {
   const { data } = await apiClient.get<Page<FacturaAgenciaInfo>>("/facturacion/agencias", {
     params: { estatus_factura_agencia: "autorizada", size: 100 },
+  });
+  return data.items;
+}
+
+/** Petición del usuario: para que "Comisión vendedor" pueda elegir a cuál
+ *  `FacturaVendedor` corresponde (y así cerrarla al pagar la requisición). */
+export async function facturasVendedorPagables(): Promise<FacturaVendedorInfo[]> {
+  const { data } = await apiClient.get<Page<FacturaVendedorInfo>>("/facturacion/vendedores", {
+    params: { estatus_factura_vendedor: "autorizada", size: 100 },
   });
   return data.items;
 }

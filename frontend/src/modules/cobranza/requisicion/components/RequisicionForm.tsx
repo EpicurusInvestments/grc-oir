@@ -20,6 +20,7 @@ import {
   useAgenciasInfo,
   useFacturasAfiliadoPagables,
   useFacturasAgenciaPagables,
+  useFacturasVendedorPagables,
   useOrdenesInfo,
   useVendedoresInfo,
 } from "../../hooks";
@@ -38,6 +39,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
   const vendedores = useVendedoresInfo();
   const facturasAfiliado = useFacturasAfiliadoPagables();
   const facturasAgencia = useFacturasAgenciaPagables();
+  const facturasVendedor = useFacturasVendedorPagables();
   const ordenes = useOrdenesInfo();
 
   const [tipo, setTipo] = useState<TipoRequisicion>("pago_afiliado");
@@ -49,6 +51,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
   const [facturaAfiliadoId, setFacturaAfiliadoId] = useState("");
   const [agenciaId, setAgenciaId] = useState("");
   const [facturaAgenciaId, setFacturaAgenciaId] = useState("");
+  const [facturaVendedorId, setFacturaVendedorId] = useState("");
   const [vendedorId, setVendedorId] = useState("");
   const [ordenId, setOrdenId] = useState("");
   const [pctVendedor, setPctVendedor] = useState("");
@@ -62,6 +65,10 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
   const facturasAgenciaDelSeleccionado = useMemo(
     () => (facturasAgencia.data ?? []).filter((f) => f.agencia_id === agenciaId),
     [facturasAgencia.data, agenciaId],
+  );
+  const facturasVendedorDelSeleccionado = useMemo(
+    () => (facturasVendedor.data ?? []).filter((f) => f.vendedor_id === vendedorId),
+    [facturasVendedor.data, vendedorId],
   );
   const ordenOpciones = useMemo(
     () => (ordenes.data ?? []).map((o) => ({ value: o.orden_id, label: `${o.folio_orden} · ${fmtMoneda(o.total)}` })),
@@ -105,6 +112,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
       agencia_id: tipo === "pago_agencia" || tipo === "comision_agencia" ? agenciaId : null,
       factura_agencia_id: tipo === "pago_agencia" ? facturaAgenciaId || null : null,
       vendedor_comision_id: tipo === "comision_vendedor" ? vendedorId : null,
+      factura_vendedor_id: tipo === "comision_vendedor" ? facturaVendedorId || null : null,
       orden_id: tipo === "comision_vendedor" || tipo === "comision_agencia" ? ordenId : null,
       porcentaje_comision_vendedor: tipo === "comision_vendedor" && pctVendedor ? pctVendedor : null,
       porcentaje_comision_agencia_req: tipo === "comision_agencia" && pctAgencia ? pctAgencia : null,
@@ -179,7 +187,12 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <select
                 className="fsel"
                 value={facturaAfiliadoId}
-                onChange={(e) => setFacturaAfiliadoId(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setFacturaAfiliadoId(id);
+                  const f = facturasAfiliadoDelSeleccionado.find((x) => x.factura_afiliado_id === id);
+                  if (f) setMontoRequisicion(f.total_factura_afiliado);
+                }}
                 disabled={!afiliadoId}
               >
                 <option value="">— Ninguna —</option>
@@ -216,7 +229,12 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <select
                 className="fsel"
                 value={facturaAgenciaId}
-                onChange={(e) => setFacturaAgenciaId(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setFacturaAgenciaId(id);
+                  const f = facturasAgenciaDelSeleccionado.find((x) => x.factura_agencia_id === id);
+                  if (f) setMontoRequisicion(f.total_factura_agencia);
+                }}
                 disabled={!agenciaId}
               >
                 <option value="">— Ninguna —</option>
@@ -240,6 +258,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 onChange={(e) => {
                   const id = e.target.value;
                   setVendedorId(id);
+                  setFacturaVendedorId("");
                   const v = (vendedores.data ?? []).find((x) => x.vendedor_id === id);
                   if (v && !pctVendedor) setPctVendedor(v.porcentaje_comision_default ?? "");
                 }}
@@ -248,6 +267,27 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 {(vendedores.data ?? []).map((v) => (
                   <option key={v.vendedor_id} value={v.vendedor_id}>
                     {v.nombre_vendedor}
+                  </option>
+                ))}
+              </select>
+              {/* Petición del usuario: al pagar la requisición, esta factura (si se
+                  elige) pasa a "pagada" también. */}
+              <div className="fl">Factura del vendedor (opcional)</div>
+              <select
+                className="fsel"
+                value={facturaVendedorId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setFacturaVendedorId(id);
+                  const f = facturasVendedorDelSeleccionado.find((x) => x.factura_vendedor_id === id);
+                  if (f) setMontoRequisicion(f.total_factura_vendedor);
+                }}
+                disabled={!vendedorId}
+              >
+                <option value="">— Ninguna —</option>
+                {facturasVendedorDelSeleccionado.map((f) => (
+                  <option key={f.factura_vendedor_id} value={f.factura_vendedor_id}>
+                    {f.folio_factura_vendedor ?? "(sin folio)"} · {fmtMoneda(f.total_factura_vendedor)}
                   </option>
                 ))}
               </select>
@@ -319,7 +359,10 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
             </>
           )}
 
-          <div className="fl fl-required">Monto de la requisición</div>
+          <div className="fl fl-required">
+            Monto de la requisición
+            {tipo !== "comision_agencia" && <FieldTag origin="catalogo" text="Sugerido, editable" />}
+          </div>
           <input
             className="fi"
             inputMode="decimal"

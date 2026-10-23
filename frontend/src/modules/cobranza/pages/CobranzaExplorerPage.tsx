@@ -4,7 +4,7 @@
  * morado · F1 teal · F2 azul · F3 ámbar · F4 gris · F5 rojo).
  */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { currentUser } from "@/shared/lib/currentUser";
 import { ExplorerLayout } from "@/shared/ui";
@@ -37,7 +37,16 @@ export function CobranzaExplorerPage() {
       rootClassName="phase-f3"
     >
       {entry ? (
-        entry.render()
+        // Fix (reportado por el usuario): "Requisiciones" y sus "vistas operativas" ("Por
+        // autorizar"/"Por pagar") renderizan el MISMO componente (`RequisicionesPage`),
+        // solo con `filtroInicial` distinto — mismo caso "Cobranza de facturas"/
+        // "Cobranzas vencidas" con `CobranzaFacturasPage`. Sin una `key` que distinga la
+        // sección activa, React no remonta al cambiar entre ellas (mismo tipo, misma
+        // posición), así que el `useState(filtroInicial ?? "all")` interno — que solo
+        // corre al MONTAR — se quedaba con el valor de la primera vez que se montó esa
+        // instancia, ignorando el nuevo `filtroInicial`. `key={entry.key}` fuerza un
+        // remonte limpio en cada cambio de sección.
+        <Fragment key={entry.key}>{entry.render()}</Fragment>
       ) : (
         <>
           <div className="cat-header">

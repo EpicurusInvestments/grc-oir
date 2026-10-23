@@ -116,6 +116,9 @@ export interface Requisicion {
   tipo_requisicion: TipoRequisicion;
   factura_afiliado_id: string | null;
   factura_agencia_id: string | null;
+  /** Petición del usuario: solo `comision_vendedor` la usa (opcional) — permite cerrar
+   *  la `FacturaVendedor` correcta al pagar la requisición. */
+  factura_vendedor_id: string | null;
   orden_id: string | null;
   afiliado_id: string | null;
   agencia_id: string | null;
@@ -148,6 +151,7 @@ export interface RequisicionCreate {
   tipo_requisicion: TipoRequisicion;
   factura_afiliado_id?: string | null;
   factura_agencia_id?: string | null;
+  factura_vendedor_id?: string | null;
   orden_id?: string | null;
   afiliado_id?: string | null;
   agencia_id?: string | null;
@@ -269,6 +273,16 @@ export interface FacturaAgenciaInfo {
   folio_factura_agencia: string | null;
   total_factura_agencia: string;
   porcentaje_comision_agencia: string | null;
+}
+
+/** Subconjunto de `FacturaVendedor` (F2) `autorizada`: origen de una requisición de
+ *  `comision_vendedor` (petición del usuario). */
+export interface FacturaVendedorInfo {
+  factura_vendedor_id: string;
+  vendedor_id: string;
+  orden_id: string;
+  folio_factura_vendedor: string | null;
+  total_factura_vendedor: string;
 }
 
 /** Subconjunto de `OrdenCliente` (F1): origen de una requisición de comisión. */

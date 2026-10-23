@@ -8646,3 +8646,235 @@ Suite `ordenes` 274/274 sin regresiones.
   correr GitHub Actions localmente, así que la verificación real queda pendiente del
   próximo push/merge a `main` — si algo rompiera, sería visible de inmediato en el
   resumen del workflow.
+
+### ADR-214 — Cobranza de Facturas: quita las etiquetas "Heredado"/"Heredado, editable" del detalle
+
+- **Estado:** aceptada · **Fecha:** 2026-10-22 (petición del usuario, con captura): el
+  detalle de "Cobranza de Facturas" mostraba `<span className="fl-tag her">Heredado,
+  editable</span>` junto a "Días de crédito" y `<span className="fl-tag her">Heredado
+  </span>` junto a "Método de pago" — el usuario pidió quitarlas.
+- **Decisión:** se borran ambos `<span>` en
+  `CobranzaFacturasPage.tsx` (eran texto hardcodeado, no el componente compartido
+  `FieldTag.tsx` — no hubo que tocar ningún otro llamador). Puramente visual: la palabra
+  "editable" del tag no controlaba nada — el campo ya se podía editar vía el botón
+  "Editar condiciones" (cambia el estado `modo` a `"editar"`), independiente del tag.
+  El tag "Calc" de "Fecha estimada cobro" (mismo patrón hardcodeado, misma línea del
+  archivo) se deja intacto — no fue parte de lo pedido.
+- **Verificado:** frontend, `tsc`/`eslint` limpios; suite `cobranza` 15/15 sin
+  regresiones (sin pruebas que dependieran de ese texto).
+
+### ADR-215 — "Registrar pago del cliente": el botón se deshabilita en vivo en vez de no tener ninguna señal de qué falta
+
+- **Estado:** aceptada · **Fecha:** 2026-10-22 (petición del usuario, con 2 capturas): el
+  botón azul "Registrar pago" (`RegistrarPagoForm.tsx`) siempre estaba habilitado en el
+  DOM — la validación de los 4 campos obligatorios (Fecha del pago, Monto aplicado,
+  Método de pago, Referencia bancaria/cheque) solo corría AL HACER CLIC, dentro de
+  `confirmar()`, mostrando un mensaje de error después del hecho. El usuario pidió que,
+  mientras falten campos, el botón se vea inhabilitado — "que no desaparezca".
+- **Decisión:** nuevo booleano derivado `camposCompletos` (fecha no vacía, monto
+  numérico > 0 y ≤ `importe_pendiente_cobro`, método de pago elegido, referencia no
+  vacía) calculado en cada render a partir del mismo estado que ya alimentaba
+  `confirmar()` — se usa en `disabled={submitting || !camposCompletos}` del botón. El
+  botón sigue SIEMPRE presente en el DOM (nunca estuvo envuelto en un condicional que lo
+  ocultara); `confirmar()` se deja intacta como respaldo (defensa en profundidad, aunque
+  un botón disabled no dispara `onClick`).
+- **Verificado:** frontend, `tsc`/`eslint` limpios; nueva prueba
+  `RegistrarPagoForm.test.tsx` (4 casos: nace deshabilitado pero presente; se habilita
+  al completar los 4 campos y se vuelve a deshabilitar si se borra uno; un monto mayor
+  al pendiente lo deja deshabilitado; con todo válido, llama a `onConfirm` con los datos
+  correctos). Suite `cobranza` 15/15 sin regresiones.
+
+### Fix (reportado por el usuario, con captura): "Referencia bancaria / cheque" se partía en 2 líneas y desalineaba el input con "Método de pago"
+
+- **Causa:** la etiqueta "Referencia bancaria / cheque" (`RegistrarPagoForm.tsx`) era lo
+  bastante larga para partirse en 2 líneas dentro de su columna del `.r2` (grid de 2
+  columnas), mientras la etiqueta vecina "Método de pago" cabía en 1 — como cada celda
+  del grid apila etiqueta + campo con flujo normal (no hay regla que las empareje), el
+  input de "Referencia" quedaba más abajo que el de "Método de pago".
+- **Decisión:** se acorta a "Referencia bancaria" — mismo texto que ya usa
+  `MovimientoBancarioForm.tsx`/`MovimientosBancariosPage.tsx` en el mismo módulo (ADR:
+  consistencia de término); el placeholder del campo (`"SPEI-XXXXXXXX / CHE-XXXXXX"`) ya
+  deja claro que acepta ambos tipos de referencia, así que no se pierde información.
+- **Verificado:** frontend, `tsc`/`eslint` limpios; suite `cobranza` 15/15 sin
+  regresiones (la prueba nueva de ADR-215 ya usaba el placeholder, no la etiqueta, para
+  ubicar el campo).
+
+**Fix (mismo día, reportado por el usuario con captura): el placeholder
+`"SPEI-XXXXXXXX / CHE-XXXXXX"` se recortaba en el input (el navegador no alcanzaba a
+mostrarlo completo, cortando la palabra "CHE") — se acorta a `"SPEI-XXXXX /
+CHE-XXXX"` (menos X por grupo) para que quepa completo. Pruebas actualizadas al mismo
+texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
+
+### Fix (reportado por el usuario): "Editar condiciones" — "Guardar" se habilita solo si de verdad hay algo que guardar
+
+- **Reporte del usuario:** "al editar el registro se oculta el botón de Guardar... si
+  existe el botón solo que no se ve"; pidió que se muestre, pero inhabilitado, y que
+  se habilite SOLO si se modifica algún campo. **Revisando el código:** el botón nunca
+  estuvo envuelto en un condicional que lo ocultara del DOM (mismo patrón que ADR-215,
+  "Registrar pago") — siempre se renderiza en `modo === "editar"`. Estaba, eso sí,
+  SIEMPRE habilitado (solo `disabled={actualizar.isPending}`, sin ningún chequeo de si
+  algo había cambiado) — probable causa real de la confusión del usuario: guardar sin
+  haber tocado nada no hacía nada visible, dando la sensación de que el botón "no
+  funcionaba"/"no estaba".
+- **Decisión:** nuevo booleano derivado `huboCambiosEdicion`
+  (`CobranzaFacturasPage.tsx`) que compara `diasCredito`/`metodoPagoEdit`/`comentarios`
+  (el estado editable) contra `selected.dias_credito`/`metodo_pago_clave`/
+  `comentarios_cobranza` (el registro ya cargado, que no cambia mientras se edita) — sin
+  necesidad de guardar una copia aparte del valor original. El botón usa
+  `disabled={actualizar.isPending || !huboCambiosEdicion}`: nace deshabilitado al entrar
+  a editar (nada cambiado todavía), se habilita en cuanto algo diverge del original, y
+  vuelve a deshabilitarse si se revierte al valor original (no hay nada que guardar).
+- **Verificado:** frontend, `tsc`/`eslint` limpios; nueva prueba en
+  `CobranzaFacturasPage.test.tsx` ("Guardar" nace deshabilitado pero presente, se
+  habilita al cambiar "Días de crédito", se deshabilita de nuevo al revertirlo). Suite
+  `cobranza` 16/16 sin regresiones.
+
+### Fix real (reportado por el usuario, con capturas): "Guardar" SÍ estaba en el DOM al habilitarse — pero transparente, invisible contra el fondo
+
+- **Causa raíz (corrige el diagnóstico de más arriba):** el fix anterior era correcto en
+  su lógica (`huboCambiosEdicion`), pero el usuario reportó que, al modificar un campo,
+  el botón "se escondía" — lo opuesto de lo esperado. Investigando el CSS: la pantalla
+  de Cobranza (F3) se pinta con `rootClassName="phase-f3"`
+  (`CobranzaExplorerPage.tsx`), que repinta los tokens `--phase*` a ámbar. Pero
+  `theme.css` **nunca definió la variable base `--amber`** (sí existían `--amber-bg`/
+  `--amber-text`/`--amber-border`, pero no el tono sólido) — ni `.phase-f3` traía su
+  propio `--phase-hover` (a diferencia de `.phase-f5`, que sí lo tiene). Con `--amber`
+  inválida, `.btn-phase { background: var(--phase); border-color: var(--phase); }`
+  (botón "Guardar" habilitado) se quedaba SIN pintar — fondo transparente, se "perdía"
+  contra el panel. El estado DESHABILITADO se veía bien porque `.btn:disabled` (al
+  final de la cascada) pisa el `background` con un gris fijo (`var(--surface3)`),
+  ajeno al token roto — por eso "deshabilitado" se veía normal y "habilitado" no.
+- **Decisión:** se agrega `--amber: #ba7517;` a `:root` (mismo tono ya usado,
+  hardcodeado, por `.btn-amber`) y `--phase-hover: #a06412;` a `.phase-f3` (mismo tono
+  de `.btn-amber:hover`) — alinea F3 con el mismo patrón completo que ya tienen F1/F2/F5.
+  Arregla CUALQUIER `.btn-phase` de las pantallas de Cobranza, no solo este botón
+  puntual (el bug llevaba ahí desde que se introdujo `.phase-f3`, solo que ningún otro
+  botón de esa fase había llegado a probarse en estado habilitado hasta ahora).
+- **Verificado:** `npm run build` limpio (sin errores de sintaxis CSS); CSS compilado
+  inspeccionado a mano (`--amber: #ba7517;` y `--phase-hover: #a06412;` presentes en el
+  bundle); `tsc`/`eslint` limpios; suite `cobranza` 16/16 sin regresiones (cambio
+  puramente de CSS, no afecta la lógica ya probada de `huboCambiosEdicion`).
+
+### Fix (reportado por el usuario, con captura): los pills de "Estado" en Requisiciones "no filtraban" — en realidad, navegar a una "vista operativa" no remontaba el componente
+
+- **Reporte del usuario:** al crear una requisición y moverla por sus estados, los pills
+  "Por autorizar"/"Por pagar"/etc. de la pantalla "Requisiciones" "se seguían quedando en
+  Todas" — al entrar a la sección "Por autorizar" del sidebar, la tabla igual mostraba
+  todo. **Diagnóstico (verificado con `curl` directo al backend):** el backend SÍ
+  respeta `estatus_requisicion` correctamente; `RequisicionesPage.tsx` y
+  `CatalogToolbar.tsx` también — una prueba nueva (`RequisicionesPage.test.tsx`) con un
+  mock que de verdad filtra por `params.estatus_requisicion` confirma que hacer CLIC en
+  un pill SÍ pide y muestra la lista filtrada correctamente. El bug real estaba un nivel
+  arriba: **`CobranzaExplorerPage.tsx`** renderizaba `entry.render()` sin ninguna `key`.
+  "Requisiciones" (`key: "requisicion"`, sin `filtroInicial`) y "Por autorizar"
+  (`key: "por_autorizar"`, `filtroInicial="pendiente"`) renderizan el MISMO componente
+  `RequisicionesPage` — mismo tipo, misma posición en el árbol — así que React NO lo
+  remonta al cambiar de sección del sidebar, solo actualiza props. Como
+  `filtroEstatus` se inicializa con `useState(filtroInicial ?? "all")` (el inicializador
+  de `useState` solo corre al MONTAR, nunca de nuevo por un cambio de props), el filtro
+  interno se quedaba pegado al valor de la PRIMERA vez que esa instancia se montó —
+  típicamente "all", si el usuario había entrado antes a "Requisiciones" a secas. El
+  mismo par "Cobranza de facturas"/"Cobranzas vencidas" (`CobranzaFacturasPage`) tiene
+  exactamente el mismo riesgo dentro del mismo registro.
+- **Decisión:** `CobranzaExplorerPage.tsx` envuelve `entry.render()` en
+  `<Fragment key={entry.key}>` — fuerza un remonte limpio cada vez que cambia la sección
+  activa, sin ningún `<div>` extra que pudiera romper el layout (un `Fragment` no genera
+  nodo DOM). Mismo patrón ya usado correctamente en `OrdenesExplorerPage.tsx`
+  (`key={...filtroOC/filtroOI...}`) — Cobranza simplemente nunca lo tuvo. Catálogos y
+  Seguridad no tienen este riesgo: cada entrada de su registro apunta a un componente
+  DISTINTO, así que React ya los remonta de forma natural sin necesitar una `key`.
+- **Verificado:** `tsc`/`eslint` limpios; nueva prueba `CobranzaExplorerPage.test.tsx`
+  (2 casos, con un mock de `requisicionApi.list` que filtra de verdad: reproduce el bug
+  ANTES del fix —ambas pruebas quedaban en timeout esperando un filtro que nunca se
+  pedía— y pasa después); más la prueba nueva en `RequisicionesPage.test.tsx` que ya
+  confirma que el filtrado en sí (sin el problema de montaje) funciona bien. Suite
+  `cobranza` 20/20 sin regresiones.
+
+### ADR-216 — Al pagar una Requisición se cierra ("pagada") la Factura de proveedor relacionada (Afiliado, Agencia y Vendedor)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-23 (petición del usuario, con captura): una
+  factura de afiliado se quedaba en "Autorizada" (paso 3 de 4) aunque su requisición ya
+  se había marcado "Pagada" — nada conectaba el pago de la requisición con el estatus de
+  la factura. El usuario pidió que esto aplicara a Afiliados, Agencia **y Vendedores**.
+- **Decisión de alcance (vía `AskUserQuestion`):**
+  1. `Requisicion.tipo_requisicion == "comision_vendedor"` no tenía ningún FK a una
+     factura (solo `vendedor_comision_id` + `orden_id`, relación 1:N sin
+     `UniqueConstraint` — igual de ambigua que `FacturaAgencia`, que ya forzó un FK
+     explícito en vez de resolver por folio). El usuario eligió agregar también el
+     enlace para Vendedores ahora, no dejarlo pendiente: nueva columna
+     `Requisicion.factura_vendedor_id` (FK opcional a `factura_vendedor.
+     factura_vendedor_id`, migración `a1c4f6e8b2d7`). `tipo_requisicion ==
+     "comision_agencia"` se investigó y confirmó que **no tiene ninguna factura
+     asociada** (pago puro de comisión, sin invoice previo) — no aplica ningún cierre.
+  2. El esquema permite, en teoría, más de una requisición por factura (sin
+     `UniqueConstraint`). El usuario eligió cerrar siempre la factura al pagar la
+     requisición (sin verificar si hay otras requisiciones pendientes/autorizadas sobre
+     la misma factura) — la opción simple, recomendada.
+- **Implementación:** `RequisicionService.transicionar()`, justo antes del commit final
+  cuando `destino == "pagada"`, llama a un nuevo método privado
+  `_cerrar_factura_relacionada()` que, según cuál FK tenga la requisición
+  (`factura_afiliado_id` / `factura_agencia_id` / `factura_vendedor_id`), construye el
+  `Service`+`Repository` correspondiente (`FacturaAfiliadoService`,
+  `FacturaAgenciaService` o `FacturaVendedorService`) **compartiendo la misma `Session`**
+  (`self._repo.db`) y le pide `.transicionar(..., "pagada", usuario)` — reutiliza la
+  máquina de estados y validaciones que cada servicio ya tiene, en vez de escribir una
+  mutación nueva. Como las 3 facturas comparten la misma clase de estatus
+  (`EstatusFacturaProveedor`), no hace falta lógica distinta por tipo. Al compartir
+  sesión, si la transición de la factura fallara (estado inválido), nada se habría
+  comiteado todavía — atomicidad gratis, sin `try/except` manual.
+- **Frontend:** `RequisicionForm.tsx` agrega un selector "Factura del vendedor
+  (opcional)" (mismo patrón ya existente para Afiliado/Agencia) que solo lista facturas
+  `autorizada` del vendedor elegido (`useFacturasVendedorPagables`, nuevo hook/endpoint
+  en `hooks.ts`/`api.ts`); se limpia al cambiar de vendedor, igual que los otros dos.
+- **Verificado:** backend — migración aplicada y con viaje redondo `downgrade`→`upgrade`
+  sobre SQLite; `ruff` limpio; 5 pruebas nuevas en `test_f3_03_requisiciones_pagos.py`
+  (pagar cierra factura de afiliado / agencia / vendedor-con-FK; pagar
+  `comision_vendedor` sin FK y `comision_agencia` no truenan); suite completa de backend
+  100% verde. Frontend — `tsc`/`eslint` limpios; suite `cobranza` 20/20 sin regresiones
+  (fixtures/mocks de `RequisicionesPage.test.tsx` y `CobranzaExplorerPage.test.tsx`
+  actualizados con el nuevo campo).
+
+### Nota (ADR-216): backfill único de datos de desarrollo tras desplegar el cierre automático de facturas
+
+- Tras levantar el aplicativo, el usuario reportó (con captura) que una factura de
+  afiliado (`AFI-003`) se seguía viendo "Autorizada" aunque su requisición ya estaba
+  "Pagada". **Diagnóstico:** se invocó `_cerrar_factura_relacionada()` manualmente
+  contra esa requisición y SÍ cerró la factura correctamente — la lógica del ADR-216 es
+  correcta. La causa real: esas 3 requisiciones (`668787`, `AFI-0005`, `AGE-001`/
+  `AGE-0009`) ya estaban en `pagada` desde ANTES de que este código existiera (datos de
+  prueba de sesiones anteriores en `backend/dev_ordenes.db`), así que nunca dispararon
+  el cierre — el ADR-216 solo actúa sobre transiciones NUEVAS a `pagada`, no es
+  retroactivo.
+- **Acción (una sola vez, solo en la BD SQLite local de desarrollo):** se corrió un
+  script puntual que recorre todas las `Requisicion` ya en `pagada` y les vuelve a
+  aplicar `_cerrar_factura_relacionada()` (idempotente: `.transicionar()` no hace nada
+  si la factura ya está en el estatus destino) — deja consistentes `AFI-003`,
+  `4343f434587PY` y `AGENCIA-01`. `VND-001` (`comision_vendedor` sin
+  `factura_vendedor_id`) correctamente no cambia, no tiene factura que cerrar.
+- No aplica a QA/producción (dato de desarrollo únicamente); no requirió migración ni
+  cambio de código adicional.
+
+### Fix (reportado por el usuario, con captura): "Nueva requisición" no pintaba el monto de la factura elegida en "Monto de la requisición"
+
+- **Reporte del usuario:** al elegir una "Factura de la emisora"/"Factura de la
+  agencia"/"Factura del vendedor" en el alta de una Requisicion, el monto que ya se veía
+  en el selector (p.ej. "AFI-004 · $290.25") no se copiaba a "Monto de la requisición" —
+  había que teclearlo a mano. Pidió que se autollene (para los 3 tipos: Afiliados,
+  Agencia y Vendedores) y que el campo siga siendo editable.
+- **Diagnóstico:** `monto_requisicion` (spec) **siempre** fue un `<input>` normal, nunca
+  `disabled` ni de solo lectura (ya era editable) — lo que faltaba era el autollenado en
+  sí. Los 3 `onChange` de los selectores de factura (`RequisicionForm.tsx`) solo
+  actualizaban su propio id (`facturaAfiliadoId`/`facturaAgenciaId`/
+  `facturaVendedorId`), sin tocar `montoRequisicion`.
+- **Decisión:** cada uno de los 3 `onChange` ahora también busca la factura elegida en
+  su lista ya cargada (`facturasAfiliadoDelSeleccionado`/etc.) y, si la encuentra, hace
+  `setMontoRequisicion(f.total_factura_xxx)` — sobrescribe el campo con el total exacto
+  de la factura (string, mismo formato que ya maneja el input). El usuario puede seguir
+  editándolo después sin restricción (p.ej. un pago parcial). Se agrega
+  `<FieldTag origin="catalogo" text="Sugerido, editable" />` junto a la etiqueta "Monto
+  de la requisición" (mismo patrón ya usado en "% Comisión") — oculto para
+  `comision_agencia`, el único tipo sin ninguna factura de la que sugerir el monto.
+- **Verificado:** `tsc`/`eslint` limpios; nueva prueba `RequisicionForm.test.tsx` (3
+  casos: `pago_afiliado`, `pago_agencia`, `comision_vendedor` — cada uno confirma que
+  elegir la factura pinta su total exacto en el campo, y que el campo admite edición
+  posterior). Suite `cobranza` 23/23 sin regresiones.
