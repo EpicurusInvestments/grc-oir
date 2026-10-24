@@ -51,6 +51,21 @@ export function RegistrarPagoForm({
   const [archivoNombre, setArchivoNombre] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Fix (petición del usuario): antes "Registrar pago" solo validaba AL HACER CLIC
+  // (adentro de `confirmar()`) — el botón mismo siempre estaba habilitado, sin ninguna
+  // señal visual de qué faltaba. Ahora se deshabilita en vivo mientras no estén los 4
+  // campos obligatorios (marcados con asterisco arriba) — nunca desaparece, solo se ve
+  // gris hasta que se completan.
+  const montoNum = Number(monto);
+  const camposCompletos =
+    fecha.trim() !== "" &&
+    monto.trim() !== "" &&
+    !Number.isNaN(montoNum) &&
+    montoNum > 0 &&
+    montoNum <= pendiente &&
+    metodoPago !== "" &&
+    referencia.trim() !== "";
+
   const confirmar = () => {
     const montoNum = Number(monto);
     if (!monto || Number.isNaN(montoNum) || montoNum <= 0) {
@@ -163,10 +178,15 @@ export function RegistrarPagoForm({
                 </select>
               </div>
               <div>
-                <div className="fl fl-required">Referencia bancaria / cheque</div>
+                {/* Fix (petición del usuario): "Referencia bancaria / cheque" se
+                    partía en 2 líneas y desalineaba el input con el de "Método de
+                    pago" — se acorta a "Referencia bancaria" (mismo texto que ya usa
+                    MovimientoBancarioForm.tsx/MovimientosBancariosPage.tsx); el
+                    placeholder de abajo ya aclara que también acepta cheque. */}
+                <div className="fl fl-required">Referencia bancaria</div>
                 <input
                   className="fi"
-                  placeholder="SPEI-XXXXXXXX / CHE-XXXXXX"
+                  placeholder="SPEI-XXXXX / CHE-XXXX"
                   value={referencia}
                   onChange={(e) => setReferencia(e.target.value)}
                 />
@@ -197,7 +217,12 @@ export function RegistrarPagoForm({
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancelar
         </button>
-        <button type="button" className="btn btn-sm btn-phase" onClick={confirmar} disabled={submitting}>
+        <button
+          type="button"
+          className="btn btn-sm btn-phase"
+          onClick={confirmar}
+          disabled={submitting || !camposCompletos}
+        >
           {submitting ? "Guardando…" : "Registrar pago"}
         </button>
       </div>

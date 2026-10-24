@@ -5,7 +5,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -122,6 +122,25 @@ describe("CobranzaFacturasPage", () => {
     expect(screen.getAllByText("Pendiente").length).toBeGreaterThan(0);
     // Aparece tanto en el renglón de la lista como en la franja de KPIs ("Por cobrar").
     expect(screen.getAllByText(/\$1,183,200\.00/).length).toBeGreaterThan(0);
+  });
+
+  it("fix (petición del usuario): 'Guardar' de 'Editar condiciones' nace deshabilitado y solo se habilita si se modifica algún campo", async () => {
+    renderCon(base);
+    (await screen.findByText("A-001245")).click();
+    (await screen.findByText("Editar condiciones")).click();
+
+    const guardar = await screen.findByRole("button", { name: "Guardar" });
+    // Siempre presente (nunca se oculta) y deshabilitado hasta que algo cambie.
+    expect(guardar).toBeInTheDocument();
+    expect(guardar).toBeDisabled();
+
+    const diasInput = screen.getByDisplayValue("60") as HTMLInputElement;
+    fireEvent.change(diasInput, { target: { value: "45" } });
+    expect(guardar).toBeEnabled();
+
+    // Revertir al valor original lo vuelve a deshabilitar — no hay nada que guardar.
+    fireEvent.change(diasInput, { target: { value: "60" } });
+    expect(guardar).toBeDisabled();
   });
 
   it("en 'pendiente' ofrece registrar pago y editar condiciones", async () => {

@@ -37,8 +37,9 @@ from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor, FacturaAfiliado
-from app.modules.facturacion.factura_agencia import FacturaAgencia  # noqa: F401
+from app.modules.facturacion.factura_agencia import FacturaAgencia
 from app.modules.facturacion.factura_cliente import FacturaCliente  # noqa: F401
+from app.modules.facturacion.factura_vendedor import FacturaVendedor
 from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion  # noqa: F401 — registra la tabla
 from app.modules.usuarios.models import Usuario
@@ -181,6 +182,50 @@ def _factura_afiliado(db: Session, cat: dict[str, uuid.UUID], total: Decimal) ->
             iva_factura_afiliado=(total - monto).quantize(Decimal("0.01")),
             total_factura_afiliado=total,
             estatus_factura_afiliado=EstatusFacturaProveedor.AUTORIZADA.value,
+            created_by=ADMIN_ID,
+        )
+    )
+    db.flush()
+    return factura_id
+
+
+def _factura_agencia(
+    db: Session, cat: dict[str, uuid.UUID], orden_id: uuid.UUID, total: Decimal
+) -> uuid.UUID:
+    factura_id = uuid.uuid4()
+    monto = (total / Decimal("1.16")).quantize(Decimal("0.01"))
+    db.add(
+        FacturaAgencia(
+            factura_agencia_id=factura_id,
+            agencia_id=cat["agencia_id"],
+            orden_id=orden_id,
+            fecha_factura_agencia=date(2026, 3, 1),
+            monto_factura_agencia=monto,
+            iva_factura_agencia=(total - monto).quantize(Decimal("0.01")),
+            total_factura_agencia=total,
+            estatus_factura_agencia=EstatusFacturaProveedor.AUTORIZADA.value,
+            created_by=ADMIN_ID,
+        )
+    )
+    db.flush()
+    return factura_id
+
+
+def _factura_vendedor(
+    db: Session, cat: dict[str, uuid.UUID], orden_id: uuid.UUID, total: Decimal
+) -> uuid.UUID:
+    factura_id = uuid.uuid4()
+    monto = (total / Decimal("1.16")).quantize(Decimal("0.01"))
+    db.add(
+        FacturaVendedor(
+            factura_vendedor_id=factura_id,
+            vendedor_id=cat["vendedor_id"],
+            orden_id=orden_id,
+            fecha_factura_vendedor=date(2026, 3, 1),
+            monto_factura_vendedor=monto,
+            iva_factura_vendedor=(total - monto).quantize(Decimal("0.01")),
+            total_factura_vendedor=total,
+            estatus_factura_vendedor=EstatusFacturaProveedor.AUTORIZADA.value,
             created_by=ADMIN_ID,
         )
     )
@@ -404,6 +449,171 @@ def test_rbac_direccion_solo_lee_no_puede_capturar(
         headers=_hdr("direccion"),
     )
     assert r.status_code == 403
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Petición del usuario: al pagar la requisición, su factura de proveedor relacionada
+# también pasa a "pagada" (pago_afiliado/pago_agencia/comision_vendedor con
+# factura_vendedor_id) — comision_agencia no tiene factura que cerrar.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_pagar_requisicion_pago_afiliado_cierra_la_factura_afiliado(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = _factura_afiliado(db, cat, Decimal("50000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0200",
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "50000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+
+    # Antes de pagar: la factura sigue "autorizada" tal cual se sembró.
+    assert db.get(FacturaAfiliado, factura_id).estatus_factura_afiliado == "autorizada"
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(FacturaAfiliado, factura_id).estatus_factura_afiliado == "pagada"
+
+
+def test_pagar_requisicion_pago_agencia_cierra_la_factura_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-FA1", Decimal("100000.00"))
+    factura_id = _factura_agencia(db, cat, orden_id, Decimal("20000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0201",
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_id),
+            "monto_requisicion": "20000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(FacturaAgencia, factura_id).estatus_factura_agencia == "pagada"
+
+
+def test_pagar_requisicion_comision_vendedor_con_factura_vendedor_id_cierra_esa_factura(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-FV1", Decimal("100000.00"))
+    factura_id = _factura_vendedor(db, cat, orden_id, Decimal("4000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0202",
+            "tipo_requisicion": "comision_vendedor",
+            "orden_id": str(orden_id),
+            "vendedor_comision_id": str(cat["vendedor_id"]),
+            "factura_vendedor_id": str(factura_id),
+            "monto_requisicion": "4000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(FacturaVendedor, factura_id).estatus_factura_vendedor == "pagada"
+
+
+def test_pagar_requisicion_comision_vendedor_sin_factura_vendedor_id_no_truena(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """`factura_vendedor_id` es opcional (requisiciones viejas no lo tienen, o se
+    captura sin saber todavía cuál factura corresponde) — pagarla sin ese dato no debe
+    tronar, solo no hay ninguna factura que cerrar."""
+    orden_id = _orden(db, cat, "OC-FV2", Decimal("100000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0203",
+            "tipo_requisicion": "comision_vendedor",
+            "orden_id": str(orden_id),
+            "vendedor_comision_id": str(cat["vendedor_id"]),
+            "monto_requisicion": "4000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["estatus_requisicion"] == "pagada"
+
+
+def test_pagar_requisicion_comision_agencia_no_truena_sin_factura_que_cerrar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """`comision_agencia` nunca tiene una factura asociada (confirmado: es un pago puro,
+    sin entidad "factura" que cerrar) — pagarla no debe tronar."""
+    orden_id = _orden(db, cat, "OC-CA1", Decimal("100000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0204",
+            "tipo_requisicion": "comision_agencia",
+            "orden_id": str(orden_id),
+            "agencia_id": str(cat["agencia_id"]),
+            "monto_requisicion": "2000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["estatus_requisicion"] == "pagada"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -91,10 +91,14 @@ PK `pago_cliente_id`. FK `CobranzaFactura` (N:1). Captura manual por **CxC**.
 `metodo_pago_clave` (mismo ajuste que arriba — texto, no FK). Al crear/borrar un
 `PagoCliente`, el servicio recalcula `CobranzaFactura.estatus_cobro` y `fecha_cobro`.
 
-### Requisicion (23 campos spec, sin ajustes estructurales)
+### Requisicion (23 campos spec + `factura_vendedor_id` agregado — ver ADR-216)
 PK `requisicion_id`. `tipo_requisicion` ENUM (`pago_afiliado`/`pago_agencia`/
 `comision_vendedor`/`comision_agencia`). FKs opcionales según el tipo (`factura_afiliado_id`,
-`factura_agencia_id`, `orden_id`, `afiliado_id`, `agencia_id`, `vendedor_comision_id`).
+`factura_agencia_id`, `factura_vendedor_id`, `orden_id`, `afiliado_id`, `agencia_id`,
+`vendedor_comision_id`). `factura_vendedor_id` (migración `a1c4f6e8b2d7`, ADR-216) solo la
+usa `comision_vendedor`, y es opcional ahí (puede capturarse sin saber todavía a cuál
+`FacturaVendedor` corresponde). `comision_agencia` no tiene ninguna factura asociada (pago
+puro de comisión, confirmado por diseño — no aplica cierre de factura).
 Captura por **CxP**. Calculados: `requisicion_comision_vendedor = OrdenCliente.total *
 porcentaje_comision_vendedor / 100`; `requisicion_comision_agencia` análogo;
 `diferencia_afiliada = monto_requisicion - FacturaAfiliado.total_factura_afiliado`
@@ -106,6 +110,10 @@ porcentaje_comision_vendedor / 100`; `requisicion_comision_agencia` análogo;
 canal dedicado del ADR-046 — permiso de router en `pagos:leer`, chequeo de área real
 dentro del servicio) — CxP captura pero no se autoriza a sí mismo. Extensión directa del
 patrón ya aprobado en F2.
+**Efecto colateral al pagar (ADR-216):** al llegar a `pagada`, la Requisicion cierra
+también (`.transicionar(..., "pagada", ...)`) la `FacturaAfiliado`/`FacturaAgencia`/
+`FacturaVendedor` que tenga enlazada por FK, siempre (sin verificar si existen otras
+requisiciones pendientes sobre la misma factura — decisión explícita del usuario).
 
 ### MovimientoBancario (11 campos spec, sin ajustes)
 PK `movimiento_id`. `tipo_movimiento` ENUM (`cargo`/`abono`). Captura por **Tesorería**

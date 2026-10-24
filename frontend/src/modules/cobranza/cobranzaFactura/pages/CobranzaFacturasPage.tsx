@@ -180,6 +180,16 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
     setErrorAccion(null);
   };
 
+  // Fix (petición del usuario): "Guardar" siempre estaba en el DOM (nunca se ocultó),
+  // pero siempre habilitado — sin ninguna señal de si de verdad había algo que guardar.
+  // Se compara contra `selected` (que no cambia mientras se edita: la propia OC ya
+  // seleccionada) en vez de guardar una copia aparte del valor original.
+  const huboCambiosEdicion =
+    !!selected &&
+    (Number(diasCredito) !== selected.dias_credito ||
+      metodoPagoEdit !== selected.metodo_pago_clave ||
+      comentarios.trim() !== (selected.comentarios_cobranza ?? ""));
+
   const guardarEdicion = async () => {
     if (!selected) return;
     setErrorAccion(null);
@@ -359,15 +369,11 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           ) : (
             <div className="r2">
               <div>
-                <div className="fl">
-                  Días de crédito <span className="fl-tag her">Heredado, editable</span>
-                </div>
+                <div className="fl">Días de crédito</div>
                 <div className="fv mono">{selected.dias_credito} días</div>
               </div>
               <div>
-                <div className="fl">
-                  Método de pago <span className="fl-tag her">Heredado</span>
-                </div>
+                <div className="fl">Método de pago</div>
                 <div className="fv">{selected.metodo_pago_clave}</div>
               </div>
             </div>
@@ -475,7 +481,12 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
               <button type="button" className="btn btn-sm" onClick={() => setModo("ver")} disabled={actualizar.isPending}>
                 Cancelar
               </button>
-              <button type="button" className="btn btn-sm btn-phase" onClick={() => void guardarEdicion()} disabled={actualizar.isPending}>
+              <button
+                type="button"
+                className="btn btn-sm btn-phase"
+                onClick={() => void guardarEdicion()}
+                disabled={actualizar.isPending || !huboCambiosEdicion}
+              >
                 {actualizar.isPending ? "Guardando…" : "Guardar"}
               </button>
             </>

@@ -124,6 +124,19 @@ class Requisicion(Base):
         ),
         default=None,
     )
+    # Petición del usuario: `comision_vendedor` no tenía forma de ligarse a una
+    # `FacturaVendedor` concreta (`vendedor_comision_id`+`orden_id` no bastan — relación
+    # 1:N sin `UniqueConstraint`, igual que `FacturaAgencia`). Opcional: las requisiciones
+    # ya existentes no la tienen.
+    factura_vendedor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_vendedor.factura_vendedor_id",
+            name="fk_requisicion_factura_vendedor",
+            ondelete="NO ACTION",
+        ),
+        default=None,
+    )
     orden_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(),
         ForeignKey("orden_cliente.orden_id", name="fk_requisicion_orden", ondelete="NO ACTION"),
@@ -194,6 +207,7 @@ class RequisicionRead(BaseModel):
     tipo_requisicion: TipoRequisicion
     factura_afiliado_id: uuid.UUID | None = None
     factura_agencia_id: uuid.UUID | None = None
+    factura_vendedor_id: uuid.UUID | None = None
     orden_id: uuid.UUID | None = None
     afiliado_id: uuid.UUID | None = None
     agencia_id: uuid.UUID | None = None
@@ -229,6 +243,10 @@ class RequisicionCreate(BaseModel):
     tipo_requisicion: TipoRequisicion
     factura_afiliado_id: uuid.UUID | None = None
     factura_agencia_id: uuid.UUID | None = None
+    # Opcional incluso para `comision_vendedor`: una requisición de comisión puede
+    # capturarse sin saber todavía a cuál `FacturaVendedor` corresponde (se le asigna
+    # después, editándola) — no bloquea el alta.
+    factura_vendedor_id: uuid.UUID | None = None
     orden_id: uuid.UUID | None = None
     afiliado_id: uuid.UUID | None = None
     agencia_id: uuid.UUID | None = None
@@ -430,6 +448,18 @@ class RequisicionService(
                 data.monto_requisicion - Decimal(factura_af.total_factura_afiliado)
             ).quantize(CENTAVOS)
 
+        # Petición del usuario: valida que la FacturaVendedor exista, si se capturó —
+        # mismo criterio que `factura_afiliado_id` arriba (no tiene un cálculo propio
+        # como `diferencia_afiliada`, solo existencia).
+        if data.factura_vendedor_id is not None:
+            from app.modules.facturacion.factura_vendedor import FacturaVendedor
+
+            if db.get(FacturaVendedor, data.factura_vendedor_id) is None:
+                raise DomainError(
+                    "La FacturaVendedor indicada no existe.",
+                    detalles={"factura_vendedor_id": str(data.factura_vendedor_id)},
+                )
+
         obj = Requisicion(
             requisicion_id=uuid4(),
             numero_requisicion=data.numero_requisicion,
@@ -437,6 +467,7 @@ class RequisicionService(
             tipo_requisicion=tipo.value,
             factura_afiliado_id=data.factura_afiliado_id,
             factura_agencia_id=data.factura_agencia_id,
+            factura_vendedor_id=data.factura_vendedor_id,
             orden_id=data.orden_id,
             afiliado_id=data.afiliado_id,
             agencia_id=data.agencia_id,
@@ -486,9 +517,63 @@ class RequisicionService(
         obj.estatus_requisicion = destino
         if destino == EstatusRequisicion.PAGADA.value:
             obj.fecha_pago_requisicion = input_.fecha_pago_requisicion or date.today()
+            self._cerrar_factura_relacionada(obj, usuario)
         self._repo.db.commit()
         self._repo.db.refresh(obj)
         return self._to_read(obj)
+
+    def _cerrar_factura_relacionada(self, obj: Requisicion, usuario: CurrentUser) -> None:
+        """Petición del usuario: al pagar la requisición, su factura de proveedor
+        relacionada pasa a "pagada" también — `pago_afiliado`/`pago_agencia`/
+        `comision_vendedor` (si trae `factura_vendedor_id`). `comision_agencia` no tiene
+        ninguna factura que cerrar (es un pago puro, sin ese enlace).
+
+        Reusa el `.transicionar(..., "pagada", ...)` de cada módulo de facturación en vez
+        de poner el estatus a mano: ya valida la transición (`autorizada → pagada`) y es
+        idempotente — si por alguna razón la factura ya estuviera "pagada" (p.ej. cerrada
+        por otro canal), no hace nada ni truena. Comparten LA MISMA sesión de BD
+        (`self._repo.db`), así que el `commit()` de cada una de ellas también deja listo
+        el cambio de `obj.estatus_requisicion` de arriba — si la factura NO estuviera en
+        un estado del que se pueda pasar a "pagada" (`StateTransitionError`), esto corre
+        ANTES de cualquier commit, así que nada queda a medias: ni la requisición ni la
+        factura se marcan pagadas.
+        """
+        if obj.factura_afiliado_id is not None:
+            from app.modules.facturacion.factura_afiliado import (
+                EstatusFacturaProveedor,
+                FacturaAfiliado,
+                FacturaAfiliadoRepository,
+                FacturaAfiliadoService,
+            )
+
+            repo_af = FacturaAfiliadoRepository(self._repo.db, FacturaAfiliado)
+            FacturaAfiliadoService(repo_af).transicionar(
+                obj.factura_afiliado_id, EstatusFacturaProveedor.PAGADA.value, usuario
+            )
+        elif obj.factura_agencia_id is not None:
+            from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+            from app.modules.facturacion.factura_agencia import (
+                FacturaAgencia,
+                FacturaAgenciaRepository,
+                FacturaAgenciaService,
+            )
+
+            repo_ag = FacturaAgenciaRepository(self._repo.db, FacturaAgencia)
+            FacturaAgenciaService(repo_ag).transicionar(
+                obj.factura_agencia_id, EstatusFacturaProveedor.PAGADA.value, usuario
+            )
+        elif obj.factura_vendedor_id is not None:
+            from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+            from app.modules.facturacion.factura_vendedor import (
+                FacturaVendedor,
+                FacturaVendedorRepository,
+                FacturaVendedorService,
+            )
+
+            repo_vd = FacturaVendedorRepository(self._repo.db, FacturaVendedor)
+            FacturaVendedorService(repo_vd).transicionar(
+                obj.factura_vendedor_id, EstatusFacturaProveedor.PAGADA.value, usuario
+            )
 
     def autorizar(self, requisicion_id: uuid.UUID, usuario: CurrentUser) -> RequisicionRead:
         """CANAL DEDICADO para `pendiente → autorizada`. Solo Dirección/Admin.

@@ -18,6 +18,7 @@ import {
   facturaClienteResumen,
   facturasAfiliadoPagables,
   facturasAgenciaPagables,
+  facturasVendedorPagables,
   historialPagosCliente,
   metodosDePago,
   movimientoBancarioApi,
@@ -146,6 +147,9 @@ export const useFacturasAfiliadoPagables = () =>
 
 export const useFacturasAgenciaPagables = () =>
   useQuery({ queryKey: ["cobranza:facturas-agencia-pagables"], queryFn: facturasAgenciaPagables });
+
+export const useFacturasVendedorPagables = () =>
+  useQuery({ queryKey: ["cobranza:facturas-vendedor-pagables"], queryFn: facturasVendedorPagables });
 
 export const useOrdenesInfo = () =>
   useQuery({ queryKey: ["cobranza:ordenes"], queryFn: ordenesInfo });

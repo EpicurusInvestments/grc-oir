@@ -41,6 +41,7 @@
   --blue-bg: #e6f1fb;
   --blue-text: #0c447c;
   --blue-border: #8fbde8;
+  --amber: #ba7517;
   --amber-bg: #faeeda;
   --amber-text: #633806;
   --amber-border: #fac775;
@@ -1623,6 +1624,11 @@ body {
 
 .phase-f3 {
   --phase: var(--amber);
+  /* Fix (reportado por el usuario: "Guardar" se veía transparente/"escondido" en
+     Cobranza al habilitarse) — faltaba tanto `--amber` (arriba, en :root) como este
+     `--phase-hover`; sin ellos, `.btn-phase`/`.btn-phase:hover` quedaban sin fondo
+     (custom property inválida = sin pintar), aunque el botón SÍ seguía en el DOM. */
+  --phase-hover: #a06412;
   --phase-bg: var(--amber-bg);
   --phase-text: var(--amber-text);
   --phase-border: var(--amber-border);
