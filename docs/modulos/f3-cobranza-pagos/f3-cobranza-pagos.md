@@ -115,6 +115,12 @@ también (`.transicionar(..., "pagada", ...)`) la `FacturaAfiliado`/`FacturaAgen
 `FacturaVendedor` que tenga enlazada por FK, siempre (sin verificar si existen otras
 requisiciones pendientes sobre la misma factura — decisión explícita del usuario).
 
+**Combos "disponibles" del alta (ADR-217):** `GET /cobranza/requisiciones/facturas-
+{afiliado,agencia,vendedor}-disponibles` — facturas `autorizada` que NINGUNA
+`Requisicion` (de cualquier estatus) tiene ligada todavía; reemplazan, para el alta de
+Requisicion, el pedir directo `/facturacion/afiliados|agencias|vendedores` (ese listado
+genérico de Facturación sigue mostrando TODAS las facturas, sin este filtro).
+
 ### MovimientoBancario (11 campos spec, sin ajustes)
 PK `movimiento_id`. `tipo_movimiento` ENUM (`cargo`/`abono`). Captura por **Tesorería**
 (nueva área que escribe en este módulo — hasta ahora Tesorería solo leía). `conciliado`

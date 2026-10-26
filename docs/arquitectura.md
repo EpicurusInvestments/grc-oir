@@ -8878,3 +8878,115 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   casos: `pago_afiliado`, `pago_agencia`, `comision_vendedor` — cada uno confirma que
   elegir la factura pinta su total exacto en el campo, y que el campo admite edición
   posterior). Suite `cobranza` 23/23 sin regresiones.
+
+### Fix (reportado por el usuario, con captura): el % de comisión sugerido se quedaba pegado al cambiar de vendedor/agencia
+
+- **Reporte del usuario:** en "Nueva requisición" (`comision_vendedor`), al elegir un
+  vendedor se sugería correctamente su % de comisión en el campo — pero al cambiar a
+  OTRO vendedor, el campo se quedaba con el % del vendedor anterior en vez de
+  actualizarse al del nuevo. Mismo patrón en `comision_agencia`.
+- **Causa:** los `onChange` de "Vendedor"/"Agencia" (`RequisicionForm.tsx`) traían la
+  guarda `if (v && !pctVendedor) setPctVendedor(...)` / `if (a && !pctAgencia)
+  setPctAgencia(...)` — pensada para no pisar un % ya editado a mano, pero que en la
+  práctica nunca se volvía a disparar una vez que el campo tenía CUALQUIER valor
+  (incluido el sugerido de la primera selección), así que un segundo cambio de
+  vendedor/agencia no hacía nada.
+- **Decisión:** se quita la guarda — cada `onChange` ahora siempre hace
+  `setPctVendedor(v?.porcentaje_comision_default ?? "")` /
+  `setPctAgencia(a?.porcentaje_comision_agencia_default ?? "")`, sobrescribiendo el
+  campo con el % del vendedor/agencia recién elegido (o vaciándolo si se vuelve a
+  "— Selecciona —"). El campo sigue siendo editable después (mismo criterio que
+  "Monto de la requisición", ADR consecutivo en este mismo documento) — el usuario puede
+  ajustar el % sugerido sin que se le vuelva a pisar mientras no cambie de
+  vendedor/agencia otra vez.
+- **Verificado:** `tsc`/`eslint` limpios; 2 pruebas nuevas en `RequisicionForm.test.tsx`
+  (cambiar de vendedor/de agencia reemplaza el % mostrado por el del nuevo catálogo, no
+  lo deja pegado al anterior). Suite `cobranza` 25/25 sin regresiones.
+
+### ADR-217 — No volver a ofrecer "lo ya usado" en los combos de Requisicion/FacturaAfiliado
+
+- **Estado:** aceptada · **Fecha:** 2026-10-25 (petición del usuario, con captura:
+  "Nueva factura de afiliado" seguía listando una OE ya facturada). Son 2 bugs
+  relacionados que el usuario reportó juntos como "importante": un combo seguía
+  ofreciendo algo que ya se había usado en otro registro.
+- **Parte 1 — "Nueva requisición": las 3 facturas "pagables" (emisora/agencia/vendedor)
+  seguían apareciendo aunque ya tuvieran una requisición creada.** Antes
+  `facturasAfiliadoPagables`/`facturasAgenciaPagables`/`facturasVendedorPagables`
+  (`cobranza/api.ts`) pedían directo `/facturacion/afiliados|agencias|vendedores` con
+  `estatus_factura_xxx=autorizada` — sin mirar si ya existía una `Requisicion` ligada.
+  **Decisión:** 3 endpoints NUEVOS en el propio módulo `cobranza`
+  (`GET /cobranza/requisiciones/facturas-{afiliado,agencia,vendedor}-disponibles`,
+  `RequisicionService.facturas_afiliado_disponibles()` y análogos) que, además del
+  filtro de estatus, excluyen toda factura con `factura_afiliado_id`/
+  `factura_agencia_id`/`factura_vendedor_id` ya apuntado por CUALQUIER `Requisicion`
+  (no solo `pagada` — basta con que ya se haya usado en una `pendiente`/`autorizada`).
+  Se implementa en `cobranza` (no en `facturacion`) para no invertir la dependencia
+  entre fases (F3 depende de F2, nunca al revés) y para no tocar el listado genérico de
+  Facturación, que SÍ debe seguir mostrando todas las facturas con fines de auditoría.
+  `cobranza/api.ts` apunta ahora a estos 3 endpoints; se quita el campo
+  `porcentaje_comision_agencia` de `FacturaAgenciaInfo` (no lo leía ninguna pantalla,
+  y el endpoint nuevo no lo expone).
+- **Parte 2 — "Nueva factura de afiliado": el combo "Folio de la Orden Interna" seguía
+  ofreciendo una OE ya facturada en OTRA factura.** Esto **revierte una decisión previa**
+  (`ordenes_facturables()` listaba TODAS las OE `cerrada`, "sin excluir las ya asignadas
+  a otra factura: la spec permite parcialidades") — el usuario, con esta captura, pidió
+  lo contrario de forma explícita. **Decisión:** el método ahora excluye las OE que ya
+  tienen una `FacturaAfiliadoOrden` registrada en OTRA factura. Para no romper la
+  EDICIÓN de una factura ya existente (sus propias OE no deben desaparecer del combo
+  mientras se edita), el endpoint acepta `excluir_de_factura_id` (opcional): las
+  asignaciones de ESA factura no cuentan como "ya facturadas". El backend de
+  CREACIÓN/EDICIÓN (`_validar_ordenes_estacion`) NO cambia — sigue aceptando un alta que
+  mande explícito el id de una OE ya facturada (nadie pidió quitar esa capacidad, solo
+  que el combo no la sugiera); la prueba que cubre ese caso
+  (`test_crear_factura_afiliado_permite_facturar_la_misma_oe_en_parcialidades`) sigue
+  pasando intacta. `FacturaAfiliadoForm.tsx` manda su propio id (`facturaAfiliadoIdActual`,
+  prop nueva) al hook `useOrdenesFacturablesAfiliado` solo cuando está en modo edición.
+- **Verificado:** backend — `ruff` limpio en los 2 archivos tocados; nuevas pruebas en
+  `test_f2_02_facturacion_escritura.py` (el combo excluye una OE ya facturada en otra
+  factura; `excluir_de_factura_id` evita que la propia edición la oculte) y en
+  `test_f3_03_requisiciones_pagos.py` (los 3 endpoints "disponibles" excluyen una
+  factura ya usada por una requisición); suite completa de backend 100% verde. Frontend
+  — `tsc`/`eslint` limpios; nueva prueba en `FacturaAfiliadoForm.test.tsx` (manda el id
+  propio al editar); suites `cobranza` y `facturacion` 132/132 sin regresiones.
+
+### Fix (reportado por el usuario, con 2 capturas): regresión de ADR-217 — la columna "Origen" de Requisiciones se quedaba en "—"; y el monto no se limpiaba al cambiar de combo
+
+- **Reporte del usuario:** al crear una requisición de "Pago afiliado", la columna
+  "Origen" (de la lista "Requisiciones de pago") mostró primero el folio de la factura
+  elegida — pero al darle de nuevo a "Crear requisición", ese valor se borró y quedó en
+  "—", incluso para requisiciones de días anteriores que antes sí lo mostraban. Aparte,
+  al cambiar de afiliado en el alta (si el nuevo no tenía facturas en el combo), el
+  campo "Monto de la requisición" se quedaba con el valor autollenado por el afiliado
+  ANTERIOR en vez de limpiarse.
+- **Causa raíz (bug 1) — regresión directa de ADR-217 (la sesión anterior de este mismo
+  documento):** `RequisicionesPage.tsx` resolvía el folio de "Origen" con los MISMOS
+  hooks `useFacturasAfiliadoPagables`/`useFacturasAgenciaPagables` que ADR-217 acababa
+  de cambiar para EXCLUIR cualquier factura ya ligada a una requisición (el filtro
+  correcto para el combo del ALTA, pero no para resolver nombres de requisiciones YA
+  creadas). En cuanto se creaba la requisición, su propia factura desaparecía de ese
+  catálogo "disponibles" y `facturaAfiliadoMap`/`facturaAgenciaMap` ya no la encontraba
+  — de ahí el "—", incluso para requisiciones previas que comparten la misma factura ya
+  usada por otra.
+- **Decisión (bug 1):** se separan las 2 responsabilidades, que hasta ahora compartían
+  el mismo hook por conveniencia: `facturasAfiliadoInfo`/`facturasAgenciaInfo`
+  (`cobranza/api.ts` + `hooks.ts`, nuevos) piden directo `/facturacion/afiliados|
+  agencias` con `estatus=autorizada` **sin** el filtro de "ya tiene requisición" (el
+  comportamiento exacto de ANTES de ADR-217) — se usan SOLO para resolver nombres en
+  `RequisicionesPage.tsx`. `useFacturasXxxPagables` (con el filtro de ADR-217) se deja
+  intacto y ahora se usa EXCLUSIVAMENTE en `RequisicionForm.tsx` (el combo del alta,
+  donde sí se quiere ocultar lo ya usado).
+- **Causa raíz (bug 2):** los `onChange` de Afiliado/Agencia/Vendedor en
+  `RequisicionForm.tsx` ya limpiaban su propia `facturaXxxId` al cambiar (para no
+  arrastrar la factura del catálogo anterior), pero nunca tocaban
+  `montoRequisicion` — que el autollenado de un ADR anterior en este mismo documento
+  solo sobrescribía al ELEGIR una factura, nunca al cambiar de beneficiario ni al volver
+  el combo de factura a "— Ninguna —".
+- **Decisión (bug 2):** los 3 `onChange` de Afiliado/Agencia(`pago_agencia`)/Vendedor
+  ahora también hacen `setMontoRequisicion("")`; y los 3 `onChange` de los combos de
+  factura (emisora/agencia/vendedor) cambian su `if (f) setMontoRequisicion(...)` por
+  `setMontoRequisicion(f ? ... : "")` — limpia el monto también al deseleccionar la
+  factura ("— Ninguna —"), no solo al elegir una.
+- **Verificado:** `tsc`/`eslint` limpios; nueva prueba en `RequisicionesPage.test.tsx`
+  (resuelve "Origen" aunque la factura ya no esté en el combo de "disponibles" del
+  alta); 3 pruebas nuevas en `RequisicionForm.test.tsx` (cambiar de afiliado/vendedor, y
+  deseleccionar la factura, limpian el monto). Suite `cobranza` 29/29 sin regresiones.

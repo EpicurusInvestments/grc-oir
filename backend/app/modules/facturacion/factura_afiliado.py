@@ -445,15 +445,30 @@ class FacturaAfiliadoService(
         return self._enriquecida(super().get(id_))
 
     def ordenes_facturables(
-        self, afiliado_id: uuid.UUID
+        self, afiliado_id: uuid.UUID, excluir_de_factura_id: uuid.UUID | None = None
     ) -> list[OrdenEstacionFacturableAfiliadoRead]:
-        """OE `cerrada` del afiliado — combo "Folio de la Orden Interna" del alta. Se
-        listan TODAS, sin excluir las ya asignadas a otra factura: la spec permite
-        facturar una OE en parcialidades (ver `FacturaAfiliadoOrden.__table_args__`)."""
+        """OE `cerrada` del afiliado — combo "Folio de la Orden Interna" del alta.
+
+        Excluye las que YA tienen una `FacturaAfiliadoOrden` registrada en OTRA factura
+        (petición del usuario, con captura: "en el combo no deberían aparecer las
+        órdenes que ya tengan una factura registrada") — revierte la decisión anterior
+        de permitir "parcialidades" (una OE facturada en más de una factura), que la
+        spec no prohibía pero que en la práctica el usuario no quiere. Al EDITAR una
+        factura, `excluir_de_factura_id` es el id de esa misma factura: sus propias
+        asignaciones no cuentan como "ya facturadas" — si no, desaparecerían del combo
+        mientras se edita esa factura.
+        """
         from app.modules.catalogos.estacion import Estacion
         from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
 
         db = self._repo.db
+        ya_facturadas_stmt = select(FacturaAfiliadoOrden.orden_estacion_id)
+        if excluir_de_factura_id is not None:
+            ya_facturadas_stmt = ya_facturadas_stmt.where(
+                FacturaAfiliadoOrden.factura_afiliado_id != excluir_de_factura_id
+            )
+        ya_facturadas = set(db.scalars(ya_facturadas_stmt).all())
+
         filas = db.execute(
             select(
                 OrdenEstacion.orden_estacion_id,
@@ -480,6 +495,7 @@ class FacturaAfiliadoService(
                 total_emisora=f.total_emisora,
             )
             for f in filas
+            if f.orden_estacion_id not in ya_facturadas
         ]
 
     def _validar_ordenes_estacion(self, ids: list[uuid.UUID]) -> list[Any]:
@@ -812,13 +828,17 @@ def listar_facturas_afiliado(
 )
 def listar_ordenes_facturables_afiliado(
     afiliado_id: uuid.UUID = Query(...),
+    excluir_de_factura_id: uuid.UUID | None = Query(
+        None, description="Al editar: no excluye las asignaciones de esta misma factura."
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
     svc: FacturaAfiliadoService = Depends(get_factura_afiliado_service),
 ) -> list[OrdenEstacionFacturableAfiliadoRead]:
-    """Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado.
-    Declarado ANTES de `/{item_id}` — si no, FastAPI intentaría parsear
-    "ordenes-facturables" como UUID de `item_id` y respondería 422."""
-    return svc.ordenes_facturables(afiliado_id)
+    """Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado, sin
+    las que ya tienen factura registrada en OTRA. Declarado ANTES de `/{item_id}` — si
+    no, FastAPI intentaría parsear "ordenes-facturables" como UUID de `item_id` y
+    respondería 422."""
+    return svc.ordenes_facturables(afiliado_id, excluir_de_factura_id)
 
 
 @router_afiliados.get("/{item_id}", response_model=FacturaAfiliadoRead)

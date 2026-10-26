@@ -21,8 +21,8 @@ import type { FiltrosRequisicion } from "../../api";
 import { badgeEstatusRequisicion, badgeTipoRequisicion, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
 import {
   useAgenciasInfo,
-  useFacturasAfiliadoPagables,
-  useFacturasAgenciaPagables,
+  useFacturasAfiliadoInfo,
+  useFacturasAgenciaInfo,
   useOrdenesInfo,
   useRequisiciones,
   useVendedoresInfo,
@@ -87,8 +87,8 @@ export function RequisicionesPage({ filtroInicial }: Props) {
   const { list, crear, cambiarEstatus, autorizar } = useRequisiciones(filtros);
   const agencias = useAgenciasInfo();
   const vendedores = useVendedoresInfo();
-  const facturasAfiliado = useFacturasAfiliadoPagables();
-  const facturasAgencia = useFacturasAgenciaPagables();
+  const facturasAfiliado = useFacturasAfiliadoInfo();
+  const facturasAgencia = useFacturasAgenciaInfo();
   const ordenes = useOrdenesInfo();
 
   const agenciaMap = useMemo(() => new Map((agencias.data ?? []).map((a) => [a.agencia_id, a])), [agencias.data]);

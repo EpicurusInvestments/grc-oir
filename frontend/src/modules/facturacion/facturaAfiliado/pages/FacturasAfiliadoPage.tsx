@@ -164,6 +164,7 @@ export function FacturasAfiliadoPage() {
           monto_factura_afiliado: selected.monto_factura_afiliado,
           iva_factura_afiliado: selected.iva_factura_afiliado,
         }}
+        facturaAfiliadoIdActual={selected.factura_afiliado_id}
         asignacionesIniciales={asignaciones.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}

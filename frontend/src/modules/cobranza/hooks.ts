@@ -16,7 +16,9 @@ import {
   anunciantesInfo,
   cobranzaFacturaApi,
   facturaClienteResumen,
+  facturasAfiliadoInfo,
   facturasAfiliadoPagables,
+  facturasAgenciaInfo,
   facturasAgenciaPagables,
   facturasVendedorPagables,
   historialPagosCliente,
@@ -150,6 +152,17 @@ export const useFacturasAgenciaPagables = () =>
 
 export const useFacturasVendedorPagables = () =>
   useQuery({ queryKey: ["cobranza:facturas-vendedor-pagables"], queryFn: facturasVendedorPagables });
+
+/** Fix (reportado por el usuario): para resolver el "Origen" de una requisición YA
+ *  creada (`RequisicionesPage.tsx`) — a diferencia de `useFacturasXxxPagables`
+ *  (el combo del ALTA, que desde ADR-217 excluye facturas ya ligadas a una
+ *  requisición), esta lista NO se filtra por eso: necesita ver también la factura de
+ *  la requisición que se acaba de crear. */
+export const useFacturasAfiliadoInfo = () =>
+  useQuery({ queryKey: ["cobranza:facturas-afiliado-info"], queryFn: facturasAfiliadoInfo });
+
+export const useFacturasAgenciaInfo = () =>
+  useQuery({ queryKey: ["cobranza:facturas-agencia-info"], queryFn: facturasAgenciaInfo });
 
 export const useOrdenesInfo = () =>
   useQuery({ queryKey: ["cobranza:ordenes"], queryFn: ordenesInfo });

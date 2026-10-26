@@ -215,11 +215,14 @@ export const facturaAfiliadoApi = {
     const { data } = await apiClient.get<FacturaAfiliadoOrden[]>(`${BASE}/afiliados/${id}/ordenes`);
     return data;
   },
-  /** Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado. */
-  async ordenesFacturables(afiliadoId: string) {
+  /** Combo "Folio de la Orden Interna" del alta: OE `cerrada` de ese afiliado, sin las
+   *  que ya tienen factura registrada en OTRA (petición del usuario). Al editar,
+   *  `excluirDeFacturaId` es la propia factura: sus asignaciones no cuentan como "ya
+   *  facturadas", para no desaparecer del combo mientras se edita. */
+  async ordenesFacturables(afiliadoId: string, excluirDeFacturaId?: string | null) {
     const { data } = await apiClient.get<OrdenEstacionFacturableAfiliado[]>(
       `${BASE}/afiliados/ordenes-facturables`,
-      { params: { afiliado_id: afiliadoId } },
+      { params: { afiliado_id: afiliadoId, excluir_de_factura_id: excluirDeFacturaId || undefined } },
     );
     return data;
   },

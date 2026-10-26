@@ -2777,6 +2777,73 @@ def test_ordenes_facturables_afiliado_solo_lista_las_cerradas(
     assert items[0]["total_emisora"] == "8120.00"
 
 
+def test_ordenes_facturables_afiliado_excluye_las_ya_facturadas_en_otra_factura(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario, con captura: una OE que YA tiene una
+    `FacturaAfiliadoOrden` en OTRA factura ya no debe ofrecerse en el combo — revierte
+    la decisión anterior de permitir "parcialidades" (el backend sigue aceptando el
+    alta si se manda explícito, ver `test_crear_factura_afiliado_permite_facturar_la_
+    misma_oe_en_parcialidades`; solo el COMBO deja de sugerirla)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-YA-FACT")
+    oe_libre = _orden_estacion(db, cat, orden_id, "cerrada")
+    oe_ya_facturada = _orden_estacion(db, cat, orden_id, "cerrada")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(
+            cat, factura_emisora="EMI-YA-FACT", ordenes_estacion_ids=[str(oe_ya_facturada)]
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    r = client.get(
+        "/api/v1/facturacion/afiliados/ordenes-facturables",
+        params={"afiliado_id": str(cat["afiliado_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    ids = {item["orden_estacion_id"] for item in r.json()}
+    assert str(oe_libre) in ids
+    assert str(oe_ya_facturada) not in ids
+
+
+def test_ordenes_facturables_afiliado_excluir_de_factura_id_no_oculta_sus_propias(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Al EDITAR una factura, `excluir_de_factura_id` evita que sus propias OE
+    asignadas desaparezcan del combo (solo se excluyen las de OTRAS facturas)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-EDITAR-FACT")
+    oe = _orden_estacion(db, cat, orden_id, "cerrada")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(
+            cat, factura_emisora="EMI-EDITAR", ordenes_estacion_ids=[str(oe)]
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    factura_id = r.json()["factura_afiliado_id"]
+
+    sin_excluir = client.get(
+        "/api/v1/facturacion/afiliados/ordenes-facturables",
+        params={"afiliado_id": str(cat["afiliado_id"])},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(oe) not in {item["orden_estacion_id"] for item in sin_excluir}
+
+    con_excluir = client.get(
+        "/api/v1/facturacion/afiliados/ordenes-facturables",
+        params={"afiliado_id": str(cat["afiliado_id"]), "excluir_de_factura_id": factura_id},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(oe) in {item["orden_estacion_id"] for item in con_excluir}
+
+
 def test_crear_factura_afiliado_con_orden_estacion_asigna_automaticamente(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

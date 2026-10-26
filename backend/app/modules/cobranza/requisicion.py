@@ -42,7 +42,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, Uuid, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.auth.identity import Area
@@ -279,6 +279,40 @@ class TransicionRequisicionIn(BaseModel):
     fecha_pago_requisicion: date | None = None
 
 
+# ── Combos "disponibles" del alta (petición del usuario, con captura): una factura ya
+# usada por OTRA requisición (de cualquier estatus, no solo `pagada`) no debe volver a
+# ofrecerse — antes el combo solo filtraba por `estatus_factura_xxx == "autorizada"`,
+# así que una factura ya elegida en una requisición `pendiente`/`autorizada` seguía
+# apareciendo para elegirla de nuevo en otra.
+class FacturaAfiliadoDisponibleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    factura_afiliado_id: uuid.UUID
+    afiliado_id: uuid.UUID
+    factura_emisora: str
+    total_factura_afiliado: Decimal
+
+
+class FacturaAgenciaDisponibleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    factura_agencia_id: uuid.UUID
+    agencia_id: uuid.UUID
+    orden_id: uuid.UUID
+    folio_factura_agencia: str | None = None
+    total_factura_agencia: Decimal
+
+
+class FacturaVendedorDisponibleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    factura_vendedor_id: uuid.UUID
+    vendedor_id: uuid.UUID
+    orden_id: uuid.UUID
+    folio_factura_vendedor: str | None = None
+    total_factura_vendedor: Decimal
+
+
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class RequisicionRepository(BaseRepository[Requisicion]):
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
@@ -487,6 +521,70 @@ class RequisicionService(
         db.refresh(obj)
         return self._to_read(obj)
 
+    # ── Combos "disponibles" del alta ─────────────────────────────────────────────
+    def facturas_afiliado_disponibles(self) -> list[FacturaAfiliadoDisponibleRead]:
+        """`FacturaAfiliado` `autorizada` que NINGUNA `Requisicion` (de cualquier
+        estatus) tiene ligada todavía — petición del usuario: una factura ya usada en
+        una requisición no debe volver a ofrecerse para otra nueva."""
+        from app.modules.facturacion.factura_afiliado import (
+            EstatusFacturaProveedor,
+            FacturaAfiliado,
+        )
+
+        db = self._repo.db
+        ya_usadas = select(Requisicion.factura_afiliado_id).where(
+            Requisicion.factura_afiliado_id.is_not(None)
+        )
+        autorizada = EstatusFacturaProveedor.AUTORIZADA.value
+        filas = db.scalars(
+            select(FacturaAfiliado)
+            .where(
+                FacturaAfiliado.estatus_factura_afiliado == autorizada,
+                FacturaAfiliado.factura_afiliado_id.not_in(ya_usadas),
+            )
+            .order_by(FacturaAfiliado.factura_emisora)
+        ).all()
+        return [FacturaAfiliadoDisponibleRead.model_validate(f) for f in filas]
+
+    def facturas_agencia_disponibles(self) -> list[FacturaAgenciaDisponibleRead]:
+        """Mismo criterio que `facturas_afiliado_disponibles`, para `FacturaAgencia`."""
+        from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+        from app.modules.facturacion.factura_agencia import FacturaAgencia
+
+        db = self._repo.db
+        ya_usadas = select(Requisicion.factura_agencia_id).where(
+            Requisicion.factura_agencia_id.is_not(None)
+        )
+        filas = db.scalars(
+            select(FacturaAgencia)
+            .where(
+                FacturaAgencia.estatus_factura_agencia == EstatusFacturaProveedor.AUTORIZADA.value,
+                FacturaAgencia.factura_agencia_id.not_in(ya_usadas),
+            )
+            .order_by(FacturaAgencia.folio_factura_agencia)
+        ).all()
+        return [FacturaAgenciaDisponibleRead.model_validate(f) for f in filas]
+
+    def facturas_vendedor_disponibles(self) -> list[FacturaVendedorDisponibleRead]:
+        """Mismo criterio que `facturas_afiliado_disponibles`, para `FacturaVendedor`."""
+        from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+        from app.modules.facturacion.factura_vendedor import FacturaVendedor
+
+        db = self._repo.db
+        ya_usadas = select(Requisicion.factura_vendedor_id).where(
+            Requisicion.factura_vendedor_id.is_not(None)
+        )
+        autorizada = EstatusFacturaProveedor.AUTORIZADA.value
+        filas = db.scalars(
+            select(FacturaVendedor)
+            .where(
+                FacturaVendedor.estatus_factura_vendedor == autorizada,
+                FacturaVendedor.factura_vendedor_id.not_in(ya_usadas),
+            )
+            .order_by(FacturaVendedor.folio_factura_vendedor)
+        ).all()
+        return [FacturaVendedorDisponibleRead.model_validate(f) for f in filas]
+
     # ── Máquina de estados (idéntica en forma a FacturaAfiliado/FacturaAgencia, F2) ──
     def transicionar(
         self,
@@ -631,6 +729,30 @@ def listar_requisiciones(
             vendedor_comision_id=vendedor_comision_id,
         )
     )
+
+
+@router.get("/facturas-afiliado-disponibles", response_model=list[FacturaAfiliadoDisponibleRead])
+def listar_facturas_afiliado_disponibles(
+    usuario: CurrentUser = Depends(requiere_permiso("pagos:leer")),
+    svc: RequisicionService = Depends(get_requisicion_service),
+) -> list[FacturaAfiliadoDisponibleRead]:
+    return svc.facturas_afiliado_disponibles()
+
+
+@router.get("/facturas-agencia-disponibles", response_model=list[FacturaAgenciaDisponibleRead])
+def listar_facturas_agencia_disponibles(
+    usuario: CurrentUser = Depends(requiere_permiso("pagos:leer")),
+    svc: RequisicionService = Depends(get_requisicion_service),
+) -> list[FacturaAgenciaDisponibleRead]:
+    return svc.facturas_agencia_disponibles()
+
+
+@router.get("/facturas-vendedor-disponibles", response_model=list[FacturaVendedorDisponibleRead])
+def listar_facturas_vendedor_disponibles(
+    usuario: CurrentUser = Depends(requiere_permiso("pagos:leer")),
+    svc: RequisicionService = Depends(get_requisicion_service),
+) -> list[FacturaVendedorDisponibleRead]:
+    return svc.facturas_vendedor_disponibles()
 
 
 @router.get("/{item_id}", response_model=RequisicionRead)

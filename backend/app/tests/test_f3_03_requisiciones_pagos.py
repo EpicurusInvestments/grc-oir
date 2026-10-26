@@ -617,6 +617,97 @@ def test_pagar_requisicion_comision_agencia_no_truena_sin_factura_que_cerrar(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Combos "disponibles" del alta — petición del usuario, con captura: una factura ya
+# usada por OTRA requisición (de cualquier estatus) no debe volver a ofrecerse.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_facturas_afiliado_disponibles_excluye_las_ya_usadas_por_una_requisicion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_libre = _factura_afiliado(db, cat, Decimal("5000.00"))
+    factura_usada = _factura_afiliado(db, cat, Decimal("6000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-DISP-01",
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_usada),
+            "monto_requisicion": "6000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    ruta = "/api/v1/cobranza/requisiciones/facturas-afiliado-disponibles"
+    r = client.get(ruta, headers=_hdr("cxp"))
+    assert r.status_code == 200, r.text
+    ids = {item["factura_afiliado_id"] for item in r.json()}
+    assert str(factura_libre) in ids
+    assert str(factura_usada) not in ids
+
+
+def test_facturas_agencia_disponibles_excluye_las_ya_usadas_por_una_requisicion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-DISP-AG", Decimal("100000.00"))
+    factura_libre = _factura_agencia(db, cat, orden_id, Decimal("5000.00"))
+    factura_usada = _factura_agencia(db, cat, orden_id, Decimal("6000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-DISP-02",
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_usada),
+            "monto_requisicion": "6000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    ruta = "/api/v1/cobranza/requisiciones/facturas-agencia-disponibles"
+    r = client.get(ruta, headers=_hdr("cxp"))
+    assert r.status_code == 200, r.text
+    ids = {item["factura_agencia_id"] for item in r.json()}
+    assert str(factura_libre) in ids
+    assert str(factura_usada) not in ids
+
+
+def test_facturas_vendedor_disponibles_excluye_las_ya_usadas_por_una_requisicion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-DISP-VD", Decimal("100000.00"))
+    factura_libre = _factura_vendedor(db, cat, orden_id, Decimal("5000.00"))
+    factura_usada = _factura_vendedor(db, cat, orden_id, Decimal("6000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-DISP-03",
+            "tipo_requisicion": "comision_vendedor",
+            "vendedor_comision_id": str(cat["vendedor_id"]),
+            "orden_id": str(orden_id),
+            "factura_vendedor_id": str(factura_usada),
+            "monto_requisicion": "6000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    ruta = "/api/v1/cobranza/requisiciones/facturas-vendedor-disponibles"
+    r = client.get(ruta, headers=_hdr("cxp"))
+    assert r.status_code == 200, r.text
+    ids = {item["factura_vendedor_id"] for item in r.json()}
+    assert str(factura_libre) in ids
+    assert str(factura_usada) not in ids
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MovimientoBancario — canal dedicado de Tesorería + duplicados + conciliar manual
 # ══════════════════════════════════════════════════════════════════════════════
 def test_solo_tesoreria_puede_capturar_un_movimiento(

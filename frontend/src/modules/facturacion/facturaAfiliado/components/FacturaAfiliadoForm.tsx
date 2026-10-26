@@ -62,6 +62,10 @@ interface OrdenSeleccionada {
 interface Props {
   isEdit?: boolean;
   defaultValues?: Valores;
+  /** Id de la factura en edición — se manda como `excluir_de_factura_id` al combo de
+   *  OE para que sus propias asignaciones no desaparezcan (petición del usuario: solo
+   *  se excluyen las OE ya facturadas en OTRA factura). */
+  facturaAfiliadoIdActual?: string;
   /** Asignaciones ya guardadas, al editar — precargan la sección "Asignación a órdenes
    *  estación" (el `useState` de abajo solo las toma como valor inicial, no se
    *  resincroniza si la prop cambia después del primer render). */
@@ -82,6 +86,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 export function FacturaAfiliadoForm({
   isEdit,
   defaultValues,
+  facturaAfiliadoIdActual,
   asignacionesIniciales,
   archivoPdfPathInicial = null,
   archivoXmlPathInicial = null,
@@ -117,7 +122,7 @@ export function FacturaAfiliadoForm({
   const [archivoXmlPath, setArchivoXmlPath] = useState<string | null>(archivoXmlPathInicial);
 
   const afiliadoId = watch("afiliado_id");
-  const ordenesFacturables = useOrdenesFacturablesAfiliado(afiliadoId || null);
+  const ordenesFacturables = useOrdenesFacturablesAfiliado(afiliadoId || null, facturaAfiliadoIdActual);
 
   // Fix: cambiar de afiliado limpia las OI ya elegidas — eran del afiliado ANTERIOR y
   // ya no tiene sentido dejarlas (además de que ninguna pertenecería al nuevo). Se
