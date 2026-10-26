@@ -25,8 +25,8 @@ vi.mock("../hooks", () => ({
       { id: "af-2", etiqueta: "Grupo ACIR SA de CV" },
     ],
   }),
-  useOrdenesFacturablesAfiliado: (afiliadoId: string | null) => ({
-    data: afiliadoId ? ordenesFacturablesMock(afiliadoId) : [],
+  useOrdenesFacturablesAfiliado: (afiliadoId: string | null, excluirDeFacturaId?: string) => ({
+    data: afiliadoId ? ordenesFacturablesMock(afiliadoId, excluirDeFacturaId) : [],
   }),
 }));
 
@@ -215,6 +215,27 @@ describe("FacturaAfiliadoForm — Asignación a órdenes estación", () => {
     expect(await screen.findByDisplayValue("Radiorama Jalisco SA de CV")).toBeEnabled();
     expect(screen.getByText("Asignación a órdenes estación")).toBeInTheDocument();
     expect(screen.getByText("Folio de la Orden Interna")).toBeInTheDocument();
+  });
+
+  it("fix (petición del usuario): en edición, manda el id de la propia factura para que el combo no excluya sus propias OE", async () => {
+    ordenesFacturablesMock.mockReturnValue([]);
+    render(
+      <FacturaAfiliadoForm
+        isEdit
+        defaultValues={{
+          afiliado_id: "af-1",
+          factura_emisora: "EMI-2025-118",
+          fecha_factura_afiliado: "2025-04-10",
+          monto_factura_afiliado: "334904.00",
+          iva_factura_afiliado: "53584.64",
+        }}
+        facturaAfiliadoIdActual="fa-1"
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByDisplayValue("Radiorama Jalisco SA de CV");
+    expect(ordenesFacturablesMock).toHaveBeenCalledWith("af-1", "fa-1");
   });
 
   it("fix: en edición, precarga las OI ya asignadas y sobreviven al doble-render de StrictMode", async () => {

@@ -174,6 +174,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 onChange={(e) => {
                   setAfiliadoId(e.target.value);
                   setFacturaAfiliadoId("");
+                  setMontoRequisicion("");
                 }}
               >
                 <option value="">— Selecciona —</option>
@@ -191,7 +192,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   const id = e.target.value;
                   setFacturaAfiliadoId(id);
                   const f = facturasAfiliadoDelSeleccionado.find((x) => x.factura_afiliado_id === id);
-                  if (f) setMontoRequisicion(f.total_factura_afiliado);
+                  setMontoRequisicion(f ? f.total_factura_afiliado : "");
                 }}
                 disabled={!afiliadoId}
               >
@@ -216,6 +217,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 onChange={(e) => {
                   setAgenciaId(e.target.value);
                   setFacturaAgenciaId("");
+                  setMontoRequisicion("");
                 }}
               >
                 <option value="">— Selecciona —</option>
@@ -233,7 +235,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   const id = e.target.value;
                   setFacturaAgenciaId(id);
                   const f = facturasAgenciaDelSeleccionado.find((x) => x.factura_agencia_id === id);
-                  if (f) setMontoRequisicion(f.total_factura_agencia);
+                  setMontoRequisicion(f ? f.total_factura_agencia : "");
                 }}
                 disabled={!agenciaId}
               >
@@ -259,8 +261,9 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   const id = e.target.value;
                   setVendedorId(id);
                   setFacturaVendedorId("");
+                  setMontoRequisicion("");
                   const v = (vendedores.data ?? []).find((x) => x.vendedor_id === id);
-                  if (v && !pctVendedor) setPctVendedor(v.porcentaje_comision_default ?? "");
+                  setPctVendedor(v?.porcentaje_comision_default ?? "");
                 }}
               >
                 <option value="">— Selecciona —</option>
@@ -280,7 +283,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   const id = e.target.value;
                   setFacturaVendedorId(id);
                   const f = facturasVendedorDelSeleccionado.find((x) => x.factura_vendedor_id === id);
-                  if (f) setMontoRequisicion(f.total_factura_vendedor);
+                  setMontoRequisicion(f ? f.total_factura_vendedor : "");
                 }}
                 disabled={!vendedorId}
               >
@@ -326,7 +329,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   const id = e.target.value;
                   setAgenciaId(id);
                   const a = (agencias.data ?? []).find((x) => x.agencia_id === id);
-                  if (a && !pctAgencia) setPctAgencia(a.porcentaje_comision_agencia_default ?? "");
+                  setPctAgencia(a?.porcentaje_comision_agencia_default ?? "");
                 }}
               >
                 <option value="">— Selecciona —</option>

@@ -12,6 +12,8 @@ import type { Requisicion } from "../types";
 const listMock = vi.fn();
 const cambiarEstatusMock = vi.fn();
 const autorizarMock = vi.fn();
+const facturasAfiliadoInfoMock = vi.fn().mockResolvedValue([]);
+const facturasAfiliadoPagablesMock = vi.fn().mockResolvedValue([]);
 
 vi.mock("../api", () => ({
   requisicionApi: {
@@ -25,8 +27,10 @@ vi.mock("../api", () => ({
   afiliadosInfo: vi.fn().mockResolvedValue([]),
   agenciasInfo: vi.fn().mockResolvedValue([]),
   vendedoresInfo: vi.fn().mockResolvedValue([]),
-  facturasAfiliadoPagables: vi.fn().mockResolvedValue([]),
+  facturasAfiliadoPagables: () => facturasAfiliadoPagablesMock(),
   facturasAgenciaPagables: vi.fn().mockResolvedValue([]),
+  facturasAfiliadoInfo: () => facturasAfiliadoInfoMock(),
+  facturasAgenciaInfo: vi.fn().mockResolvedValue([]),
   facturasVendedorPagables: vi.fn().mockResolvedValue([]),
   ordenesInfo: vi.fn().mockResolvedValue([]),
 }));
@@ -73,6 +77,8 @@ describe("RequisicionesPage", () => {
     listMock.mockReset();
     cambiarEstatusMock.mockReset();
     autorizarMock.mockReset();
+    facturasAfiliadoInfoMock.mockReset().mockResolvedValue([]);
+    facturasAfiliadoPagablesMock.mockReset().mockResolvedValue([]);
   });
 
   it("lista las requisiciones con su monto y beneficiario", async () => {
@@ -81,6 +87,19 @@ describe("RequisicionesPage", () => {
     expect(screen.getAllByText("Multimedios Estrellas de Oro SA de CV").length).toBeGreaterThan(0);
     // Aparece tanto en el renglón de la lista como en la franja de KPIs ("Por autorizar").
     expect(screen.getAllByText(/\$526,176\.00/).length).toBeGreaterThan(0);
+  });
+
+  it("fix (reportado por el usuario, con captura): la columna 'Origen' resuelve la factura aunque ya no esté en el combo de 'disponibles' del alta", async () => {
+    // La requisición YA tiene esta factura ligada (así se creó) — el combo del alta
+    // (`facturasAfiliadoPagables`, ADR-217) la EXCLUYE porque ya está usada, pero el
+    // "Origen" de la lista debe seguir resolviéndola con `facturasAfiliadoInfo`
+    // (sin ese filtro) en vez de mostrar "—".
+    facturasAfiliadoPagablesMock.mockResolvedValue([]);
+    facturasAfiliadoInfoMock.mockResolvedValue([
+      { factura_afiliado_id: "fa-1", afiliado_id: "af-1", factura_emisora: "AFLI-003", total_factura_afiliado: "10317.00" },
+    ]);
+    renderCon({ ...base, factura_afiliado_id: "fa-1" });
+    expect(await screen.findByText("AFLI-003")).toBeInTheDocument();
   });
 
   it("en 'pendiente' ofrece cancelar y autorizar, pero NO marcar pagada", async () => {

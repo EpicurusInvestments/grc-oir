@@ -257,8 +257,9 @@ export interface VendedorInfo {
   porcentaje_comision_default: string | null;
 }
 
-/** Subconjunto de `FacturaAfiliado`/`FacturaAgencia` (F2) `autorizada`: origen de una
- *  requisición de pago. */
+/** Subconjunto de `FacturaAfiliado`/`FacturaAgencia` (F2) `autorizada` SIN requisición
+ *  ya ligada (petición del usuario, con captura: "ya no deberían aparecer las facturas
+ *  que ya tienen requisición de compra"): origen de una requisición de pago. */
 export interface FacturaAfiliadoInfo {
   factura_afiliado_id: string;
   afiliado_id: string;
@@ -272,7 +273,6 @@ export interface FacturaAgenciaInfo {
   orden_id: string;
   folio_factura_agencia: string | null;
   total_factura_agencia: string;
-  porcentaje_comision_agencia: string | null;
 }
 
 /** Subconjunto de `FacturaVendedor` (F2) `autorizada`: origen de una requisición de

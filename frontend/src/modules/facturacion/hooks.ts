@@ -148,11 +148,13 @@ export function useAsignacionesAfiliado(facturaId: string | null) {
 }
 
 /** Combo "Folio de la Orden Interna" del alta — solo se pide con un afiliado ya
- *  elegido (`enabled`), para no listar OE de nadie antes de tiempo. */
-export function useOrdenesFacturablesAfiliado(afiliadoId: string | null) {
+ *  elegido (`enabled`), para no listar OE de nadie antes de tiempo. `excluirDeFacturaId`
+ *  es la factura en edición: sus propias OE no cuentan como "ya facturadas" (petición
+ *  del usuario: las de OTRAS facturas sí se excluyen del combo). */
+export function useOrdenesFacturablesAfiliado(afiliadoId: string | null, excluirDeFacturaId?: string | null) {
   return useQuery({
-    queryKey: [K_AFILIADOS, "ordenes-facturables", afiliadoId],
-    queryFn: () => facturaAfiliadoApi.ordenesFacturables(afiliadoId as string),
+    queryKey: [K_AFILIADOS, "ordenes-facturables", afiliadoId, excluirDeFacturaId],
+    queryFn: () => facturaAfiliadoApi.ordenesFacturables(afiliadoId as string, excluirDeFacturaId),
     enabled: !!afiliadoId,
   });
 }

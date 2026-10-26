@@ -259,27 +259,50 @@ export async function vendedoresInfo(): Promise<VendedorInfo[]> {
   return data.items;
 }
 
-/** Solo las `autorizada`: son las únicas que se pueden pagar (precondición del backend
- *  al crear la requisición, aunque no la valide por FK — el combo ya la respeta). */
+/** Solo las `autorizada` y SIN ninguna requisición ya ligada (petición del usuario, con
+ *  captura: "ya no deberían aparecer las facturas que ya tienen requisición de compra"
+ *  — antes solo filtraba por estatus y una factura ya usada seguía apareciendo). */
 export async function facturasAfiliadoPagables(): Promise<FacturaAfiliadoInfo[]> {
+  const { data } = await apiClient.get<FacturaAfiliadoInfo[]>(
+    "/cobranza/requisiciones/facturas-afiliado-disponibles",
+  );
+  return data;
+}
+
+export async function facturasAgenciaPagables(): Promise<FacturaAgenciaInfo[]> {
+  const { data } = await apiClient.get<FacturaAgenciaInfo[]>(
+    "/cobranza/requisiciones/facturas-agencia-disponibles",
+  );
+  return data;
+}
+
+/** Petición del usuario: para que "Comisión vendedor" pueda elegir a cuál
+ *  `FacturaVendedor` corresponde (y así cerrarla al pagar la requisición). */
+export async function facturasVendedorPagables(): Promise<FacturaVendedorInfo[]> {
+  const { data } = await apiClient.get<FacturaVendedorInfo[]>(
+    "/cobranza/requisiciones/facturas-vendedor-disponibles",
+  );
+  return data;
+}
+
+/** Fix (reportado por el usuario, con captura): la columna "Origen" de la lista de
+ *  Requisiciones resolvía el folio de la factura con los mismos hooks `xxxPagables`
+ *  de arriba — pero esos, desde ADR-217, EXCLUYEN cualquier factura ya ligada a una
+ *  requisición, así que apenas se creaba la requisición, su propia factura
+ *  desaparecía del catálogo y la columna se quedaba en "—". Estas 2 funciones NO
+ *  filtran por requisición ya ligada (solo por `estatus == autorizada`, igual que
+ *  antes de ADR-217): úsense SOLO para resolver nombres/folios ya existentes, nunca
+ *  para ofrecer opciones de un combo de alta (ahí sí se quiere el filtro). */
+export async function facturasAfiliadoInfo(): Promise<FacturaAfiliadoInfo[]> {
   const { data } = await apiClient.get<Page<FacturaAfiliadoInfo>>("/facturacion/afiliados", {
     params: { estatus_factura_afiliado: "autorizada", size: 100 },
   });
   return data.items;
 }
 
-export async function facturasAgenciaPagables(): Promise<FacturaAgenciaInfo[]> {
+export async function facturasAgenciaInfo(): Promise<FacturaAgenciaInfo[]> {
   const { data } = await apiClient.get<Page<FacturaAgenciaInfo>>("/facturacion/agencias", {
     params: { estatus_factura_agencia: "autorizada", size: 100 },
-  });
-  return data.items;
-}
-
-/** Petición del usuario: para que "Comisión vendedor" pueda elegir a cuál
- *  `FacturaVendedor` corresponde (y así cerrarla al pagar la requisición). */
-export async function facturasVendedorPagables(): Promise<FacturaVendedorInfo[]> {
-  const { data } = await apiClient.get<Page<FacturaVendedorInfo>>("/facturacion/vendedores", {
-    params: { estatus_factura_vendedor: "autorizada", size: 100 },
   });
   return data.items;
 }

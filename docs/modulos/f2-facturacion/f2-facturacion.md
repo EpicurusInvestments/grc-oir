@@ -173,11 +173,15 @@ sin tocar, pero ningún formulario los llena desde que existen estos dos.
 
 **Combo "Folio de la Orden Interna" en alta Y edición (ADR-070, multi-selección desde
 ADR-083, también al editar desde ADR-087):** el formulario ofrece agregar VARIAS OE
-`cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=`), una por una
-con búsqueda; al guardar, la factura queda asignada a cada una
-(`ordenes_estacion_ids: UUID[]`, en `FacturaAfiliadoCreate` y también en
-`FacturaAfiliadoUpdate`) — sin excluir OE ya asignadas a otra factura: la spec permite
-facturar en parcialidades. El monto asignado a cada una es su propio `importe_emisora`
+`cerrada` del afiliado (`GET /afiliados/ordenes-facturables?afiliado_id=&excluir_de_
+factura_id=`), una por una con búsqueda; al guardar, la factura queda asignada a cada
+una (`ordenes_estacion_ids: UUID[]`, en `FacturaAfiliadoCreate` y también en
+`FacturaAfiliadoUpdate`). **Desde ADR-217 el combo YA NO ofrece una OE que tenga factura
+registrada en OTRA factura** (petición del usuario — revierte la idea original de
+"parcialidades libres" de la spec); al editar, `excluir_de_factura_id` evita que la
+propia factura se autoexcluya. El backend de creación/edición sigue aceptando mandar
+explícito el id de una OE ya facturada (esa capacidad no se quitó, solo el combo dejó de
+sugerirla). El monto asignado a cada una es su propio `importe_emisora`
 (no una repartición del Subtotal). Subtotal/IVA se capturan a mano, sin auto-llenarse
 desde las OE elegidas (con varias no hay un solo monto que copiar); la sección
 "Asignación a órdenes estación" muestra en vivo **Asignado** (suma de `importe_emisora`
@@ -719,8 +723,10 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   "2.3 Reales Conciliados" pedido no existe en el backend real (solo en un mockup
   obsoleto) — la OI en esa etapa queda `cerrada`, y se confirmó filtrar por ahí. Nuevo
   endpoint `GET /afiliados/ordenes-facturables?afiliado_id=` lista las OE `cerrada` del
-  afiliado (sin excluir las ya asignadas a otra factura: la spec permite parcialidades).
-  Al elegir un folio en el combo (`SearchableSelect`, búsqueda por folio), se precargan
+  afiliado (en ese momento, sin excluir las ya asignadas a otra factura: la spec permite
+  parcialidades — **decisión revertida después por ADR-217**, petición del usuario: el
+  combo ya no ofrece una OE ya facturada en otra). Al elegir un folio en el combo
+  (`SearchableSelect`, búsqueda por folio), se precargan
   Subtotal/IVA con `importe_emisora`/`iva_emisora` de esa OE — quedan editables — y al
   guardar, `FacturaAfiliadoCreate.orden_estacion_id` hace que el backend cree la
   `FacturaAfiliadoOrden` en la misma transacción (auto-asignación, confirmada con el
