@@ -6,10 +6,15 @@
  * lote sin filtrar y agrupa en el cliente — mismo criterio de "ampliar y filtrar en el
  * cliente" que el resto de este módulo.
  *
- * El "Origen del pago" del detalle (factura de afiliado/agencia u orden) se resuelve con
- * los combos de creación (facturas `autorizada`, órdenes de los últimos 100) — una
- * requisición cuyo origen ya no está en ese lote (p.ej. la factura pasó a `pagada` por
- * otra vía) muestra el folio crudo en vez del resuelto: limitación conocida, no rompe.
+ * El "Origen del pago" del detalle (factura de afiliado/agencia/vendedor u orden, según
+ * el tipo) se resuelve con los catálogos `xxxInfo` (facturas `autorizada`, SIN filtrar
+ * por si ya tienen una requisición ligada — ver ADR-217) y órdenes de los últimos 100 —
+ * una requisición cuyo origen ya no está en ese lote (p.ej. la factura pasó a `pagada`
+ * por otra vía) muestra el folio crudo en vez del resuelto: limitación conocida, no rompe.
+ *
+ * "Pagos vendedor" (`comision_vendedor`, renombrado en la UI — petición del usuario):
+ * ya NO captura `orden_id` ni `porcentaje_comision_vendedor`, se simplificó al mismo
+ * patrón que `pago_agencia` (solo Vendedor + `FacturaVendedor`, ahora obligatoria).
  */
 
 import { useMemo, useState } from "react";
@@ -21,8 +26,10 @@ import type { FiltrosRequisicion } from "../../api";
 import { badgeEstatusRequisicion, badgeTipoRequisicion, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
 import {
   useAgenciasInfo,
+  useAsignacionesFacturaAfiliado,
   useFacturasAfiliadoInfo,
   useFacturasAgenciaInfo,
+  useFacturasVendedorInfo,
   useOrdenesInfo,
   useRequisiciones,
   useVendedoresInfo,
@@ -89,6 +96,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
   const vendedores = useVendedoresInfo();
   const facturasAfiliado = useFacturasAfiliadoInfo();
   const facturasAgencia = useFacturasAgenciaInfo();
+  const facturasVendedor = useFacturasVendedorInfo();
   const ordenes = useOrdenesInfo();
 
   const agenciaMap = useMemo(() => new Map((agencias.data ?? []).map((a) => [a.agencia_id, a])), [agencias.data]);
@@ -101,7 +109,41 @@ export function RequisicionesPage({ filtroInicial }: Props) {
     () => new Map((facturasAgencia.data ?? []).map((f) => [f.factura_agencia_id, f])),
     [facturasAgencia.data],
   );
+  // "Pagos vendedor" (comision_vendedor) se simplificó al mismo patrón que
+  // pago_agencia (petición del usuario): "Origen del pago" y la orden de servicio
+  // relacionada ahora se resuelven vía su `FacturaVendedor`, no vía un `orden_id`
+  // directo (ya no se captura en el alta).
+  const facturaVendedorMap = useMemo(
+    () => new Map((facturasVendedor.data ?? []).map((f) => [f.factura_vendedor_id, f])),
+    [facturasVendedor.data],
+  );
   const ordenMap = useMemo(() => new Map((ordenes.data ?? []).map((o) => [o.orden_id, o])), [ordenes.data]);
+
+  // Badge "Orden de servicio" del detalle (petición del usuario, con captura): solo
+  // `pago_afiliado` necesita el endpoint de asignaciones de F2 (su factura puede
+  // repartirse entre OE de varias Órdenes de Servicio, "parcialidades") — los demás
+  // tipos ya resuelven su única orden con los catálogos de arriba.
+  const asignacionesFacturaAfiliado = useAsignacionesFacturaAfiliado(
+    selected?.tipo_requisicion === "pago_afiliado" ? selected.factura_afiliado_id : null,
+  );
+  const foliosOrdenServicio = (r: Requisicion): string[] => {
+    if (r.tipo_requisicion === "pago_afiliado") {
+      const folios = (asignacionesFacturaAfiliado.data ?? []).map((a) => a.folio_orden).filter(Boolean);
+      return [...new Set(folios)];
+    }
+    if (r.tipo_requisicion === "pago_agencia") {
+      const ordenId = facturaAgenciaMap.get(r.factura_agencia_id ?? "")?.orden_id;
+      const folio = ordenId ? ordenMap.get(ordenId)?.folio_orden : undefined;
+      return folio ? [folio] : [];
+    }
+    if (r.tipo_requisicion === "comision_vendedor") {
+      const ordenId = facturaVendedorMap.get(r.factura_vendedor_id ?? "")?.orden_id;
+      const folio = ordenId ? ordenMap.get(ordenId)?.folio_orden : undefined;
+      return folio ? [folio] : [];
+    }
+    const folio = ordenMap.get(r.orden_id ?? "")?.folio_orden;
+    return folio ? [folio] : [];
+  };
 
   let items = list.data?.items ?? [];
   if (ampliando) {
@@ -120,8 +162,12 @@ export function RequisicionesPage({ filtroInicial }: Props) {
     if (r.tipo_requisicion === "pago_afiliado") {
       return facturaAfiliadoMap.get(r.factura_afiliado_id ?? "")?.factura_emisora ?? "—";
     }
-    if (r.tipo_requisicion === "pago_agencia") {
-      return facturaAgenciaMap.get(r.factura_agencia_id ?? "")?.folio_factura_agencia ?? "—";
+    if (r.tipo_requisicion === "pago_agencia" || r.tipo_requisicion === "comision_vendedor") {
+      const folio =
+        r.tipo_requisicion === "pago_agencia"
+          ? facturaAgenciaMap.get(r.factura_agencia_id ?? "")?.folio_factura_agencia
+          : facturaVendedorMap.get(r.factura_vendedor_id ?? "")?.folio_factura_vendedor;
+      return folio ?? "—";
     }
     return ordenMap.get(r.orden_id ?? "")?.folio_orden ?? "—";
   };
@@ -191,9 +237,12 @@ export function RequisicionesPage({ filtroInicial }: Props) {
       />
     );
   } else if (selected) {
-    const esComision = selected.tipo_requisicion === "comision_vendedor" || selected.tipo_requisicion === "comision_agencia";
-    const pct = selected.tipo_requisicion === "comision_vendedor" ? selected.porcentaje_comision_vendedor : selected.porcentaje_comision_agencia_req;
-    const montoComision = selected.tipo_requisicion === "comision_vendedor" ? selected.requisicion_comision_vendedor : selected.requisicion_comision_agencia;
+    // "Pagos vendedor" (comision_vendedor) ya NO calcula/muestra comisión — se
+    // simplificó al mismo patrón que pago_agencia (petición del usuario).
+    const esComision = selected.tipo_requisicion === "comision_agencia";
+    const pct = selected.porcentaje_comision_agencia_req;
+    const montoComision = selected.requisicion_comision_agencia;
+    const folios = foliosOrdenServicio(selected);
 
     detail = (
       <>
@@ -208,6 +257,14 @@ export function RequisicionesPage({ filtroInicial }: Props) {
                 <span className={`badge ${badgeTipoRequisicion(selected.tipo_requisicion)}`}>
                   {TIPO_REQUISICION_LABEL[selected.tipo_requisicion]}
                 </span>
+                {folios.length > 0 && (
+                  // Petición del usuario, con captura: la orden de servicio relacionada
+                  // como badge, mismo patrón ya usado en Facturas de Cliente (ADR-064).
+                  <span className="badge b-blue mono">
+                    {folios[0]}
+                    {folios.length > 1 && ` +${folios.length - 1}`}
+                  </span>
+                )}
                 {selected.numero_oc_sap && (
                   <span className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>
                     {selected.numero_oc_sap}

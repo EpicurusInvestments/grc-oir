@@ -10,6 +10,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { facturaAfiliadoApi } from "@/modules/facturacion/api";
+
 import {
   afiliadosInfo,
   agenciasInfo,
@@ -20,6 +22,7 @@ import {
   facturasAfiliadoPagables,
   facturasAgenciaInfo,
   facturasAgenciaPagables,
+  facturasVendedorInfo,
   facturasVendedorPagables,
   historialPagosCliente,
   metodosDePago,
@@ -164,6 +167,9 @@ export const useFacturasAfiliadoInfo = () =>
 export const useFacturasAgenciaInfo = () =>
   useQuery({ queryKey: ["cobranza:facturas-agencia-info"], queryFn: facturasAgenciaInfo });
 
+export const useFacturasVendedorInfo = () =>
+  useQuery({ queryKey: ["cobranza:facturas-vendedor-info"], queryFn: facturasVendedorInfo });
+
 export const useOrdenesInfo = () =>
   useQuery({ queryKey: ["cobranza:ordenes"], queryFn: ordenesInfo });
 
@@ -214,6 +220,18 @@ export function useRequisiciones(filtros: FiltrosRequisicion) {
   });
 
   return { list, crear, actualizar, cambiarEstatus, autorizar };
+}
+
+/** Badge "Orden de servicio" del detalle de Requisiciones (petición del usuario, con
+ *  captura) — solo aplica a `pago_afiliado` (único tipo sin `orden_id` directo ni vía
+ *  una FK 1:1): reusa el endpoint de asignaciones de F2 (`facturaAfiliadoApi`, ya
+ *  enriquecido con `folio_orden`) en vez de duplicar la resolución. */
+export function useAsignacionesFacturaAfiliado(facturaAfiliadoId: string | null) {
+  return useQuery({
+    queryKey: [K_REQUISICIONES, "asignaciones-factura-afiliado", facturaAfiliadoId],
+    queryFn: () => facturaAfiliadoApi.asignaciones(facturaAfiliadoId as string),
+    enabled: !!facturaAfiliadoId,
+  });
 }
 
 // ── MovimientoBancario ────────────────────────────────────────────────────────

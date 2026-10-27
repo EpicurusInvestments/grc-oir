@@ -191,6 +191,9 @@ class FacturaAfiliadoOrdenRead(BaseModel):
     # dónde sacarlos hasta ahora.
     folio_orden_estacion: str = ""
     nombre_estacion: str | None = None
+    #: Folio de la `OrdenCliente` ("orden de servicio") padre de esta OE — petición del
+    #: usuario: desplegarlo como badge en el detalle de Requisiciones (Cobranza, F3).
+    folio_orden: str = ""
 
 
 class FacturaAfiliadoRead(BaseModel):
@@ -378,18 +381,22 @@ class FacturaAfiliadoService(
         ]
         datos_oe = self._datos_oe(leidas)
         for a in leidas:
-            folio, nombre = datos_oe.get(a.orden_estacion_id, ("", None))
-            a.folio_orden_estacion = folio
+            folio_oe, nombre, folio_orden = datos_oe.get(a.orden_estacion_id, ("", None, ""))
+            a.folio_orden_estacion = folio_oe
             a.nombre_estacion = nombre
+            a.folio_orden = folio_orden
         return leidas
 
     def _datos_oe(
         self, asignaciones: list[FacturaAfiliadoOrdenRead]
-    ) -> dict[uuid.UUID, tuple[str, str | None]]:
-        """Folio y estación de las OE de una factura, en UNA consulta — mismo patrón
-        por lote que `_conteo_asignaciones`. Sin esto, la lista de asignaciones solo
-        podía mostrar el UUID crudo de la OE (pantalla aprobada: folio + estación)."""
+    ) -> dict[uuid.UUID, tuple[str, str | None, str]]:
+        """Folio de la OE, estación y folio de la `OrdenCliente` padre, de las OE de una
+        factura, en UNA consulta — mismo patrón por lote que `_conteo_asignaciones`. Sin
+        esto, la lista de asignaciones solo podía mostrar el UUID crudo de la OE
+        (pantalla aprobada: folio + estación; el folio de la orden de servicio se
+        agrega para el badge del detalle de Requisiciones en Cobranza, F3)."""
         from app.modules.catalogos.estacion import Estacion
+        from app.modules.ordenes.orden_cliente import OrdenCliente
         from app.modules.ordenes.orden_estacion import OrdenEstacion
 
         ids = {a.orden_estacion_id for a in asignaciones}
@@ -400,11 +407,13 @@ class FacturaAfiliadoService(
                 OrdenEstacion.orden_estacion_id,
                 OrdenEstacion.folio_orden_estacion,
                 Estacion.nombre_estacion,
+                OrdenCliente.folio_orden,
             )
             .join(Estacion, Estacion.estacion_id == OrdenEstacion.estacion_id)
+            .join(OrdenCliente, OrdenCliente.orden_id == OrdenEstacion.orden_id)
             .where(OrdenEstacion.orden_estacion_id.in_(ids))
         ).all()
-        return {fila[0]: (fila[1], fila[2]) for fila in filas}
+        return {fila[0]: (fila[1], fila[2], fila[3]) for fila in filas}
 
     def _conteo_asignaciones(
         self, facturas: list[FacturaAfiliadoRead]

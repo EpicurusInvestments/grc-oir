@@ -74,6 +74,7 @@ const asignaciones2: FacturaAfiliadoOrden[] = [
     notas_asignacion: null,
     folio_orden_estacion: "OE-2025-0041A",
     nombre_estacion: "XHMT-FM",
+    folio_orden: "OC-2025-0041",
   },
   {
     id: "asig-2",
@@ -83,6 +84,7 @@ const asignaciones2: FacturaAfiliadoOrden[] = [
     notas_asignacion: null,
     folio_orden_estacion: "OE-2025-0041B",
     nombre_estacion: "XHRC-FM",
+    folio_orden: "OC-2025-0041",
   },
 ];
 

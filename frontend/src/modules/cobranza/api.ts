@@ -307,6 +307,17 @@ export async function facturasAgenciaInfo(): Promise<FacturaAgenciaInfo[]> {
   return data.items;
 }
 
+/** Petición del usuario: "Pagos vendedor" (antes "Comisión vendedor") se simplificó al
+ *  mismo patrón que `pago_agencia` — "Origen del pago" ahora resuelve la factura del
+ *  vendedor (ya no la orden directa), con el mismo criterio sin filtro que las otras
+ *  2 funciones `xxxInfo` de arriba. */
+export async function facturasVendedorInfo(): Promise<FacturaVendedorInfo[]> {
+  const { data } = await apiClient.get<Page<FacturaVendedorInfo>>("/facturacion/vendedores", {
+    params: { estatus_factura_vendedor: "autorizada", size: 100 },
+  });
+  return data.items;
+}
+
 /** Órdenes para el combo de comisiones (comision_vendedor/comision_agencia): sin filtrar
  *  por estatus_orden — la comisión puede corresponder a una orden ya facturada o cobrada,
  *  no solo cerrada. Trae hasta 100; sin live-search en el backend (limitación conocida). */

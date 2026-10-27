@@ -14,6 +14,14 @@ const cambiarEstatusMock = vi.fn();
 const autorizarMock = vi.fn();
 const facturasAfiliadoInfoMock = vi.fn().mockResolvedValue([]);
 const facturasAfiliadoPagablesMock = vi.fn().mockResolvedValue([]);
+const asignacionesFacturaAfiliadoMock = vi.fn().mockResolvedValue([]);
+
+// El badge "Orden de servicio" de `pago_afiliado` reusa el endpoint de asignaciones de
+// F2 (`facturaAfiliadoApi`, de otro módulo) — se mockea aparte para que la prueba no
+// dependa de una llamada HTTP real no interceptada.
+vi.mock("@/modules/facturacion/api", () => ({
+  facturaAfiliadoApi: { asignaciones: (id: string) => asignacionesFacturaAfiliadoMock(id) },
+}));
 
 vi.mock("../api", () => ({
   requisicionApi: {
@@ -31,6 +39,7 @@ vi.mock("../api", () => ({
   facturasAgenciaPagables: vi.fn().mockResolvedValue([]),
   facturasAfiliadoInfo: () => facturasAfiliadoInfoMock(),
   facturasAgenciaInfo: vi.fn().mockResolvedValue([]),
+  facturasVendedorInfo: vi.fn().mockResolvedValue([]),
   facturasVendedorPagables: vi.fn().mockResolvedValue([]),
   ordenesInfo: vi.fn().mockResolvedValue([]),
 }));
@@ -79,6 +88,7 @@ describe("RequisicionesPage", () => {
     autorizarMock.mockReset();
     facturasAfiliadoInfoMock.mockReset().mockResolvedValue([]);
     facturasAfiliadoPagablesMock.mockReset().mockResolvedValue([]);
+    asignacionesFacturaAfiliadoMock.mockReset().mockResolvedValue([]);
   });
 
   it("lista las requisiciones con su monto y beneficiario", async () => {
@@ -100,6 +110,32 @@ describe("RequisicionesPage", () => {
     ]);
     renderCon({ ...base, factura_afiliado_id: "fa-1" });
     expect(await screen.findByText("AFLI-003")).toBeInTheDocument();
+  });
+
+  it("petición del usuario, con captura: despliega la orden de servicio relacionada como badge junto al tipo", async () => {
+    asignacionesFacturaAfiliadoMock.mockResolvedValue([
+      { id: "asig-1", factura_afiliado_id: "fa-1", orden_estacion_id: "oe-1", monto_asignado: "100.00", notas_asignacion: null, folio_orden_estacion: "OE-1", nombre_estacion: "XHTEST-FM", folio_orden: "OC-2026-0041" },
+    ]);
+    renderCon({ ...base, factura_afiliado_id: "fa-1" });
+    (await screen.findByText("REQ-2026-0001")).click();
+    expect(await screen.findByText("OC-2026-0041")).toBeInTheDocument();
+  });
+
+  it("pago_afiliado con la factura repartida en varias Órdenes de Servicio (parcialidades): el badge muestra la primera y un contador", async () => {
+    asignacionesFacturaAfiliadoMock.mockResolvedValue([
+      { id: "asig-1", factura_afiliado_id: "fa-1", orden_estacion_id: "oe-1", monto_asignado: "100.00", notas_asignacion: null, folio_orden_estacion: "OE-1", nombre_estacion: "XHTEST-FM", folio_orden: "OC-2026-0041A" },
+      { id: "asig-2", factura_afiliado_id: "fa-1", orden_estacion_id: "oe-2", monto_asignado: "100.00", notas_asignacion: null, folio_orden_estacion: "OE-2", nombre_estacion: "XHTEST-FM", folio_orden: "OC-2026-0041B" },
+    ]);
+    renderCon({ ...base, factura_afiliado_id: "fa-1" });
+    (await screen.findByText("REQ-2026-0001")).click();
+    expect(await screen.findByText("OC-2026-0041A +1")).toBeInTheDocument();
+  });
+
+  it("sin factura ligada (campo opcional): no aparece ningún badge de orden de servicio", async () => {
+    renderCon(base);
+    (await screen.findByText("REQ-2026-0001")).click();
+    await waitFor(() => expect(screen.getByText("Origen del pago")).toBeInTheDocument());
+    expect(asignacionesFacturaAfiliadoMock).not.toHaveBeenCalled();
   });
 
   it("en 'pendiente' ofrece cancelar y autorizar, pero NO marcar pagada", async () => {

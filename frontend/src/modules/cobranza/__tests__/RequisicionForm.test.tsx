@@ -142,8 +142,20 @@ describe("RequisicionForm: bug reportado por el usuario — el monto quedaba con
   });
 });
 
-describe("RequisicionForm: bug reportado por el usuario — el % de comisión sugerido se quedaba pegado al cambiar de vendedor/agencia", () => {
-  it("comision_vendedor: cambiar de vendedor reemplaza el % sugerido por el del nuevo vendedor", async () => {
+describe("RequisicionForm: 'Comisión agencia' se quita del selector (petición del usuario)", () => {
+  it("el selector 'Tipo de requisición' ya no ofrece 'Comisión agencia'", async () => {
+    const { container } = renderForm();
+    await screen.findByText("Radio Fórmula MX");
+
+    const [selectTipo] = container.querySelectorAll("select.fsel");
+    const opciones = Array.from(selectTipo.querySelectorAll("option")).map((o) => o.textContent);
+    expect(opciones).toEqual(["Pago afiliado", "Pago agencia", "Pagos vendedor"]);
+    expect(opciones).not.toContain("Comisión agencia");
+  });
+});
+
+describe("RequisicionForm: 'Pagos vendedor' (petición del usuario) — mismo patrón que 'Pago agencia'", () => {
+  it("ya no muestra 'Orden de cliente' ni '% Comisión'", async () => {
     const { container } = renderForm();
     await screen.findByText("Radio Fórmula MX");
 
@@ -151,29 +163,145 @@ describe("RequisicionForm: bug reportado por el usuario — el % de comisión su
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
     await screen.findByText("Juan Arturo Rodríguez Morales");
 
-    const [, selectVendedor] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
-    expect(screen.getByDisplayValue("5.00")).toBeInTheDocument();
-
-    fireEvent.change(selectVendedor, { target: { value: "vd-2" } });
-    expect(screen.queryByDisplayValue("5.00")).not.toBeInTheDocument();
-    expect(screen.getByDisplayValue("8.00")).toBeInTheDocument();
+    expect(screen.queryByText("Orden de cliente")).not.toBeInTheDocument();
+    expect(screen.queryByText("% Comisión")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Buscar por folio de orden…")).not.toBeInTheDocument();
   });
 
-  it("comision_agencia: cambiar de agencia reemplaza el % sugerido por el de la nueva agencia", async () => {
+  it("'Factura del vendedor' ya no dice '(opcional)' y Guardar exige elegirla", async () => {
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Radio Fórmula MX");
+
+    const [selectTipo] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
+    await screen.findByText("Juan Arturo Rodríguez Morales");
+
+    expect(screen.queryByText("Factura del vendedor (opcional)")).not.toBeInTheDocument();
+    expect(screen.getByText("Factura del vendedor")).toBeInTheDocument();
+
+    const numero = container.querySelectorAll("input.fi")[0] as HTMLInputElement; // "Número de requisición"
+    fireEvent.change(numero, { target: { value: "REQ-TEST" } });
+
+    // Vendedor PRIMERO: elegirlo limpia el monto (fix de un bug anterior), así que debe
+    // ir antes de capturar el monto, no después.
+    const [, selectVendedor] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+
+    const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+    fireEvent.change(monto, { target: { value: "100.00" } });
+
+    fireEvent.click(screen.getByText("Guardar"));
+    expect(screen.getByText("Selecciona el vendedor y la factura del vendedor.")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("RequisicionForm: 'Pago afiliado'/'Pago agencia' (petición del usuario) — la factura ya no es opcional", () => {
+  it("pago_afiliado: 'Factura de la emisora' ya no dice '(opcional)' y Guardar la exige", async () => {
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Radio Fórmula MX");
+
+    expect(screen.queryByText("Factura de la emisora (opcional)")).not.toBeInTheDocument();
+    expect(screen.getByText("Factura de la emisora")).toBeInTheDocument();
+
+    const [, selectAfiliado] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+
+    const numero = container.querySelectorAll("input.fi")[0] as HTMLInputElement;
+    fireEvent.change(numero, { target: { value: "REQ-TEST" } });
+    const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+    fireEvent.change(monto, { target: { value: "100.00" } });
+
+    fireEvent.click(screen.getByText("Guardar"));
+    expect(screen.getByText("Selecciona el afiliado y la factura de la emisora.")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("pago_agencia: 'Factura de la agencia' ya no dice '(opcional)' y Guardar la exige", async () => {
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Radio Fórmula MX");
+
+    const [selectTipo] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectTipo, { target: { value: "pago_agencia" } });
+    await screen.findByText("Mindshare México");
+
+    expect(screen.queryByText("Factura de la agencia (opcional)")).not.toBeInTheDocument();
+    expect(screen.getByText("Factura de la agencia")).toBeInTheDocument();
+
+    const [, selectAgencia] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectAgencia, { target: { value: "ag-1" } });
+
+    const numero = container.querySelectorAll("input.fi")[0] as HTMLInputElement;
+    fireEvent.change(numero, { target: { value: "REQ-TEST" } });
+    const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+    fireEvent.change(monto, { target: { value: "100.00" } });
+
+    fireEvent.click(screen.getByText("Guardar"));
+    expect(screen.getByText("Selecciona la agencia y la factura de la agencia.")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("RequisicionForm: bug reportado por el usuario — cambiar de 'Tipo de requisición' no limpiaba los demás campos", () => {
+  it("pago_afiliado → pago_agencia: limpia afiliado/factura/monto; el nuevo tipo no hereda nada del anterior", async () => {
+    const { container } = renderForm();
+    await screen.findByText("Radio Fórmula MX");
+
+    const [selectTipo, selectAfiliado, selectFacturaAfiliado] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    fireEvent.change(selectFacturaAfiliado, { target: { value: "fa-1" } });
+    expect(screen.getByDisplayValue("290.25")).toBeInTheDocument();
+
+    fireEvent.change(selectTipo, { target: { value: "pago_agencia" } });
+    await screen.findByText("Mindshare México");
+
+    // El monto autollenado por la factura de afiliado ya no debe seguir ahí.
+    expect(screen.queryByDisplayValue("290.25")).not.toBeInTheDocument();
+    // El select de Afiliado/su factura ya no están en el DOM (cambió de rama) — si el
+    // componente conservara el valor viejo "af-1" en el estado, no se notaría visualmente
+    // porque el campo no se renderiza, pero si se vuelve a "pago_afiliado" debe verse limpio.
+    fireEvent.change(selectTipo, { target: { value: "pago_afiliado" } });
+    await screen.findByText("Radio Fórmula MX");
+    const [, selectAfiliado2] = container.querySelectorAll("select.fsel");
+    expect((selectAfiliado2 as HTMLSelectElement).value).toBe("");
+  });
+
+  it("comision_vendedor → pago_afiliado: limpia vendedor/factura del vendedor/monto", async () => {
     const { container } = renderForm();
     await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectTipo, { target: { value: "comision_agencia" } });
-    await screen.findByText("Mindshare México");
+    fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
+    await screen.findByText("Juan Arturo Rodríguez Morales");
 
-    const [, selectAgencia] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAgencia, { target: { value: "ag-1" } });
-    expect(screen.getByDisplayValue("10.00")).toBeInTheDocument();
+    const [, selectVendedor, selectFacturaVendedor] = container.querySelectorAll("select.fsel");
+    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+    fireEvent.change(selectFacturaVendedor, { target: { value: "fv-1" } });
+    expect(screen.getByDisplayValue("4698.00")).toBeInTheDocument();
 
-    fireEvent.change(selectAgencia, { target: { value: "ag-2" } });
-    expect(screen.queryByDisplayValue("10.00")).not.toBeInTheDocument();
-    expect(screen.getByDisplayValue("12.00")).toBeInTheDocument();
+    fireEvent.change(selectTipo, { target: { value: "pago_afiliado" } });
+    await screen.findByText("Radio Fórmula MX");
+
+    expect(screen.queryByDisplayValue("4698.00")).not.toBeInTheDocument();
+    const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
+    expect(monto.value).toBe("");
   });
 });

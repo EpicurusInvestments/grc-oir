@@ -93,16 +93,24 @@ PK `pago_cliente_id`. FK `CobranzaFactura` (N:1). Captura manual por **CxC**.
 
 ### Requisicion (23 campos spec + `factura_vendedor_id` agregado — ver ADR-216)
 PK `requisicion_id`. `tipo_requisicion` ENUM (`pago_afiliado`/`pago_agencia`/
-`comision_vendedor`/`comision_agencia`). FKs opcionales según el tipo (`factura_afiliado_id`,
+`comision_vendedor`/`comision_agencia` — en la UI, `comision_vendedor` se muestra como
+**"Pagos vendedor"** desde ADR-219, el valor interno no cambia; **`comision_agencia` ya
+NO aparece en el selector del alta desde ADR-220**, aunque sigue existiendo en el
+modelo/API para lo ya capturado). FKs según el tipo (`factura_afiliado_id`,
 `factura_agencia_id`, `factura_vendedor_id`, `orden_id`, `afiliado_id`, `agencia_id`,
-`vendedor_comision_id`). `factura_vendedor_id` (migración `a1c4f6e8b2d7`, ADR-216) solo la
-usa `comision_vendedor`, y es opcional ahí (puede capturarse sin saber todavía a cuál
-`FacturaVendedor` corresponde). `comision_agencia` no tiene ninguna factura asociada (pago
-puro de comisión, confirmado por diseño — no aplica cierre de factura).
+`vendedor_comision_id`) — **`factura_afiliado_id`/`factura_agencia_id`/
+`factura_vendedor_id` son OBLIGATORIAS** para sus respectivos tipos desde ADR-219/
+ADR-220 (antes eran opcionales: se podía capturar la requisición sin saber todavía a
+cuál factura correspondía). `comision_agencia` no tiene ninguna factura asociada (pago
+puro de comisión, confirmado por diseño — no aplica cierre de factura) y sigue siendo
+el único tipo con `orden_id` + % de comisión (ya inalcanzable desde el alta, ADR-220).
 Captura por **CxP**. Calculados: `requisicion_comision_vendedor = OrdenCliente.total *
-porcentaje_comision_vendedor / 100`; `requisicion_comision_agencia` análogo;
-`diferencia_afiliada = monto_requisicion - FacturaAfiliado.total_factura_afiliado`
-(monitoreo de márgenes, puede ser negativa — no llevar `CHECK >= 0` en ese campo).
+porcentaje_comision_vendedor / 100` — **ya NO se ejecuta para altas nuevas de
+`comision_vendedor`** desde ADR-219 (no hay `orden_id` del que tomarlo); las columnas
+siguen existiendo, solo quedan sin capturar por esa vía. `requisicion_comision_agencia`
+análogo, SIN cambios. `diferencia_afiliada = monto_requisicion -
+FacturaAfiliado.total_factura_afiliado` (monitoreo de márgenes, puede ser negativa — no
+llevar `CHECK >= 0` en ese campo).
 
 **Máquina de estados real** (con endpoint dedicado, mismo mecanismo de seams que F1/F2):
 `pendiente → autorizada → pagada`, rama a `cancelada` desde `pendiente`/`autorizada`.
@@ -120,6 +128,16 @@ requisiciones pendientes sobre la misma factura — decisión explícita del usu
 `Requisicion` (de cualquier estatus) tiene ligada todavía; reemplazan, para el alta de
 Requisicion, el pedir directo `/facturacion/afiliados|agencias|vendedores` (ese listado
 genérico de Facturación sigue mostrando TODAS las facturas, sin este filtro).
+
+**Badge "Orden de servicio" del detalle (ADR-218, actualizado en ADR-219):** junto al
+estado/tipo, mismo patrón que el badge de orden en Facturas de Cliente (ADR-064) —
+folio + `+N` si hay varias. Resuelto en el frontend con los catálogos ya cargados:
+`comision_agencia` vía `orden_id` directo (el único que lo sigue capturando);
+`pago_agencia` y `comision_vendedor` (desde ADR-219) vía la factura ligada
+(`FacturaAgencia.orden_id` / `FacturaVendedor.orden_id`); `pago_afiliado` reusa el
+endpoint de asignaciones de F2 (`GET /facturacion/afiliados/{id}/ordenes`, con
+`folio_orden` agregado) para resolver la(s) Orden(es) de Servicio detrás de una factura
+repartida en parcialidades.
 
 ### MovimientoBancario (11 campos spec, sin ajustes)
 PK `movimiento_id`. `tipo_movimiento` ENUM (`cargo`/`abono`). Captura por **Tesorería**

@@ -2872,6 +2872,9 @@ def test_crear_factura_afiliado_con_orden_estacion_asigna_automaticamente(
     oe_db = db.get(OrdenEstacion, oe)
     assert asignaciones[0]["folio_orden_estacion"] == oe_db.folio_orden_estacion
     assert asignaciones[0]["nombre_estacion"] == "XHTEST-FM"
+    # Folio de la OrdenCliente ("orden de servicio") padre de la OE — petición del
+    # usuario: se usa como badge en el detalle de Requisiciones (Cobranza, F3).
+    assert asignaciones[0]["folio_orden"] == "OC-AUTO"
 
 
 def test_crear_factura_afiliado_orden_estacion_no_cerrada_400(

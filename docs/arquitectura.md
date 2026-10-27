@@ -8990,3 +8990,136 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (resuelve "Origen" aunque la factura ya no esté en el combo de "disponibles" del
   alta); 3 pruebas nuevas en `RequisicionForm.test.tsx` (cambiar de afiliado/vendedor, y
   deseleccionar la factura, limpian el monto). Suite `cobranza` 29/29 sin regresiones.
+
+### ADR-218 — Badge "Orden de servicio" en el detalle de Requisiciones (los 4 tipos)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-27 (petición del usuario, con captura): en el
+  detalle de "Requisiciones de pago" (CxP) pidió desplegar la orden de servicio
+  relacionada, para los 4 tipos (Agencia, Afiliado/Estación y Vendedor), **igual al
+  patrón ya usado en Facturas de Cliente**: un badge chico junto a los demás (estado,
+  tipo), no una tarjeta nueva — primer intento (card con anunciante/vendedor/total vía
+  endpoint dedicado) revertido por completo a petición del usuario por sobre-construir
+  lo pedido.
+- **Decisión — mismo patrón que ADR-064 (`FacturaClientePage`):** un
+  `<span className="badge b-blue mono">` con el folio de la `OrdenCliente`, y
+  `+N` si hay más de una (reutiliza la convención ya existente, no una nueva).
+  Resolución por tipo, toda en el FRONTEND con datos ya cargados en la página (sin
+  endpoint nuevo para 3 de los 4 tipos):
+  - `comision_vendedor`/`comision_agencia`: `ordenMap.get(selected.orden_id)` — ya
+    disponible (catálogo `useOrdenesInfo` ya cargado en esta pantalla).
+  - `pago_agencia`: `facturaAgenciaMap.get(factura_agencia_id)?.orden_id` →
+    `ordenMap.get(...)` — `FacturaAgenciaInfo` ya trae `orden_id` desde ADR-216.
+  - `pago_afiliado` (único caso sin atajo: `FacturaAfiliado` no tiene `orden_id` propio,
+    reparte su costo entre OE de una o varias `OrdenCliente` vía `FacturaAfiliadoOrden`,
+    N:M): se agrega `folio_orden` a `FacturaAfiliadoOrdenRead` (F2,
+    `factura_afiliado.py` — un solo `JOIN` extra en `_datos_oe()`, campo aditivo, no
+    rompe nada existente) y Cobranza **reusa el endpoint de asignaciones que F2 ya
+    tenía** (`GET /facturacion/afiliados/{id}/ordenes`, nuevo hook
+    `useAsignacionesFacturaAfiliado` que importa `facturaAfiliadoApi` desde el módulo
+    `facturacion` — primer cruce de módulos en el frontend, mismo sentido F3→F2 que ya
+    usa el backend) en vez de crear un endpoint nuevo en `cobranza`. Si hay varias
+    OE de distintas Órdenes de Servicio (parcialidades, F2), se deduplican los folios y
+    se listan todos (primero + `+N`).
+  - Sin factura ligada (campo opcional en `pago_afiliado`/`pago_agencia`): no hay folio
+    que resolver, el badge simplemente no aparece.
+- **Verificado:** backend — `ruff` limpio; aserción nueva en el test ya existente de
+  `test_f2_02_facturacion_escritura.py` (`folio_orden` en la respuesta de asignaciones);
+  suite completa de backend 100% verde. Frontend — `tsc`/`eslint` limpios; 3 pruebas
+  nuevas en `RequisicionesPage.test.tsx` (badge con una orden, badge `+N` con varias,
+  sin badge y sin llamada de red si no hay factura ligada — con
+  `@/modules/facturacion/api` mockeado aparte para no depender de una llamada HTTP
+  real). Suite `cobranza`+`facturacion` 139/139 sin regresiones.
+
+### ADR-219 — "Pagos vendedor" (antes "Comisión vendedor"): se simplifica al mismo patrón que "Pago agencia"
+
+- **Estado:** aceptada · **Fecha:** 2026-10-27 (petición del usuario, con captura):
+  renombrar la opción "Comisión vendedor" → "Pagos vendedor" en el alta de Requisicion,
+  y que su captura quede **igual que "Pago agencia"**: quitar el combo "Orden de
+  cliente" y el campo "% Comisión"; solo se elige la `FacturaVendedor` ya capturada en
+  Facturación (F2), ahora **obligatoria** (antes era opcional).
+- **Decisión — solo la etiqueta cambia, no el valor interno:** `tipo_requisicion` sigue
+  siendo `"comision_vendedor"` en BD/API (spec BD v2, no se renombra — guardarraíl del
+  CLAUDE.md); `TIPO_REQUISICION_LABEL.comision_vendedor` pasa de "Comisión vendedor" a
+  "Pagos vendedor" (solo el texto que ve el usuario).
+- **Backend (`RequisicionService.create()`):** la validación de FKs obligatorias para
+  `comision_vendedor` cambia de `vendedor_comision_id + orden_id` a
+  `vendedor_comision_id + factura_vendedor_id`. **Esto deja de ejecutar, para altas
+  nuevas, el cálculo de la spec** `requisicion_comision_vendedor = OrdenCliente.total *
+  porcentaje_comision_vendedor / 100` (no hay `orden_id` del que tomarlo) — es una
+  desviación deliberada, a petición explícita del usuario, no una "mejora" por cuenta
+  propia. Las columnas `porcentaje_comision_vendedor`/`requisicion_comision_vendedor`
+  NO se renombran ni se quitan (siguen existiendo, solo quedan sin capturar por esta
+  vía); el cálculo en `create()`/`_pre_update()` se deja intacto (no-op sin `orden_id`)
+  por si algún registro antiguo lo trae. `comision_agencia` (el otro tipo "de comisión")
+  **no cambia**, sigue exactamente igual.
+- **Frontend (`RequisicionForm.tsx`):** se quita el `SearchableSelect` de "Orden de
+  cliente" y el input de "% Comisión" del bloque `comision_vendedor`; "Factura del
+  vendedor" deja de decir "(opcional)" y ahora valida como obligatoria junto al
+  vendedor. `RequisicionesPage.tsx`: como `orden_id` ya no se captura, "Origen del
+  pago" y el badge "Orden de servicio" (ADR-218) para este tipo se resuelven ahora vía
+  su `FacturaVendedor` (nuevo `facturasVendedorInfo()`/`useFacturasVendedorInfo`, mismo
+  criterio sin-filtro que ADR-217) en vez de `Requisicion.orden_id` directo — idéntico
+  al mecanismo que ya usa `pago_agencia`. El bloque "Cálculo de comisión" del detalle
+  ya no se muestra para `comision_vendedor` (`esComision` ahora solo cubre
+  `comision_agencia`).
+- **Verificado:** backend — `ruff` limpio; pruebas de `test_f3_03_requisiciones_pagos.py`
+  reescritas (el alta ya no requiere `orden_id` ni calcula el % de comisión; rechaza sin
+  `factura_vendedor_id`); suite completa de backend 100% verde. Frontend — `tsc`/
+  `eslint` limpios; pruebas de `RequisicionForm.test.tsx` actualizadas (se quita la
+  prueba obsoleta del % de comisión de vendedor; nuevas pruebas confirman que ya no se
+  muestran "Orden de cliente"/"% Comisión" y que Guardar exige la factura); suite
+  `cobranza` 33/33 sin regresiones.
+
+### ADR-220 — "Pago afiliado"/"Pago agencia": factura obligatoria; "Comisión agencia" se quita del selector del alta
+
+- **Estado:** aceptada · **Fecha:** 2026-10-27 (petición del usuario): continuación
+  directa de ADR-219 sobre el mismo formulario de "Nueva requisición":
+  1. `pago_agencia`: `factura_agencia_id` deja de ser opcional.
+  2. `pago_afiliado`: `factura_afiliado_id` deja de ser opcional.
+  3. `comision_agencia`: se elimina del selector "Tipo de requisición" del alta.
+- **Decisión (1 y 2) — backend:** `RequisicionService.create()` ahora exige
+  `factura_afiliado_id`/`factura_agencia_id` junto con `afiliado_id`/`agencia_id` para
+  sus respectivos tipos (antes solo el catálogo era obligatorio, la factura se podía
+  capturar después). Error de dominio claro si falta cualquiera de los dos.
+- **Decisión (1 y 2) — frontend:** en `RequisicionForm.tsx`, "Factura de la emisora"/
+  "Factura de la agencia" dejan de decir "(opcional)", ganan `fl-required`, su opción
+  vacía cambia de "— Ninguna —" a "— Selecciona —" (mismo texto que el resto de
+  selects obligatorios), y `confirmar()` valida que estén elegidas antes de guardar.
+- **Decisión (3):** `comision_agencia` **sigue existiendo** en `TipoRequisicion`/el
+  backend/las requisiciones ya capturadas (no se renombra ni se quita — spec BD v2,
+  guardarraíl del CLAUDE.md) — solo se excluye de las opciones que ofrece el `<select>`
+  "Tipo de requisición" del alta (`TIPOS_SELECCIONABLES`, nueva constante en
+  `RequisicionForm.tsx` que filtra `TIPOS_REQUISICION`). El bloque de campos de
+  `comision_agencia` dentro del formulario se deja intacto (código ya inalcanzable
+  desde la UI, no se borra) por si se necesita reactivar. Las vistas de solo-lectura
+  (filtros "Comisiones" de `RequisicionesPage.tsx`, badges, etc.) NO cambian — las
+  requisiciones `comision_agencia` ya capturadas se siguen viendo y filtrando igual.
+- **Verificado:** backend — `ruff` limpio; `_crear_requisicion_simple()` (helper
+  compartido por 6 pruebas de la máquina de estados) actualizado para crear su propia
+  orden+factura, ya no le bastaba con la agencia sola; 2 pruebas nuevas de rechazo
+  (`pago_afiliado`/`pago_agencia` sin factura → 400); suite completa de backend 100%
+  verde. Frontend — `tsc`/`eslint` limpios; se quita la prueba de `comision_agencia`
+  que ya no podía disparase vía `fireEvent.change` en un `<select>` sin esa `<option>`
+  (comportamiento real del DOM, no un bug) y se reemplaza por una que confirma que el
+  selector ya no la ofrece; 2 pruebas nuevas confirman que "Pago afiliado"/"Pago
+  agencia" exigen su factura. Suite `cobranza` 35/35 sin regresiones.
+
+### Fix (reportado por el usuario): cambiar "Tipo de requisición" no limpiaba los demás campos
+
+- **Reporte del usuario:** en "Nueva requisición", al elegir un afiliado/agencia/
+  vendedor (y su factura, autollenando el monto) y luego CAMBIAR el "Tipo de
+  requisición", todo lo capturado para el tipo anterior se quedaba en el estado del
+  componente — invisible mientras la rama correspondiente no se renderizaba, pero
+  listo para reaparecer (o irse por error en el payload) si el usuario volvía al tipo
+  original o guardaba sin notar el arrastre.
+- **Decisión:** el `onChange` del select "Tipo de requisición" ahora limpia, además de
+  `tipo`, TODO el estado específico de un tipo: `afiliadoId`, `facturaAfiliadoId`,
+  `agenciaId`, `facturaAgenciaId`, `vendedorId`, `facturaVendedorId`, `ordenId`,
+  `pctAgencia` y `montoRequisicion` (autollenado, ya no válido para el tipo nuevo) —
+  además de limpiar cualquier mensaje de error visible. `numeroRequisicion`/
+  `numeroOcSap`/`observaciones` NO se tocan (no son específicos del tipo; el usuario ya
+  los había tecleado y no hay motivo para perderlos solo por corregir el tipo).
+- **Verificado:** `tsc`/`eslint` limpios; 2 pruebas nuevas en `RequisicionForm.test.tsx`
+  (cambiar de `pago_afiliado` a `pago_agencia` y de regreso deja todo limpio; cambiar de
+  `comision_vendedor` a `pago_afiliado` también). Suite `cobranza` 37/37 sin
+  regresiones.

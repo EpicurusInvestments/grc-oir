@@ -266,6 +266,7 @@ describe("FacturaAfiliadoForm — Asignación a órdenes estación", () => {
               notas_asignacion: null,
               folio_orden_estacion: "OE-2026-0041A",
               nombre_estacion: "XHMT-FM",
+              folio_orden: "OC-2026-0041",
             },
           ]}
           onSubmit={onSubmit}
@@ -306,6 +307,7 @@ describe("FacturaAfiliadoForm — Asignación a órdenes estación", () => {
             notas_asignacion: null,
             folio_orden_estacion: "OE-2026-0041A",
             nombre_estacion: "XHMT-FM",
+            folio_orden: "OC-2026-0041",
           },
         ]}
         onSubmit={vi.fn()}
