@@ -44,6 +44,7 @@ vi.mock("../api", () => ({
   facturasAgenciaPagables: vi.fn().mockResolvedValue([]),
   facturasAfiliadoInfo: vi.fn().mockResolvedValue([]),
   facturasAgenciaInfo: vi.fn().mockResolvedValue([]),
+  facturasVendedorInfo: vi.fn().mockResolvedValue([]),
   facturasVendedorPagables: vi.fn().mockResolvedValue([]),
   ordenesInfo: vi.fn().mockResolvedValue([]),
   facturaClienteResumen: vi.fn().mockResolvedValue({}),

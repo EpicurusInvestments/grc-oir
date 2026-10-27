@@ -10,13 +10,18 @@ pero no se autoriza a sí mismo. Mismo canal dedicado que ya usan `FacturaAfilia
 dentro del servicio — `/estatus` (el canal operativo, `pagos:editar`) rechaza con 403 si
 alguien intenta pedir `autorizada` por ahí.
 
-Cuatro FKs opcionales, según `tipo_requisicion` (spec): `factura_afiliado_id`/
-`afiliado_id` (pago_afiliado), `factura_agencia_id`/`agencia_id` (pago_agencia),
-`vendedor_comision_id`+`orden_id` (comision_vendedor), `agencia_id`+`orden_id`
-(comision_agencia). El servicio valida cuáles son obligatorias según el tipo.
+Cuatro FKs según `tipo_requisicion` (spec): `afiliado_id`+`factura_afiliado_id`
+(pago_afiliado), `agencia_id`+`factura_agencia_id` (pago_agencia),
+`vendedor_comision_id`+`factura_vendedor_id` (comision_vendedor — ver excepción abajo),
+`agencia_id`+`orden_id` (comision_agencia). El servicio valida cuáles son obligatorias
+según el tipo — `factura_afiliado_id`/`factura_agencia_id` DEJARON de ser opcionales
+(petición del usuario): antes se podía capturar la requisición sin saber todavía a cuál
+factura correspondía, ahora es obligatoria desde el alta. `comision_agencia` sigue
+existiendo en el modelo/API (no se renombra ni se quita, requisiciones viejas siguen
+intactas) pero **ya no aparece en el selector "Tipo de requisición" del alta**
+(petición del usuario) — solo queda accesible para listar/filtrar lo ya capturado.
 
-Calculados (spec, sin desviaciones):
-- `requisicion_comision_vendedor = OrdenCliente.total * porcentaje_comision_vendedor / 100`
+Calculados (spec, sin desviaciones salvo lo anotado):
 - `requisicion_comision_agencia  = OrdenCliente.total * porcentaje_comision_agencia_req / 100`
 - `diferencia_afiliada = monto_requisicion - FacturaAfiliado.total_factura_afiliado`
   (monitoreo de márgenes, **puede ser negativa** — sin CHECK `>= 0`, a propósito).
@@ -26,6 +31,16 @@ Calculados (spec, sin desviaciones):
 Los porcentajes de comisión se SUGIEREN desde el catálogo (`Vendedor.
 porcentaje_comision_default` / `Agencia.porcentaje_comision_agencia_default`) si no se
 capturan explícitos — mismo criterio que `FacturaAgencia` en F2.
+
+**Excepción — "Pagos vendedor" (petición del usuario, ADR nuevo):** `comision_vendedor`
+ya NO captura `orden_id` ni `porcentaje_comision_vendedor` desde el alta (se quita el
+combo "Orden de cliente" y el campo "% Comisión" del formulario) — se simplifica al
+MISMO patrón que `pago_agencia`: solo Vendedor + `FacturaVendedor` (ahora OBLIGATORIA,
+ya no opcional) + monto manual (autollenado desde el total de la factura, editable).
+`requisicion_comision_vendedor = OrdenCliente.total * porcentaje_comision_vendedor / 100`
+(spec) ya NO se calcula por esta vía — las columnas siguen existiendo (no se renombran
+ni se quitan: solo quedan sin capturar), y el cálculo en `create()`/`_pre_update()` se
+deja intacto (no-op si no hay `orden_id`) por si algún registro antiguo lo trae.
 
 `monto_requisicion` es SIEMPRE manual (spec): no se fuerza a coincidir con las comisiones
 calculadas, que son informativas/de verificación, no una fórmula que sustituya la captura.
@@ -402,15 +417,26 @@ class RequisicionService(
         tipo = data.tipo_requisicion
 
         # ── Validación de las FKs obligatorias según el tipo (spec) ──
-        if tipo == TipoRequisicion.PAGO_AFILIADO and data.afiliado_id is None:
-            raise DomainError("`pago_afiliado` requiere `afiliado_id`.")
-        if tipo == TipoRequisicion.PAGO_AGENCIA and data.agencia_id is None:
-            raise DomainError("`pago_agencia` requiere `agencia_id`.")
-        if tipo == TipoRequisicion.COMISION_VENDEDOR and (
-            data.vendedor_comision_id is None or data.orden_id is None
+        # Petición del usuario: `factura_afiliado_id`/`factura_agencia_id` dejan de ser
+        # opcionales para sus respectivos tipos (antes se podía capturar la requisición
+        # sin saber todavía a cuál factura correspondía).
+        if tipo == TipoRequisicion.PAGO_AFILIADO and (
+            data.afiliado_id is None or data.factura_afiliado_id is None
         ):
             raise DomainError(
-                "`comision_vendedor` requiere `vendedor_comision_id` y `orden_id`."
+                "`pago_afiliado` requiere `afiliado_id` y `factura_afiliado_id`."
+            )
+        if tipo == TipoRequisicion.PAGO_AGENCIA and (
+            data.agencia_id is None or data.factura_agencia_id is None
+        ):
+            raise DomainError(
+                "`pago_agencia` requiere `agencia_id` y `factura_agencia_id`."
+            )
+        if tipo == TipoRequisicion.COMISION_VENDEDOR and (
+            data.vendedor_comision_id is None or data.factura_vendedor_id is None
+        ):
+            raise DomainError(
+                "`comision_vendedor` requiere `vendedor_comision_id` y `factura_vendedor_id`."
             )
         if tipo == TipoRequisicion.COMISION_AGENCIA and (
             data.agencia_id is None or data.orden_id is None

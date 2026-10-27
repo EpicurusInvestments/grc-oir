@@ -1,13 +1,23 @@
 /** Alta de Requisicion (F3) — captura de CxP.
  *
  * Las FKs obligatorias dependen de `tipo_requisicion` (el backend las valida con 400 si
- * falta la que corresponde): `pago_afiliado`→afiliado; `pago_agencia`→agencia;
- * `comision_vendedor`→vendedor+orden; `comision_agencia`→agencia+orden. Validación manual
- * en vez de un resolver Zod condicional: 4 ramas con reglas cruzadas son más claras así.
+ * falta la que corresponde): `pago_afiliado`→afiliado+factura (OBLIGATORIA);
+ * `pago_agencia`→agencia+factura (OBLIGATORIA); `comision_vendedor` ("Pagos vendedor"
+ * en la UI)→vendedor+factura (OBLIGATORIA); `comision_agencia`→agencia+orden.
+ * Validación manual en vez de un resolver Zod condicional: 4 ramas con reglas cruzadas
+ * son más claras así.
+ *
+ * `comision_agencia` sigue existiendo en el tipo/backend (requisiciones viejas, listas,
+ * filtros) pero YA NO aparece en el selector "Tipo de requisición" del alta —petición
+ * del usuario, `TIPOS_SELECCIONABLES` abajo la excluye— así que su bloque de campos de
+ * este formulario queda sin usarse en la práctica (se deja intacto, no se borra, por si
+ * se necesita reactivar).
  *
  * `monto_requisicion` es SIEMPRE captura manual (spec): nunca se sustituye por la
- * comisión calculada, que es informativa. Los % de comisión se SUGIEREN del catálogo al
- * elegir vendedor/agencia (editable) — mismo criterio que `FacturaAgencia` en F2.
+ * comisión calculada, que es informativa. `comision_vendedor` ya NO tiene % de comisión
+ * ni orden: se simplificó al mismo patrón que `pago_agencia`/`pago_afiliado` (solo
+ * catálogo + su factura, ahora obligatoria en los 3; el monto se autollena desde esa
+ * factura, editable).
  */
 
 import { useMemo, useState } from "react";
@@ -25,6 +35,10 @@ import {
   useVendedoresInfo,
 } from "../../hooks";
 import { TIPO_REQUISICION_LABEL, TIPOS_REQUISICION, type RequisicionCreate, type TipoRequisicion } from "../../types";
+
+// Petición del usuario: "Comisión agencia" se quita del selector del alta (sigue
+// existiendo en el tipo/backend para lo ya capturado — ver docstring arriba).
+const TIPOS_SELECCIONABLES = TIPOS_REQUISICION.filter((t) => t !== "comision_agencia");
 
 interface Props {
   submitting?: boolean;
@@ -54,7 +68,6 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
   const [facturaVendedorId, setFacturaVendedorId] = useState("");
   const [vendedorId, setVendedorId] = useState("");
   const [ordenId, setOrdenId] = useState("");
-  const [pctVendedor, setPctVendedor] = useState("");
   const [pctAgencia, setPctAgencia] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -84,16 +97,16 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
       setError("Captura el monto de la requisición.");
       return;
     }
-    if (tipo === "pago_afiliado" && !afiliadoId) {
-      setError("Selecciona el afiliado.");
+    if (tipo === "pago_afiliado" && (!afiliadoId || !facturaAfiliadoId)) {
+      setError("Selecciona el afiliado y la factura de la emisora.");
       return;
     }
-    if (tipo === "pago_agencia" && !agenciaId) {
-      setError("Selecciona la agencia.");
+    if (tipo === "pago_agencia" && (!agenciaId || !facturaAgenciaId)) {
+      setError("Selecciona la agencia y la factura de la agencia.");
       return;
     }
-    if (tipo === "comision_vendedor" && (!vendedorId || !ordenId)) {
-      setError("Selecciona el vendedor y la orden.");
+    if (tipo === "comision_vendedor" && (!vendedorId || !facturaVendedorId)) {
+      setError("Selecciona el vendedor y la factura del vendedor.");
       return;
     }
     if (tipo === "comision_agencia" && (!agenciaId || !ordenId)) {
@@ -108,13 +121,13 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
       monto_requisicion: montoRequisicion,
       observaciones_cuentas_por_pagar: observaciones.trim() || null,
       afiliado_id: tipo === "pago_afiliado" ? afiliadoId : null,
-      factura_afiliado_id: tipo === "pago_afiliado" ? facturaAfiliadoId || null : null,
+      factura_afiliado_id: tipo === "pago_afiliado" ? facturaAfiliadoId : null,
       agencia_id: tipo === "pago_agencia" || tipo === "comision_agencia" ? agenciaId : null,
-      factura_agencia_id: tipo === "pago_agencia" ? facturaAgenciaId || null : null,
+      factura_agencia_id: tipo === "pago_agencia" ? facturaAgenciaId : null,
       vendedor_comision_id: tipo === "comision_vendedor" ? vendedorId : null,
-      factura_vendedor_id: tipo === "comision_vendedor" ? facturaVendedorId || null : null,
-      orden_id: tipo === "comision_vendedor" || tipo === "comision_agencia" ? ordenId : null,
-      porcentaje_comision_vendedor: tipo === "comision_vendedor" && pctVendedor ? pctVendedor : null,
+      factura_vendedor_id: tipo === "comision_vendedor" ? facturaVendedorId : null,
+      orden_id: tipo === "comision_agencia" ? ordenId : null,
+      porcentaje_comision_vendedor: null,
       porcentaje_comision_agencia_req: tipo === "comision_agencia" && pctAgencia ? pctAgencia : null,
     });
   };
@@ -132,9 +145,25 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
           <select
             className="fsel"
             value={tipo}
-            onChange={(e) => setTipo(e.target.value as TipoRequisicion)}
+            onChange={(e) => {
+              // Petición del usuario: cambiar de tipo debe limpiar TODO lo capturado
+              // específico del tipo anterior (afiliado/agencia/vendedor, su factura, la
+              // orden, el % y el monto autollenado) — antes se quedaba pegado y podía
+              // enviarse por error con el nuevo tipo.
+              setTipo(e.target.value as TipoRequisicion);
+              setAfiliadoId("");
+              setFacturaAfiliadoId("");
+              setAgenciaId("");
+              setFacturaAgenciaId("");
+              setVendedorId("");
+              setFacturaVendedorId("");
+              setOrdenId("");
+              setPctAgencia("");
+              setMontoRequisicion("");
+              setError(null);
+            }}
           >
-            {TIPOS_REQUISICION.map((t) => (
+            {TIPOS_SELECCIONABLES.map((t) => (
               <option key={t} value={t}>
                 {TIPO_REQUISICION_LABEL[t]}
               </option>
@@ -184,7 +213,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   </option>
                 ))}
               </select>
-              <div className="fl">Factura de la emisora (opcional)</div>
+              <div className="fl fl-required">Factura de la emisora</div>
               <select
                 className="fsel"
                 value={facturaAfiliadoId}
@@ -196,7 +225,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 }}
                 disabled={!afiliadoId}
               >
-                <option value="">— Ninguna —</option>
+                <option value="">— Selecciona —</option>
                 {facturasAfiliadoDelSeleccionado.map((f) => (
                   <option key={f.factura_afiliado_id} value={f.factura_afiliado_id}>
                     {f.factura_emisora} · {fmtMoneda(f.total_factura_afiliado)}
@@ -227,7 +256,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   </option>
                 ))}
               </select>
-              <div className="fl">Factura de la agencia (opcional)</div>
+              <div className="fl fl-required">Factura de la agencia</div>
               <select
                 className="fsel"
                 value={facturaAgenciaId}
@@ -239,7 +268,7 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 }}
                 disabled={!agenciaId}
               >
-                <option value="">— Ninguna —</option>
+                <option value="">— Selecciona —</option>
                 {facturasAgenciaDelSeleccionado.map((f) => (
                   <option key={f.factura_agencia_id} value={f.factura_agencia_id}>
                     {f.folio_factura_agencia ?? "(sin folio)"} · {fmtMoneda(f.total_factura_agencia)}
@@ -262,8 +291,6 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   setVendedorId(id);
                   setFacturaVendedorId("");
                   setMontoRequisicion("");
-                  const v = (vendedores.data ?? []).find((x) => x.vendedor_id === id);
-                  setPctVendedor(v?.porcentaje_comision_default ?? "");
                 }}
               >
                 <option value="">— Selecciona —</option>
@@ -273,9 +300,9 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                   </option>
                 ))}
               </select>
-              {/* Petición del usuario: al pagar la requisición, esta factura (si se
-                  elige) pasa a "pagada" también. */}
-              <div className="fl">Factura del vendedor (opcional)</div>
+              {/* Petición del usuario: al pagar la requisición, esta factura pasa a
+                  "pagada" también — igual patrón que "pago_agencia". */}
+              <div className="fl fl-required">Factura del vendedor</div>
               <select
                 className="fsel"
                 value={facturaVendedorId}
@@ -287,33 +314,13 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
                 }}
                 disabled={!vendedorId}
               >
-                <option value="">— Ninguna —</option>
+                <option value="">— Selecciona —</option>
                 {facturasVendedorDelSeleccionado.map((f) => (
                   <option key={f.factura_vendedor_id} value={f.factura_vendedor_id}>
                     {f.folio_factura_vendedor ?? "(sin folio)"} · {fmtMoneda(f.total_factura_vendedor)}
                   </option>
                 ))}
               </select>
-              <div className="fl fl-required">Orden de cliente</div>
-              <SearchableSelect
-                value={ordenId}
-                onChange={setOrdenId}
-                options={ordenOpciones}
-                placeholder="Buscar por folio de orden…"
-              />
-              <div className="r2">
-                <div>
-                  <div className="fl">
-                    % Comisión <FieldTag origin="catalogo" text="Sugerido, editable" />
-                  </div>
-                  <input
-                    className="fi"
-                    inputMode="decimal"
-                    value={pctVendedor}
-                    onChange={(e) => setPctVendedor(e.target.value)}
-                  />
-                </div>
-              </div>
             </>
           )}
 

@@ -95,7 +95,9 @@ export type TipoRequisicion = (typeof TIPOS_REQUISICION)[number];
 export const TIPO_REQUISICION_LABEL: Record<TipoRequisicion, string> = {
   pago_afiliado: "Pago afiliado",
   pago_agencia: "Pago agencia",
-  comision_vendedor: "Comisión vendedor",
+  // Petición del usuario: el valor interno sigue siendo "comision_vendedor" (spec BD
+  // v2, no se renombra) — solo cambia el texto mostrado al usuario.
+  comision_vendedor: "Pagos vendedor",
   comision_agencia: "Comisión agencia",
 };
 

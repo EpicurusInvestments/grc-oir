@@ -198,7 +198,9 @@ de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacio
 **`folio_orden_estacion`/`nombre_estacion` (ADR-085, no son columnas de la tabla):**
 resueltos en el servicio (`JOIN OrdenEstacion → Estacion`, en lote) y expuestos solo en
 `FacturaAfiliadoOrdenRead` — sin esto, la lista de asignaciones del detalle solo podía
-mostrar el UUID crudo de la OE.
+mostrar el UUID crudo de la OE. **`folio_orden` (ADR-218, aditivo):** mismo criterio,
+un `JOIN` más hasta `OrdenCliente` — lo consume Cobranza (F3) reusando este mismo
+endpoint para el badge "Orden de servicio" del detalle de Requisiciones.
 
 ### FacturaAgencia (15 campos spec)
 PK `factura_agencia_id`. FK a `Agencia` y a `OrdenCliente` (**1:N** — una OC puede tener

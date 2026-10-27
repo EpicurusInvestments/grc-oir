@@ -246,6 +246,9 @@ export interface FacturaAfiliadoOrden {
    *  lote, para no mostrar el UUID crudo en la lista de asignaciones. */
   folio_orden_estacion: string;
   nombre_estacion: string | null;
+  /** Folio de la `OrdenCliente` ("orden de servicio") padre de la OE — petición del
+   *  usuario: se usa como badge en el detalle de Requisiciones (Cobranza, F3). */
+  folio_orden: string;
 }
 
 // ── FacturaAgencia ────────────────────────────────────────────────────────────

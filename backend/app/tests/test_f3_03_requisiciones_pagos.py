@@ -260,10 +260,16 @@ def _hdr(area: str) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════════════
 # Requisicion — alta con comisiones sugeridas / diferencia negativa
 # ══════════════════════════════════════════════════════════════════════════════
-def test_alta_comision_vendedor_sugiere_el_porcentaje_del_catalogo(
+def test_alta_comision_vendedor_ya_no_requiere_orden_ni_calcula_porcentaje(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    """Petición del usuario: "Pagos vendedor" (antes "Comisión vendedor") se simplifica
+    al mismo patrón que `pago_agencia` — ya no se captura `orden_id` ni `porcentaje_
+    comision_vendedor` desde el alta, solo Vendedor + `FacturaVendedor` (ahora
+    obligatoria). El cálculo de comisión de la spec queda sin ejecutarse por esta vía
+    (no hay `orden_id` del que tomar `OrdenCliente.total`)."""
     orden_id = _orden(db, cat, "OC-CV1", Decimal("100000.00"))
+    factura_id = _factura_vendedor(db, cat, orden_id, Decimal("4000.00"))
     db.commit()
 
     r = client.post(
@@ -271,20 +277,24 @@ def test_alta_comision_vendedor_sugiere_el_porcentaje_del_catalogo(
         json={
             "numero_requisicion": "REQ-0001",
             "tipo_requisicion": "comision_vendedor",
-            "orden_id": str(orden_id),
             "vendedor_comision_id": str(cat["vendedor_id"]),
+            "factura_vendedor_id": str(factura_id),
             "monto_requisicion": "4000.00",
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["porcentaje_comision_vendedor"] == "4.00"  # sugerido de Vendedor
-    assert Decimal(body["requisicion_comision_vendedor"]) == Decimal("4000.00")
+    assert body["orden_id"] is None
+    # `requisicion_comision_vendedor` (el IMPORTE calculado, spec) depende de
+    # `OrdenCliente.total` — sin `orden_id` no hay de dónde calcularlo, se queda en
+    # None. `porcentaje_comision_vendedor` sigue sugiriéndose del catálogo del
+    # vendedor (comportamiento silencioso preexistente, ya no se muestra en la UI).
+    assert body["requisicion_comision_vendedor"] is None
     assert body["estatus_requisicion"] == "pendiente"
 
 
-def test_alta_comision_vendedor_rechaza_sin_orden_ni_vendedor(
+def test_alta_comision_vendedor_rechaza_sin_vendedor_ni_factura_vendedor(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     r = client.post(
@@ -339,16 +349,62 @@ def test_alta_pago_afiliado_requiere_afiliado_id(
     assert r.status_code == 400
 
 
+def test_alta_pago_afiliado_requiere_factura_afiliado_id(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario: `factura_afiliado_id` deja de ser opcional en
+    `pago_afiliado` — con `afiliado_id` pero sin factura, el alta se rechaza."""
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0004B",
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "monto_requisicion": "1000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+
+
+def test_alta_pago_agencia_requiere_agencia_id_y_factura_agencia_id(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario: `factura_agencia_id` deja de ser opcional en
+    `pago_agencia` — con `agencia_id` pero sin factura, el alta se rechaza."""
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "REQ-0004C",
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "monto_requisicion": "1000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Requisicion — máquina de estados + canal dedicado de autorización (ADR-046)
 # ══════════════════════════════════════════════════════════════════════════════
-def _crear_requisicion_simple(client: TestClient, cat: dict[str, uuid.UUID], numero: str) -> str:
+def _crear_requisicion_simple(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], numero: str
+) -> str:
+    """Petición del usuario: `factura_agencia_id` ya no es opcional en `pago_agencia`,
+    así que esta requisición "simple" (solo para probar la máquina de estados, no le
+    importa la factura) necesita su propia orden+factura desechable."""
+    orden_id = _orden(db, cat, f"OC-{numero}", Decimal("50000.00"))
+    factura_id = _factura_agencia(db, cat, orden_id, Decimal("1000.00"))
+    db.commit()
+
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
             "numero_requisicion": numero,
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_id),
             "monto_requisicion": "1000.00",
         },
         headers=_hdr("cxp"),
@@ -360,7 +416,7 @@ def _crear_requisicion_simple(client: TestClient, cat: dict[str, uuid.UUID], num
 def test_cxp_no_puede_autorizar_por_el_canal_operativo(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    req_id = _crear_requisicion_simple(client, cat, "REQ-0100")
+    req_id = _crear_requisicion_simple(client, db, cat, "REQ-0100")
     r = client.post(
         f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
         json={"estatus": "autorizada"},
@@ -372,7 +428,7 @@ def test_cxp_no_puede_autorizar_por_el_canal_operativo(
 def test_direccion_autoriza_por_el_canal_dedicado(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    req_id = _crear_requisicion_simple(client, cat, "REQ-0101")
+    req_id = _crear_requisicion_simple(client, db, cat, "REQ-0101")
     r_cxp = client.post(
         f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("cxp")
     )
@@ -386,7 +442,7 @@ def test_direccion_autoriza_por_el_canal_dedicado(
 def test_ciclo_completo_pendiente_autorizada_pagada(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    req_id = _crear_requisicion_simple(client, cat, "REQ-0102")
+    req_id = _crear_requisicion_simple(client, db, cat, "REQ-0102")
     client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
 
     r = client.post(
@@ -403,7 +459,7 @@ def test_ciclo_completo_pendiente_autorizada_pagada(
 def test_no_se_puede_pagar_una_requisicion_sin_autorizar(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    req_id = _crear_requisicion_simple(client, cat, "REQ-0103")
+    req_id = _crear_requisicion_simple(client, db, cat, "REQ-0103")
     r = client.post(
         f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
         json={"estatus": "pagada"},
@@ -415,7 +471,7 @@ def test_no_se_puede_pagar_una_requisicion_sin_autorizar(
 def test_cancelar_desde_pendiente_y_desde_autorizada(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    req1 = _crear_requisicion_simple(client, cat, "REQ-0104")
+    req1 = _crear_requisicion_simple(client, db, cat, "REQ-0104")
     r1 = client.post(
         f"/api/v1/cobranza/requisiciones/{req1}/estatus",
         json={"estatus": "cancelada"},
@@ -424,7 +480,7 @@ def test_cancelar_desde_pendiente_y_desde_autorizada(
     assert r1.status_code == 200
     assert r1.json()["estatus_requisicion"] == "cancelada"
 
-    req2 = _crear_requisicion_simple(client, cat, "REQ-0105")
+    req2 = _crear_requisicion_simple(client, db, cat, "REQ-0105")
     client.post(f"/api/v1/cobranza/requisiciones/{req2}/autorizar", headers=_hdr("direccion"))
     r2 = client.post(
         f"/api/v1/cobranza/requisiciones/{req2}/estatus",
@@ -553,12 +609,11 @@ def test_pagar_requisicion_comision_vendedor_con_factura_vendedor_id_cierra_esa_
     assert db.get(FacturaVendedor, factura_id).estatus_factura_vendedor == "pagada"
 
 
-def test_pagar_requisicion_comision_vendedor_sin_factura_vendedor_id_no_truena(
+def test_alta_comision_vendedor_rechaza_sin_factura_vendedor(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """`factura_vendedor_id` es opcional (requisiciones viejas no lo tienen, o se
-    captura sin saber todavía cuál factura corresponde) — pagarla sin ese dato no debe
-    tronar, solo no hay ninguna factura que cerrar."""
+    """Petición del usuario: `factura_vendedor_id` ya NO es opcional para
+    `comision_vendedor` (antes sí lo era) — sin ella, el alta se rechaza."""
     orden_id = _orden(db, cat, "OC-FV2", Decimal("100000.00"))
     db.commit()
 
@@ -573,16 +628,7 @@ def test_pagar_requisicion_comision_vendedor_sin_factura_vendedor_id_no_truena(
         },
         headers=_hdr("cxp"),
     )
-    req_id = r.json()["requisicion_id"]
-    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
-
-    r = client.post(
-        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
-        json={"estatus": "pagada"},
-        headers=_hdr("cxp"),
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["estatus_requisicion"] == "pagada"
+    assert r.status_code == 400
 
 
 def test_pagar_requisicion_comision_agencia_no_truena_sin_factura_que_cerrar(
