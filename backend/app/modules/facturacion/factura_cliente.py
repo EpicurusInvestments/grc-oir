@@ -250,6 +250,24 @@ class FacturaCliente(Base):
     # más de una activa. Nullable porque las facturas viejas nunca la capturaron; las
     # nuevas la exigen (`FacturaClienteCreate`), igual que `metodo_pago_clave`.
     forma_pago_clave: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    # ADR-223 (petición del usuario): 4 claves fiscales más que el timbrador exige y que
+    # antes NO se capturaban por factura — mismo patrón sin FK que `metodo_pago_clave`/
+    # `forma_pago_clave` (clave de `ConstantesSistema`, sugerida por el front, sin
+    # relación formal). `clave_prod_serv`/`clave_unidad` reemplazan el mecanismo viejo
+    # (`_constante_unica`, "solo si hay una activa en el catálogo") por captura real;
+    # `moneda_sat` reemplaza el default fijo `"MXN"` que traía `DatosTimbrado.moneda`.
+    # Nullable porque las facturas viejas nunca las capturaron; las nuevas las exigen
+    # (`FacturaClienteCreate`).
+    clave_prod_serv: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    clave_unidad: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    moneda_sat: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    # `tipo_comprobante` (catálogo I/E/P) se captura y se guarda, pero TODAVÍA no se
+    # conecta al archivo plano del timbrador: el layout trae hoy un código fijo ("33",
+    # `_TIPO_DOCUMENTO` en `adapter_pac_v40.py`) observado en el ejemplo real solo para
+    # "factura de ingreso" — no hay confirmado qué código usaría el PAC para Egreso/Pago,
+    # así que inventar el mapeo podría producir un archivo fiscal mal armado para esos
+    # casos (ver docs/modulos/f2-facturacion/f2-facturacion.md, "Pendientes/dudas").
+    tipo_comprobante: Mapped[str | None] = mapped_column(Unicode(20), default=None)
     info_cuenta_pago: Mapped[str | None] = mapped_column(texto_largo(), default=None)
     # Desviación aditiva 1: texto libre nullable, sin catálogo LayoutFactura.
     layout_factura: Mapped[str | None] = mapped_column(Unicode(200), default=None)
@@ -397,6 +415,10 @@ class FacturaClienteRead(BaseModel):
     cuenta_contable_id: uuid.UUID
     metodo_pago_clave: str
     forma_pago_clave: str | None = None
+    clave_prod_serv: str | None = None
+    clave_unidad: str | None = None
+    moneda_sat: str | None = None
+    tipo_comprobante: str | None = None
     info_cuenta_pago: str | None = None
     layout_factura: str | None = None
     estado_facturacion: str
@@ -506,6 +528,12 @@ class FacturaClienteCreate(BaseModel):
     # aditiva 4, bug real ADR-065 bis): antes se resolvía sola del catálogo, ahora se
     # captura como MetodoPago.
     forma_pago_clave: str = Field(min_length=1, max_length=20)
+    # ADR-223: 4 claves fiscales más del catálogo `ConstantesSistema` (sin FK, mismo
+    # patrón) — ver nota junto a las columnas en el modelo.
+    clave_prod_serv: str = Field(min_length=1, max_length=20)
+    clave_unidad: str = Field(min_length=1, max_length=20)
+    moneda_sat: str = Field(min_length=1, max_length=20)
+    tipo_comprobante: str = Field(min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
 
@@ -525,6 +553,10 @@ class FacturaClienteUpdate(BaseModel):
     cuenta_contable_id: uuid.UUID | None = None
     metodo_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
     forma_pago_clave: str | None = Field(default=None, min_length=1, max_length=20)
+    clave_prod_serv: str | None = Field(default=None, min_length=1, max_length=20)
+    clave_unidad: str | None = Field(default=None, min_length=1, max_length=20)
+    moneda_sat: str | None = Field(default=None, min_length=1, max_length=20)
+    tipo_comprobante: str | None = Field(default=None, min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
 
@@ -987,26 +1019,6 @@ class FacturaClienteService(
             )
         return True
 
-    def _constante_unica(self, grupo: str) -> str | None:
-        """Clave del grupo de `ConstantesSistema` **solo si hay exactamente una activa**.
-
-        Con varias, elegir cuál es una decision FISCAL que nadie ha tomado (que UsoCFDI?
-        que ClaveProdServ?), y adivinarla produciria un CFDI que timbra pero esta mal.
-        Con cero, sencillamente no hay dato. En ambos casos se devuelve `None` y el campo
-        acaba reportado como faltante.
-        """
-        from app.modules.catalogos.constantes_sistema import ConstanteSistema
-
-        claves = list(
-            self._repo.db.scalars(
-                select(ConstanteSistema.clave).where(
-                    ConstanteSistema.grupo == grupo,
-                    ConstanteSistema.activo == True,  # noqa: E712 - BIT en SQL Server (ADR-014)
-                )
-            ).all()
-        )
-        return claves[0] if len(claves) == 1 else None
-
     def _domicilio_de(self, entidad: Any) -> DomicilioFiscal | None:
         """Domicilio estructurado de un `Anunciante`/`EmpresaFacturadora` (ADR-059) o
         `Agencia` (ADR-175) — las 3 entidades exponen los mismos 10 atributos. `None`
@@ -1152,9 +1164,14 @@ class FacturaClienteService(
             regimen_fiscal_receptor=regimen_fiscal_receptor,
             # UsoCFDI: columna propia de la factura (ADR-065), ya no un catálogo global.
             uso_cfdi=obj.uso_cfdi,
-            # Constantes fiscales restantes: solo si el catálogo no deja lugar a dudas.
-            clave_prod_serv=self._constante_unica("ClaveProdServ"),
-            clave_unidad=self._constante_unica("ClaveUnidad"),
+            # ADR-223: columnas propias de la factura, ya no `_constante_unica` (mismo
+            # criterio que `uso_cfdi`/`forma_pago_clave`) — una vieja sin capturar cae a
+            # `None` y se reporta en `campos_faltantes()`, no se adivina.
+            clave_prod_serv=obj.clave_prod_serv,
+            clave_unidad=obj.clave_unidad,
+            # Moneda: columna propia (ADR-223); facturas viejas sin capturar caen al
+            # default histórico "MXN" (nunca se reportaba como faltante, ver `port.py`).
+            moneda=obj.moneda_sat or "MXN",
             # AGREGADOS.LugarExpedicion = CP de dónde se expide el CFDI (catálogo SAT
             # c_CodigoPostal) — el del domicilio fiscal del emisor (ADR-059), no una
             # constante nueva que capturar aparte.
@@ -1601,6 +1618,10 @@ class OrdenPorFacturarRead(BaseModel):
     total: Decimal
     # ── Lo que el alta necesita para PRE-CARGAR el formulario (pantalla aprobada) ──
     empresa_emisora: str | None = None
+    #: Tarifa pactada por spot (ADR-224, petición del usuario) — el "costo del spot" para
+    #: la sugerencia de Concepto. Se expone tal cual (no se deriva de subtotal/total_spots:
+    #: con bonificables, ADR-067, esa división ya no da la tarifa real pactada).
+    precio_unitario: Decimal | None = None
     total_spots: int | None = None
     duracion_spot: str | None = None
     #: A quién se factura: agencia si la hay y no es facturación directa (misma regla que
@@ -1650,6 +1671,7 @@ class OrdenesPorFacturarRepository:
                 OrdenCliente.subtotal,
                 OrdenCliente.total,
                 EmpresaFacturadora.nombre_empresa.label("empresa_emisora"),
+                OrdenCliente.precio_unitario,
                 OrdenCliente.total_spots,
                 OrdenCliente.duracion_spot,
                 OrdenCliente.facturacion_directa_cliente,

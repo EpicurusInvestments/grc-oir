@@ -214,6 +214,41 @@ def test_mapea_los_datos_de_la_factura(datos: DatosTimbrado) -> None:
     assert "Orden            OC-2025-0046" in texto
 
 
+# ── ADR-224 (petición del usuario, bug real): `observaciones` llegaba resuelto hasta
+# `DatosTimbrado` pero nunca se escribía en ningún lado del layout — se descartaba en
+# silencio. Ahora se anexa al mismo texto libre que ya cargan `Detalle.concepto` y
+# `Personalizados.Descripcion1..5`. ──
+def test_observaciones_se_integran_al_concepto_del_detalle() -> None:
+    """`Detalle.concepto` es de ANCHO FIJO (49 caracteres) — con descripción + comentario
+    cortos (como aquí) ambos caben completos; una combinación más larga se trunca, igual
+    que ya truncaba una descripción larga por sí sola antes de este fix (ver
+    `test_sin_observaciones_el_concepto_no_cambia` para el caso sin comentario)."""
+    datos_con_obs = _datos_completos(descripcion="Spot radio", observaciones="Pagar ya.")
+    texto = TimbradoExportPacV40().exportar(datos_con_obs).decode("cp1252")
+    detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
+    assert "Spot radio — Observaciones: Pagar ya." in detalle
+
+
+def test_observaciones_se_integran_a_personalizados_descripcion() -> None:
+    datos_con_obs = _datos_completos(
+        descripcion="Servicios de transmisión publicitaria",
+        observaciones="Pagar antes del día 10.",
+    )
+    texto = TimbradoExportPacV40().exportar(datos_con_obs).decode("cp1252")
+    personalizados = texto.split("================ Personalizados")[1].split(
+        "================ ContactoEmisor"
+    )[0]
+    assert "Observaciones: Pagar antes del d" in personalizados  # trocea a 100 chars
+
+
+def test_sin_observaciones_el_concepto_no_cambia() -> None:
+    """Sin comentarios adicionales capturados, el concepto es tal cual la descripción —
+    no deja un "— Observaciones: " vacío colgando."""
+    datos_sin_obs = _datos_completos(descripcion="Servicios de transmisión publicitaria")
+    texto = TimbradoExportPacV40().exportar(datos_sin_obs).decode("cp1252")
+    assert "Observaciones:" not in texto
+
+
 def test_detalle_cantidad_es_la_suma_de_spots_y_costo_se_deriva() -> None:
     """Bug real: antes `Detalle.CANT` era "1" fijo (toda la campaña como una sola
     unidad), sin importar cuántos spots tuviera la orden. Ahora es la cantidad real;

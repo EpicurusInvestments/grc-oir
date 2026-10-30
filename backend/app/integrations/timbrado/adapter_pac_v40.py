@@ -256,6 +256,23 @@ def _monto(valor: Decimal | None) -> str:
     return f"{valor:.2f}" if valor is not None else ""
 
 
+def _concepto_completo(d: DatosTimbrado) -> str:
+    """Texto libre del concepto: la descripción capturada + los comentarios adicionales
+    (`observaciones`), si los hay.
+
+    Bug real (petición del usuario 2026-10-30): `observaciones` SÍ llegaba resuelto hasta
+    `DatosTimbrado` (el servicio lo captura desde `FacturaCliente.observaciones_factura`),
+    pero este adaptador nunca lo escribía en ningún lado del layout — se descartaba en
+    silencio. No hay un campo dedicado de "comentarios" en el formato real (ADR-048: el
+    layout medido no trae ninguno), así que se anexa al mismo texto libre que ya usan
+    `Detalle.concepto` y `Personalizados.Descripcion1..5` — ambos ya toleran texto largo
+    sin ancho fijo real (`Descripcion1..5` es clave-valor; `concepto` sí es de ancho fijo,
+    49 caracteres, y lo trunca como ya truncaba una descripción larga antes de este fix)."""
+    base = _texto(d.descripcion)
+    extra = _texto(d.observaciones)
+    return f"{base} — Observaciones: {extra}" if extra else base
+
+
 def _domicilio_valores(
     prefijo: str, dom: DomicilioFiscal | None, legacy: str | None
 ) -> dict[tuple[str, str], str]:
@@ -369,7 +386,7 @@ class TimbradoExportPacV40:
             Decimal("0.01")
         )
         celdas = {
-            "concepto": _texto(datos.descripcion),
+            "concepto": _concepto_completo(datos),
             "cantidad": str(datos.cantidad),
             "unidad": _texto(datos.clave_unidad),
             "costo": _monto(costo_unitario),
@@ -411,7 +428,7 @@ class TimbradoExportPacV40:
 
     def _valores(self, d: DatosTimbrado) -> dict[tuple[str, str], str]:
         """Mapea el dominio al layout. Lo que no se puede llenar va VACÍO, nunca inventado."""
-        descripciones = _trocear(_texto(d.descripcion), 100, 5)
+        descripciones = _trocear(_concepto_completo(d), 100, 5)
         v: dict[tuple[str, str], str] = {
             # ── IdDoc ──
             ("IdDoc", "NumeroInterno"): _texto(d.numero_factura),

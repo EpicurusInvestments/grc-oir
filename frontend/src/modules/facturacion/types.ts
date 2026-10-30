@@ -109,6 +109,12 @@ export interface FacturaCliente {
   /** Clave SAT (c_FormaPago, `AGREGADOS.MedioPago`). Antes se resolvía sola de un
    *  catálogo global; ahora se captura por factura, igual que metodo_pago_clave. */
   forma_pago_clave: string | null;
+  /** ADR-223: 4 claves fiscales más, mismo patrón sin FK que metodo_pago_clave/
+   *  forma_pago_clave (clave de `ConstantesSistema`, sin validar la relación). */
+  clave_prod_serv: string | null;
+  clave_unidad: string | null;
+  moneda_sat: string | null;
+  tipo_comprobante: string | null;
   info_cuenta_pago: string | null;
   layout_factura: string | null;
   estado_facturacion: EstadoFacturacion;
@@ -143,6 +149,12 @@ export interface FacturaClienteCreate {
   cuenta_contable_id: string;
   metodo_pago_clave: string;
   forma_pago_clave: string;
+  /** ADR-223: 4 claves fiscales más, obligatorias desde el alta (ver nota en
+   *  `FacturaCliente` de arriba). */
+  clave_prod_serv: string;
+  clave_unidad: string;
+  moneda_sat: string;
+  tipo_comprobante: string;
   info_cuenta_pago?: string | null;
   layout_factura?: string | null;
   /** El receptor se DERIVA de la orden; estos tres campos lo sobrescriben si el usuario
@@ -458,6 +470,10 @@ export interface OrdenPorFacturar {
   total: string;
   // ── Para pre-cargar el formulario de alta (pantalla aprobada) ──
   empresa_emisora: string | null;
+  /** Tarifa pactada por spot (ADR-224) — el "costo del spot" de la sugerencia de
+   *  Concepto. No se deriva de subtotal/total_spots: con bonificables (ADR-067) esa
+   *  división ya no da la tarifa real pactada. */
+  precio_unitario: string | null;
   total_spots: number | null;
   duracion_spot: string | null;
   facturacion_directa_cliente: boolean;
