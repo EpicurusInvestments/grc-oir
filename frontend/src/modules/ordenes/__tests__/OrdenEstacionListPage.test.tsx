@@ -233,7 +233,10 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
 // Helper compartido por las pruebas de ADR-116 (abajo): llena lo mínimo para poder
 // guardar (Estación/Producto/Duración/Tarifa + un audio + un día con spots).
 async function capturarOEMinima(container: HTMLElement) {
-  fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+  // ADR-221b: "Estación" ahora es un `SearchableSelect` (input con filtro + lista), no un
+  // `<select>` nativo — hay que teclear y luego elegir la opción de la lista.
+  fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Estación"), { target: { value: "XEW" } });
+  fireEvent.mouseDown(screen.getByText("900 AM FM XEW-AM"));
   // ADR-169: "Producto" se llena desde el catálogo "Producto Duración" vía react-query —
   // hay que esperar a que la opción exista antes de poder seleccionarla.
   await waitFor(() =>
@@ -391,7 +394,8 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
     // campaña de la OC) — se vuelve a capturar completa, como cualquier alta, para poder
     // guardar de verdad una segunda vez; lo que esta prueba evalúa es que la clonación no
     // se arrastre al SIGUIENTE alta.
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Estación"), { target: { value: "es1" } });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Estación"), { target: { value: "XEW" } });
+    fireEvent.mouseDown(screen.getByText("900 AM FM XEW-AM"));
     await waitFor(() =>
       expect(within(fieldByLabelText<HTMLSelectElement>(container, "Producto")).getByText("spot")).toBeInTheDocument(),
     );

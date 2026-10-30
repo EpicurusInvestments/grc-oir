@@ -462,6 +462,19 @@ puesto en la columna "HORA" — vuelve a ser un solo horario (`hora_inicio`), ya
 `hora_fin` es el fin de rango COMPARTIDO del día (ADR-186), no algo propio del spot de
 ese renglón. "Capturar reales" (pantalla y PDF) sigue sin agruparse, a propósito.
 
+**ADR-221c (petición del usuario, con 3 capturas) — Programados muestra spots por día,
+Reales pierde la columna "Spots" por renglón, descripción completa de la emisora en
+ambos:** Programados no mostraba el número de spots POR DÍA (solo el total agregado del
+encabezado); Reales sí tenía una columna "SPOTS" por renglón, pero como cada renglón YA es
+un solo spot (ADR-127) siempre mostraba "1" sin aportar nada ("lo implementaste al revés" —
+ese conteo tiene sentido agrupado por día, como en Programados, no por renglón). Fix:
+`_fila_dia_programado` (Programados) agrega "Spots: N" (usa `grupo.spots`, ya calculado por
+`_agrupar_dias_por_fecha`); la tabla de Reales quita la columna "SPOTS". Además, en ambos
+PDFs la descripción de la emisora venía incompleta (solo nombre + frecuencia) — nuevo
+helper `_descripcion_estacion()` arma "Siglas Frecuencia TIPO Nombre" (mismo formato que
+ya usa el front en sus selectores, ADR-136/ADR-191), usado en la línea "ESTACION:" de
+Programados y en "EMISORA" (encabezado y columna del detalle) de Reales.
+
 **ADR-197 (petición del usuario) — "Material a Transmitir" permite elegir varios audios
 de un jalón:** el `<input type="file">` no tenía `multiple` — el selector de Windows solo
 dejaba marcar uno por apertura. Se agrega `multiple` en los 2 lugares donde existe esta
@@ -911,10 +924,14 @@ propuesta no le da captura sobre Órdenes.
   spots_programados_efectivo`; `monto_ajuste = diferencia_spots * precio_spot` de la OE;
   se crea una `Verificacion` por CADA día de la OE (spec), pero solo se genera
   `Incidencia` en los días con diferencia.
-- **`OrdenEstacion.precio_spot` puede superar `OrdenCliente.precio_unitario` (ELIMINADO
-  el candado previo — ver ADR-101):** el margen OIR (`porcentaje_participacion_oir`/
-  `importe_oir`/`iva_oir`/`total_oir`) simplemente se vuelve negativo; `precio_spot >= 0`
-  sigue siendo el único piso.
+- **`OrdenEstacion.precio_spot` NO puede exceder `OrdenCliente.precio_unitario` (ADR-222,
+  petición del usuario, REVIERTE ADR-101/ADR-221):** ADR-101 había quitado este candado
+  (margen OIR negativo permitido); ADR-221 solo topó el extremo que desbordaba la columna
+  `NUMERIC(5,2)`. ADR-222 aclara el criterio real de negocio y lo revierte del todo:
+  `create`/`update` rechazan con `DomainError` claro
+  (`_validar_tarifa_no_excede_oc`, `orden_estacion.py`) CUALQUIER `precio_spot` mayor al
+  `precio_unitario` de la OC — igualarlo sí se permite (pct_oir = 0.0). Se espeja en
+  `OrdenEstacionForm.tsx`. `precio_spot >= 0` sigue siendo el piso (sin cambio).
 - Editar `fecha_inicio_campania`/`fecha_fin_campania` de una OC (`_pre_update`) es
   **direccional**: AMPLIAR el rango se permite siempre (todo día ya capturado en las OE
   hijas seguía cabiendo); ANGOSTARLO (inicio más tarde o fin más temprano que el

@@ -10,6 +10,7 @@ traducen a HTTP en la capa API, para que el router no contenga lógica de errore
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -17,6 +18,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+
+logger = logging.getLogger(__name__)
 
 
 class DomainError(Exception):
@@ -85,6 +89,35 @@ class DependenciasActivasError(DomainError):
 
 def _envelope(codigo: str, mensaje: str, detalles: Any = None) -> dict[str, Any]:
     return {"error": {"codigo": codigo, "mensaje": mensaje, "detalles": detalles}}
+
+
+class CatchAllErrorMiddleware(BaseHTTPMiddleware):
+    """Red de seguridad para excepciones que ningún handler de abajo cubre (p.ej. un
+    error crudo de SQLAlchemy/DB).
+
+    Bug reportado 2026-10-30: una excepción sin handler registrado la termina
+    resolviendo Starlette con `ServerErrorMiddleware`, que en el stack de middlewares
+    queda FUERA de `CORSMiddleware` — la respuesta sale sin headers CORS, el navegador
+    la bloquea y el frontend la reporta como "Network Error" sin mensaje útil. Este
+    middleware debe registrarse ANTES que `CORSMiddleware` en `main.py` (con
+    `app.add_middleware`, el orden de registro invierte el orden de envoltura) para
+    quedar DENTRO de CORS y que su respuesta sí lleve los headers.
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        try:
+            return await call_next(request)
+        except Exception:
+            logger.exception(
+                "Error no manejado en %s %s", request.method, request.url.path
+            )
+            return JSONResponse(
+                status_code=500,
+                content=_envelope(
+                    "error_interno",
+                    "Ocurrió un error interno. Intenta de nuevo o contacta a soporte.",
+                ),
+            )
 
 
 def register_error_handlers(app: FastAPI) -> None:

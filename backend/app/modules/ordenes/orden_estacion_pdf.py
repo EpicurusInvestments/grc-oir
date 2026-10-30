@@ -251,6 +251,21 @@ def _tipo_medio(estacion: Estacion) -> str:
     return "TELEVISIÓN" if estacion.tipo_senal == "tv" else "RADIO"
 
 
+def _descripcion_estacion(estacion: Estacion) -> str:
+    """"Siglas Frecuencia TIPO Nombre" — mismo formato que ya usa el front para
+    identificar la estación en sus selectores (ADR-136/ADR-191). Petición del usuario
+    2026-10-30: "Horarios programados" (2.2) y "Horarios reales" (2.3) mostraban solo
+    nombre + frecuencia, sin siglas ni tipo de señal. Cualquier parte vacía (siglas
+    faltantes, p.ej.) se OMITE en vez de dejar un espacio en blanco de más."""
+    partes = [
+        estacion.siglas,
+        estacion.frecuencia,
+        estacion.tipo_senal.upper() if estacion.tipo_senal else None,
+        estacion.nombre_estacion,
+    ]
+    return " ".join(p for p in partes if p)
+
+
 # ── Estilos compartidos ──────────────────────────────────────────────────────────
 _STYLES = getSampleStyleSheet()
 _TITULO = ParagraphStyle("titulo", parent=_STYLES["Title"], fontSize=14, alignment=TA_CENTER)
@@ -454,12 +469,15 @@ def _fila_dia_programado(grupo: _GrupoFechaDia, nombre_material: str) -> list:
     # "Horario" a un solo valor, asumiendo `hora_inicio == hora_fin` siempre (ADR-108) —
     # supuesto inválido desde ADR-184 en adelante. Vuelve a mostrar el rango completo.
     # ADR-196: `grupo` reemplaza la fila real suelta — ya viene agrupada por fecha.
+    # ADR-221c (petición del usuario): faltaba el número de spots DE ESE DÍA (solo se veía
+    # el total agregado arriba, "TOTAL SPOTS") — se agrega como columna propia.
     return [
         Paragraph(f"<b>{fecha_txt}</b>", _FILA_PROGRAMADO),
         Paragraph(
             f"Horario: <i>{_hora_12h(grupo.hora_inicio)} A {_hora_12h(grupo.hora_fin)}</i>",
             _FILA_PROGRAMADO,
         ),
+        Paragraph(f"Spots: <i>{grupo.spots}</i>", _FILA_PROGRAMADO),
         Paragraph(f"Material a Transmitir: <i>{nombre_material}</i>", _FILA_PROGRAMADO),
     ]
 
@@ -658,7 +676,7 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         for d in ctx.dias
     )
 
-    nombre_estacion_ciudad = f"{estacion.nombre_estacion} {estacion.frecuencia or ''}".strip()
+    nombre_estacion_ciudad = _descripcion_estacion(estacion)
 
     elementos: list = [
         _encabezado(
@@ -709,7 +727,7 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         Table(
             filas,
             style=_FILA_CON_LINEA,
-            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.4, 1.1, 2.5]),
+            colWidths=_proporciones(_ANCHO_DISPONIBLE, [1.4, 1.1, 0.7, 2.3]),
         )
     )
 
@@ -775,7 +793,9 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 + _campo_negrita_der(
                     "MARCA", (ctx.marca.nombre_marca if ctx.marca else "—").upper()
                 ),
-                _campo_negrita("EMISORA", f"{estacion.nombre_estacion} / {plaza.nombre_plaza}".upper())
+                _campo_negrita(
+                    "EMISORA", f"{_descripcion_estacion(estacion)} / {plaza.nombre_plaza}".upper()
+                )
                 + _campo_negrita_der("TOTAL SPOTS REALES", str(total_real)),
                 _campo_negrita("PRODUCTO", (oe.producto_tarifa or "—").upper()) + ["", ""],
             ],
@@ -791,25 +811,27 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     # los spots del mismo día (no algo propio de este renglón en particular), así que
     # mostrarlo aquí como rango confundía más de lo que aclaraba — "Capturar reales"
     # sigue siendo por spot, SIN agrupar (a diferencia de Servicio/Programados, ADR-196).
-    filas = [["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]]
+    # ADR-221c (petición del usuario, corrige un bug real): se quita la columna "SPOTS" de
+    # este detalle — cada renglón YA es un solo spot (ADR-127), así que siempre mostraba
+    # "1" (o "—"), sin aportar nada; ese conteo tiene sentido agrupado por día, no aquí —
+    # ver el nuevo "Spots" por día que sí se agregó al PDF de Programados.
+    filas = [["", "FECHA", "HORA", "DESCRIPCION", "EMISORA"]]
+    descripcion_estacion = _descripcion_estacion(estacion).upper()
     for i, dia in enumerate(ctx.dias, start=1):
-        verificacion = verificaciones.get(dia.orden_estacion_dia_id)
-        spots = verificacion.spots_verificados if verificacion else "—"
         filas.append(
             [
                 str(i),
                 _fecha_corta(dia.fecha_transmision),
                 _hora_24h(dia.hora_inicio),
-                str(spots),
                 Paragraph((oc.producto or "—").upper(), _FILA_REALES),
-                Paragraph(estacion.nombre_estacion.upper(), _FILA_REALES),
+                Paragraph(descripcion_estacion, _FILA_REALES),
             ]
         )
     elementos.append(
         Table(
             filas,
             style=_TABLA_SIN_MARCO,
-            colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 1.8 * cm, 6.8 * cm, 2.9 * cm],
+            colWidths=[1 * cm, 2.5 * cm, 2.8 * cm, 8.6 * cm, 2.9 * cm],
         )
     )
 

@@ -144,6 +144,24 @@ from app.shared.schemas import ListParams, Page
 CENTAVOS = Decimal("0.01")
 IVA_RATE = Decimal(str(settings.iva_rate))
 
+# ADR-222 (petición del usuario, REVIERTE ADR-101): "no debe exceder el monto de la orden
+# de servicio y si lo excede, a la hora de guardar no debe dejar guardarlo — que mande el
+# mensaje para que lo corrijan". ADR-101 había quitado este candado para permitir que
+# `precio_spot` superara `OrdenCliente.precio_unitario` (margen OIR negativo); el bug
+# reportado 2026-10-30 (una tarifa desproporcionada desbordaba la columna
+# `porcentaje_participacion_oir`, NUMERIC(5,2), y tronaba como "Network Error" sin
+# mensaje) expuso que el negocio en realidad nunca quiso permitir esto — el candado
+# original vuelve, con un mensaje de validación claro en vez de dejarlo reventar en BD.
+def _validar_tarifa_no_excede_oc(precio_spot: Decimal, precio_unitario_oc: Decimal) -> None:
+    if precio_spot > precio_unitario_oc:
+        raise DomainError(
+            "La tarifa por spot no puede exceder la tarifa de la orden de servicio.",
+            detalles={
+                "precio_spot": str(precio_spot),
+                "precio_unitario_oc": str(precio_unitario_oc),
+            },
+        )
+
 
 class EstatusOrdenEstacion(StrEnum):
     BORRADOR = "borrador"
@@ -178,13 +196,15 @@ class OrdenEstacion(Base):
             "'cerrada', 'cancelada')",
             name="ck_orden_estacion_estatus",
         ),
-        # ADR-101 (petición del usuario): se quitó el candado que impedía que
-        # `precio_spot` superara `OrdenCliente.precio_unitario` — ahora el margen OIR
-        # (`porcentaje_participacion_oir`/`importe_oir`/`iva_oir`/`total_oir`) puede ser
-        # NEGATIVO cuando eso pasa (la estación cuesta más de lo que se le cobró al
-        # cliente). El tope superior de 100% sigue aplicando (matemáticamente no puede
-        # superarse con `precio_spot >= 0`). Se revisará más adelante si el negocio
-        # quiere limitar el negativo en vez de permitirlo tal cual.
+        # ADR-101 había quitado el candado que impedía que `precio_spot` superara
+        # `OrdenCliente.precio_unitario` (margen OIR negativo permitido). ADR-222
+        # (petición del usuario, revierte ADR-101) lo vuelve a exigir, pero como
+        # validación de SERVICIO (`_validar_tarifa_no_excede_oc`, con mensaje claro),
+        # no como CHECK — la columna en sí sigue sin CHECK de signo negativo (dejarlo
+        # únicamente como CHECK haría tronar un error crudo de BD en vez de un
+        # `DomainError` legible, que fue justo el bug original). El tope superior de 100%
+        # sigue aplicando aquí (matemáticamente ya no puede superarse con
+        # `precio_spot >= 0` y ADR-222, pero se deja el CHECK como red de seguridad).
         CheckConstraint(
             "porcentaje_participacion_oir <= 100",
             name="ck_orden_estacion_pct_oir",
@@ -192,8 +212,9 @@ class OrdenEstacion(Base):
         # Auditoría de migración a RDS: las 8 columnas de dinero de OrdenEstacion no
         # tenían CHECK — omisión de la misma pasada que sí cubrió orden_cliente e
         # incidencia. `precio_spot`/`importe_estacion` y el lado "emisora" nunca son
-        # legítimamente negativos; el lado "oir" SÍ puede serlo desde ADR-101 (ver
-        # arriba), así que no lleva CHECK de signo.
+        # legítimamente negativos; el lado "oir" tampoco debería serlo en la práctica
+        # desde ADR-222, pero no lleva CHECK de signo (ver nota de arriba: el candado
+        # vive en el servicio, no en el esquema).
         CheckConstraint("precio_spot >= 0", name="ck_orden_estacion_precio_spot"),
         # ADR-068: spots que se asignan/transmiten igual que cualquier otro pero no se
         # cobran a la estación — análogo a `cantidad_spots_bonificables` de OrdenCliente
@@ -2020,6 +2041,9 @@ class OrdenEstacionService(
                 },
             )
 
+        # ADR-222: `precio_spot` no puede exceder la tarifa de la orden de servicio.
+        _validar_tarifa_no_excede_oc(data.precio_spot, oc.precio_unitario)
+
         # % de participación OIR: CALCULADO (ya no lo captura el formulario, ver plan de
         # la Tanda 5) = (precio_unitario_OC − precio_spot) / precio_unitario_OC × 100.
         pct_oir = Decimal("0")
@@ -2257,6 +2281,9 @@ class OrdenEstacionService(
                     "cantidad_spots_bonificables": cantidad_spots_bonificables,
                 },
             )
+
+        # ADR-222: idem alta — `precio_spot` no puede exceder la tarifa de la OC.
+        _validar_tarifa_no_excede_oc(precio_spot, oc.precio_unitario)
 
         pct_oir = Decimal("0")
         if oc.precio_unitario > 0:
@@ -3027,8 +3054,9 @@ def crear_orden_estacion(
 ) -> OrdenEstacionRead:
     """Asigna una estación a una OrdenCliente (Ventas). Hereda de la OC (anunciante,
     vendedor, agencia, categoría, producto, contrato, duración de spot) y de la Estación
-    (plaza); calcula % de participación OIR e importes. **ADR-101:** `precio_spot` puede
-    superar la tarifa cliente de la OC (el margen OIR se vuelve negativo). **ADR-102:**
+    (plaza); calcula % de participación OIR e importes. **ADR-222** (revierte ADR-101):
+    `precio_spot` NO puede exceder la tarifa cliente de la OC — 400 claro si lo excede.
+    **ADR-102:**
     si `precio_spot` no coincide con la tarifa activa del catálogo para
     (estación, tipo_señal, duración, `producto_tarifa`), exige `motivo_cambio_tarifa` y lo
     audita — sin bloquear la captura. 400 si excede el balance de spots de la orden."""

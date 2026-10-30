@@ -9123,3 +9123,148 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (cambiar de `pago_afiliado` a `pago_agencia` y de regreso deja todo limpio; cambiar de
   `comision_vendedor` a `pago_afiliado` también). Suite `cobranza` 37/37 sin
   regresiones.
+
+### ADR-221c — PDFs de OrdenEstacion: spots por día en Programados, se quita la columna "Spots" de Reales, descripción completa de la emisora en ambos
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (reportado por el usuario, con 3 capturas):
+  1. "Horarios programados" (2.2) no mostraba el número de spots POR DÍA (solo el total
+     agregado del encabezado, "TOTAL SPOTS").
+  2. "Horarios reales" (2.3) sí tenía una columna "SPOTS" por renglón, pero "lo
+     implementaste al revés" — cada renglón YA es un solo spot (ADR-127), así que esa
+     columna siempre mostraba "1" (o "—") sin aportar nada; ese conteo tiene sentido
+     agrupado por día (como en 2.2), no ahí.
+  3. En ambos PDFs la descripción de la emisora venía incompleta (solo nombre + frecuencia,
+     p.ej. "Rediorama 88.1") — se pidió completarla a "Siglas + Frecuencia + Tipo de Señal +
+     Descripción", el mismo formato que ya usa el front en sus selectores (ADR-136/ADR-191).
+- **Decisión:** en `orden_estacion_pdf.py`:
+  - Nuevo helper compartido `_descripcion_estacion(estacion)` ("Siglas Frecuencia TIPO
+    Nombre", partes vacías omitidas) — reemplaza el `f"{nombre} {frecuencia}"` suelto de
+    Programados (línea "ESTACION:") y el `f"{nombre} / {plaza}"` de Reales (línea
+    "EMISORA:" del encabezado Y la columna "EMISORA" de cada renglón del detalle).
+  - `_fila_dia_programado()` agrega una columna "Spots: N" (usa `grupo.spots`, ya calculado
+    por `_agrupar_dias_por_fecha` — el mismo total que ya usaba "Orden de servicio" 2.1).
+  - La tabla de detalle de Reales pierde la columna "SPOTS": encabezado pasa de
+    `["", "FECHA", "HORA", "SPOTS", "DESCRIPCION", "EMISORA"]` a `["", "FECHA", "HORA",
+    "DESCRIPCION", "EMISORA"]`; el ancho liberado (1.8cm) se le da a "DESCRIPCION". El
+    cálculo de `verificaciones`/`total_real` SIGUE existiendo (lo usa "TOTAL SPOTS REALES"
+    del encabezado) — solo se quitó su uso POR RENGLÓN.
+- **Verificado:** 6 pruebas nuevas en `test_f1_06_ordenes_pdf.py` (extracción de texto real
+  del PDF vía `pypdf`, mismo patrón que las pruebas de ADR-192/193/196 ya existentes):
+  spots por día en Programados (simple y agrupado por fecha), descripción completa de la
+  estación en Programados y en Reales, y que el encabezado de la tabla de Reales ya no
+  trae "SPOTS". Suite completa de `test_f1_06_ordenes_pdf.py` (24) y de backend completo
+  en verde; `ruff` limpio.
+
+### ADR-222 — `precio_spot` de OrdenEstacion YA NO puede exceder `OrdenCliente.precio_unitario` (REVIERTE ADR-101)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (petición del usuario, corrige el criterio
+  de ADR-221/ADR-101): tras ver el fix de ADR-221 (que solo topaba el EXTREMO que
+  desbordaba la columna de BD, dejando pasar cualquier exceso moderado con % OIR
+  negativo), el usuario aclaró el criterio real de negocio: *"según yo no debe exceder el
+  monto de la orden de servicio y si lo excede, a la hora de guardar no debe dejar
+  guardarlo — que mande el mensaje para que lo corrijan"*. Esto revierte ADR-101 por
+  completo: no se trata de un límite técnico de almacenamiento (eso ya lo resolvía
+  ADR-221), sino de que el negocio nunca quiso permitir el margen OIR negativo en absoluto.
+- **Decisión (backend, `orden_estacion.py`):** se reemplaza `PCT_OIR_MINIMO`/
+  `_validar_pct_oir_almacenable()` (ADR-221, ahora innecesarios) por
+  `_validar_tarifa_no_excede_oc(precio_spot, precio_unitario_oc)`, invocada en
+  `OrdenEstacionService.create()` y `.update()` ANTES de calcular `pct_oir` (ya no
+  después): si `precio_spot > precio_unitario` de la OC, `DomainError` claro
+  ("La tarifa por spot no puede exceder la tarifa de la orden de servicio"). Igual a la
+  tarifa de la OC SÍ se permite (pct_oir = 0.0) — el rechazo es solo si la EXCEDE. El
+  `CheckConstraint("porcentaje_participacion_oir <= 100")` se deja tal cual (red de
+  seguridad, aunque ya matemáticamente inalcanzable con esta validación); no se agregó
+  ningún `CheckConstraint` nuevo de piso — el candado vive en el servicio, como el resto
+  de las validaciones de esta entidad (balance de spots, bonificables, etc.), no en el
+  esquema.
+- **Decisión (frontend, `OrdenEstacionForm.tsx`):** mismo cambio de criterio en el
+  arreglo `errores` — de `pctOIR < -999.99` (ADR-221) a `precio > oc.precio_unitario`
+  (cualquier exceso, sin importar magnitud), con mensaje que incluye ambos montos.
+- **Tests reescritos** (ya no tiene sentido "permite pct_oir negativo"):
+  `test_crear_oe_precio_mayor_a_tarifa_cliente_permite_pct_oir_negativo` →
+  `test_crear_oe_precio_mayor_a_tarifa_cliente_se_rechaza`;
+  `test_editar_oe_permite_tarifa_mayor_a_la_de_la_oc_con_pct_oir_negativo` se fusiona en
+  `test_editar_oe_tarifa_mayor_a_la_de_la_oc_se_rechaza`; nuevo
+  `test_crear_oe_precio_igual_a_tarifa_cliente_se_permite` (caso límite: igualar sí se
+  permite). 2 fixtures que usaban `precio_spot` por encima de `precio_unitario` para
+  probar algo NO relacionado (motivo de cambio de tarifa, "sin tarifa en catálogo") se
+  bajan a valores dentro del límite (p.ej. 5000.00→900.00, 1500.00/1600.00→900.00/950.00),
+  conservando su divergencia respecto a la tarifa sugerida del catálogo para seguir
+  probando lo que probaban originalmente. Frontend: `OrdenEstacionForm.test.tsx` actualiza
+  su prueba de ADR-101 al criterio inverso (bloquea Guardar, no lo permite) y ajusta las
+  mismas 5 fixtures con el mismo criterio.
+- **Verificado:** suite completa de backend (pytest) 100% verde; `ruff` limpio; `tsc`/
+  `eslint` limpios; suite `OrdenEstacionForm.test.tsx` (50) sin regresiones.
+
+### ADR-221 — Orden de Transmisión: "Network Error" al capturar una tarifa por spot desproporcionada (overflow de `% participación OIR`)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (reportado por el usuario, con captura):
+  en "Nueva Orden de Transmisión", cuando la tarifa por spot excede por mucho la tarifa
+  de la orden de servicio (p.ej. $100,000.00 contra $100.00), el formulario mostraba
+  "Network Error" en vez de un error de validación claro — aunque la UI ya calculaba y
+  mostraba el `% participación OIR` resultante (-9980% en el ejemplo).
+- **Causa raíz (3 partes, no una sola):**
+  1. ADR-101 quitó a propósito el candado "`precio_spot` no puede superar la tarifa de
+     la OC", dejando el `% participación OIR` sin límite inferior.
+  2. `OrdenEstacion.porcentaje_participacion_oir` es `NUMERIC(5,2)` (magnitud máxima
+     ±999.99). Un `% OIR` más negativo que eso desborda la columna: en SQLite (dev) el
+     insert pasa silencioso, pero en SQL Server (RDS, el motor real) truena con un error
+     crudo de BD (`DBAPIError`), no un `DomainError`.
+  3. `app/core/errors.py` no tenía handler para excepciones sin tipo registrado: la
+     resolvía el `ServerErrorMiddleware` de Starlette, que en el stack de middlewares
+     queda FUERA de `CORSMiddleware` — la respuesta 500 sale sin headers CORS, el
+     navegador la bloquea y axios la reporta como `"Network Error"` sin mensaje (gotcha
+     conocido de FastAPI+CORS con excepciones no manejadas).
+- **Decisión (backend, `orden_estacion.py`):** nueva constante `PCT_OIR_MINIMO =
+  Decimal("-999.99")` y helper `_validar_pct_oir_almacenable()`, invocado en
+  `OrdenEstacionService.create()` y `.update()` justo después de calcular `pct_oir`:
+  si cae por debajo del mínimo, `DomainError` con mensaje claro ("la tarifa por spot es
+  demasiado alta..."). **ADR-101 NO se revierte**: el negativo moderado sigue permitido
+  tal cual; solo se topa el extremo que la columna no puede almacenar — sigue siendo
+  "se revisará más adelante si el negocio quiere un límite de negocio más estricto"
+  (nota original de ADR-101, todavía abierta).
+- **Decisión (backend, red de seguridad general):** nuevo
+  `CatchAllErrorMiddleware` (`app/core/errors.py`) que envuelve cualquier excepción sin
+  handler y la convierte en un 500 con el sobre uniforme de error. Se registra en
+  `app/main.py` **antes** que `CORSMiddleware` (`add_middleware` envuelve en orden
+  inverso al de registro) para quedar DENTRO de CORS — así cualquier error futuro no
+  previsto sigue trayendo los headers CORS en vez de degradar a "Network Error" en el
+  navegador. No reemplaza los handlers de `DomainError`/`RequestValidationError`/
+  `StarletteHTTPException` ya existentes, que siguen resolviendo sus casos tal cual.
+- **Decisión (frontend, `OrdenEstacionForm.tsx`):** se espeja el mismo límite
+  (`pctOIR < -999.99`) en el arreglo `errores` del formulario, con un mensaje
+  explicando que la tarifa es demasiado alta — así el usuario ve el aviso y el botón
+  "Guardar" se bloquea antes de llegar al servidor, en vez de descubrirlo con un error
+  de red después de enviar.
+- **Verificado:** backend — 2 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oe_tarifa_desproporcionada_rechaza_overflow_de_pct_oir`,
+  `test_editar_oe_tarifa_desproporcionada_rechaza_overflow_de_pct_oir`); 2 pruebas
+  existentes ajustaron su `precio_spot` de prueba (`12345.00` → `5000.00`, un valor que
+  ya no desborda la columna — su intención original no tenía relación con la magnitud
+  del `% OIR`); nuevo `test_core_errors.py` reproduce el bug con el orden de middleware
+  invertido (falla sin el fix: la respuesta de error no trae el header CORS) y confirma
+  que el orden correcto sí lo trae, sin afectar el comportamiento ya existente de
+  `DomainError`. Suite completa de backend 100% verde. Frontend — `tsc` limpio; suite
+  `ordenes` (278 pruebas) sin regresiones.
+
+### ADR-221b — Selector de "Estación" (Nueva Orden de Transmisión): `<select>` nativo → `SearchableSelect`
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (petición del usuario, con captura): con
+  decenas de estaciones ya en catálogo, el combo nativo obligaba a desplazarse por toda
+  la lista — se pidió poder filtrar tecleando las primeras letras, como ya funciona el
+  selector "Orden de Servicio de origen" en el mismo formulario.
+- **Decisión:** en `OrdenEstacionForm.tsx` se reemplaza el `<select className="fsel">`
+  de Estación por el componente compartido `SearchableSelect` (`shared/ui/`, ya usado ahí
+  mismo para la OC) — mismo `options` (`{value, label}`) con la etiqueta ya existente
+  ("Siglas Frecuencia TIPO Nombre", ADR-136/ADR-191), mismo `disabled={isEdit}` (se envuelve
+  en un `<div title="...">` para conservar el tooltip de "no se puede reasignar al editar",
+  ya que `SearchableSelect` no tiene prop `title`). Sin cambios de backend ni de datos.
+- **Verificado:** `tsc`/`eslint` limpios. Se actualizaron las pruebas que interactuaban con
+  el `<select>` nativo (24 en `OrdenEstacionForm.test.tsx`, 2 en
+  `OrdenEstacionListPage.test.tsx`): el patrón pasa de `fireEvent.change(select, {target:
+  {value: id}})` a teclear + `fireEvent.mouseDown` sobre la opción (mismo patrón que ya
+  usaban las pruebas de la OC); las 2 aserciones que leían `.value` como el id crudo ahora
+  comparan contra la ETIQUETA mostrada (`SearchableSelect` muestra el label, no el id); los
+  2 tests que listaban las `<option>` sin abrir el combo ahora hacen `fireEvent.focus`
+  primero (las opciones solo se renderizan con el campo abierto). Suite `ordenes` completa
+  (278 pruebas) en verde.

@@ -525,8 +525,8 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
   // contando para el balance de la OC, arriba).
   const spotsFacturables = Math.max(totalEstaOI - bonificablesRaw, 0);
   const importe = spotsFacturables * precio;
-  // ADR-101: sin candado — la tarifa de la estación puede superar la tarifa cliente; el
-  // % de participación OIR simplemente se vuelve negativo (ver panel "Cálculos en vivo").
+  // ADR-222 (petición del usuario, revierte ADR-101): la tarifa de la estación YA NO
+  // puede superar la tarifa cliente — ver el error más abajo que bloquea "Guardar".
   const pctOIR = oc && oc.precio_unitario > 0 ? ((oc.precio_unitario - precio) / oc.precio_unitario) * 100 : 0;
 
   // ADR-102: solo se exige motivo cuando el precio final se APARTA de la tarifa
@@ -569,6 +569,16 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
   });
   if (balance && balance.sobreAsignado) errores.push(`Excede el total de la OC por ${Math.abs(balance.porAsignar)} spots.`);
   if (bonificablesExcede) errores.push(`Los spots bonificables (${bonificablesRaw}) no pueden exceder los spots asignados de esta OI (${totalEstaOI}).`);
+  // ADR-222 (petición del usuario, revierte ADR-101): la tarifa por spot NO puede exceder
+  // la tarifa de la orden de servicio — antes se permitía (margen OIR negativo) y una
+  // tarifa desproporcionada terminaba tronando en el backend con un "Network Error" poco
+  // claro (bug reportado 2026-10-30). Se valida aquí también para avisar ANTES de guardar,
+  // con el mismo criterio que `_validar_tarifa_no_excede_oc` en `orden_estacion.py`.
+  if (oc && precio > oc.precio_unitario) {
+    errores.push(
+      `La tarifa por spot ($${precio.toLocaleString("es-MX")}) no puede exceder la tarifa de la orden de servicio ($${oc.precio_unitario.toLocaleString("es-MX")}).`
+    );
+  }
 
   const listo = errores.length === 0;
 
@@ -684,35 +694,27 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
               <div className="form-card">
                 <div className="form-card-title">Datos de la Orden de Transmisión</div>
                 <div className="fl fl-required">Estación</div>
-                <select
-                  className="fsel"
-                  value={estacionId}
-                  disabled={isEdit}
-                  onChange={(e) => onEstacionChange(e.target.value)}
-                  title={isEdit ? "La estación no se puede cambiar al editar — crea una OE nueva si es otra estación." : undefined}
-                >
-                  <option value="">Selecciona…</option>
-                  {/* ADR-136 (petición del usuario): "Estación-Siglas-Frecuencia" — antes
-                      solo mostraba "Estación (Frecuencia)". REVERTIDO en ADR-191 (ver
-                      abajo). */}
-                  {/* ADR-191 (petición del usuario, corrige un primer intento que SÍ
-                      incluía la plaza): "Siglas Frecuencia TipoSeñal Nombre", separados
-                      por un solo espacio (ya no guiones, sin Plaza) — Frecuencia y Tipo
-                      de señal van por separado (antes venían ya combinados en el campo
-                      `frecuencia`, p.ej. "90.1 FM", perdiendo la distinción). Cualquier
-                      parte vacía (siglas/frecuencia faltantes) se OMITE en vez de
-                      mostrar un "—" o dejar un espacio en blanco de más. */}
-                  {estaciones.filter(esActivo).map((e) => {
-                    const partes = [e.siglas, e.frecuencia, e.tipo_senal.toUpperCase(), e.nombre_estacion].filter(
-                      (parte): parte is string => !!parte,
-                    );
-                    return (
-                      <option key={e.id} value={e.id}>
-                        {partes.join(" ")}
-                      </option>
-                    );
-                  })}
-                </select>
+                {/* ADR-221b (petición del usuario): `<select>` nativo → `SearchableSelect`
+                    — con decenas de estaciones, poder filtrar tecleando (siglas/frecuencia/
+                    nombre) es más rápido que desplazarse por la lista completa. */}
+                <div title={isEdit ? "La estación no se puede cambiar al editar — crea una OE nueva si es otra estación." : undefined}>
+                  <SearchableSelect
+                    value={estacionId}
+                    onChange={onEstacionChange}
+                    disabled={isEdit}
+                    options={estaciones.filter(esActivo).map((e) => {
+                      // ADR-136/ADR-191 (petición del usuario, corrige un primer intento
+                      // que SÍ incluía la plaza): "Siglas Frecuencia TipoSeñal Nombre",
+                      // separados por un solo espacio (sin Plaza) — cualquier parte vacía
+                      // (siglas/frecuencia faltantes) se OMITE en vez de mostrar un "—" o
+                      // dejar un espacio en blanco de más.
+                      const partes = [e.siglas, e.frecuencia, e.tipo_senal.toUpperCase(), e.nombre_estacion].filter(
+                        (parte): parte is string => !!parte,
+                      );
+                      return { value: e.id, label: partes.join(" ") };
+                    })}
+                  />
+                </div>
                 {estacion && (
                   <div className="heredado-block" style={{ marginTop: 4 }}>
                     <div className="heredado-title">Datos heredados de la estación</div>

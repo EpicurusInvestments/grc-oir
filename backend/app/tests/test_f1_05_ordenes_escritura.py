@@ -812,17 +812,51 @@ def test_crear_oe_con_hora_inicio_igual_a_hora_fin_no_falla(
     assert oe.orden_estacion_id is not None
 
 
-def test_crear_oe_precio_mayor_a_tarifa_cliente_permite_pct_oir_negativo(
+def test_crear_oe_precio_mayor_a_tarifa_cliente_se_rechaza(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
-    """ADR-101: ya no se rechaza que `precio_spot` supere `precio_unitario` de la OC —
-    el margen OIR simplemente se vuelve negativo (20 spots * 1500 = 30000; % OIR =
-    (1000-1500)/1000*100 = -50.0; importe_oir = 30000 * -50/100 = -15000.00)."""
+    """ADR-222 (petición del usuario, revierte ADR-101): `precio_spot` NO puede exceder
+    `precio_unitario` de la OC — se rechaza con un mensaje claro, no se deja guardar."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)  # precio_unitario=1000.00
+    with pytest.raises(DomainError):
+        oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("1500.00")), VENTAS)
+
+
+def test_crear_oe_precio_igual_a_tarifa_cliente_se_permite(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """Caso límite de ADR-222: igual a la tarifa de la OC SÍ se permite (pct_oir = 0.0) —
+    solo se rechaza si la EXCEDE, no si la iguala."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)  # precio_unitario=1000.00
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("1000.00")), VENTAS)
+    assert oe.porcentaje_participacion_oir == Decimal("0.0")
+
+
+def test_crear_oe_tarifa_desproporcionada_se_rechaza(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """Bug reportado 2026-10-30: una tarifa muy por encima de la de la OC producía un
+    `porcentaje_participacion_oir` que desbordaba la columna `NUMERIC(5,2)` (±999.99) — en
+    SQL Server eso tronaba con un error crudo de BD que el front veía como "Network Error".
+    ADR-222 corrige esto de raíz: CUALQUIER exceso sobre la tarifa de la OC se rechaza
+    desde `_validar_tarifa_no_excede_oc`, mucho antes de llegar a calcular el % o escribir
+    en BD — ya no existe un "extremo tolerado"."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)  # precio_unitario=1000.00
+    with pytest.raises(DomainError):
+        oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("100000.00")), VENTAS)
+
+
+def test_editar_oe_tarifa_mayor_a_la_de_la_oc_se_rechaza(
+    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-222: idem alta — editar para poner una tarifa mayor a la de la OC también se
+    rechaza (antes, bajo ADR-101, se permitía)."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("1500.00")), VENTAS)
-    assert oe.importe_estacion == Decimal("30000.00")
-    assert oe.porcentaje_participacion_oir == Decimal("-50.0")
-    assert oe.importe_oir == Decimal("-15000.00")
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    with pytest.raises(DomainError):
+        oe_svc.update(
+            oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("1500.00")), VENTAS
+        )
 
 
 def test_crear_oe_excede_balance_de_spots_400(
@@ -941,20 +975,6 @@ def test_editar_oe_solo_tarifa_conserva_los_dias_existentes(
     assert len(oe_svc.dias(oe.orden_estacion_id)) == 2
 
 
-def test_editar_oe_permite_tarifa_mayor_a_la_de_la_oc_con_pct_oir_negativo(
-    oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
-) -> None:
-    """ADR-101: la edición ya no rechaza `precio_spot > precio_unitario` — mismo criterio
-    que el alta (test hermano de arriba)."""
-    oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
-    editada = oe_svc.update(
-        oe.orden_estacion_id, OrdenEstacionUpdate(precio_spot=Decimal("1500.00")), VENTAS
-    )
-    assert editada.porcentaje_participacion_oir == Decimal("-50.0")
-    assert editada.importe_oir == Decimal("-15000.00")
-
-
 def test_editar_oe_rechaza_dia_fuera_de_campania(
     oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -1056,9 +1076,10 @@ def test_crear_oe_sin_tarifa_en_catalogo_no_exige_motivo_ni_audita(
     cat: dict[str, uuid.UUID],
 ) -> None:
     """Sin ninguna `TarifaPlaza` activa para la combinación, no hay nada contra qué
-    comparar: `precio_spot` sigue siendo 100% libre, igual que antes de esta fase."""
+    comparar: `precio_spot` sigue siendo libre en cuanto a motivo/auditoría (ADR-102),
+    dentro del límite de ADR-222 (no exceder la tarifa de la OC, 1000.00 en el fixture)."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
-    oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("12345.00")), VENTAS)
+    oe_svc.create(_oe_payload(cat, oc.orden_id, precio_spot=Decimal("900.00")), VENTAS)
     assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
 
 
@@ -1177,8 +1198,9 @@ def test_crear_oe_duracion_sin_tarifa_sembrada_para_esa_duracion_sigue_libre(
     aunque SÍ exista tarifa para otra duración de la misma estación/producto."""
     _seed_tarifa(db, cat, tarifa_bruta=Decimal("800.00"), duracion_spot="30s")
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    # ADR-222: idem nota de arriba — libre, dentro del límite de no exceder la OC.
     oe_svc.create(
-        _oe_payload(cat, oc.orden_id, duracion_spot="60s", precio_spot=Decimal("12345.00")),
+        _oe_payload(cat, oc.orden_id, duracion_spot="60s", precio_spot=Decimal("900.00")),
         VENTAS,
     )
     assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 0
@@ -1209,7 +1231,7 @@ def test_editar_oe_cambia_duracion_y_recalcula_tarifa_sugerida(
 
     oe_svc.update(
         oe.orden_estacion_id,
-        OrdenEstacionUpdate(precio_spot=Decimal("1200.00"), motivo_cambio_tarifa="Ajuste"),
+        OrdenEstacionUpdate(precio_spot=Decimal("900.00"), motivo_cambio_tarifa="Ajuste"),
         VENTAS,
     )
     assert db.query(LogCambioParametro).filter_by(entidad="OrdenEstacion").count() == 1
