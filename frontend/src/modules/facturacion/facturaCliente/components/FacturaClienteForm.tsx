@@ -62,6 +62,13 @@ const schema = z.object({
   cuenta_contable_id: z.string().min(1, "Selecciona la cuenta contable."),
   metodo_pago_clave: z.string().min(1, "Selecciona el método de pago."),
   forma_pago_clave: z.string().min(1, "Selecciona la forma de pago."),
+  // ADR-223 (petición del usuario): 4 claves fiscales más que el timbrador exige —
+  // mismo patrón sin FK que metodo_pago_clave/forma_pago_clave (clave de
+  // ConstantesSistema, sugerida por el combo).
+  clave_prod_serv: z.string().min(1, "Selecciona la clave de producto o servicio."),
+  clave_unidad: z.string().min(1, "Selecciona la clave de unidad."),
+  moneda_sat: z.string().min(1, "Selecciona la moneda."),
+  tipo_comprobante: z.string().min(1, "Selecciona el tipo de comprobante."),
   info_cuenta_pago: z.string().trim().optional(),
 });
 
@@ -83,18 +90,26 @@ interface Props {
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
-/** Descripción sugerida, con el mismo texto que arma la pantalla aprobada. */
-function descripcionSugerida(o: OrdenPorFacturar | null | undefined): string {
-  if (!o) return "";
-  const spots =
-    o.total_spots != null && o.duracion_spot
-      ? ` ${o.total_spots} spots de ${o.duracion_spot}`
-      : "";
-  return (
-    `Servicios de transmisión publicitaria — ${o.producto ?? "Campaña"} del ` +
-    `${o.fecha_inicio_campania} al ${o.fecha_fin_campania}.${spots} según orden ` +
-    `${o.numero_orden_cliente}.`
-  );
+/** Concepto sugerido (ADR-224, petición del usuario): un renglón por orden — Campaña,
+ *  periodo, spots, costo del spot, monto de la orden, número de orden cliente y folio de
+ *  la orden de servicio — unidos con salto de línea cuando la factura cubre varias
+ *  órdenes (facturación múltiple, ADR-064). Con una sola orden es un solo renglón, igual
+ *  que antes (más los 3 datos nuevos: costo del spot, monto y folio). */
+function descripcionSugerida(ordenes: OrdenPorFacturar[]): string {
+  return ordenes
+    .map((o) => {
+      const spots =
+        o.total_spots != null && o.duracion_spot
+          ? ` ${o.total_spots} spots de ${o.duracion_spot} a ${fmtMoneda(o.precio_unitario)} c/u.`
+          : "";
+      return (
+        `Servicios de transmisión publicitaria — ${o.producto ?? "Campaña"} del ` +
+        `${o.fecha_inicio_campania} al ${o.fecha_fin_campania}.${spots} ` +
+        `Monto: ${fmtMoneda(o.subtotal)}. Según orden ${o.numero_orden_cliente}. ` +
+        `Folio: ${o.folio_orden}.`
+      );
+    })
+    .join("\n");
 }
 
 export function FacturaClienteForm({
@@ -114,6 +129,12 @@ export function FacturaClienteForm({
   const facturasDelAnunciante = useFacturasDelAnunciante(orden?.anunciante_id);
   const { useList } = useConstantes();
   const usosCfdi = useList({ grupo: "UsoCFDI", activo: true, size: 100 });
+  // ADR-223: mismo patrón sin FK que `usosCfdi` — el combo sugiere desde
+  // `ConstantesSistema`, la base no valida la relación.
+  const clavesProdServ = useList({ grupo: "ClaveProdServ", activo: true, size: 100 });
+  const clavesUnidad = useList({ grupo: "ClaveUnidad", activo: true, size: 100 });
+  const monedas = useList({ grupo: "MonedaSAT", activo: true, size: 100 });
+  const tiposComprobante = useList({ grupo: "TipoComprobante", activo: true, size: 100 });
 
   const {
     register,
@@ -132,7 +153,7 @@ export function FacturaClienteForm({
       rfc_facturacion: orden?.receptor_rfc ?? "",
       direccion_facturacion: orden?.receptor_direccion ?? "",
       uso_cfdi: orden?.receptor_uso_cfdi_default ?? "",
-      descripcion_factura: descripcionSugerida(orden),
+      descripcion_factura: descripcionSugerida(ordenesMultiples ?? (orden ? [orden] : [])),
       fecha_factura: hoy(),
       facturas_relacionadas_ids: [],
     },
@@ -448,6 +469,60 @@ export function FacturaClienteForm({
           ))}
         </select>
         {errors.forma_pago_clave && <div className="fe">{errors.forma_pago_clave.message}</div>}
+
+        {/* ADR-223 (petición del usuario): 4 claves fiscales más que el timbrador exige
+            — mismo patrón sin FK que Método/Forma de pago arriba. */}
+        <div className="fl fl-required">
+          Clave del producto o servicio <FieldTag origin="catalogo" />
+        </div>
+        <select className="fsel" {...register("clave_prod_serv")}>
+          <option value="">— Selecciona —</option>
+          {(clavesProdServ.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        {errors.clave_prod_serv && <div className="fe">{errors.clave_prod_serv.message}</div>}
+
+        <div className="fl fl-required">
+          Clave de unidad <FieldTag origin="catalogo" />
+        </div>
+        <select className="fsel" {...register("clave_unidad")}>
+          <option value="">— Selecciona —</option>
+          {(clavesUnidad.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        {errors.clave_unidad && <div className="fe">{errors.clave_unidad.message}</div>}
+
+        <div className="fl fl-required">
+          Moneda <FieldTag origin="catalogo" />
+        </div>
+        <select className="fsel" {...register("moneda_sat")}>
+          <option value="">— Selecciona —</option>
+          {(monedas.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        {errors.moneda_sat && <div className="fe">{errors.moneda_sat.message}</div>}
+
+        <div className="fl fl-required">
+          Tipo de comprobante <FieldTag origin="catalogo" />
+        </div>
+        <select className="fsel" {...register("tipo_comprobante")}>
+          <option value="">— Selecciona —</option>
+          {(tiposComprobante.data?.items ?? []).map((c) => (
+            <option key={c.clave} value={c.clave}>
+              {c.clave} · {c.descripcion}
+            </option>
+          ))}
+        </select>
+        {errors.tipo_comprobante && <div className="fe">{errors.tipo_comprobante.message}</div>}
 
         <div className="fl">Información cuenta de pago (aparece en factura)</div>
         <textarea

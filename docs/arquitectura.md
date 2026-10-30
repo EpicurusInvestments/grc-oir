@@ -9268,3 +9268,98 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   2 tests que listaban las `<option>` sin abrir el combo ahora hacen `fireEvent.focus`
   primero (las opciones solo se renderizan con el campo abierto). Suite `ordenes` completa
   (278 pruebas) en verde.
+
+### ADR-223 — "Nueva factura": 4 claves fiscales más en "Configuración contable" (ClaveProdServ, ClaveUnidad, MonedaSAT, TipoComprobante)
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (petición del usuario, con captura): el
+  formulario de alta de `FacturaCliente` no capturaba 4 claves que el timbrador exige:
+  Clave del producto o Servicio, Clave de unidad, Moneda y Tipo de comprobante. Se piden
+  como combos nuevos en "Configuración contable", justo debajo de "Forma de pago".
+- **Decisión (alcance, tras investigar):** las 5 claves mencionadas originalmente no eran
+  un bloque uniforme:
+  - `ClaveProdServ`/`ClaveUnidad`: pendiente YA documentado (nota de ADR-065 bis) —
+    `_datos_timbrado()` las resolvía solas con `_constante_unica(...)` ("solo si hay
+    exactamente una activa en el catálogo"), mecanismo frágil que deja de servir en
+    cuanto el catálogo tiene 0 o más de una activa (el catálogo de este ambiente YA
+    tiene varias activas por grupo). Mismo bug de fondo que `forma_pago_clave`.
+  - `MonedaSAT`: `DatosTimbrado.moneda` traía un default fijo `"MXN"` en código, nunca
+    se preguntaba — aditivo, sin conflicto.
+  - `TipoComprobante`: no existía ningún concepto equivalente en `DatosTimbrado`; se
+    captura y se guarda en la factura, pero **NO se conecta al archivo plano del
+    timbrador en este cambio** — `IdDoc.Tipo` del layout trae hoy un código fijo
+    observado en el ejemplo real (`_TIPO_DOCUMENTO = "33"`, el seed del catálogo lo
+    etiqueta "legado del timbrador externo"), y no hay confirmado qué código usaría el
+    PAC para Egreso/Pago (solo "33" = Ingreso está confirmado). Inventar ese mapeo
+    podría producir un archivo fiscal mal armado para esos casos — queda como pendiente
+    explícito (ver `docs/modulos/f2-facturacion/f2-facturacion.md`), no una decisión
+    tomada en silencio.
+  - **Serie: NO se agrega** (confirmado con el usuario) — sigue derivándose del número
+    de factura (ADR-060/061), decisión que este cambio no toca.
+- **Decisión (backend, `factura_cliente.py`):** 4 columnas nuevas `Unicode(20)` nullable
+  en `FacturaCliente` (`clave_prod_serv`, `clave_unidad`, `moneda_sat`,
+  `tipo_comprobante`) — mismo patrón sin FK que `metodo_pago_clave`/`forma_pago_clave`
+  (clave de `ConstantesSistema`, sugerida por el front, la base no valida la relación).
+  Requeridas en `FacturaClienteCreate`, opcionales en `Update`/nullable en BD (facturas
+  viejas no las capturaron). Migración `bf4b31efeac9`. `_datos_timbrado()` cambia
+  `clave_prod_serv`/`clave_unidad` de `_constante_unica(...)` a leer la columna
+  directamente (mismo criterio que `uso_cfdi`/`forma_pago_clave`) y `moneda` de
+  `"MXN"` fijo a `obj.moneda_sat or "MXN"` (facturas viejas sin capturar caen al mismo
+  default de siempre). El helper `_constante_unica()` se elimina: ya nada lo llama.
+- **Decisión (frontend, `FacturaClienteForm.tsx`):** 4 `<select>` nuevos con
+  `FieldTag origin="catalogo"`, mismo patrón `useConstantes().useList({grupo, activo:
+  true, size: 100})` ya usado para `UsoCFDI` — sin hooks/funciones de API dedicadas
+  nuevas (innecesario, el patrón genérico ya cubre el caso).
+- **Verificado:** backend — 4 pruebas nuevas (`test_claves_fiscales_adr223_*`,
+  `test_clave_prod_serv_y_clave_unidad_ya_no_dependen_del_catalogo...`,
+  `test_moneda_sat_reemplaza_el_default_fijo_mxn`); `test_el_endpoint_avisa_de_los_
+  campos_fiscales_que_faltan` se ajusta (`ClaveProdServ` ya NO aparece como faltante,
+  se captura siempre); `_payload_factura` (helper compartido por ~60 pruebas) incluye
+  las 4 claves nuevas. Suite completa de backend 100% verde, `ruff` limpio, migración
+  aplicada contra la BD de desarrollo. Frontend — `tsc`/`eslint` limpios; suite de
+  `facturacion` (107 pruebas) sin regresiones.
+
+### ADR-224 — "Concepto" de la factura: un renglón por orden en facturación múltiple; `observaciones_factura` deja de descartarse en silencio
+
+- **Estado:** aceptada · **Fecha:** 2026-10-30 (petición del usuario): "Corregir el
+  concepto de facturación" — debe incluir Orden del cliente, Orden de Servicio, Periodo,
+  # de Spots, Costo de los Spots y Monto, con un renglón por cada orden cuando la
+  factura cubre varias (facturación múltiple, ADR-064). Además: "Campo para comentarios
+  adicionales (ya está, verificar que se integre en la factura)" y "corregir que el
+  layout sí lleve el comentario adicional a la factura".
+- **Alcance aclarado tras investigar:** "concepto de facturación" es el campo "Concepto"
+  del formulario de alta (`descripcion_factura`, textarea editable, sección "Concepto y
+  observaciones") — su texto SUGERIDO lo arma `descripcionSugerida()` en el frontend.
+  **NO es** la fila fiscal "Detalle" del archivo del timbrador, que sigue consolidada en
+  una sola línea por factura (sub-decisión ya tomada dentro de ADR-064, "Archivo del
+  PAC: una sola línea de detalle consolidada") — este cambio NO la revierte; nadie pidió
+  tocar esa parte, y los campos de campaña por orden ya viajan concatenados en
+  `Personalizados` desde ADR-064.
+- **Decisión (frontend, `FacturaClienteForm.tsx`):** `descripcionSugerida()` pasa de
+  recibir una sola orden a recibir el arreglo completo (`ordenesMultiples ?? (orden ?
+  [orden] : [])`) y arma UN renglón por orden, unidos con salto de línea:
+  `Servicios de transmisión publicitaria — {Campaña} del {FechaIni} al {FechaFin}. {N}
+  spots de {duración} a {costo del spot} c/u. Monto: {monto de la orden}. Según orden
+  {No. orden cliente}. Folio: {folio_orden}.` — mismo inicio que el formato anterior
+  (compatibilidad visual), con 3 datos nuevos: costo del spot, monto y folio de la OC.
+  Sigue siendo una SUGERENCIA editable, como ya era antes (el backend no fuerza este
+  formato ni lo reconstruye al exportar).
+- **Decisión (backend, `factura_cliente.py`):** `OrdenPorFacturarRead` expone
+  `precio_unitario` (ya existe en `OrdenCliente`, solo faltaba en esta lectura) — es el
+  "costo del spot" REAL y exacto; no se deriva de `subtotal / total_spots` porque con
+  bonificables (ADR-067) esa división ya no da la tarifa pactada real.
+- **Bug confirmado y corregido (backend, `adapter_pac_v40.py`):** `observaciones_factura`
+  SÍ se capturaba y SÍ llegaba resuelto hasta `DatosTimbrado.observaciones`, pero el
+  adaptador del timbrador nunca lo escribía en ningún lado del archivo plano — se
+  descartaba en silencio (confirmado: cero referencias a `observaciones` en todo
+  `adapter_pac_v40.py`, y no existe ningún campo dedicado de "comentarios" en las 20
+  secciones del layout medido, ADR-048). Nuevo helper `_concepto_completo()`: anexa
+  `observaciones` al mismo texto libre que ya usan `Detalle.concepto` (ancho fijo, 49
+  caracteres — se trunca igual que ya truncaba una descripción larga por sí sola) y
+  `Personalizados.Descripcion1..5` (clave-valor, sin ancho fijo real — el que de verdad
+  garantiza que el comentario llegue completo).
+- **Verificado:** backend — 3 pruebas nuevas en `test_f2_03_timbrado_pac_v40.py`
+  (observaciones en el concepto del Detalle, en Personalizados.Descripcion, y que sin
+  observaciones el concepto no cambia); 1 aserción nueva en
+  `test_bandeja_lista_ordenes_cerradas_sin_factura` (`precio_unitario`). Suite completa
+  de backend 100% verde, `ruff` limpio. Frontend — `tsc`/`eslint` limpios; suite de
+  `facturacion` (107 pruebas) sin regresiones.

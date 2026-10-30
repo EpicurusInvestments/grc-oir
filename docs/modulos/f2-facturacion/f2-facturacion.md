@@ -107,6 +107,15 @@ En el archivo del PAC va **una sola línea de detalle consolidada** (decisión d
 con los folios y números de orden concatenados por coma. El producto solo se emite si todas
 las órdenes coinciden; si difieren, cae a `descripcion_factura`.
 
+**ADR-224 (petición del usuario) — "Concepto" (`descripcion_factura`) sugiere un renglón
+por orden:** sin tocar la consolidación de arriba (eso sigue igual), la SUGERENCIA del
+campo "Concepto" del formulario de alta ahora arma un renglón por orden (Campaña, periodo,
+spots, costo del spot vía `precio_unitario` de la OC, monto, número de orden cliente y
+folio), separados por salto de línea cuando hay varias órdenes — antes solo usaba la
+primera. Además, `observaciones_factura` ("Observaciones adicionales", campo YA existente)
+se integra de verdad al archivo del PAC: antes se resolvía hasta `DatosTimbrado` pero el
+adaptador nunca la escribía (bug real, corregido en `adapter_pac_v40.py`).
+
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas + 1 entidad nueva)
 
 ### FacturaCliente (33 campos spec, con 3 ajustes + 2 desviaciones aditivas)
@@ -925,6 +934,15 @@ campo sin uso real.
 - **Codificación del archivo plano.** Se asume CP1252 (`TIMBRADO_ENCODING`), pero el
   ejemplo llegó con sus acentos ya corruptos, así que no se pudo deducir del archivo.
   **Confirmar con el PAC antes de producción.**
+- **`TipoComprobante` (ADR-223): se captura por factura pero NO está conectado al
+  archivo plano.** `IdDoc.Tipo` del layout trae hoy un código fijo
+  (`_TIPO_DOCUMENTO = "33"`, observado en el ejemplo real) que corresponde a "factura
+  de ingreso" — el catálogo `TipoComprobante` ya tiene ese mismo "33" seedeado como
+  "legado del timbrador externo", confirmando que es ESE el slot, pero no hay
+  confirmado qué código usaría el PAC para Egreso/Pago (solo Ingreso="33" está
+  verificado). **Antes de conectar el combo al layout, confirmar con el PAC/timbrador
+  los códigos legacy de Egreso y Pago** — mapear a ciegas podría generar un archivo
+  fiscal mal armado para esos casos.
 - **Interceptor de `apiClient.ts` no parsea errores en descargas `blob`.** Cualquier
   endpoint con `responseType: "blob"` (archivo plano de F2; adjuntos, PDFs y contratos
   de F1/F0) pierde el mensaje de dominio del backend en un error y muestra el genérico
@@ -937,10 +955,10 @@ campo sin uso real.
   `ClaveUnidad`/`UsoCFDI`/forma de pago SAT (sembrados con valores reales de
   producción, un único activo por grupo). Verificado en vivo: 0 campos faltantes.
   **Régimen fiscal, UsoCFDI y FormaPago dejaron de depender de esto** (ver ADR-065/065
-  bis arriba): solo `ClaveProdServ`/`ClaveUnidad` SIGUEN dependiendo de tener una única
-  constante activa por grupo en producción — describen el tipo de servicio que OIR
-  factura (no varía por factura), así que curar el dato basta; si algún día sí llegaran
-  a variar, necesitarían el mismo tratamiento de columna real que `FormaPago`.
+  bis arriba). **(Resuelto, ADR-223)** `ClaveProdServ`/`ClaveUnidad` también dejaron de
+  depender de tener una única constante activa: sí llegaron a variar en este ambiente
+  (4 y 3 activas respectivamente) y se les dio el mismo tratamiento de columna real que
+  `FormaPago` — se capturan por factura en "Configuración contable".
   **(Resuelto, ADR-060)** Los domicilios DESGLOSADOS de emisor/receptor y
   `AGREGADOS.LugarExpedicion` (código postal de expedición) ya salen del domicilio
   estructurado por CP de Anunciante/EmpresaFacturadora (ADR-059) — el receptor solo si

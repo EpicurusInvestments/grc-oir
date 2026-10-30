@@ -55,6 +55,7 @@ const orden: OrdenPorFacturar = {
   subtotal: "504000.00",
   total: "584640.00",
   empresa_emisora: "OIR Comercial",
+  precio_unitario: "8400.00",
   total_spots: 60,
   duracion_spot: "30s",
   facturacion_directa_cliente: true,

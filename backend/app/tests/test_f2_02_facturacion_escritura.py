@@ -262,6 +262,11 @@ def _payload_factura(
         "cuenta_contable_id": str(cuenta_id),
         "metodo_pago_clave": "PUE",
         "forma_pago_clave": "03",
+        # ADR-223: 4 claves fiscales más, obligatorias desde `FacturaClienteCreate`.
+        "clave_prod_serv": "82101601",
+        "clave_unidad": "E48",
+        "moneda_sat": "MXN",
+        "tipo_comprobante": "I",
     }
 
 
@@ -689,13 +694,17 @@ def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """Sin constantes fiscales en el catálogo el archivo sale, pero incompleto: la
-    cabecera lo dice para que nadie lo mande al PAC creyéndolo listo."""
+    cabecera lo dice para que nadie lo mande al PAC creyéndolo listo.
+
+    ADR-223: `ClaveProdServ`/`ClaveUnidad` ya NO dependen del catálogo (se capturan por
+    factura, `_payload_factura` siempre las manda) — lo que sigue faltando aquí es lo que
+    de verdad no se captura en este fixture mínimo (régimen fiscal, uso CFDI, domicilios)."""
     factura_id, _ = _crear_factura(client, db, cat)
     r = client.get(
         f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
     faltantes = r.headers["x-campos-faltantes"]
-    assert "Detalle.ClaveProdServ" in faltantes
+    assert "Detalle.ClaveProdServ" not in faltantes
     assert "AGREGADOS.UsoCFDI" in faltantes
     # La cabecera debe ser visible para el navegador, o la pantalla no podría avisar.
     assert "X-Campos-Faltantes" in r.headers["access-control-expose-headers"]
@@ -1151,6 +1160,69 @@ def test_forma_pago_clave_se_captura_y_llega_al_archivo_plano(
         f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
     assert "AGREGADOS.MedioPago" not in r.headers["x-campos-faltantes"]
+
+
+# ── ADR-223: ClaveProdServ/ClaveUnidad/MonedaSAT/TipoComprobante se capturan por factura ─
+def test_claves_fiscales_adr223_se_capturan_y_se_leen(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-CF223")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-9701")
+    payload["clave_prod_serv"] = "80141600"
+    payload["clave_unidad"] = "H87"
+    payload["moneda_sat"] = "USD"
+    payload["tipo_comprobante"] = "E"
+    r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+    assert r.status_code == 201, r.text
+    leida = r.json()
+    assert leida["clave_prod_serv"] == "80141600"
+    assert leida["clave_unidad"] == "H87"
+    assert leida["moneda_sat"] == "USD"
+    assert leida["tipo_comprobante"] == "E"
+
+
+def test_claves_fiscales_adr223_faltan_en_el_alta_400(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-CF223B")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-9702")
+    del payload["clave_prod_serv"]
+    r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
+    assert r.status_code == 422
+
+
+def test_clave_prod_serv_y_clave_unidad_ya_no_dependen_del_catalogo_en_el_archivo_plano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Antes se resolvían solas con `_constante_unica("ClaveProdServ"/"ClaveUnidad")` —
+    dejaban de servir en cuanto ese catálogo tenía 0 o más de una activa (mismo bug que
+    FormaPago). Ahora se capturan al dar de alta, sin importar el catálogo."""
+    factura_id, _ = _crear_factura(client, db, cat, "F-9703")
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    faltantes = r.headers["x-campos-faltantes"]
+    assert "Detalle.ClaveProdServ" not in faltantes
+    assert "Detalle.ClaveUnidad / U.MED" not in faltantes
+
+
+def test_moneda_sat_reemplaza_el_default_fijo_mxn(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-CF223C")
+    db.commit()
+    payload = _payload_factura(orden_id, cat["cuenta_id"], "F-9704")
+    payload["moneda_sat"] = "EUR"
+    factura_id = client.post(
+        "/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion")
+    ).json()["factura_id"]
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    assert r.status_code == 200
+    assert "EUR" in r.text
 
 
 def test_forma_pago_clave_es_obligatoria_en_el_alta(
@@ -2076,6 +2148,8 @@ def test_bandeja_lista_ordenes_cerradas_sin_factura(
     assert fila["agencia"] == "Agencia Uno"
     assert fila["vendedor"] == "Vendedor Uno"
     assert fila["total"] == "11600.00"
+    # ADR-224 (petición del usuario): "costo del spot" para la sugerencia de Concepto.
+    assert fila["precio_unitario"] == "1000.00"
 
 
 def test_al_facturar_la_orden_sale_de_la_bandeja(
