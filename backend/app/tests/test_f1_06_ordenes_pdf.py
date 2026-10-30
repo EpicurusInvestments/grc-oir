@@ -546,6 +546,90 @@ def test_pdf_reales_muestra_marca_y_producto_del_catalogo(
     assert "PRODUCTO" in texto
 
 
+# ── ADR-221c (petición del usuario, con 3 capturas): en Programados faltaba el número de
+# spots POR DÍA (antes solo se veía el total agregado "TOTAL SPOTS" del encabezado); en
+# Reales sobraba una columna "SPOTS" por renglón (cada renglón YA es un solo spot, ADR-127,
+# así que siempre mostraba "1" sin aportar nada); y en ambos la descripción de la emisora
+# venía incompleta (solo nombre + frecuencia, sin siglas ni tipo de señal). ──
+def test_pdf_programados_muestra_spots_por_dia(db: Session, oe_asignada) -> None:
+    _, oe = oe_asignada  # 2 días, 6 spots_asignados cada uno (ver `_oe_payload`).
+    texto = " ".join(_texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id)).split())
+    assert texto.count("Spots: 6") == 2
+
+
+def test_pdf_programados_agrupa_spots_por_dia_cuando_hay_varios_renglones_la_misma_fecha(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    fecha = date.today() + timedelta(days=32)
+    dias = [
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(8, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha, hora_inicio=time(9, 0), hora_fin=time(18, 0), spots_asignados=1
+        ),
+        OrdenEstacionDiaCreate(
+            fecha_transmision=fecha,
+            hora_inicio=time(10, 0),
+            hora_fin=time(18, 0),
+            spots_asignados=1,
+        ),
+    ]
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, dias=dias), VENTAS)
+    texto = " ".join(_texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id)).split())
+    assert "Spots: 3" in texto  # 1 renglón para la fecha, suma de los 3 (ADR-196).
+
+
+def test_pdf_programados_descripcion_de_estacion_incluye_siglas_y_tipo_senal(
+    db: Session, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    texto = _texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id))
+    # Fixture `cat["estacion"]`: nombre_estacion="XHLE-FM", frecuencia="97.7 FM",
+    # tipo_senal="fm" (sin siglas propias) — el tipo de señal (FM) debe verse junto al
+    # nombre, no solo nombre+frecuencia como antes.
+    assert "FM XHLE-FM" in texto
+
+
+def test_pdf_reales_descripcion_de_emisora_incluye_siglas_y_tipo_senal(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
+        ),
+        VENTAS,
+    )
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id)).upper()
+    assert "FM XHLE-FM" in texto
+
+
+def test_pdf_reales_ya_no_tiene_columna_spots_por_renglon(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
+        ),
+        VENTAS,
+    )
+    texto = " ".join(_texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id)).split()).upper()
+    assert "FECHA HORA DESCRIPCION EMISORA" in texto
+    assert "FECHA HORA SPOTS DESCRIPCION" not in texto
+
+
 # ── ADR-196 (corrige un bug real, petición del usuario): Servicio y Programados vuelven
 # a mostrar UN SOLO renglón por FECHA (como la grid de captura, ADR-185) — antes
 # mostraban 1 renglón por SPOT (varias filas reales de la misma fecha, ADR-127), con

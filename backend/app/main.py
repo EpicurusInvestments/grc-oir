@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.db import get_engine
-from app.core.errors import register_error_handlers
+from app.core.errors import CatchAllErrorMiddleware, register_error_handlers
 from app.modules.auth.router import router as auth_router
 from app.modules.catalogos.router import router as catalogos_router
 from app.modules.cobranza.router import router as cobranza_router
@@ -33,6 +33,11 @@ app = FastAPI(
     # volver a pegarlo en cada F5 mientras se prueba (F5-00).
     swagger_ui_parameters={"persistAuthorization": True},
 )
+
+# Red de seguridad para excepciones sin handler (ver `CatchAllErrorMiddleware`). Debe
+# registrarse ANTES que `CORSMiddleware`: `add_middleware` envuelve en orden inverso al
+# de registro, así que esto queda DENTRO de CORS y sus respuestas sí llevan los headers.
+app.add_middleware(CatchAllErrorMiddleware)
 
 # CORS: el frontend (SPA) vive en otro origen. Los orígenes permitidos son CONFIGURABLES
 # (CORS_ORIGINS en el entorno), nunca hardcodeados: en producción se pone el dominio real.
