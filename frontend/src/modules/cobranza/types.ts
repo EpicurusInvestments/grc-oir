@@ -24,6 +24,10 @@ export interface CobranzaFactura {
   cobranza_id: string;
   factura_id: string;
   anunciante_id: string;
+  /** ADR-225: derivado de `FacturaCliente.agencia_id` al crear — `null` si fue
+   *  facturación directa. Permite filtrar "facturas pendientes de esta agencia" en el
+   *  picker de pago múltiple. */
+  agencia_id: string | null;
   metodo_pago_clave: string;
   dias_credito: number;
   fecha_estimada_cobro: string;
@@ -41,6 +45,14 @@ export interface CobranzaFactura {
   vencida: boolean;
   /** Denormalizado para no obligar una consulta aparte a la lista. */
   numero_factura: string | null;
+  /** Petición del usuario (columna "Número de parcialidad"): `numero_pago` del ÚLTIMO
+   *  `PagoCliente` de esta cobranza (por `fecha_pago_cliente`, no por captura) — `null`
+   *  si aún no hay pagos o el último no lo capturó. */
+  ultimo_numero_pago: string | null;
+  /** Petición del usuario (tabla de "Facturas disponibles" en Pago Múltiple): cantidad
+   *  de pagos ya registrados para esta cobranza + 1, como string — siempre un número,
+   *  nunca `null` (por conteo, no por parsear `ultimo_numero_pago`). */
+  siguiente_numero_pago: string;
 }
 
 /** Único campo editable de `CobranzaFactura` vía `PUT`. */
@@ -53,18 +65,28 @@ export interface CobranzaFacturaUpdate {
 // ── PagoCliente ───────────────────────────────────────────────────────────────
 export interface PagoCliente {
   pago_cliente_id: string;
-  cobranza_id: string;
+  /** ADR-229: `null` = "pago no asignado" todavía a ninguna factura. */
+  cobranza_id: string | null;
   fecha_pago_cliente: string;
   monto_aplicado: string;
-  metodo_pago_clave: string;
+  /** ADR-225: nullable desde que existe el pago múltiple — ese flujo no lo captura. */
+  metodo_pago_clave: string | null;
   referencia_pago: string | null;
   archivo_nombre: string | null;
   archivo_path: string | null;
+  // ── ADR-225: se agregan también al pago individual, no solo al múltiple ──
+  forma_pago_clave: string | null;
+  fecha_deposito: string | null;
+  numero_pago: string | null;
+  cuenta_contable_id: string | null;
+  /** Comparten este id TODOS los `PagoCliente` creados en una misma captura de pago
+   *  múltiple (trazabilidad) — `null` en un pago individual. */
+  pago_multiple_id: string | null;
   created_by: string;
   created_at: string;
 }
 
-/** Lo que CxC captura al registrar un pago. */
+/** Lo que CxC captura al registrar un pago individual. */
 export interface PagoClienteCreate {
   fecha_pago_cliente: string;
   monto_aplicado: string;
@@ -72,15 +94,64 @@ export interface PagoClienteCreate {
   referencia_pago?: string | null;
   archivo_nombre?: string | null;
   archivo_path?: string | null;
+  forma_pago_clave: string;
+  fecha_deposito?: string | null;
+  numero_pago?: string | null;
+  cuenta_contable_id: string;
+}
+
+/** Una factura seleccionada en el pago múltiple, el monto que se le asigna y SU
+ *  parcialidad. ADR-227: `numero_pago` vive AQUÍ (por renglón), no en
+ *  `PagoMultipleCreate` — cada factura tiene su propio historial de pagos. */
+export interface PagoMultipleItem {
+  cobranza_id: string;
+  monto_aplicado: string;
+  numero_pago?: string | null;
+}
+
+/** Pago múltiple (ADR-225, petición del usuario): un solo pago recibido que se reparte
+ *  entre varias facturas del MISMO anunciante o agencia — cada factura seleccionada se
+ *  registra como su propio `PagoCliente`. */
+export interface PagoMultipleCreate {
+  fecha_pago_cliente: string;
+  /** Lo que de verdad entró — puede ser mayor a la suma de `pagos` (asignación
+   *  parcial permitida); el tablero lo llama "Monto por asignar". */
+  monto_total_pago: string;
+  forma_pago_clave: string;
+  fecha_deposito?: string | null;
+  referencia_pago?: string | null;
+  cuenta_contable_id: string;
+  pagos: PagoMultipleItem[];
+  /** ADR-230 (petición del usuario): si este lote reparte un pago "huérfano" (sin
+   *  asignar) ya existente, aquí va su id — se borra en la misma transacción. */
+  pago_origen_id?: string | null;
+}
+
+/** ADR-230 (petición del usuario): datos de un pago "huérfano" (sin asignar) que se
+ *  precargan en `PagoMultipleForm` para repartirlo entre una o varias facturas. */
+export interface PagoHuerfanoOrigen {
+  pagoId: string;
+  fecha_pago_cliente: string;
+  monto_aplicado: string;
+  forma_pago_clave: string | null;
+  fecha_deposito: string | null;
+  referencia_pago: string | null;
+  cuenta_contable_id: string | null;
 }
 
 /** `PagoCliente` con su `CobranzaFactura` padre embebida — la usa el historial global de
  *  "Pagos recibidos": el backend no expone un `GET` de pagos sin acotar a una cobranza
  *  (`/cobranza/facturas/{cobranza_id}/pagos`), así que el front arma la vista agregando
  *  por cobranza (ver `historialPagosCliente` en `api.ts`). Limitación conocida: no
- *  escala a un volumen muy grande de cobranzas — suficiente para esta primera tanda. */
+ *  escala a un volumen muy grande de cobranzas — suficiente para esta primera tanda.
+ *  ADR-229: `cobranza` es `null` para un "pago no asignado". */
 export interface PagoClienteConCobranza extends PagoCliente {
-  cobranza: CobranzaFactura;
+  cobranza: CobranzaFactura | null;
+}
+
+/** ADR-229 (petición del usuario): asigna una factura a un pago capturado sin ella. */
+export interface PagoAsignarFacturaRequest {
+  cobranza_id: string;
 }
 
 // ── Requisicion ───────────────────────────────────────────────────────────────

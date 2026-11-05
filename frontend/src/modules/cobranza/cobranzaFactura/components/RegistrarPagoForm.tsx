@@ -10,12 +10,23 @@
  * No hay campo de "notas": el mockup aprobado tiene un textarea de observaciones, pero
  * `PagoCliente` no tiene una columna para guardarlas — agregarlo aquí sería una promesa
  * de guardado que el backend no cumple.
+ *
+ * ADR-225 (petición del usuario): "Forma de pago"/"Cuenta contable" (obligatorios, mismo
+ * patrón sin FK/con FK que ya usa F2) y "Fecha de depósito"/"Número de pago" (parcialidad
+ * tipo "2 de 3", opcionales) se agregan aquí TAMBIÉN, no solo en el pago múltiple
+ * (`PagoMultipleForm.tsx`) — el usuario pidió explícitamente sumarlos al individual.
+ *
+ * ADR-226 (petición del usuario): "Número de pago" ya NO se captura a mano — se precarga
+ * CALCULADO (cantidad de pagos ya registrados + 1, p.ej. si ya hay 2, el nuevo es "3") y
+ * se muestra de solo lectura, para que el usuario no pueda escribir una parcialidad
+ * equivocada. Se basa en el CONTEO de `PagoCliente` existentes, no en parsear el texto
+ * libre del último (que puede no ser numérico, p.ej. "2 de 3") — más robusto.
  */
 
 import { useState } from "react";
 
 import { fmtMoneda } from "../../format";
-import { useMetodosDePago } from "../../hooks";
+import { useCuentasContables, useFormasDePago, useMetodosDePago } from "../../hooks";
 import type { CobranzaFactura, PagoClienteCreate } from "../../types";
 import { AdjuntoCobranzaInput } from "./AdjuntoCobranzaInput";
 
@@ -23,6 +34,9 @@ interface Props {
   cobranza: CobranzaFactura;
   numeroFactura: string;
   anunciante: string;
+  /** ADR-226: "cantidad de pagos ya registrados + 1", calculado por el padre (que ya
+   *  trae la lista de pagos para "Pagos recibidos") — ver docstring del módulo. */
+  numeroPagoSugerido: string;
   submitting?: boolean;
   submitError?: string | null;
   onConfirm: (data: PagoClienteCreate) => void;
@@ -35,12 +49,15 @@ export function RegistrarPagoForm({
   cobranza,
   numeroFactura,
   anunciante,
+  numeroPagoSugerido,
   submitting = false,
   submitError,
   onConfirm,
   onCancel,
 }: Props) {
   const metodosPago = useMetodosDePago();
+  const formasPago = useFormasDePago();
+  const cuentasContables = useCuentasContables();
   const pendiente = Number(cobranza.importe_pendiente_cobro);
 
   const [fecha, setFecha] = useState(hoy());
@@ -50,6 +67,11 @@ export function RegistrarPagoForm({
   const [archivoPath, setArchivoPath] = useState<string | null>(null);
   const [archivoNombre, setArchivoNombre] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // ADR-225 (petición del usuario): Forma de pago/Cuenta contable obligatorias; Fecha de
+  // depósito/Número de pago opcionales — igual que ya captura el pago múltiple.
+  const [formaPago, setFormaPago] = useState("");
+  const [fechaDeposito, setFechaDeposito] = useState("");
+  const [cuentaContable, setCuentaContable] = useState("");
 
   // Fix (petición del usuario): antes "Registrar pago" solo validaba AL HACER CLIC
   // (adentro de `confirmar()`) — el botón mismo siempre estaba habilitado, sin ninguna
@@ -64,7 +86,9 @@ export function RegistrarPagoForm({
     montoNum > 0 &&
     montoNum <= pendiente &&
     metodoPago !== "" &&
-    referencia.trim() !== "";
+    referencia.trim() !== "" &&
+    formaPago !== "" &&
+    cuentaContable !== "";
 
   const confirmar = () => {
     const montoNum = Number(monto);
@@ -84,11 +108,23 @@ export function RegistrarPagoForm({
       setError("Captura la referencia bancaria o del cheque.");
       return;
     }
+    if (!formaPago) {
+      setError("Selecciona la forma de pago.");
+      return;
+    }
+    if (!cuentaContable) {
+      setError("Selecciona la cuenta contable.");
+      return;
+    }
     onConfirm({
       fecha_pago_cliente: fecha,
       monto_aplicado: monto,
       metodo_pago_clave: metodoPago,
       referencia_pago: referencia.trim(),
+      forma_pago_clave: formaPago,
+      fecha_deposito: fechaDeposito || null,
+      numero_pago: numeroPagoSugerido,
+      cuenta_contable_id: cuentaContable,
       archivo_path: archivoPath,
       archivo_nombre: archivoNombre,
     });
@@ -190,6 +226,56 @@ export function RegistrarPagoForm({
                   value={referencia}
                   onChange={(e) => setReferencia(e.target.value)}
                 />
+              </div>
+            </div>
+            {/* ADR-225 (petición del usuario) */}
+            <div className="r2">
+              <div>
+                <div className="fl fl-required">Forma de pago</div>
+                <select
+                  className="fsel"
+                  value={formaPago}
+                  onChange={(e) => setFormaPago(e.target.value)}
+                >
+                  <option value="">— Selecciona —</option>
+                  {(formasPago.data ?? []).map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="fl fl-required">Cuenta contable</div>
+                <select
+                  className="fsel"
+                  value={cuentaContable}
+                  onChange={(e) => setCuentaContable(e.target.value)}
+                >
+                  <option value="">— Selecciona —</option>
+                  {(cuentasContables.data ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="r2">
+              <div>
+                <div className="fl">Fecha de depósito</div>
+                <input
+                  type="date"
+                  className="fi"
+                  value={fechaDeposito}
+                  onChange={(e) => setFechaDeposito(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="fl">
+                  Número de pago <span className="fl-tag calc">Calc</span>
+                </div>
+                <input className="fi" value={numeroPagoSugerido} disabled />
               </div>
             </div>
             <div className="fl">Comprobante (PDF, imagen)</div>

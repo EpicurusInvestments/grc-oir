@@ -2060,7 +2060,14 @@ class OrdenEstacionService(
         iva_emisora = (importe_emisora * IVA_RATE).quantize(CENTAVOS)
 
         letra = chr(65 + len(hermanas_ids))
-        folio = oc.folio_orden.replace("OC-", "OE-") + letra
+        # ADR-237 (petición del usuario): el folio de la OE siempre deriva del folio REAL
+        # de su OC padre, que puede ser viejo (`OC-AAAA-####`, no se regenera) o nuevo
+        # (`OS-AAAA-MM-######`) — por eso el prefijo se decide según cuál tenga, no se
+        # asume siempre el nuevo.
+        if oc.folio_orden.startswith("OS-"):
+            folio = oc.folio_orden.replace("OS-", "OT-", 1) + letra
+        else:
+            folio = oc.folio_orden.replace("OC-", "OE-", 1) + letra
 
         # ADR-102: tarifa sugerida del catálogo para esta combinación — auditoría
         # condicional (sin candado de permiso) si `precio_spot` no coincide.

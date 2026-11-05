@@ -59,13 +59,16 @@ la misma transacción, sin `commit` propio":
 
 ## Entidades (spec BD v2, con las 3 desviaciones aditivas de esta sesión)
 
-### CobranzaFactura (14 campos spec, con 2 ajustes)
+### CobranzaFactura (14 campos spec, con 2 ajustes + 2 campos nuevos ADR-225/ADR-226)
 PK `cobranza_id`. FK `FacturaCliente` (1:1), `anunciante_id` (derivado de la factura),
 `metodo_pago_id` — **incoherencia de spec, mismo caso que `FacturaCliente.metodo_pago_clave`
 en F2**: no existe tabla `MetodoPago` propia (vive en `ConstantesSistema`), así que este
 campo se implementa igual, como `metodo_pago_clave` (texto, sin FK formal).
 `dias_credito` (sugerido de `Anunciante.dias_credito_default`, editable).
 `fecha_estimada_cobro = FacturaCliente.fecha_entrega_factura + dias_credito` (calculado).
+**ADR-225 (petición del usuario):** `agencia_id` (nullable, derivado de
+`FacturaCliente.agencia_id` al crear — mismo criterio que `anunciante_id`) — hace falta
+para filtrar "facturas pendientes de esta agencia" en el picker de pago múltiple.
 
 **Ajuste 1 — `importe_cobrado` e `importe_pendiente_cobro`: derivados en lectura, NO
 columnas persistidas.** La spec los marca "Calculado" pero son una suma viva
@@ -86,10 +89,126 @@ que `spots_faltantes` en F1-02.
 spec la marca "Manual"): el servicio la fija en el momento en que `estatus_cobro` pasa a
 `cobrada` (cuando `importe_cobrado >= total_factura`). Deviación menor, documentar.
 
-### PagoCliente (10 campos spec, sin ajustes)
-PK `pago_cliente_id`. FK `CobranzaFactura` (N:1). Captura manual por **CxC**.
-`metodo_pago_clave` (mismo ajuste que arriba — texto, no FK). Al crear/borrar un
-`PagoCliente`, el servicio recalcula `CobranzaFactura.estatus_cobro` y `fecha_cobro`.
+**ADR-226 (petición del usuario) — columnas "Agencia" y "Número de parcialidad" en la
+lista:** `CobranzaFacturaRead` gana `ultimo_numero_pago` (derivado en lectura, NUNCA
+columna — mismo criterio que `importe_cobrado`): el `numero_pago` del `PagoCliente` más
+reciente de la cobranza, ordenado por `fecha_pago_cliente` desc (la fecha real del pago,
+no cuándo se capturó), con `created_at` desc como desempate (p.ej. dos renglones del
+mismo pago múltiple, misma fecha). `None` si todavía no hay pagos o el último no lo
+capturó. El frontend (`CobranzaFacturasPage.tsx`) agrega la columna "Agencia" (resuelta
+con el mismo combo `useAgenciasInfo` que ya usaba el picker de pago múltiple) y "Núm.
+parcialidad" (este campo tal cual) al DataTable de la lista — ningún cambio de pantalla
+en Facturación.
+
+**Ajuste posterior (petición del usuario):** en `RegistrarPagoForm.tsx` (pago
+individual), "Número de pago" pasa de texto libre a CALCULADO y de solo lectura —
+cantidad de `PagoCliente` ya registrados para esa cobranza + 1 (conteo, no se parsea el
+texto libre del último, que podría no ser numérico). El pago múltiple no cambia: sigue
+siendo texto libre, porque reparte un solo pago entre varias facturas con historiales
+distintos y no hay un "siguiente" único que calcular ahí.
+
+### PagoCliente (10 campos spec + 5 campos nuevos ADR-225)
+PK `pago_cliente_id`. FK `CobranzaFactura` (N:1, **NULLABLE desde ADR-229** — ver abajo).
+Captura manual por **CxC**. `metodo_pago_clave` (mismo ajuste que arriba — texto, no FK).
+Al crear/borrar un `PagoCliente`, el servicio recalcula `CobranzaFactura.estatus_cobro`
+y `fecha_cobro` (salvo que no tenga cobranza asignada — ver ADR-229).
+
+**ADR-229 (petición del usuario) — "Pagos no asignados":** un pago puede capturarse SIN
+elegir factura todavía (`cobranza_id = NULL`) y asignarse después. 3 endpoints nuevos:
+`POST /cobranza/pagos/no-asignados` (crea sin cobranza, sin recálculo), `GET /cobranza/
+pagos/no-asignados` (lista los `cobranza_id IS NULL`), `POST /cobranza/pagos/{id}/
+asignar` (le pone `cobranza_id` y SÍ dispara `recalcular_tras_pago` — puede dejar la
+factura `cobro_parcial`/`cobrada`; rechaza con 409 si ya estaba asignado). `eliminar()`
+borra un pago sin asignar directo, sin los guardarraíles de "ya cobrada" (no aplica, no
+hay cobranza). Frontend: pill "No asignados" + botón "+ Pago sin asignar"
+(`PagoSinAsignarForm.tsx`, sin "Número de pago" ni tope contra pendiente) en "Pagos
+recibidos"; el detalle de un pago sin asignar muestra un combo + botón "Asignar" en vez
+de "Factura aplicada".
+
+**ADR-230 (petición del usuario) — "pago de menos" + repartir un huérfano con Pago
+Múltiple:** en Pago Múltiple, si el monto total no se cubre por completo con las
+facturas seleccionadas, el SOBRANTE ya no se pierde: `crear_multiple()` lo guarda como
+su propio huérfano (mismo `pago_multiple_id`). `PagoMultipleCreate.pago_origen_id`
+(nuevo, opcional): si se está REPARTIENDO un huérfano ya existente (no capturando
+dinero nuevo), ese huérfano se borra en la MISMA transacción. Frontend:
+`PagoMultipleForm.tsx` acepta `origenHuerfano` (precarga sus datos, bloquea "Monto
+total del pago"); botón "Repartir con Pago Múltiple" en el detalle de un huérfano
+(`PagosClientePage.tsx`), junto al "Asignar" de ADR-229.
+
+**ADR-231 (petición del usuario, reportado con captura) — "Asignar" con monto
+parcial:** "Asignar" ya NO le asigna el monto COMPLETO del huérfano a la factura sin
+importar su pendiente. `PagoAsignarFacturaRequest.monto_aplicado` (nuevo, obligatorio):
+si cubre el huérfano completo, reutiliza la misma fila (igual que antes); si es MENOR,
+`asignar()` hace split — crea un `PagoCliente` nuevo solo por lo asignado (con su
+propia parcialidad) y el huérfano ORIGINAL se queda con el restante, más chico. Rechaza
+con 400 si excede el monto del huérfano (restricción dura); el tope contra el pendiente
+de la factura es solo del frontend (mismo criterio que ADR-227). Frontend: "Asignar"
+gana un input "Monto a asignar", precargado con el menor entre el pendiente de la
+factura y lo que queda del huérfano, editable.
+
+**ADR-233 (petición del usuario) — búsqueda de "Pagos recibidos" por fecha,
+referencia, factura o monto:** la caja de búsqueda solo comparaba contra
+`referencia_pago`; ahora también compara contra la fecha y el monto YA FORMATEADOS
+(como se ven en la tabla), el monto crudo y el número de factura de la cobranza. Solo
+cambia el filtro en memoria de `PagosClientePage.tsx`, sin tocar la API.
+
+**ADR-234 (petición del usuario, con captura) — la referencia sube al encabezado del
+detalle de un pago:** en vez de ir hasta abajo de "Datos del pago" con el tamaño normal,
+la referencia ahora se muestra en el encabezado del panel, a la derecha y al mismo nivel
+que el monto, en negrita (15px/700) para que se note de inmediato.
+
+**ADR-235 (petición del usuario, reportado con captura) — "Pago Múltiple del
+Anunciante" ya no mezcla facturas de la agencia:** `CobranzaFactura.anunciante_id`
+nunca es NULL (es el anunciante DE LA ORDEN, no a quién se factura), así que filtrar
+solo por `anunciante_id` dejaba pasar también las facturas de ese anunciante
+facturadas a su agencia. `CobranzaFacturaRepository._apply_filters` ahora exige además
+`agencia_id IS NULL` cuando la petición NO trae `agencia_id` explícito (mismo criterio
+que el selector de "Listas para facturar" de F2). El filtro por `agencia_id` no
+cambió — ya era correcto. Límite conocido anotado aquí: una orden directa con
+`agencia_id` de referencia seguiría viéndose como "de agencia" — **resuelto el mismo
+día, ver ADR-236 abajo: no era un caso raro, era el bug real.**
+
+**ADR-236 (petición del usuario, reportado con captura) — `facturado_directo`
+reemplaza `agencia_id IS NULL`:** `agencia_id` es solo una referencia capturada en la
+orden — no distingue "a quién se factura" (eso solo lo sabe
+`OrdenCliente.facturacion_directa_cliente`). Se agrega `facturado_directo: bool` a
+`CobranzaFactura` (y a `FacturaCliente`, calculado igual que `_receptor_de()` de F2,
+copiado al timbrar) — `_apply_filters` ahora usa `facturado_directo = True/False` en
+vez de `agencia_id IS NULL`/`agencia_id = Y`, en AMBOS modos del picker de Pago
+Múltiple. Migración `2e0c8a75aad5` + backfill `4f286d68a07f`.
+
+**ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
+recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
+factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M
+nueva: `PagoCliente→CobranzaFactura` ya era N:1, así que "un pago, varias facturas" es
+simplemente varios `PagoCliente`, cada uno con su propio `monto_aplicado`).
+- `metodo_pago_clave` pasa a **NULLABLE**: el pago múltiple no lo captura (no se pidió
+  para ese flujo); el pago individual lo sigue exigiendo vía `PagoClienteCreate`
+  (Pydantic), no por la columna.
+- 5 columnas nuevas, agregadas TANTO al pago individual como al múltiple (petición
+  explícita): `forma_pago_clave` (clave de `ConstantesSistema` grupo `FormaPago` —
+  REUTILIZA el catálogo que F2 ya usa para `FacturaCliente.forma_pago_clave`, sin FK
+  formal, mismo patrón que `metodo_pago_clave`), `fecha_deposito`, `numero_pago` (texto
+  libre en el pago múltiple, tipo "2 de 3", sin fórmula — en el pago INDIVIDUAL, ADR-226
+  lo calcula y lo precarga de solo lectura, ver abajo), `cuenta_contable_id` (FK real a
+  `CuentaContable`, catálogo ya existente — reutilizado de F2 también), `pago_multiple_id`
+  (UUID compartido por todos los `PagoCliente` de una misma captura múltiple, indexado,
+  para trazabilidad — `NULL` en un pago individual).
+- Nuevo endpoint `POST /cobranza/pagos/multiples` (`PagoMultipleCreate`): captura además
+  `monto_total_pago` (lo que de verdad entró — puede ser MAYOR a la suma de `pagos`,
+  asignación parcial permitida) y la lista `pagos` (`cobranza_id` + `monto_aplicado` por
+  factura). Valida que la suma asignada no exceda `monto_total_pago` y que ninguna
+  factura se repita en el mismo lote; TODO o NADA en una sola transacción (si cualquier
+  renglón falla, se revierte lo ya insertado). **NO topa** cada `monto_aplicado` contra
+  el pendiente de SU factura individual — mismo criterio que el pago sencillo, que nunca
+  lo hizo (`recalcular_tras_pago` ya tolera un pago de más, dejando la factura `cobrada`
+  igual).
+- Frontend: `CobranzaFacturasPage.tsx` gana un botón "+ Pago múltiple" que despliega
+  `PagoMultipleForm.tsx` a pantalla completa DENTRO de la misma pantalla (no una ruta
+  nueva) — mismo patrón de checkbox mutuamente excluyente "por Anunciante"/"por Agencia"
+  que ADR-064/ADR-201 ya usa en F2, con un tablero en vivo de Monto total/Monto
+  asignado/Monto por asignar. El flujo de pago individual (`RegistrarPagoForm.tsx`) no
+  cambió de pantalla, solo ganó los 4 campos nuevos de arriba.
 
 ### Requisicion (23 campos spec + `factura_vendedor_id` agregado — ver ADR-216)
 PK `requisicion_id`. `tipo_requisicion` ENUM (`pago_afiliado`/`pago_agencia`/

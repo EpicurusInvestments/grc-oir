@@ -9,6 +9,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { agenciasInfo } from "../api";
 import { CobranzaFacturasPage } from "../cobranzaFactura/pages/CobranzaFacturasPage";
 import type { CobranzaFactura } from "../types";
 
@@ -38,6 +39,12 @@ vi.mock("@/modules/catalogos/anunciante/api", () => ({
   },
 }));
 
+// ADR-225: "Pago múltiple" reutiliza Forma de pago/Cuenta contable de F2.
+vi.mock("@/modules/facturacion/hooks", () => ({
+  useCuentasContables: () => ({ data: [{ id: "cc-1", etiqueta: "4100-001 · Ingresos" }] }),
+  useFormasDePago: () => ({ data: [{ id: "01", etiqueta: "01 · Efectivo" }] }),
+}));
+
 const listMock = vi.fn();
 const getMock = vi.fn();
 const updateMock = vi.fn();
@@ -53,6 +60,7 @@ vi.mock("../api", () => ({
     list: (cobranzaId: string, params: unknown) => pagosListMock(cobranzaId, params),
     crear: vi.fn(),
     eliminar: vi.fn(),
+    crearMultiple: vi.fn(),
   },
   adjuntosCobranzaApi: { subir: vi.fn(), ver: vi.fn() },
   nombreDeAdjuntoCobranzaRef: (ref: string) => ref,
@@ -64,6 +72,9 @@ vi.mock("../api", () => ({
       dias_credito_default: 60,
     },
   ]),
+  // ADR-225: combo de "Pago múltiple" por agencia (no ejercitado por las pruebas ya
+  // existentes de esta página, pero el componente lo monta y necesita resolver algo).
+  agenciasInfo: vi.fn().mockResolvedValue([]),
   metodosDePago: vi.fn().mockResolvedValue([{ id: "03", etiqueta: "03 · Transferencia" }]),
   facturaClienteResumen: vi.fn().mockResolvedValue({
     factura_id: "f-1",
@@ -79,6 +90,7 @@ const base: CobranzaFactura = {
   cobranza_id: "cb-1",
   factura_id: "f-1",
   anunciante_id: "an-1",
+  agencia_id: null,
   metodo_pago_clave: "03",
   dias_credito: 60,
   fecha_estimada_cobro: "2099-01-01",
@@ -92,6 +104,8 @@ const base: CobranzaFactura = {
   importe_pendiente_cobro: "1183200.00",
   vencida: false,
   numero_factura: "A-001245",
+  ultimo_numero_pago: null,
+  siguiente_numero_pago: "1",
 };
 
 function renderCon(cobranza: CobranzaFactura) {
@@ -122,6 +136,35 @@ describe("CobranzaFacturasPage", () => {
     expect(screen.getAllByText("Pendiente").length).toBeGreaterThan(0);
     // Aparece tanto en el renglón de la lista como en la franja de KPIs ("Por cobrar").
     expect(screen.getAllByText(/\$1,183,200\.00/).length).toBeGreaterThan(0);
+  });
+
+  // Petición del usuario: columna "Agencia" y "Núm. parcialidad" (calculada) en la lista.
+  it("la lista muestra la agencia de la factura y el número de parcialidad del último pago", async () => {
+    vi.mocked(agenciasInfo).mockResolvedValueOnce([
+      {
+        agencia_id: "ag-1",
+        nombre_agencia: "Agencia Prisma",
+        rfc_agencia: "APR900101AB1",
+        porcentaje_comision_agencia_default: "10.00",
+      },
+    ]);
+    const conAgenciaYParcialidad: CobranzaFactura = {
+      ...base,
+      agencia_id: "ag-1",
+      ultimo_numero_pago: "2 de 3",
+    };
+    renderCon(conAgenciaYParcialidad);
+
+    await screen.findByText("A-001245");
+    expect(await screen.findByText("Agencia Prisma")).toBeInTheDocument();
+    expect(screen.getByText("2 de 3")).toBeInTheDocument();
+  });
+
+  it("sin agencia ni pagos, ambas columnas nuevas muestran '—'", async () => {
+    renderCon(base); // base: agencia_id null, ultimo_numero_pago null
+    await screen.findByText("A-001245");
+    const fila = (await screen.findByText("A-001245")).closest("tr") as HTMLElement;
+    expect(fila.textContent).toContain("—");
   });
 
   it("fix (petición del usuario): 'Guardar' de 'Editar condiciones' nace deshabilitado y solo se habilita si se modifica algún campo", async () => {
@@ -191,5 +234,20 @@ describe("CobranzaFacturasPage", () => {
     (await screen.findByText("A-001245")).click();
     await waitFor(() => expect(screen.getByText("Factura cobrada")).toBeInTheDocument());
     expect(screen.queryByText("Vencida")).not.toBeInTheDocument();
+  });
+
+  // ADR-225 (petición del usuario): "Pago de Múltiples Facturas" toma pantalla completa
+  // SIN navegar a otra ruta — el flujo de pago individual de arriba no se toca.
+  it("'+ Pago múltiple' lleva a la pantalla de pago múltiple, y 'Cancelar' regresa a la lista de siempre", async () => {
+    renderCon(base);
+    await screen.findByText("A-001245");
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Pago múltiple" }));
+    expect(screen.getByText("Pago de Múltiples Facturas")).toBeInTheDocument();
+    expect(screen.queryByText("Cobranza de facturas")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "← Cancelar" }));
+    expect(screen.getByText("Cobranza de facturas")).toBeInTheDocument();
+    expect(await screen.findByText("A-001245")).toBeInTheDocument();
   });
 });

@@ -33,6 +33,11 @@ import {
   type TimbrarInput,
 } from "../../types";
 
+/** Oculta el botón "Ver en Cobranza (F3)" del panel de detalle a pedido del equipo
+ *  (2026-11-05). La navegación y su condición de estado se dejan intactas: poner esto en
+ *  `true` lo reactiva sin tocar nada más. */
+const MOSTRAR_BOTON_VER_EN_COBRANZA = false;
+
 /** Filtros de la pantalla aprobada, más «Entregadas» (pedido del equipo): sigue sin haber
  *  uno por cada estado — «Pendientes timbrar» agrupa `preparada` y `enviada_a_timbrado`. */
 type Filtro = "todas" | "pendientes_timbrar" | "timbradas" | "entregadas" | "cobradas";
@@ -563,16 +568,17 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                 Marcar entregada →
               </button>
             )}
-            {(estado === "timbrada" || estado === "entregada" || estado === "cobrada") && (
-              <button
-                type="button"
-                className="btn btn-sm btn-dark"
-                title="La CobranzaFactura ya existe desde que se timbró (ADR-072)"
-                onClick={() => navigate(`/cobranza?factura_id=${selected.factura_id}`)}
-              >
-                Ver en Cobranza (F3) →
-              </button>
-            )}
+            {MOSTRAR_BOTON_VER_EN_COBRANZA &&
+              (estado === "timbrada" || estado === "entregada" || estado === "cobrada") && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-dark"
+                  title="La CobranzaFactura ya existe desde que se timbró (ADR-072)"
+                  onClick={() => navigate(`/cobranza?factura_id=${selected.factura_id}`)}
+                >
+                  Ver en Cobranza (F3) →
+                </button>
+              )}
             {["preparada", "enviada_a_timbrado", "timbrada", "entregada"].includes(estado) && (
               <button
                 type="button"

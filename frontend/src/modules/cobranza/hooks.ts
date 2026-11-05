@@ -40,6 +40,7 @@ import type {
   EstatusRequisicion,
   MovimientoBancarioCreate,
   PagoClienteCreate,
+  PagoMultipleCreate,
   RequisicionCreate,
   RequisicionUpdate,
 } from "./types";
@@ -120,6 +121,22 @@ export function usePagosCliente(cobranzaId: string | null) {
   return { list, crear, eliminar };
 }
 
+/** Pago múltiple (ADR-225, petición del usuario): invalida las MISMAS claves que
+ *  `usePagosCliente().crear` — un pago múltiple puede completar el cobro de varias
+ *  facturas a la vez, con la misma cascada hacia F2/F1. */
+export function useCrearPagoMultiple() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PagoMultipleCreate) => pagoClienteApi.crearMultiple(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [K_PAGOS] });
+      qc.invalidateQueries({ queryKey: [K_COBRANZA] });
+      qc.invalidateQueries({ queryKey: [K_FACTURACION_CLIENTES] });
+      qc.invalidateQueries({ queryKey: [K_ORDENES] });
+    },
+  });
+}
+
 /** Historial completo de pagos (vista "Pagos recibidos" del mockup), agregado por el
  *  front ante la ausencia de un endpoint "todos los pagos" (ver `historialPagosCliente`
  *  en `api.ts`). Sin paginar en el backend: el filtrado/orden se hace en el cliente sobre
@@ -128,6 +145,44 @@ export function useHistorialPagosCliente() {
   return useQuery({
     queryKey: [K_PAGOS, "historial"],
     queryFn: historialPagosCliente,
+  });
+}
+
+// ── ADR-229 (petición del usuario): "Pagos no asignados" ───────────────────────
+export function useNoAsignados() {
+  return useQuery({
+    queryKey: [K_PAGOS, "no-asignados"],
+    queryFn: () => pagoClienteApi.listarNoAsignados({ page: 1, size: 100 }),
+  });
+}
+
+export function useCrearPagoNoAsignado() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PagoClienteCreate) => pagoClienteApi.crearSinAsignar(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [K_PAGOS] }),
+  });
+}
+
+/** Asignar completa el cobro de la factura elegida — misma cascada que un pago nuevo. */
+export function useAsignarPago() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      pagoId,
+      cobranzaId,
+      montoAplicado,
+    }: {
+      pagoId: string;
+      cobranzaId: string;
+      montoAplicado: string;
+    }) => pagoClienteApi.asignar(pagoId, cobranzaId, montoAplicado),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [K_PAGOS] });
+      qc.invalidateQueries({ queryKey: [K_COBRANZA] });
+      qc.invalidateQueries({ queryKey: [K_FACTURACION_CLIENTES] });
+      qc.invalidateQueries({ queryKey: [K_ORDENES] });
+    },
   });
 }
 
@@ -143,6 +198,10 @@ export const useAfiliadosInfo = () =>
 
 export const useAgenciasInfo = () =>
   useQuery({ queryKey: ["cobranza:agencias"], queryFn: agenciasInfo });
+
+// ADR-225: "Forma de pago"/"Cuenta contable" ya existen en F2 — se reutilizan tal cual
+// (mismo cruce entre módulos que `facturaAfiliadoApi` de arriba), sin duplicar el fetch.
+export { useCuentasContables, useFormasDePago } from "@/modules/facturacion/hooks";
 
 export const useVendedoresInfo = () =>
   useQuery({ queryKey: ["cobranza:vendedores"], queryFn: vendedoresInfo });

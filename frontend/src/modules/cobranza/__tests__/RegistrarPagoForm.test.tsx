@@ -17,10 +17,23 @@ vi.mock("../api", () => ({
   nombreDeAdjuntoCobranzaRef: (ref: string) => ref,
 }));
 
+// ADR-225: "Forma de pago"/"Cuenta contable" se reutilizan de F2 (`../hooks` las
+// re-exporta desde `@/modules/facturacion/hooks`) — se mockea ESE módulo directamente,
+// sin pasar por su API real.
+vi.mock("@/modules/facturacion/hooks", () => ({
+  useCuentasContables: () => ({
+    data: [{ id: "cc-1", etiqueta: "4100-001 · Ingresos" }],
+  }),
+  useFormasDePago: () => ({
+    data: [{ id: "01", etiqueta: "01 · Efectivo" }],
+  }),
+}));
+
 const cobranza: CobranzaFactura = {
   cobranza_id: "cb-1",
   factura_id: "f-1",
   anunciante_id: "an-1",
+  agencia_id: null,
   metodo_pago_clave: "03",
   dias_credito: 30,
   fecha_estimada_cobro: "2026-11-01",
@@ -34,9 +47,19 @@ const cobranza: CobranzaFactura = {
   importe_pendiente_cobro: "991800.00",
   vencida: false,
   numero_factura: "B-0010023454343",
+  ultimo_numero_pago: null,
+  siguiente_numero_pago: "1",
 };
 
-function renderForm(onConfirm = vi.fn(), onCancel = vi.fn()) {
+/** ADR-225: selecciona Forma de pago y Cuenta contable (obligatorios, además de Método
+ *  de pago) — orden en el DOM: Método de pago, Forma de pago, Cuenta contable. */
+function completarCamposNuevos(container: HTMLElement) {
+  const selects = container.querySelectorAll("select.fsel");
+  fireEvent.change(selects[1], { target: { value: "01" } });
+  fireEvent.change(selects[2], { target: { value: "cc-1" } });
+}
+
+function renderForm(onConfirm = vi.fn(), onCancel = vi.fn(), numeroPagoSugerido = "1") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={qc}>
@@ -44,6 +67,7 @@ function renderForm(onConfirm = vi.fn(), onCancel = vi.fn()) {
         cobranza={cobranza}
         numeroFactura="B-0010023454343"
         anunciante="Grupo Femsa"
+        numeroPagoSugerido={numeroPagoSugerido}
         onConfirm={onConfirm}
         onCancel={onCancel}
       />
@@ -72,6 +96,10 @@ describe("Fix: 'Registrar pago' se deshabilita en vivo en vez de desaparecer", (
     fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
       target: { value: "SPEI-12345678" },
     });
+    expect(boton).toBeDisabled(); // ADR-225: aún faltan Forma de pago/Cuenta contable.
+
+    await screen.findByText("01 · Efectivo");
+    completarCamposNuevos(container);
     expect(boton).toBeEnabled();
 
     // Borrar un campo ya lleno lo vuelve a deshabilitar — nunca lo oculta.
@@ -88,10 +116,11 @@ describe("Fix: 'Registrar pago' se deshabilita en vivo en vez de desaparecer", (
     fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
       target: { value: "SPEI-12345678" },
     });
+    completarCamposNuevos(container);
     expect(screen.getByRole("button", { name: "Registrar pago" })).toBeDisabled();
   });
 
-  it("con los 4 campos válidos, 'Registrar pago' llama a onConfirm con los datos capturados", async () => {
+  it("con los campos válidos, 'Registrar pago' llama a onConfirm con los datos capturados", async () => {
     const { container, onConfirm } = renderForm();
     fireEvent.change(screen.getByPlaceholderText("991800.00"), { target: { value: "500000" } });
     await screen.findByText("03 · Transferencia");
@@ -99,6 +128,7 @@ describe("Fix: 'Registrar pago' se deshabilita en vivo en vez de desaparecer", (
     fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
       target: { value: "SPEI-12345678" },
     });
+    completarCamposNuevos(container);
 
     fireEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
 
@@ -107,7 +137,35 @@ describe("Fix: 'Registrar pago' se deshabilita en vivo en vez de desaparecer", (
         monto_aplicado: "500000",
         metodo_pago_clave: "03",
         referencia_pago: "SPEI-12345678",
+        forma_pago_clave: "01",
+        cuenta_contable_id: "cc-1",
       }),
     );
+  });
+});
+
+// ADR-226 (petición del usuario): "Número de pago" ya no se captura a mano.
+describe("'Número de pago' se precarga calculado y de solo lectura", () => {
+  it("muestra el valor sugerido por el padre y no permite editarlo", () => {
+    renderForm(vi.fn(), vi.fn(), "3");
+    const campo = screen.getByDisplayValue("3") as HTMLInputElement;
+    expect(campo).toBeDisabled();
+    fireEvent.change(campo, { target: { value: "99" } });
+    expect(campo).toHaveValue("3"); // deshabilitado: el intento de cambio no aplica.
+  });
+
+  it("envía el valor sugerido tal cual en el payload, sin que el usuario lo toque", async () => {
+    const { container, onConfirm } = renderForm(vi.fn(), vi.fn(), "3");
+    fireEvent.change(screen.getByPlaceholderText("991800.00"), { target: { value: "500000" } });
+    await screen.findByText("03 · Transferencia");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, { target: { value: "03" } });
+    fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
+      target: { value: "SPEI-12345678" },
+    });
+    completarCamposNuevos(container);
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ numero_pago: "3" }));
   });
 });
