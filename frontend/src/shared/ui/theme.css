@@ -482,6 +482,13 @@ body {
   padding: 0 11px;
   font-size: 12px;
 }
+.btn-lg {
+  height: 46px;
+  padding: 0 24px;
+  font-size: 15px;
+  font-weight: 600;
+  gap: 8px;
+}
 .btn-phase {
   background: var(--phase);
   border-color: var(--phase);

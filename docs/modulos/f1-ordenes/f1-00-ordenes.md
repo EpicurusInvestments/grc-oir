@@ -41,6 +41,17 @@ Calculados (servicio, `Decimal`): `anio_venta`/`mes_venta` (de `fecha_venta`),
   cantidad_spots_bonificables` (spots facturables), no sobre `total_spots` — ver ADR-067
   para la fórmula completa y su propagación gratuita a `FacturaCliente`/archivo plano.
 
+**ADR-237 (petición del usuario, con captura) — nuevo formato de `folio_orden`:**
+cambia de `OC-AAAA-####` a `OS-AAAA-MM-######` (Orden de Servicio) y, por derivación,
+`OrdenEstacion.folio_orden_estacion` de `OE-AAAA-####X` a `OT-AAAA-MM-######X` (Orden
+de Transmisión). El consecutivo sigue siendo **GLOBAL** (confirmado con el usuario: NO
+reinicia por año ni por mes, `AAAA-MM` es solo la etiqueta del momento de creación) y
+las órdenes YA EXISTENTES se quedan con su folio viejo — no hay backfill, conviven
+ambos formatos. `_siguiente_folio()` escanea folios en los DOS formatos para que el
+consecutivo no se reinicie; una OE nueva bajo una OC vieja conserva el prefijo `OE-`
+(deriva del folio real de su padre, nunca asume el formato nuevo). Detalle completo en
+`docs/arquitectura.md` (ADR-237).
+
 **Checklist de Vo.Bo. (ELIMINADO — ver ADR-100):** existió una tabla hija
 `OrdenClienteVoBoItem` (ADR-033, NO JSON: 10 ítems fijos `ITEMS_VOBO`, cada uno con
 `completado`/`usuario_id`/`fecha_completado`) que gateaba la transición `recibida →

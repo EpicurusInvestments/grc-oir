@@ -22,6 +22,7 @@ import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator
 import type { FiltrosCobranzaFactura } from "../../api";
 import { BADGE_VENCIDA, badgeEstatusCobro, diasHasta, fmtFecha, fmtMoneda, oGuion } from "../../format";
 import {
+  useAgenciasInfo,
   useAnunciantesInfo,
   useCobranzaFactura,
   useCobranzaFacturaPorFacturaId,
@@ -31,6 +32,7 @@ import {
   usePagosCliente,
 } from "../../hooks";
 import { ESTATUS_COBRO_LABEL, type CobranzaFactura, type PagoCliente, type PagoClienteCreate } from "../../types";
+import { PagoMultipleForm } from "../components/PagoMultipleForm";
 import { RegistrarPagoForm } from "../components/RegistrarPagoForm";
 
 type Filtro = "all" | "pendiente" | "cobro_parcial" | "cobrada" | "vencidas";
@@ -62,6 +64,9 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [pagoAEliminar, setPagoAEliminar] = useState<PagoCliente | null>(null);
+  // ADR-225 (petición del usuario): "Pago de Múltiples Facturas" toma pantalla completa
+  // DENTRO de esta misma pantalla — el flujo de pago individual (abajo) no cambia.
+  const [pagoMultipleActivo, setPagoMultipleActivo] = useState(false);
 
   // El backend no soporta `q` ni "vencida" en el filtro: se amplía a un lote de 100 y se
   // filtra en el cliente (ver docstring del módulo).
@@ -75,6 +80,12 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
   const anuncianteMap = useMemo(
     () => new Map((anunciantes.data ?? []).map((a) => [a.anunciante_id, a])),
     [anunciantes.data],
+  );
+  // Petición del usuario: columna "Agencia" en la lista — mismo patrón que `anuncianteMap`.
+  const agencias = useAgenciasInfo();
+  const agenciaMap = useMemo(
+    () => new Map((agencias.data ?? []).map((a) => [a.agencia_id, a])),
+    [agencias.data],
   );
 
   // KPIs de la franja superior: se calculan sobre un lote amplio, INDEPENDIENTE del
@@ -237,6 +248,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
         cobranza={selected}
         numeroFactura={selected.numero_factura ?? "—"}
         anunciante={anuncianteSel?.nombre_comercial ?? "—"}
+        numeroPagoSugerido={String((pagos.list.data?.items?.length ?? 0) + 1)}
         submitting={pagos.crear.isPending}
         submitError={submitError}
         onConfirm={onCrearPago}
@@ -265,11 +277,6 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                 <span className="badge b-blue">{anuncianteSel?.nombre_comercial ?? "—"}</span>
               </div>
             </div>
-            {selected.estatus_cobro !== "cobrada" && (
-              <button type="button" className="btn btn-amber btn-sm" onClick={() => setModo("pagar")}>
-                + Registrar pago
-              </button>
-            )}
           </div>
         </div>
 
@@ -418,13 +425,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                 </>
               )}
 
-              <div className="sec">
-                Pagos recibidos ({listaPagos.length})
-                {selected.estatus_cobro !== "cobrada" && (
-                  <span className="sec-action" onClick={() => setModo("pagar")}>
-                    + Registrar pago
-                  </span>
-                )}
+              <div className="sec">Pagos recibidos ({listaPagos.length})
               </div>
               {pagos.list.isLoading && <div className="fv muted">Cargando…</div>}
               {!pagos.list.isLoading && listaPagos.length === 0 && (
@@ -453,7 +454,10 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text2)", display: "flex", justifyContent: "space-between" }}>
-                    <span>{p.metodo_pago_clave}</span>
+                    {/* ADR-225: `metodo_pago_clave` es nullable desde que existe el pago
+                        múltiple (ese flujo no lo captura) — se cae a `forma_pago_clave`
+                        si no hay método, para no dejar la celda vacía. */}
+                    <span>{oGuion(p.metodo_pago_clave ?? p.forma_pago_clave)}</span>
                     <span className="td-mono">{oGuion(p.referencia_pago)}</span>
                   </div>
                 </div>
@@ -518,17 +522,20 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           <tr>
             <th>Factura</th>
             <th>Anunciante</th>
+            <th>Agencia</th>
             <th className="td-center">Días cr.</th>
             <th>Fecha estimada</th>
             <th className="td-right">Total</th>
             <th className="td-right">Cobrado</th>
             <th className="td-right">Pendiente</th>
             <th className="td-center">Estado</th>
+            <th className="td-center">Núm. parcialidad</th>
           </tr>
         </thead>
         <tbody>
           {items.map((c) => {
             const an = anuncianteMap.get(c.anunciante_id);
+            const ag = c.agencia_id ? agenciaMap.get(c.agencia_id) : undefined;
             const total = Number(c.importe_cobrado) + Number(c.importe_pendiente_cobro);
             return (
               <tr
@@ -538,6 +545,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
               >
                 <td className="td-main mono">{c.numero_factura ?? "—"}</td>
                 <td className="td-2">{oGuion(an?.nombre_comercial)}</td>
+                <td className="td-2">{oGuion(ag?.nombre_agencia)}</td>
                 <td className="td-center mono">{c.dias_credito}</td>
                 <td className="mono" style={{ fontSize: 11 }}>
                   {fmtFecha(c.fecha_estimada_cobro)}
@@ -559,6 +567,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                     {ESTATUS_COBRO_LABEL[c.estatus_cobro]}
                   </span>
                 </td>
+                <td className="td-center mono">{oGuion(c.ultimo_numero_pago)}</td>
               </tr>
             );
           })}
@@ -583,6 +592,15 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
     </>
   );
 
+  if (pagoMultipleActivo) {
+    return (
+      <PagoMultipleForm
+        onCancelar={() => setPagoMultipleActivo(false)}
+        onRegistrado={() => setPagoMultipleActivo(false)}
+      />
+    );
+  }
+
   return (
     <>
       <div className="cat-header">
@@ -593,6 +611,9 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
             anunciante (editables). Permite capturar pagos parciales o totales.
           </div>
         </div>
+        <button type="button" className="btn btn-amber btn-lg" onClick={() => setPagoMultipleActivo(true)}>
+          + Pago múltiple
+        </button>
       </div>
 
       <div className="kpi-strip">

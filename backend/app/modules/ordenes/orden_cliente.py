@@ -554,7 +554,13 @@ class OrdenClienteRepository(BaseRepository[OrdenCliente]):
         return stmt
 
 
-_FOLIO_RE = re.compile(r"^OC-\d{4}-(\d+)$")
+# ADR-237 (petición del usuario): formato nuevo `OS-AAAA-MM-######` (antes `OC-AAAA-####`).
+# El viejo (`_FOLIO_RE_VIEJO`) NO se vuelve a generar, pero sigue haciendo falta para
+# escanear el consecutivo — es GLOBAL y las órdenes viejas se quedan con su folio tal
+# cual (petición del usuario: "las ordenes viejas dejalas asi"), así que el máximo debe
+# considerar AMBOS formatos o el consecutivo se reiniciaría de golpe.
+_FOLIO_RE_NUEVO = re.compile(r"^OS-\d{4}-\d{2}-(\d+)$")
+_FOLIO_RE_VIEJO = re.compile(r"^OC-\d{4}-(\d+)$")
 
 
 # ── Servicio ──────────────────────────────────────────────────────────────────
@@ -590,16 +596,19 @@ class OrdenClienteService(
             raise NotFoundError(f"{nombre} no encontrado.", detalles={"id": str(id_)})
         return obj
 
-    def _siguiente_folio(self, db: Session, anio: int) -> str:
-        """Correlativo GLOBAL (no reinicia por año) — mismo criterio que `nextFolioOC`
-        del frontend: el número sigue subiendo aunque cambie el año de venta."""
+    def _siguiente_folio(self, db: Session, anio: int, mes: int) -> str:
+        """Correlativo GLOBAL (no reinicia por año NI por mes, ADR-237): el número sigue
+        subiendo aunque cambie el año/mes de venta — `AAAA-MM` es solo la etiqueta del
+        momento en que se creó, no particiona el consecutivo. Escanea folios en AMBOS
+        formatos (`OS-AAAA-MM-######` nuevo y `OC-AAAA-####` viejo, ADR-237) porque las
+        órdenes viejas no se regeneran y el consecutivo debe seguir siendo uno solo."""
         existentes = db.scalars(select(OrdenCliente.folio_orden)).all()
         maximo = 40
         for folio in existentes:
-            m = _FOLIO_RE.match(folio)
+            m = _FOLIO_RE_NUEVO.match(folio) or _FOLIO_RE_VIEJO.match(folio)
             if m:
                 maximo = max(maximo, int(m.group(1)))
-        return f"OC-{anio}-{maximo + 1:04d}"
+        return f"OS-{anio}-{mes:02d}-{maximo + 1:06d}"
 
     def _validar_fks_y_relaciones(self, db: Session, payload: dict[str, Any]) -> None:
         if "empresa_facturadora_id" in payload:
@@ -690,7 +699,7 @@ class OrdenClienteService(
 
         payload["orden_id"] = uuid4()
         payload["created_by"] = resolver_usuario_id(db, usuario.username)
-        payload["folio_orden"] = self._siguiente_folio(db, fecha_venta.year)
+        payload["folio_orden"] = self._siguiente_folio(db, fecha_venta.year, fecha_venta.month)
         payload["estatus_pago_afiliado"] = EstatusPago.PENDIENTE.value
         payload["estatus_pago_agencia"] = EstatusPago.PENDIENTE.value
 

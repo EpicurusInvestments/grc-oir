@@ -211,6 +211,13 @@ class FacturaCliente(Base):
         ForeignKey("agencia.agencia_id", name="fk_factura_cliente_agencia", ondelete="NO ACTION"),
         default=None,
     )
+    # ADR-236 (petición del usuario, reportado con captura): `agencia_id` NO alcanza para
+    # saber si el receptor es el anunciante o la agencia — es solo una REFERENCIA
+    # capturada en la orden, y puede estar lleno aunque la orden sea
+    # `facturacion_directa_cliente = True` (igual que `_receptor_de()` ya distinguía).
+    # Se persiste aquí el mismo booleano, calculado una sola vez al crear la factura,
+    # para que F3 (que no conoce `OrdenCliente`) pueda filtrar por el receptor real.
+    facturado_directo: Mapped[bool] = mapped_column(default=True)
     razon_social_facturacion: Mapped[str] = mapped_column(Unicode(200))
     rfc_facturacion: Mapped[str] = mapped_column(Unicode(13))
     direccion_facturacion: Mapped[str | None] = mapped_column(texto_largo(), default=None)
@@ -399,6 +406,7 @@ class FacturaClienteRead(BaseModel):
     empresa_facturadora_id: uuid.UUID
     anunciante_id: uuid.UUID
     agencia_id: uuid.UUID | None = None
+    facturado_directo: bool = True
     razon_social_facturacion: str
     rfc_facturacion: str
     direccion_facturacion: str | None = None
@@ -888,7 +896,9 @@ class FacturaClienteService(
         # Receptor: anunciante o agencia según `facturacion_directa_cliente` (spec).
         # `uso_cfdi_default` solo existe en Anunciante (ADR-065): si el receptor es la
         # Agencia, no hay de dónde sugerirlo y queda en None (se captura a mano).
-        if oc.facturacion_directa_cliente or oc.agencia_id is None:
+        # ADR-236: mismo booleano que `_receptor_de()`, persistido en `facturado_directo`.
+        facturado_directo = oc.facturacion_directa_cliente or oc.agencia_id is None
+        if facturado_directo:
             anunciante = db.get(Anunciante, oc.anunciante_id)
             if anunciante is None:  # pragma: no cover — la FK de la OC lo garantiza
                 raise DomainError("El anunciante de la orden no existe.")
@@ -931,6 +941,7 @@ class FacturaClienteService(
             empresa_facturadora_id=oc.empresa_facturadora_id,
             anunciante_id=oc.anunciante_id,
             agencia_id=oc.agencia_id,
+            facturado_directo=facturado_directo,
             razon_social_facturacion=data.razon_social_facturacion or razon_social,
             uso_cfdi=data.uso_cfdi or uso_cfdi_default,
             rfc_facturacion=data.rfc_facturacion or rfc,

@@ -32,6 +32,7 @@ import type {
   PagoCliente,
   PagoClienteConCobranza,
   PagoClienteCreate,
+  PagoMultipleCreate,
   Requisicion,
   RequisicionCreate,
   RequisicionUpdate,
@@ -44,6 +45,8 @@ const BASE = "/cobranza";
 export interface FiltrosCobranzaFactura extends ListParams {
   factura_id?: string;
   anunciante_id?: string;
+  /** ADR-225: filtra el picker de pago múltiple "por agencia". */
+  agencia_id?: string;
   estatus_cobro?: string;
 }
 
@@ -80,6 +83,31 @@ export const pagoClienteApi = {
   },
   async eliminar(pagoId: string): Promise<void> {
     await apiClient.delete(`${BASE}/pagos/${pagoId}`);
+  },
+  /** ADR-225: un `PagoCliente` por cada factura seleccionada, mismo `pago_multiple_id`. */
+  async crearMultiple(payload: PagoMultipleCreate) {
+    const { data } = await apiClient.post<PagoCliente[]>(`${BASE}/pagos/multiples`, payload);
+    return data;
+  },
+  /** ADR-229 (petición del usuario): captura un pago SIN elegir factura todavía. */
+  async crearSinAsignar(payload: PagoClienteCreate) {
+    const { data } = await apiClient.post<PagoCliente>(`${BASE}/pagos/no-asignados`, payload);
+    return data;
+  },
+  async listarNoAsignados(params?: ListParams) {
+    const { data } = await apiClient.get<Page<PagoCliente>>(`${BASE}/pagos/no-asignados`, {
+      params,
+    });
+    return data;
+  },
+  /** ADR-231 (petición del usuario): `montoAplicado` puede ser MENOR al monto total
+   *  del huérfano — el resto se queda en el propio huérfano (más chico). */
+  async asignar(pagoId: string, cobranzaId: string, montoAplicado: string) {
+    const { data } = await apiClient.post<PagoCliente>(`${BASE}/pagos/${pagoId}/asignar`, {
+      cobranza_id: cobranzaId,
+      monto_aplicado: montoAplicado,
+    });
+    return data;
   },
 };
 

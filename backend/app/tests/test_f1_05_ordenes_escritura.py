@@ -262,7 +262,22 @@ def test_crear_oc_calcula_totales_y_folio(
     assert oc.mes_venta == 1
     assert oc.total_dias_campania == 28
     assert oc.estatus_orden == EstatusOrden.CAPTURADA  # ADR-100: sin Vo.Bo., directo aquí
-    assert oc.folio_orden == "OC-2026-0041"
+    assert oc.folio_orden == "OS-2026-01-000041"  # ADR-237: formato nuevo
+
+
+def test_siguiente_folio_sigue_contando_los_folios_en_formato_viejo(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-237 (petición del usuario): el consecutivo es GLOBAL y las órdenes viejas
+    (`OC-AAAA-####`) NO se regeneran — si el escaneo solo reconociera el formato nuevo,
+    el consecutivo se reiniciaría de golpe en vez de seguir donde iba."""
+    vieja = oc_svc.create(_oc_payload(cat), VENTAS)
+    vieja_db = db.get(OrdenCliente, vieja.orden_id)
+    vieja_db.folio_orden = "OC-2026-0099"
+    db.commit()
+
+    nueva = oc_svc.create(_oc_payload(cat), VENTAS)
+    assert nueva.folio_orden == "OS-2026-01-000100"
 
 
 # ── ADR-167/168: producto_tarifa/duracion_spot texto libre ───────────────────────
@@ -779,10 +794,28 @@ def test_crear_oe_hereda_calcula_y_promueve_oc(
     assert oe.importe_estacion == Decimal("16000.00")
     assert oe.porcentaje_participacion_oir == Decimal("20.0")
     assert oe.importe_oir == Decimal("3200.00")
-    assert oe.folio_orden_estacion == oc.folio_orden.replace("OC-", "OE-") + "A"
+    assert oe.folio_orden_estacion == oc.folio_orden.replace("OS-", "OT-") + "A"
 
     oc_tras = oc_svc.get(oc.orden_id)
     assert oc_tras.estatus_orden == EstatusOrden.EN_TRANSMISION
+
+
+def test_crear_oe_bajo_oc_en_formato_viejo_conserva_el_prefijo_oe(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    """ADR-237 (petición del usuario): una OC vieja no se regenera — si se le agrega una
+    OE nueva, esa OE debe seguir usando el prefijo `OE-` (derivado del folio REAL de su
+    padre), no `OT-` (que solo aplica cuando la OC padre ya es `OS-...`)."""
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oc_db = db.get(OrdenCliente, oc.orden_id)
+    oc_db.folio_orden = "OC-2026-0099"
+    db.commit()
+
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+    assert oe.folio_orden_estacion == "OE-2026-0099A"
 
 
 def test_crear_oe_con_hora_inicio_igual_a_hora_fin_no_falla(
@@ -1650,7 +1683,7 @@ def test_crear_oe_permitido_en_verificacion_si_quedan_spots_sin_asignar(
         ),
         VENTAS,
     )
-    assert segunda.folio_orden_estacion == oc.folio_orden.replace("OC-", "OE-") + "B"
+    assert segunda.folio_orden_estacion == oc.folio_orden.replace("OS-", "OT-") + "B"
 
 
 def test_crear_oe_rechaza_orden_cerrada(

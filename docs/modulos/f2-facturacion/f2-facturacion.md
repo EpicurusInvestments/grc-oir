@@ -40,6 +40,14 @@ El receptor se compara como par `(tipo, id)` y no por `agencia_id`: dos órdenes
 agencia pueden diferir en `facturacion_directa_cliente`, y entonces una se factura a la
 agencia y la otra al anunciante.
 
+**ADR-236 (petición del usuario, reportado con captura, vía F3) —
+`facturado_directo`:** ese mismo booleano `(tipo, id)` que ya calculaba `_receptor_de()`
+ahora se PERSISTE en `FacturaCliente.facturado_directo` (default `True`) al crear la
+factura — antes solo vivía en memoria durante el alta. F3 (`CobranzaFactura`, que no
+conoce `OrdenCliente`) lo necesitaba para filtrar correctamente "facturas del
+anunciante" vs "facturas de la agencia" en el picker de Pago Múltiple: `agencia_id`
+por sí solo no bastaba (ver `docs/arquitectura.md`, ADR-236).
+
 De las órdenes incluidas se calcula:
 
 | Campo | Regla |
@@ -115,6 +123,12 @@ folio), separados por salto de línea cuando hay varias órdenes — antes solo 
 primera. Además, `observaciones_factura` ("Observaciones adicionales", campo YA existente)
 se integra de verdad al archivo del PAC: antes se resolvía hasta `DatosTimbrado` pero el
 adaptador nunca la escribía (bug real, corregido en `adapter_pac_v40.py`).
+
+**ADR-232 (petición del equipo) — se oculta "Ver en Cobranza (F3)":** el botón del
+panel de detalle de "Facturas al cliente" que navega a `/cobranza?factura_id=...`
+(visible desde `timbrada`/`entregada`/`cobrada`, ADR-072) queda oculto con una
+constante (`MOSTRAR_BOTON_VER_EN_COBRANZA = false`) sin borrar su lógica ni la
+condición de estado — reactivarlo es solo cambiar esa constante a `true`.
 
 ## Entidades (spec BD v2, con 2 desviaciones aditivas aprobadas + 1 entidad nueva)
 
