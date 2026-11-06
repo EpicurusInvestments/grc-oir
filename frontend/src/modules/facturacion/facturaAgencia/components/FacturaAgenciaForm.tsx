@@ -1,16 +1,19 @@
-/** Alta/edición de FacturaAgencia (React Hook Form + Zod) — mismo patrón que
- * `FacturaAfiliadoForm`, adaptado a que aquí la relación con la orden es 1:1 por
- * factura (no N:M): el combo "Orden relacionada" es de selección simple, filtrado por
- * la agencia ya elegida.
+/** Alta/edición de FacturaAgencia (React Hook Form + Zod) — ADR nuevo (petición del
+ * usuario, con captura, 2026-11-06) que SUSTITUYE el criterio de ADR-079: el combo
+ * "Orden relacionada" de selección simple se reemplaza por el mismo patrón de
+ * "Buscar y agregar" multi-selección que `FacturaAfiliadoForm`, para acumular VARIAS
+ * órdenes en una sola factura.
  *
- * El `%` de comisión se sugiere del catálogo de la agencia al elegir la orden (si el
- * usuario todavía no capturó uno a mano) y siempre queda editable — se persiste en la
- * factura (spec: "Cat/Manual"). La tarjeta "Comisión calculada" se recalcula en vivo
- * (`orden.total * % / 100`) para que quien captura vea el monto antes de guardar, sin
- * esperar la respuesta del backend.
+ * Subtotal/IVA/Total dejan de capturarse a mano (petición del usuario: "no se captura
+ * Subtotal manual, se vuelve un campo calculado") — se CALCULAN como la suma de la
+ * comisión de cada orden elegida, más IVA a la tasa central. Cada orden usa SU PROPIO %
+ * ya pactado (`porcentaje_comision_agencia_snap` de esa orden, o si no el default del
+ * catálogo de la agencia) — por eso ya no hay un solo campo "% de comisión" editable
+ * para toda la factura: el % se ve, de solo lectura, en cada fila agregada.
  *
  * La edición hace todo lo que hace el alta (mismo criterio que ADR-087 en
- * FacturaAfiliado): agencia y orden se pueden reasignar.
+ * FacturaAfiliado): la agencia se puede reasignar y esta misma sección edita qué
+ * órdenes tiene asignadas.
  *
  * PDF/XML por separado (ADR-079, mismo mecanismo que ADR-070 en FacturaAfiliado):
  * `AdjuntoFacturaInput` con `tipo="factura_agencia_pdf"`/`"factura_agencia_xml"`.
@@ -24,39 +27,37 @@ import { z } from "zod";
 import { FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { AdjuntoFacturaInput } from "../../facturaCliente/components/AdjuntoFacturaInput";
-import { fmtMoneda } from "../../format";
+import { fmtMoneda, fmtPorcentaje } from "../../format";
 import { useAgencias, useOrdenesFacturablesAgencia } from "../../hooks";
-import type { FacturaAgenciaCreate, FacturaAgenciaUpdate } from "../../types";
-
-const monto = z
-  .string()
-  .min(1, "Obligatorio.")
-  .refine((v) => !Number.isNaN(Number(v)) && Number(v) >= 0, "Debe ser un monto válido.");
+import type { FacturaAgenciaCreate, FacturaAgenciaOrden, FacturaAgenciaUpdate } from "../../types";
 
 const schema = z.object({
   agencia_id: z.string().min(1, "Selecciona la agencia."),
-  orden_id: z.string().min(1, "Selecciona la orden."),
   folio_factura_agencia: z.string().trim().max(50).optional(),
   fecha_factura_agencia: z.string().min(1, "La fecha es obligatoria."),
-  monto_factura_agencia: monto,
-  iva_factura_agencia: monto,
-  porcentaje_comision_agencia: z
-    .string()
-    .optional()
-    .refine(
-      (v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100),
-      "El porcentaje debe estar entre 0 y 100.",
-    ),
 });
 
 type Valores = z.infer<typeof schema>;
 
+/** Fila de la sección "Órdenes asignadas" — sea una OC recién agregada del combo (% y
+ *  comisión calculados en vivo contra su propio dato) o una ya asignada de antes
+ *  (`porcentaje_comision_snap`/`comision_calculada` ya congelados por el backend). */
+interface OrdenSeleccionada {
+  orden_id: string;
+  folio_orden: string;
+  anunciante: string | null;
+  total: string;
+  porcentaje: string;
+  comision: string;
+}
+
 interface Props {
   isEdit?: boolean;
   defaultValues?: Valores;
-  /** Adjuntos ya guardados, al editar (el `useState` de abajo solo toma un valor
-   *  inicial — no se resincroniza si `defaultValues` cambia después del primer render,
-   *  mismo criterio que `FacturaAfiliadoForm`). */
+  /** Órdenes ya guardadas, al editar — precargan la sección (el `useState` de abajo solo
+   *  las toma como valor inicial, no se resincroniza si la prop cambia después del
+   *  primer render) — mismo criterio que `asignacionesIniciales` en FacturaAfiliadoForm. */
+  ordenesIniciales?: FacturaAgenciaOrden[];
   archivoPdfPathInicial?: string | null;
   archivoXmlPathInicial?: string | null;
   submitting?: boolean;
@@ -70,6 +71,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 export function FacturaAgenciaForm({
   isEdit,
   defaultValues,
+  ordenesIniciales,
   archivoPdfPathInicial = null,
   archivoXmlPathInicial = null,
   submitting,
@@ -81,66 +83,81 @@ export function FacturaAgenciaForm({
   const {
     register,
     handleSubmit,
-    setValue,
     watch,
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
-    defaultValues: defaultValues ?? { fecha_factura_agencia: hoy(), iva_factura_agencia: "0" },
+    defaultValues: defaultValues ?? { fecha_factura_agencia: hoy() },
   });
+
+  const [ordenesSeleccionadas, setOrdenesSeleccionadas] = useState<OrdenSeleccionada[]>(() =>
+    (ordenesIniciales ?? []).map((o) => ({
+      orden_id: o.orden_id,
+      folio_orden: o.folio_orden,
+      anunciante: o.anunciante,
+      total: o.orden_total ?? "0",
+      porcentaje: o.porcentaje_comision_snap,
+      comision: o.comision_calculada,
+    })),
+  );
   const [archivoPdfPath, setArchivoPdfPath] = useState<string | null>(archivoPdfPathInicial);
   const [archivoXmlPath, setArchivoXmlPath] = useState<string | null>(archivoXmlPathInicial);
 
   const agenciaId = watch("agencia_id");
-  const ordenId = watch("orden_id");
-  const ordenes = useOrdenesFacturablesAgencia(agenciaId || null);
+  const ordenesFacturables = useOrdenesFacturablesAgencia(agenciaId || null);
 
   // Fix (mismo criterio que el combo de OI en FacturaAfiliado): cambiar de agencia
-  // limpia la orden ya elegida — era de la agencia ANTERIOR. Se compara contra la
-  // agencia CON LA QUE SE MONTÓ el formulario (no "¿ya corrió el efecto?"): React
-  // StrictMode monta cada componente dos veces en desarrollo, y un `useRef` de "ya
-  // corrió una vez" se deja engañar por ese doble montaje (ver ADR-088).
+  // limpia las órdenes ya elegidas — eran de la agencia ANTERIOR. Se compara contra la
+  // agencia CON LA QUE SE MONTÓ el formulario, no "¿ya corrió el efecto?" (React
+  // StrictMode monta cada componente dos veces en desarrollo, ver ADR-088).
   const agenciaIdDeMontaje = useRef(defaultValues?.agencia_id ?? "");
   useEffect(() => {
     if (agenciaId === agenciaIdDeMontaje.current) return;
-    setValue("orden_id", "");
-  }, [agenciaId, setValue]);
+    setOrdenesSeleccionadas([]);
+  }, [agenciaId]);
 
-  // El % solo se auto-sugiere si el usuario todavía no capturó uno a mano — elegir
-  // otra orden no debe pisar un valor ya escrito.
-  const porcentajeTocado = useRef(false);
-  const ordenSeleccionada = (ordenes.data ?? []).find((o) => o.orden_id === ordenId);
-
-  const onElegirOrden = (id: string) => {
-    setValue("orden_id", id, { shouldValidate: true });
-    const oc = (ordenes.data ?? []).find((o) => o.orden_id === id);
-    if (oc && !porcentajeTocado.current && oc.porcentaje_comision_agencia_default != null) {
-      setValue("porcentaje_comision_agencia", oc.porcentaje_comision_agencia_default);
+  const agregarOrden = (id: string) => {
+    if (!id) return;
+    const oc = (ordenesFacturables.data ?? []).find((o) => o.orden_id === id);
+    if (oc) {
+      const porcentaje = oc.porcentaje_comision_agencia_snap ?? oc.porcentaje_comision_agencia_default ?? "0";
+      const comision = String((Number(oc.total) * Number(porcentaje)) / 100);
+      setOrdenesSeleccionadas((prev) => [
+        ...prev,
+        {
+          orden_id: oc.orden_id,
+          folio_orden: oc.folio_orden,
+          anunciante: oc.anunciante,
+          total: oc.total,
+          porcentaje,
+          comision,
+        },
+      ]);
     }
   };
 
-  const porcentajeCapturado = watch("porcentaje_comision_agencia");
-  const porcentajeEfectivo =
-    porcentajeCapturado || ordenSeleccionada?.porcentaje_comision_agencia_default || null;
-  // Se manda como string SIN redondear (ni aquí ni en `fmtMoneda`, que trunca en el
-  // string): `.toFixed(2)` redondearía el preview a un valor que podría no coincidir
-  // con lo que en verdad se va a guardar.
-  const comisionPreview =
-    ordenSeleccionada && porcentajeEfectivo
-      ? String((Number(ordenSeleccionada.total) * Number(porcentajeEfectivo)) / 100)
-      : null;
+  const quitarOrden = (id: string) => {
+    setOrdenesSeleccionadas((prev) => prev.filter((o) => o.orden_id !== id));
+  };
 
-  const m = Number(watch("monto_factura_agencia") ?? 0);
-  const i = Number(watch("iva_factura_agencia") ?? 0);
-  const totalPreview = Number.isNaN(m) || Number.isNaN(i) ? null : String(m + i);
+  // Solo ofrece las que todavía no se eligieron en ESTA factura — una vez agregada,
+  // desaparece del buscador (el mismo orden SÍ puede estar en OTRAS facturas de
+  // agencia, parcialidades, ADR-079: el backend no las excluye del combo).
+  const opcionesDisponibles = (ordenesFacturables.data ?? []).filter(
+    (oc) => !ordenesSeleccionadas.some((sel) => sel.orden_id === oc.orden_id),
+  );
+
+  const comisionTotal = ordenesSeleccionadas.reduce((s, o) => s + Number(o.comision), 0);
+  const ivaPreview = comisionTotal * 0.16;
+  const totalPreview = comisionTotal + ivaPreview;
 
   const onValid = (v: Valores) => {
+    const ordenesIds = ordenesSeleccionadas.map((o) => o.orden_id);
     const payload = {
       ...v,
-      // Vacío → null: así el backend aplica el default del catálogo en vez de recibir "".
-      porcentaje_comision_agencia: v.porcentaje_comision_agencia || null,
       archivo_pdf_path: archivoPdfPath,
       archivo_xml_path: archivoXmlPath,
+      ordenes_ids: ordenesIds,
     };
     onSubmit(isEdit ? (payload as FacturaAgenciaUpdate) : (payload as FacturaAgenciaCreate));
   };
@@ -170,29 +187,6 @@ export function FacturaAgenciaForm({
           </select>
           {errors.agencia_id && <div className="fe">{errors.agencia_id.message}</div>}
 
-          <div className="fl fl-required">
-            Orden relacionada <FieldTag origin="derivado" />
-          </div>
-          <SearchableSelect
-            value={ordenId ?? ""}
-            onChange={onElegirOrden}
-            disabled={!agenciaId}
-            placeholder={ordenes.isLoading ? "Cargando órdenes…" : "Busca por folio o número…"}
-            emptyResultsLabel={
-              !agenciaId
-                ? "Selecciona primero una agencia."
-                : "Esta agencia no tiene órdenes internas cerradas."
-            }
-            options={(ordenes.data ?? []).map((o) => ({
-              value: o.orden_id,
-              label: o.anunciante ? `${o.folio_orden} — ${o.anunciante}` : o.folio_orden,
-            }))}
-          />
-          {errors.orden_id && <div className="fe">{errors.orden_id.message}</div>}
-          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
-            Solo lista las órdenes <strong>cerradas</strong> de esa agencia.
-          </div>
-
           <div className="r2">
             <div>
               <div className="fl">Folio externo</div>
@@ -209,65 +203,31 @@ export function FacturaAgenciaForm({
 
           <div className="r2">
             <div>
-              <div className="fl fl-required">Subtotal</div>
-              <input className="fi" inputMode="decimal" {...register("monto_factura_agencia")} />
-              {errors.monto_factura_agencia && (
-                <div className="fe">{errors.monto_factura_agencia.message}</div>
-              )}
+              <div className="fl">
+                Subtotal <FieldTag origin="calculado" />
+              </div>
+              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                {fmtMoneda(String(comisionTotal))}
+              </div>
             </div>
             <div>
-              <div className="fl fl-required">IVA</div>
-              <input className="fi" inputMode="decimal" {...register("iva_factura_agencia")} />
-              {errors.iva_factura_agencia && (
-                <div className="fe">{errors.iva_factura_agencia.message}</div>
-              )}
+              <div className="fl">
+                IVA <FieldTag origin="calculado" />
+              </div>
+              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                {fmtMoneda(String(ivaPreview))}
+              </div>
             </div>
           </div>
-
           <div className="fl">
-            % de comisión <FieldTag origin="catalogo" />
+            Total <FieldTag origin="calculado" />
           </div>
-          <input
-            className="fi"
-            inputMode="decimal"
-            placeholder="Vacío = default del catálogo"
-            {...register("porcentaje_comision_agencia", {
-              onChange: () => {
-                porcentajeTocado.current = true;
-              },
-            })}
-          />
-          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
-            Se sugiere de la agencia al elegir la orden; se guarda en la factura — si el catálogo
-            cambia después, esta conserva el pactado.
+          <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
+            {fmtMoneda(String(totalPreview))}
           </div>
-          {errors.porcentaje_comision_agencia && (
-            <div className="fe">{errors.porcentaje_comision_agencia.message}</div>
-          )}
-
-          <div className="r2">
-            <div>
-              <div className="fl">
-                Comisión calculada <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(comisionPreview)}
-              </div>
-            </div>
-            <div>
-              <div className="fl">
-                Total <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(totalPreview)}
-              </div>
-            </div>
+          <div className="derivado-hint" style={{ marginTop: 6, marginBottom: 10, display: "block" }}>
+            Suma de la comisión de cada orden elegida abajo (cada una con su propio %), más IVA.
           </div>
-          {ordenSeleccionada && (
-            <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
-              Sobre el total c/IVA de la orden ({fmtMoneda(ordenSeleccionada.total)})
-            </div>
-          )}
 
           <div className="r2">
             <div>
@@ -289,6 +249,76 @@ export function FacturaAgenciaForm({
               />
             </div>
           </div>
+        </div>
+
+        <div className="form-card">
+          <div className="form-card-title">Asignación a órdenes estación</div>
+          <div className="fl">
+            Folio de la Orden Interna <FieldTag origin="derivado" />
+          </div>
+          <SearchableSelect
+            value=""
+            onChange={agregarOrden}
+            disabled={!agenciaId}
+            placeholder="Buscar por folio y agregar…"
+            emptyOptionLabel="— Ninguna —"
+            emptyResultsLabel={
+              !agenciaId
+                ? "Selecciona primero una agencia."
+                : opcionesDisponibles.length === 0 && ordenesSeleccionadas.length > 0
+                  ? "Ya agregaste todas las órdenes cerradas de esta agencia."
+                  : "Esta agencia no tiene órdenes cerradas."
+            }
+            options={opcionesDisponibles.map((oc) => ({
+              value: oc.orden_id,
+              label: oc.anunciante ? `${oc.folio_orden} — ${oc.anunciante}` : oc.folio_orden,
+            }))}
+          />
+          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 11, display: "block" }}>
+            Solo lista las órdenes <strong>cerradas</strong> de esa agencia. Puedes elegir varias —
+            cada una aporta su propia comisión, con el % ya pactado en ella.
+          </div>
+
+          {ordenesSeleccionadas.length === 0 ? (
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Sin órdenes agregadas todavía.
+            </div>
+          ) : (
+            ordenesSeleccionadas.map((o) => (
+              <div
+                key={o.orden_id}
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--r)",
+                  padding: "9px 11px",
+                  marginBottom: 5,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
+                    {o.folio_orden}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+                      {fmtMoneda(o.comision)}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      onClick={() => quitarOrden(o.orden_id)}
+                      title="Quitar de esta factura"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text3)" }}>
+                  {fmtPorcentaje(o.porcentaje)} sobre {fmtMoneda(o.total)}
+                  {o.anunciante ? ` · ${o.anunciante}` : ""}
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         {submitError && <div className="state-msg error">{submitError}</div>}

@@ -30,6 +30,8 @@ import {
   useFacturasAfiliadoInfo,
   useFacturasAgenciaInfo,
   useFacturasVendedorInfo,
+  useOrdenesFacturaAgencia,
+  useOrdenesFacturaVendedor,
   useOrdenesInfo,
   useRequisiciones,
   useVendedoresInfo,
@@ -126,20 +128,28 @@ export function RequisicionesPage({ filtroInicial }: Props) {
   const asignacionesFacturaAfiliado = useAsignacionesFacturaAfiliado(
     selected?.tipo_requisicion === "pago_afiliado" ? selected.factura_afiliado_id : null,
   );
+  // ADR nuevo (mismo que volvió N:M FacturaAgencia/FacturaVendedor ↔ OrdenCliente):
+  // ninguna de las dos tiene ya un `orden_id` directo — puede cubrir varias órdenes,
+  // mismo patrón que `pago_afiliado` arriba (resolver vía el endpoint de órdenes de
+  // esa factura, no vía un solo id).
+  const ordenesFacturaAgencia = useOrdenesFacturaAgencia(
+    selected?.tipo_requisicion === "pago_agencia" ? (selected.factura_agencia_id ?? null) : null,
+  );
+  const ordenesFacturaVendedor = useOrdenesFacturaVendedor(
+    selected?.tipo_requisicion === "comision_vendedor" ? (selected.factura_vendedor_id ?? null) : null,
+  );
   const foliosOrdenServicio = (r: Requisicion): string[] => {
     if (r.tipo_requisicion === "pago_afiliado") {
       const folios = (asignacionesFacturaAfiliado.data ?? []).map((a) => a.folio_orden).filter(Boolean);
       return [...new Set(folios)];
     }
     if (r.tipo_requisicion === "pago_agencia") {
-      const ordenId = facturaAgenciaMap.get(r.factura_agencia_id ?? "")?.orden_id;
-      const folio = ordenId ? ordenMap.get(ordenId)?.folio_orden : undefined;
-      return folio ? [folio] : [];
+      const folios = (ordenesFacturaAgencia.data ?? []).map((o) => o.folio_orden).filter(Boolean);
+      return [...new Set(folios)];
     }
     if (r.tipo_requisicion === "comision_vendedor") {
-      const ordenId = facturaVendedorMap.get(r.factura_vendedor_id ?? "")?.orden_id;
-      const folio = ordenId ? ordenMap.get(ordenId)?.folio_orden : undefined;
-      return folio ? [folio] : [];
+      const folios = (ordenesFacturaVendedor.data ?? []).map((o) => o.folio_orden).filter(Boolean);
+      return [...new Set(folios)];
     }
     const folio = ordenMap.get(r.orden_id ?? "")?.folio_orden;
     return folio ? [folio] : [];

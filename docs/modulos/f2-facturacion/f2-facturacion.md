@@ -226,47 +226,80 @@ un `JOIN` más hasta `OrdenCliente` — lo consume Cobranza (F3) reusando este m
 endpoint para el badge "Orden de servicio" del detalle de Requisiciones.
 
 ### FacturaAgencia (15 campos spec)
-PK `factura_agencia_id`. FK a `Agencia` y a `OrdenCliente` (**1:N** — una OC puede tener
-varias facturas de agencia; `FacturaCliente` es N:M desde ADR-064). Captura manual
-o carga, por **CxP**. `porcentaje_comision_agencia` sugerido desde el catálogo Agencia
-(editable), `comision_agencia = OrdenCliente.total * porcentaje / 100` calculado. Mismos
+PK `factura_agencia_id`. FK a `Agencia`. Captura manual o carga, por **CxP**. Mismos
 4 estados que `FacturaAfiliado`.
 
-**Combo "Orden relacionada" (ADR-079, selección SIMPLE — la relación sigue siendo 1:N,
-no N:M):** el alta/edición ofrecen elegir una OC `orden_cerrada` de la agencia elegida
-(`GET /agencias/ordenes-facturables?agencia_id=`); al elegirla, se sugiere el `%` de
-comisión de esa agencia (editable) y se previsualiza en vivo la comisión calculada
-(`orden.total * %/100`). La edición hace todo lo que hace el alta: puede reasignar
-agencia y orden (recalcula `comision_agencia` contra la orden que quede).
+**ADR-239 (petición del usuario, con captura) SUSTITUYE el criterio de ADR-079 para
+esta entidad:** la relación con `OrdenCliente` deja de ser 1:1-por-factura (columna
+`orden_id` en la cabecera) y pasa a ser **N:M vía `FacturaAgenciaOrden`**, mismo patrón
+que `FacturaAfiliadoOrden` — una factura de agencia acumula VARIAS órdenes. La misma OC
+SÍ puede seguir apareciendo en facturas de agencia DISTINTAS (parcialidades, eso de
+ADR-079 no cambió), solo no repetida DENTRO de la misma factura
+(`UniqueConstraint(factura_agencia_id, orden_id)`). `porcentaje_comision_agencia`
+(columna única de la cabecera) desaparece: cada fila de la puente congela su propio
+`porcentaje_comision_snap` (el `%` YA PACTADO de esa orden,
+`OrdenCliente.porcentaje_comision_agencia_snap`, con el default del catálogo Agencia
+como respaldo) y su `comision_calculada = OrdenCliente.total * porcentaje / 100`.
+`monto_factura_agencia`/`iva_factura_agencia`/`total_factura_agencia`/`comision_agencia`
+(esta última, alias del mismo valor que `monto_factura_agencia`, NOT NULL) ya NO se
+capturan a mano — se CALCULAN como la suma de las comisiones de las órdenes elegidas,
+más IVA a la tasa central (a diferencia de `FacturaAfiliado`, donde el IVA sigue siendo
+"Manual": ahí sí hay una factura real de un tercero que reconciliar, aquí ya no).
 
-**`agencia`/`folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total`
-(ADR-079, no son columnas de la tabla):** resueltos en el servicio en lote (mismo
-criterio que los denormalizados de `FacturaCliente`/`FacturaAfiliado`) y expuestos solo
-en `FacturaAgenciaRead`, para la lista y la sección "Orden relacionada" del detalle.
+**Combo "Buscar y agregar" (ADR-239, multi-selección — mismo patrón que el de OI en
+`FacturaAfiliado` desde ADR-083):** el alta/edición ofrecen agregar VARIAS OC
+`orden_cerrada` de la agencia elegida (`GET /agencias/ordenes-facturables?agencia_id=`,
+que ahora también trae el `%` propio de cada orden). La edición hace todo lo que hace
+el alta: puede reasignar agencia y editar qué órdenes tiene asignadas
+(`ordenes_ids: UUID[]`, reconciliado igual que `ordenes_estacion_ids` en
+`FacturaAfiliado`: agrega, quita, deja intacto lo que sigue).
+
+**`agencia`/`ordenes_asignadas` (no son columnas de la tabla):** resueltos en el
+servicio en lote, expuestos solo en `FacturaAgenciaRead` — `ordenes_asignadas` (mismo
+criterio que en `FacturaAfiliado`) pinta la columna "Órdenes asig." de la lista.
+`folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` ahora viven
+en `FacturaAgenciaOrdenRead` (`GET /{id}/ordenes`), una fila por orden de la factura —
+ya no tiene sentido una sola de esas columnas en la cabecera.
 
 **Aditivos** (`archivo_pdf_path`/`archivo_xml_path` — ADR-080, mismo mecanismo que
 ADR-070 en `FacturaAfiliado`): la factura de la agencia se sube en PDF y XML por
 separado. Los campos legado `archivo_nombre`/`archivo_path` (spec) siguen ahí sin
 tocar, pero ningún formulario los llena desde que existen estos dos.
 
+### FacturaAgenciaOrden (ADR-239, nueva — N:M `FacturaAgencia` ↔ `OrdenCliente`)
+Tabla puente: `porcentaje_comision_snap` + `comision_calculada`, ambos congelados al
+agregar la orden (no se recalculan solos si la orden o el catálogo cambian después).
+`UniqueConstraint(factura_agencia_id, orden_id)`: la misma orden no se repite DENTRO de
+una factura, pero sí puede estar en otras (parcialidades). Mismo criterio de
+denormalización que `FacturaAfiliadoOrden`: `FacturaAgenciaOrdenRead` resuelve
+`folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` en lote.
+**Replicado en la MISMA entrega para `FacturaVendedor`** (petición del usuario —
+"hazlo para todos de una vez"): ver ADR-240 y la sección de `FacturaVendedor` abajo.
+
 ### FacturaVendedor (entidad NUEVA — sin equivalente en la spec BD v2, ADR-082)
 PK `factura_vendedor_id`. FK a `Vendedor` (**solo el principal** —
 `OrdenCliente.vendedor_principal_id`, nunca el secundario, decisión confirmada con el
-usuario al agregarla) y a `OrdenCliente` (**1:N**, igual que `FacturaAgencia`: una OC
-puede tener varias facturas de vendedor, parcialidades permitidas). Captura manual o
-carga, por **CxP**. Mirror funcional exacto de `FacturaAgencia` (mismos 4 estados,
-mismo `EstatusFacturaProveedor`, mismo candado de `autorizar()` solo Dirección/Admin):
+usuario al agregarla). Captura manual o carga, por **CxP**. Mirror funcional exacto de
+`FacturaAgencia` (mismos 4 estados, mismo `EstatusFacturaProveedor`, mismo candado de
+`autorizar()` solo Dirección/Admin) — incluido el cambio N:M de ADR-240 (mismo día que
+ADR-239, mismo patrón, aplicado a la MISMA entrega por petición explícita del usuario):
 
-- `porcentaje_comision_vendedor` sugerido desde `Vendedor.porcentaje_comision_default`
-  (el catálogo, **no** la snapshot congelada de la orden
-  `porcentaje_comision_vendedor_principal_snap` de F1 — mismo criterio que
-  `FacturaAgencia`: la snapshot es lo pactado al cerrar la OC, la factura de comisión
-  puede renegociar un % distinto).
-- `comision_vendedor = OrdenCliente.total * porcentaje_comision_vendedor / 100`.
-- Combo "Orden relacionada" (`GET /vendedores/ordenes-facturables?vendedor_id=`): solo
+- **ADR-240 (mirror exacto de ADR-239):** la relación con `OrdenCliente` es N:M vía
+  `FacturaVendedorOrden` — una factura de vendedor acumula VARIAS órdenes, cada una con
+  su propio `%` ya pactado (`OrdenCliente.porcentaje_comision_vendedor_principal_snap`,
+  con el default de `Vendedor.porcentaje_comision_default` como respaldo — a
+  diferencia de lo que decía una versión anterior de esta ficha, la factura de
+  comisión YA NO renegocia un % propio independiente de la orden: usa el de la orden
+  primero). `monto_factura_vendedor`/`iva_factura_vendedor`/`total_factura_vendedor`/
+  `comision_vendedor` se CALCULAN (suma de comisiones + IVA a tasa central), ya no se
+  capturan a mano. `ordenes_ids: UUID[]` reemplaza a `orden_id` en
+  `FacturaVendedorCreate`/`Update`.
+- Combo "Buscar y agregar" (`GET /vendedores/ordenes-facturables?vendedor_id=`): solo
   OC `orden_cerrada` cuyo `vendedor_principal_id` sea el vendedor elegido.
-- `vendedor`/`folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total`:
-  denormalizados en el servicio en lote, mismo criterio que `FacturaAgencia`.
+- `vendedor`/`ordenes_asignadas` (no son columnas de la tabla): resueltos en el
+  servicio en lote, mismo criterio que `FacturaAgencia`.
+  `folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` viven en
+  `FacturaVendedorOrdenRead` (`GET /{id}/ordenes`), una fila por orden de la factura.
 - **Sin campos legado** `archivo_nombre`/`archivo_path`: al ser una entidad nueva, va
   directo a `archivo_pdf_path`/`archivo_xml_path` — no hay nada que arrastrar por
   compatibilidad (a diferencia de Afiliado/Agencia).
@@ -285,10 +318,15 @@ estados — es un registro simple.
 - `FacturaCliente`: `iva_factura = subtotal_factura * 0.16`; `total_factura = subtotal +
   iva`. `Decimal`, nunca float (ADR-015).
 - `FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`: `total_* = monto_* + iva_*`.
-- `FacturaAgencia.comision_agencia = OrdenCliente.total * porcentaje_comision_agencia /
-  100`.
-- `FacturaVendedor.comision_vendedor = OrdenCliente.total * porcentaje_comision_vendedor
-  / 100`.
+- `FacturaAgenciaOrden.comision_calculada = OrdenCliente.total *
+  porcentaje_comision_snap / 100`, POR ORDEN (ADR-239) — `FacturaAgencia.comision_agencia`
+  (=`monto_factura_agencia`) es la SUMA de esas comisiones; `iva_factura_agencia =
+  monto_factura_agencia * 0.16` (a diferencia de `FacturaAfiliado`, aquí el IVA sí se
+  calcula).
+- `FacturaVendedorOrden.comision_calculada = OrdenCliente.total *
+  porcentaje_comision_snap / 100`, POR ORDEN (ADR-240, mirror exacto de ADR-239) —
+  `FacturaVendedor.comision_vendedor` es la SUMA de esas comisiones; mismo criterio de
+  IVA calculado (no capturado) que `FacturaAgencia`.
 - **Advertencia de ADR-039 (aplica desde el día 1 aquí):** cualquier `CHECK` de
   **igualdad** entre montos calculados por separado debe envolverse en `ROUND(x, 2)` en
   ambos lados — SQLite (desarrollo local) guarda `NUMERIC` como `float64` y una suma

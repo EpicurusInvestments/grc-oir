@@ -1,12 +1,15 @@
 /** Facturas de agencia (F2) — la comisión que la agencia cobra a OIR.
  *
  * Misma máquina de estados y misma regla de autorización que las de afiliado (ADR-046).
- * La diferencia con `FacturaCliente`/`FacturaAfiliado`: la relación con la OrdenCliente
- * es 1:N — una misma orden puede tener varias facturas de agencia (parcialidades), así
- * que aquí no hay un combo de "varias órdenes", solo una relacionada por factura.
+ *
+ * ADR nuevo (petición del usuario, con captura, 2026-11-06) — SUSTITUYE el criterio de
+ * ADR-079: la relación con OrdenCliente pasa de 1:1-por-factura a N:M vía
+ * `FacturaAgenciaOrden`, mismo patrón que `FacturaAfiliado` — una factura de agencia
+ * acumula VARIAS órdenes, cada una con su propio % ya pactado.
  *
  * Alta y edición comparten el mismo formulario (`FacturaAgenciaForm`), igual criterio
- * que `FacturasAfiliadoPage` desde ADR-087: la edición puede reasignar agencia y orden.
+ * que `FacturasAfiliadoPage` desde ADR-087: la edición puede reasignar agencia y editar
+ * qué órdenes tiene asignadas.
  *
  * PDF/XML de la factura (ADR-079, mismo mecanismo que ADR-070 en Afiliado): se muestran
  * como `ArchivoDescargable` en la sección "Archivo" del detalle.
@@ -20,7 +23,7 @@ import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } fr
 import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
 import { FacturaAgenciaForm } from "../components/FacturaAgenciaForm";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
-import { useFacturasAgencia } from "../../hooks";
+import { useFacturasAgencia, useOrdenesAgencia } from "../../hooks";
 import {
   ESTATUS_PROVEEDOR,
   ESTATUS_PROVEEDOR_LABEL,
@@ -111,6 +114,7 @@ export function FacturasAgenciaPage() {
     estatus_factura_agencia: filtro === "todas" ? undefined : filtro,
   };
   const { list, crear, actualizar, cambiarEstatus, autorizar } = useFacturasAgencia(filtros);
+  const ordenes = useOrdenesAgencia(selected?.factura_agencia_id ?? null);
 
   const mensajeDeError = (e: unknown): string =>
     e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
@@ -164,13 +168,10 @@ export function FacturasAgenciaPage() {
         isEdit
         defaultValues={{
           agencia_id: selected.agencia_id,
-          orden_id: selected.orden_id,
           folio_factura_agencia: selected.folio_factura_agencia ?? undefined,
           fecha_factura_agencia: selected.fecha_factura_agencia,
-          monto_factura_agencia: selected.monto_factura_agencia,
-          iva_factura_agencia: selected.iva_factura_agencia,
-          porcentaje_comision_agencia: selected.porcentaje_comision_agencia ?? undefined,
         }}
+        ordenesIniciales={ordenes.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}
         submitting={actualizar.isPending}
@@ -232,45 +233,38 @@ export function FacturasAgenciaPage() {
           </div>
 
           <div className="sec">
-            Orden relacionada <FieldTag origin="derivado" />
+            Órdenes asignadas <FieldTag origin="derivado" />
           </div>
-          <div
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r)",
-              padding: "9px 11px",
-              marginBottom: 11,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
-                {oGuion(selected.folio_orden)}
-              </span>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
-                {fmtMoneda(selected.orden_total)}
-              </span>
+          {ordenes.isLoading && <div className="fv muted">Cargando…</div>}
+          {!ordenes.isLoading && (ordenes.data?.length ?? 0) === 0 && (
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Sin órdenes asignadas.
             </div>
-            {(selected.anunciante || selected.producto) && (
-              <div style={{ fontSize: 11, color: "var(--text3)" }}>
-                {[selected.anunciante, selected.producto].filter(Boolean).join(" · ")}
+          )}
+          {(ordenes.data ?? []).map((o) => (
+            <div
+              key={o.id}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r)",
+                padding: "9px 11px",
+                marginBottom: 5,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
+                  {oGuion(o.folio_orden)}
+                </span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+                  {fmtMoneda(o.comision_calculada)}
+                </span>
               </div>
-            )}
-          </div>
-
-          <div className="sec">Cálculo de comisión</div>
-          <div className="fl">% Comisión aplicada</div>
-          <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtPorcentaje(selected.porcentaje_comision_agencia)}
-          </div>
-          <div className="fl">
-            Monto comisión <FieldTag origin="calculado" />
-          </div>
-          <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtMoneda(selected.comision_agencia)}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text3)", marginTop: -6 }}>
-            Sobre venta total c/IVA de la orden ({fmtMoneda(selected.orden_total)})
-          </div>
+              <div style={{ fontSize: 11, color: "var(--text3)" }}>
+                {fmtPorcentaje(o.porcentaje_comision_snap)} sobre {fmtMoneda(o.orden_total)}
+                {o.anunciante ? ` · ${o.anunciante}` : ""}
+              </div>
+            </div>
+          ))}
 
           <div className="sec">Fecha</div>
           <div className="fv mono">{fmtFecha(selected.fecha_factura_agencia)}</div>
@@ -378,13 +372,15 @@ export function FacturasAgenciaPage() {
           <tr>
             <th style={{ width: "14%" }}>Folio</th>
             <th style={{ width: "18%" }}>Agencia</th>
-            <th style={{ width: "16%" }}>Orden relacionada</th>
             <th style={{ width: "10%" }}>Fecha</th>
             <th className="td-right" style={{ width: "13%" }}>
               Subtotal
             </th>
             <th className="td-right" style={{ width: "13%" }}>
               Total
+            </th>
+            <th className="td-center" style={{ width: 90 }}>
+              Órdenes asig.
             </th>
             <th className="td-center" style={{ width: 130 }}>
               Estatus
@@ -405,10 +401,10 @@ export function FacturasAgenciaPage() {
             >
               <td className="td-main mono">{oGuion(f.folio_factura_agencia)}</td>
               <td className="td-2">{oGuion(f.agencia)}</td>
-              <td className="td-2 mono">{oGuion(f.folio_orden)}</td>
               <td className="td-2 mono">{fmtFecha(f.fecha_factura_agencia)}</td>
               <td className="td-2 td-right">{fmtMoneda(f.monto_factura_agencia)}</td>
               <td className="td-2 td-right">{fmtMoneda(f.total_factura_agencia)}</td>
+              <td className="td-center">{f.ordenes_asignadas}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_agencia)}`}>
                   {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_agencia]}

@@ -39,7 +39,7 @@ from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.facturacion.costo_adicional import CostoAdicional
 from app.modules.facturacion.factura_afiliado import FacturaAfiliado, FacturaAfiliadoOrden
-from app.modules.facturacion.factura_agencia import FacturaAgencia
+from app.modules.facturacion.factura_agencia import FacturaAgencia, FacturaAgenciaOrden
 from app.modules.facturacion.factura_cliente import FacturaCliente, FacturaClienteOrden
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.orden_cliente import OrdenCliente
@@ -236,16 +236,25 @@ def datos(db: Session) -> dict[str, uuid.UUID]:
         FacturaAgencia(
             factura_agencia_id=fag_id,
             agencia_id=agencia_id,
-            orden_id=orden_id,
             folio_factura_agencia="AG-55",
             fecha_factura_agencia=date(2026, 3, 3),
             monto_factura_agencia=Decimal("1160.00"),
             iva_factura_agencia=Decimal("185.60"),
             total_factura_agencia=Decimal("1345.60"),
-            porcentaje_comision_agencia=Decimal("10.00"),
             comision_agencia=Decimal("1160.00"),
             estatus_factura_agencia="recibida",
             created_by=ADMIN_ID,
+        )
+    )
+    db.flush()
+    # ADR nuevo: la orden ya no es columna de la factura, va en la tabla puente.
+    db.add(
+        FacturaAgenciaOrden(
+            id=uuid.uuid4(),
+            factura_agencia_id=fag_id,
+            orden_id=orden_id,
+            porcentaje_comision_snap=Decimal("10.00"),
+            comision_calculada=Decimal("1160.00"),
         )
     )
     costo_id = uuid.uuid4()
@@ -331,26 +340,61 @@ def test_la_misma_orden_no_se_repite_en_la_misma_factura(
     db.rollback()
 
 
-def test_factura_agencia_si_admite_varias_por_orden(
+def test_factura_agencia_orden_si_admite_la_misma_orden_en_varias_facturas(
     db: Session, datos: dict[str, uuid.UUID]
 ) -> None:
-    """A diferencia de FacturaCliente, la relación con la OC es 1:N (spec)."""
+    """A diferencia de `FacturaCliente`/`FacturaClienteOrden`, la misma OC SÍ puede
+    aparecer en facturas de agencia DISTINTAS (parcialidades, ADR-079) — la puente solo
+    prohíbe repetirla dentro de la MISMA factura (ver el siguiente test)."""
+    otra_fag_id = uuid.uuid4()
     db.add(
         FacturaAgencia(
-            factura_agencia_id=uuid.uuid4(),
+            factura_agencia_id=otra_fag_id,
             agencia_id=datos["agencia_id"],
-            orden_id=datos["orden_id"],  # misma OC: debe permitirse
             fecha_factura_agencia=date(2026, 4, 1),
             monto_factura_agencia=Decimal("500.00"),
             iva_factura_agencia=Decimal("80.00"),
             total_factura_agencia=Decimal("580.00"),
+            comision_agencia=Decimal("500.00"),
             created_by=ADMIN_ID,
+        )
+    )
+    db.flush()
+    db.add(
+        FacturaAgenciaOrden(
+            id=uuid.uuid4(),
+            factura_agencia_id=otra_fag_id,
+            orden_id=datos["orden_id"],  # misma OC que ya tiene la factura del fixture
+            porcentaje_comision_snap=Decimal("10.00"),
+            comision_calculada=Decimal("500.00"),
         )
     )
     db.commit()
     assert (
-        db.query(FacturaAgencia).filter(FacturaAgencia.orden_id == datos["orden_id"]).count() == 2
+        db.query(FacturaAgenciaOrden)
+        .filter(FacturaAgenciaOrden.orden_id == datos["orden_id"])
+        .count()
+        == 2
     )
+
+
+def test_no_se_repite_la_misma_orden_en_la_misma_factura_de_agencia(
+    db: Session, datos: dict[str, uuid.UUID]
+) -> None:
+    """`uq_factura_agencia_orden_factura_oc`: la misma OC no puede aparecer dos veces
+    dentro de la MISMA factura de agencia (sí lo puede en facturas distintas, ver arriba)."""
+    db.add(
+        FacturaAgenciaOrden(
+            id=uuid.uuid4(),
+            factura_agencia_id=datos["factura_agencia_id"],
+            orden_id=datos["orden_id"],
+            porcentaje_comision_snap=Decimal("10.00"),
+            comision_calculada=Decimal("1160.00"),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
 
 
 def test_no_se_asigna_dos_veces_la_misma_oe_a_la_misma_factura(
@@ -534,17 +578,36 @@ def test_listar_facturas_afiliado_y_sus_asignaciones(
     assert asignaciones[0]["monto_asignado"] == "7000.00"
 
 
-def test_listar_facturas_agencia_filtrando_por_orden(
+def test_listar_facturas_agencia_filtrando_por_agencia_trae_ordenes_asignadas(
     client: TestClient, datos: dict[str, uuid.UUID]
 ) -> None:
+    """`orden_id` ya no es columna de `FacturaAgencia` (ADR nuevo: N:M vía
+    `FacturaAgenciaOrden`) — el filtro útil ahora es por agencia, y la lista expone
+    `ordenes_asignadas` (antes expuesta solo en `FacturaAfiliado`)."""
     r = client.get(
         "/api/v1/facturacion/agencias",
-        params={"orden_id": str(datos["orden_id"])},
+        params={"agencia_id": str(datos["agencia_id"])},
         headers=_hdr("cxp"),
     )
     assert r.status_code == 200
     assert r.json()["total"] == 1
     assert r.json()["items"][0]["comision_agencia"] == "1160.00"
+    assert r.json()["items"][0]["ordenes_asignadas"] == 1
+
+
+def test_listar_ordenes_de_una_factura_agencia(
+    client: TestClient, datos: dict[str, uuid.UUID]
+) -> None:
+    r = client.get(
+        f"/api/v1/facturacion/agencias/{datos['factura_agencia_id']}/ordenes",
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200
+    ordenes = r.json()
+    assert len(ordenes) == 1
+    assert ordenes[0]["orden_id"] == str(datos["orden_id"])
+    assert ordenes[0]["porcentaje_comision_snap"] == "10.00"
+    assert ordenes[0]["comision_calculada"] == "1160.00"
 
 
 def test_listar_costos_adicionales_por_periodo(

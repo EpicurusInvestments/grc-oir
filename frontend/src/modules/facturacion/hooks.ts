@@ -194,12 +194,20 @@ export function useFacturasAgencia(filtros: FiltrosFacturaAgencia) {
   return { list, crear, actualizar, cambiarEstatus, autorizar };
 }
 
-/** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` de esa agencia. */
+/** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` de esa agencia. */
 export function useOrdenesFacturablesAgencia(agenciaId: string | null) {
   return useQuery({
     queryKey: [K_AGENCIAS, "ordenes-facturables", agenciaId],
     queryFn: () => facturaAgenciaApi.ordenesFacturables(agenciaId as string),
     enabled: !!agenciaId,
+  });
+}
+
+export function useOrdenesAgencia(facturaId: string | null) {
+  return useQuery({
+    queryKey: [K_AGENCIAS, "ordenes", facturaId],
+    queryFn: () => facturaAgenciaApi.ordenes(facturaId as string),
+    enabled: facturaId != null,
   });
 }
 
@@ -238,13 +246,21 @@ export function useFacturasVendedor(filtros: FiltrosFacturaVendedor) {
   return { list, crear, actualizar, cambiarEstatus, autorizar };
 }
 
-/** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` cuyo vendedor
+/** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` cuyo vendedor
  *  principal es el elegido. */
 export function useOrdenesFacturablesVendedor(vendedorId: string | null) {
   return useQuery({
     queryKey: [K_VENDEDORES, "ordenes-facturables", vendedorId],
     queryFn: () => facturaVendedorApi.ordenesFacturables(vendedorId as string),
     enabled: !!vendedorId,
+  });
+}
+
+export function useOrdenesVendedor(facturaId: string | null) {
+  return useQuery({
+    queryKey: [K_VENDEDORES, "ordenes", facturaId],
+    queryFn: () => facturaVendedorApi.ordenes(facturaId as string),
+    enabled: facturaId != null,
   });
 }
 

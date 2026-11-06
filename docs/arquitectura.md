@@ -9832,3 +9832,160 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   completa de backend 100% verde (exit 0), `ruff` limpio. Sin migración ni cambios de
   frontend (el frontend solo muestra `folio_orden`/`folio_orden_estacion`, no los
   genera ni los valida con una expresión regular propia).
+
+### ADR-238 — Bug de fechas en "Campaña y montos": calendario adelantado un día y Fin sin validar contra Inicio (F1, frontend)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-05 (bug reportado por el usuario, con
+  captura, en `OrdenClienteForm.tsx`, sección "Campaña y montos"). Dos defectos
+  distintos en el mismo formulario:
+  1. El calendario nativo del `<input type="date">` bloqueaba seleccionar el día de
+     hoy y obligaba a elegir mañana. Causa: el `min` (y los `.refine()` de "no puede
+     ser fecha pasada" de Zod) se calculaban con
+     `new Date().toISOString().slice(0, 10)`, que convierte a UTC ANTES de cortar la
+     fecha. México está en UTC-6 todo el año (sin horario de verano desde 2022), así
+     que desde las 18:00 hora local el día en UTC ya es el siguiente — "hoy" se
+     calculaba mal exactamente en esa ventana de 6 horas.
+  2. El input de "Fin de campaña" no tenía atributo `min` en absoluto: el calendario
+     nativo dejaba elegir cualquier fecha, incluida una anterior a "Inicio de
+     campaña" (reproducido en la captura: inicio 06/11/2026, fin 02/11/2026, "Días
+     campaña" se quedaba en "–"). La regla "fin ≥ inicio" solo existía como
+     `.refine()` de Zod, que corre hasta enviar el formulario — no impedía la
+     selección en el calendario.
+- **Diseño:** `OrdenClienteForm.tsx` agrega `hoyLocal()`, que arma la fecha ISO a
+  partir de los componentes LOCALES (`getFullYear()`/`getMonth()`/`getDate()`), nunca
+  de `toISOString()`. Reemplaza las 3 apariciones de la fórmula rota: el `min` de
+  "Fecha de venta", el `min` de "Inicio de campaña" y los dos `.refine()` de "no puede
+  ser fecha pasada" (fecha de venta e inicio de campaña). El input de "Fin de
+  campaña" ahora sí tiene `min={fechaInicio || hoyLocal()}` (`fechaInicio` es el
+  `watch()` que ya existía para el cálculo de "Días campaña"), así el calendario
+  nativo bloquea fechas anteriores al Inicio elegido — la validación de Zod
+  (`fin >= inicio`) se conserva como respaldo al enviar.
+- **Verificado:** `tsc --noEmit` y `eslint` limpios; suite `ordenes` del frontend
+  278/278 verde. Se corrigieron también 5 pruebas de `OrdenClienteForm.test.tsx` que
+  usaban la misma fórmula UTC rota para simular "ayer" (ahora `fechaLocalConOffset()`,
+  un helper local al archivo de prueba con la misma lógica de componentes locales) o
+  fechas fijas ya vencidas (`"2026-11-01"`/`"2026-12-15"`, hardcodeadas desde que se
+  escribió la prueba; reemplazadas por offsets relativos a "hoy" para que no caduquen).
+  Sin cambios de backend ni de esquema: el bug era enteramente de UI.
+
+### ADR-239 — FacturaAgencia pasa de 1:1-por-factura a N:M vía `FacturaAgenciaOrden` (F2, SUSTITUYE ADR-079/082 para Agencia)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-06 (petición del usuario, con captura):
+  "Nueva factura de agencia" solo permitía elegir UNA orden por factura ("Orden
+  relacionada", combo de selección simple) mientras que "Nueva factura de afiliado" ya
+  permitía elegir VARIAS (combo "Buscar y agregar", acumulando montos). El usuario pidió
+  el mismo comportamiento para Agencia (y, en una siguiente entrega, para Vendedor):
+  poder seleccionar varias órdenes e ir acumulando los totales de la comisión
+  correspondiente.
+  **Esto revierte una decisión arquitectónica previa, explícitamente documentada:**
+  ADR-079 decía *"a diferencia de FacturaAfiliado, la relación FacturaAgencia ↔
+  OrdenCliente es 1:N por diseño — una OC puede tener varias facturas de agencia
+  (parcialidades), NO N:M vía tabla intermedia: por eso aquí NO se replica el combo de
+  selección MÚLTIPLE de ADR-083"*. Ese "1:N" seguía siendo 1:1 **por factura** (un solo
+  `orden_id` en la cabecera); lo que cambia aquí es justo eso — ahora N:M vía
+  `FacturaAgenciaOrden`, mismo patrón que `FacturaAfiliadoOrden`. La relación "misma OC
+  en facturas de agencia DISTINTAS" (parcialidades) **no cambia**: sigue permitida,
+  solo ya no repetible DENTRO de la misma factura (antes ni siquiera existía esa
+  restricción porque no había combo múltiple).
+  Dos decisiones de cálculo, confirmadas con el usuario antes de programar:
+  1. **Suma automática, sin captura manual:** a diferencia de `FacturaAfiliado` (donde
+     Subtotal/IVA se siguen capturando a mano, reconciliados contra la factura real del
+     proveedor vía las tarjetas "Asignado"/"Sin asignar"), aquí Subtotal/IVA/Total
+     **dejan de capturarse** — se calculan como la suma de la comisión de cada orden
+     elegida, más IVA a la tasa central. Ya no hay nada que reconciliar: no existe un
+     documento externo con un monto distinto al que el sistema calcula.
+  2. **Cada orden usa SU PROPIO % ya pactado:** el campo único "% de comisión" de la
+     cabecera (editable, sugerido del catálogo) desaparece. Cada orden agregada usa su
+     propio `OrdenCliente.porcentaje_comision_agencia_snap` (si lo tiene) o, si no, el
+     default del catálogo de la agencia — igual fallback que ya existía, solo que ahora
+     se resuelve POR ORDEN en vez de una sola vez para toda la factura.
+- **Diseño:**
+  - Backend (`factura_agencia.py`): nuevo modelo `FacturaAgenciaOrden` (puente,
+    `UniqueConstraint(factura_agencia_id, orden_id)`, `porcentaje_comision_snap` +
+    `comision_calculada` congelados al agregar la orden — mismas 5 columnas de forma
+    que `FacturaAfiliadoOrden`, pero `comision_calculada` es DERIVADA
+    (`orden.total * porcentaje / 100`), no capturada como `monto_asignado`).
+    `FacturaAgencia` pierde `orden_id` y `porcentaje_comision_agencia`; `comision_agencia`
+    pasa a NOT NULL (antes opcional) — es ahora la suma agregada, igual que
+    `monto_factura_agencia` (se conserva como alias con ese nombre porque la pantalla ya
+    lo mostraba como "Monto comisión"). Nuevo CHECK `ck_factura_agencia_iva_tasa`
+    (`ROUND(iva, 2) = ROUND(monto * 0.16, 2)`) porque, a diferencia de
+    `FacturaAfiliado`, aquí el IVA SÍ se calcula (ya no hay factura real de un tercero
+    que reconciliar con posibles retenciones).
+    `FacturaAgenciaCreate`/`Update`: `orden_id: UUID` → `ordenes_ids: list[UUID]`
+    (mínimo 1 en el alta — sin órdenes no hay comisión que calcular). `_validar_ordenes()`
+    + `_aplicar_ordenes()` mismo patrón que `_validar_ordenes_estacion()`/
+    `_aplicar_asignaciones()` en `FacturaAfiliado`. Nuevo endpoint
+    `GET /{id}/ordenes` (lista la puente, denormalizada). `ordenes-facturables` (combo)
+    gana el campo `porcentaje_comision_agencia_snap` (el % propio de esa orden, para que
+    el front muestre cuál se usaría antes de agregarla) junto al
+    `porcentaje_comision_agencia_default` que ya tenía.
+    `Agencia.porcentaje_comision_agencia_default` es NOT NULL (default 0) — siempre hay
+    un `%` resoluble, aunque sea 0; no existe el caso "sin % en ninguna parte" como
+    error de dominio, solo como comisión de $0.00 (test
+    `test_sin_porcentaje_en_la_orden_ni_en_el_catalogo_la_comision_es_cero`).
+  - 3 migraciones (mismo criterio de 3 pasos que ADR-236, con un tercero porque aquí
+    además hay que ELIMINAR columnas): `b7f3a1c9d2e4` (crea `factura_agencia_orden`) →
+    `d4e8f1a2c6b3` (backfill: cada `FacturaAgencia` existente pasa su `orden_id`/`%`/
+    comisión de la cabecera a una fila de la puente) → `f2a9c5d7e1b8` (suelta
+    `orden_id`/`porcentaje_comision_agencia` de la cabecera, vuelve `comision_agencia`
+    NOT NULL, agrega el CHECK de IVA). `downgrade()` de la migración de datos es
+    irreversible a propósito: una factura con VARIAS órdenes (el objetivo mismo del
+    cambio) no tiene un único `orden_id` al que volver.
+  - `requisicion.py` (F3): `FacturaAgenciaDisponibleRead.orden_id` se quita (ya no
+    existe esa columna en `FacturaAgencia`; el campo no se usaba en el frontend, se
+    confirmó por grep antes de quitarlo — `Requisicion.factura_agencia_id` referencia
+    la FACTURA, nunca leyó su `orden_id`).
+  - Frontend: `FacturaAgenciaForm.tsx` clona el patrón de `FacturaAfiliadoForm.tsx`
+    (combo "Buscar y agregar", lista de órdenes con botón ✕, limpieza al cambiar de
+    agencia con el mismo fix anti-StrictMode de ADR-088) — sin tarjetas
+    "Asignado"/"Sin asignar" (no aplican: no hay nada que capturar a mano contra qué
+    reconciliar). Cada renglón muestra folio, % propio, comisión de esa orden y
+    anunciante; Subtotal/IVA/Total se muestran con tag "Calculado". `FacturasAgenciaPage.tsx`
+    cambia la sección "Orden relacionada"/"Cálculo de comisión" por "Órdenes asignadas"
+    (mismo patrón que la sección homónima de Afiliado) y la columna de lista "Orden
+    relacionada" por "Órdenes asig." (conteo, igual que "OE Asig." en Afiliado).
+- **Verificado:** backend — 3 migraciones aplicadas en limpio sobre SQLite (dev), suite
+  completa de backend 100% verde (exit 0), `ruff` limpio. Pruebas nuevas:
+  acumulación de 2 órdenes con `%` distintos cada una, rechazo de orden repetida en la
+  misma factura, rechazo de alta sin ninguna orden, reasignación de agencia+órdenes al
+  editar, y el caso "misma orden en facturas de agencia distintas sigue permitido"
+  (parcialidades). Frontend — `tsc --noEmit`/`eslint` limpios, suite `facturacion`
+  110/110 verde (incluye la reescritura completa de `FacturaAgenciaForm.test.tsx` y
+  `FacturasAgenciaPage.test.tsx` al nuevo contrato multi-orden).
+  **Replicado en la MISMA entrega para `FacturaVendedor`** (petición explícita del
+  usuario: "hazlo para todos de una vez") — ver ADR-240.
+
+### ADR-240 — FacturaVendedor pasa de 1:1-por-factura a N:M vía `FacturaVendedorOrden` (F2, mismo cambio que ADR-239)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-06 (petición del usuario: "hazlo para
+  todos" — aplicar a `FacturaVendedor` el mismo cambio que ADR-239 hizo para
+  `FacturaAgencia`, en la misma entrega, sin esperar a validar Agencia primero). Mirror
+  exacto de ADR-239: nueva tabla puente `FacturaVendedorOrden`
+  (`porcentaje_comision_snap`/`comision_calculada` por fila, congelados al agregar),
+  `FacturaVendedor` pierde `orden_id`/`porcentaje_comision_vendedor`,
+  `comision_vendedor` pasa a NOT NULL (alias de `monto_factura_vendedor`),
+  `ordenes_ids: list[UUID]` reemplaza a `orden_id` en `FacturaVendedorCreate`/`Update`,
+  mismo CHECK nuevo `ck_factura_vendedor_iva_tasa`. Diferencias puntuales frente a
+  Agencia (ya existentes desde que se creó esta entidad): el combo filtra por
+  `OrdenCliente.vendedor_principal_id` (no por `agencia_id`), el `%` propio de cada
+  orden es `OrdenCliente.porcentaje_comision_vendedor_principal_snap` (no
+  `..._agencia_snap`), y el catálogo de respaldo es `Vendedor.porcentaje_comision_default`
+  (no `Agencia.porcentaje_comision_agencia_default`) — también NOT NULL con default 0,
+  mismo caso límite ("sin % en ninguna parte → comisión $0.00, no error").
+- **Diseño:** 3 migraciones mirror de las de Agencia
+  (`a1b2c3d4e5f6`/`b2c3d4e5f6a7`/`c3d4e5f6a7b8`, encadenadas después de
+  `f2a9c5d7e1b8`). `FacturaVendedorForm.tsx`/`FacturasVendedorPage.tsx` clonan
+  exactamente `FacturaAgenciaForm.tsx`/`FacturasAgenciaPage.tsx`. Efecto colateral
+  detectado y corregido: `RequisicionesPage.tsx` (F3) todavía leía
+  `FacturaAgenciaInfo.orden_id`/`FacturaVendedorInfo.orden_id` (vestigio del diseño
+  1:1-por-factura, para el badge "Orden de servicio" de requisiciones `pago_agencia`/
+  `comision_vendedor`) — se reemplazó por el mismo patrón que ya usaba `pago_afiliado`
+  (`useAsignacionesFacturaAfiliado`): nuevos hooks `useOrdenesFacturaAgencia`/
+  `useOrdenesFacturaVendedor` en `cobranza/hooks.ts`, que llaman a
+  `facturaAgenciaApi.ordenes`/`facturaVendedorApi.ordenes` (F2) y muestran TODOS los
+  folios de la factura seleccionada, no solo uno.
+- **Verificado:** backend — mismas 3 migraciones aplicadas en limpio sobre SQLite (dev)
+  encima de las de Agencia, suite completa de backend 100% verde (exit 0), `ruff`
+  limpio. Frontend — `tsc --noEmit`/`eslint` limpios, suites `facturacion` (172
+  contando ambos módulos) y `cobranza` verdes tras el fix de `RequisicionesPage.tsx`.

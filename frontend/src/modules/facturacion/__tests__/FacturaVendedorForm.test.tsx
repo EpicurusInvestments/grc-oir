@@ -1,9 +1,8 @@
-/** Alta/edición de FacturaVendedor: paridad exacta de `FacturaAgenciaForm.test.tsx`,
- * pero la comisión es del vendedor principal. El combo "Orden relacionada" es de
- * selección simple y solo lista las OC `orden_cerrada` del vendedor ya elegido. Al
- * elegir una, se sugiere el % de comisión de ese vendedor (si el usuario no capturó
- * uno a mano) y se muestra en vivo la comisión calculada. La edición hace todo lo que
- * hace el alta (vendedor/orden reasignables).
+/** "Asignación a órdenes" de FacturaVendedor (alta Y edición) — ADR nuevo (petición del
+ * usuario, con captura, 2026-11-06), mismo cambio que para `FacturaAgenciaForm`: el
+ * combo "Orden relacionada" de selección simple se vuelve "Buscar y agregar"
+ * multi-selección. Cada orden aporta su propia comisión (su % ya pactado, o si no el
+ * default del catálogo del vendedor) — Subtotal/IVA/Total son CALCULADOS.
  */
 
 import { StrictMode } from "react";
@@ -20,8 +19,8 @@ const subirMock = vi.fn();
 vi.mock("../hooks", () => ({
   useVendedores: () => ({
     data: [
-      { id: "vd-1", etiqueta: "Juan Pérez" },
-      { id: "vd-2", etiqueta: "María López" },
+      { id: "vd-1", etiqueta: "Carmen Aristegui" },
+      { id: "vd-2", etiqueta: "Juan Pérez" },
     ],
   }),
   useOrdenesFacturablesVendedor: (vendedorId: string | null) => ({
@@ -38,6 +37,7 @@ vi.mock("../api", () => ({
   nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
 }));
 
+// % propio de la orden NULO: usa el default del vendedor (15%). Comisión = 1,183,200.00 * 15% = 177,480.00
 const OC_A: OrdenClienteFacturableVendedor = {
   orden_id: "oc-a",
   folio_orden: "OC-2025-0041",
@@ -45,9 +45,12 @@ const OC_A: OrdenClienteFacturableVendedor = {
   anunciante: "Grupo Bimbo",
   producto: "Pan Bimbo Integral 680g",
   total: "1183200.00",
+  porcentaje_comision_vendedor_snap: null,
   porcentaje_comision_vendedor_default: "15.00",
 };
 
+// % propio de la orden (10%), DISTINTO del default del vendedor (15%): debe usarse el
+// de la orden. Comisión = 500,000.00 * 10% = 50,000.00
 const OC_B: OrdenClienteFacturableVendedor = {
   orden_id: "oc-b",
   folio_orden: "OC-2025-0055",
@@ -55,10 +58,11 @@ const OC_B: OrdenClienteFacturableVendedor = {
   anunciante: "Grupo Bimbo",
   producto: "Bimbo Cero Cero",
   total: "500000.00",
+  porcentaje_comision_vendedor_snap: "10.00",
   porcentaje_comision_vendedor_default: "15.00",
 };
 
-/** Campo que sigue a una etiqueta `.fl` (mismo helper que en `FacturaAgenciaForm.test.tsx`). */
+/** Campo que sigue a una etiqueta `.fl` (mismo patrón que `FacturaAgenciaForm.test.tsx`). */
 function campoTrasEtiqueta<T extends Element = HTMLInputElement>(container: HTMLElement, texto: string): T {
   const etiquetas = Array.from(container.querySelectorAll(".fl"));
   const etiqueta = etiquetas.find((el) => el.textContent?.trim().startsWith(texto));
@@ -74,16 +78,16 @@ function elegirVendedor(container: HTMLElement, id = "vd-1") {
   fireEvent.change(campoTrasEtiqueta<HTMLSelectElement>(container, "Vendedor"), { target: { value: id } });
 }
 
-function elegirOrden(folio: string) {
-  const buscador = screen.getByPlaceholderText("Busca por folio o número…");
+function agregarOrden(folio: string) {
+  const buscador = screen.getByPlaceholderText("Buscar por folio y agregar…");
   fireEvent.change(buscador, { target: { value: folio } });
   fireEvent.mouseDown(screen.getByText((c) => c.startsWith(folio)));
 }
 
-describe("FacturaVendedorForm", () => {
-  it("el combo de orden aparece deshabilitado hasta elegir un vendedor", () => {
+describe("FacturaVendedorForm — Asignación a órdenes", () => {
+  it("el combo aparece deshabilitado hasta elegir un vendedor", () => {
     render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByPlaceholderText("Busca por folio o número…")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Buscar por folio y agregar…")).toBeDisabled();
   });
 
   it("al elegir un vendedor, el combo se habilita y solo lista sus OC cerradas", () => {
@@ -91,97 +95,201 @@ describe("FacturaVendedorForm", () => {
     const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     elegirVendedor(container);
 
-    const buscador = screen.getByPlaceholderText("Busca por folio o número…");
+    const buscador = screen.getByPlaceholderText("Buscar por folio y agregar…");
     expect(buscador).toBeEnabled();
     fireEvent.change(buscador, { target: { value: "0041" } });
     expect(screen.getByText("OC-2025-0041 — Grupo Bimbo")).toBeInTheDocument();
   });
 
-  it("al elegir una orden, sugiere el % de comisión del vendedor y calcula la comisión en vivo", () => {
+  it("al agregar una orden sin % propio, usa el default del vendedor y calcula su comisión", () => {
     ordenesFacturablesMock.mockReturnValue([OC_A]);
     const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     elegirVendedor(container);
-    elegirOrden("OC-2025-0041");
+    agregarOrden("OC-2025-0041");
 
-    const porcentaje = campoTrasEtiqueta(container, "% de comisión");
-    expect(porcentaje.value).toBe("15.00");
-    // Comisión = 1,183,200.00 * 15% = 177,480.00
-    expect(screen.getByText("$177,480.00")).toBeInTheDocument();
-    expect(screen.getByText(/Sobre el total c\/IVA de la orden/)).toBeInTheDocument();
+    expect(screen.getByText(/15.00 %/)).toBeInTheDocument();
+    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+    fireEvent.change(screen.getByPlaceholderText("Buscar por folio y agregar…"), { target: { value: "0041" } });
+    expect(screen.queryByText("OC-2025-0041 — Grupo Bimbo")).toBeNull();
   });
 
-  it("si el usuario ya capturó un % a mano, elegir la orden no lo pisa", () => {
-    ordenesFacturablesMock.mockReturnValue([OC_A]);
+  it("al agregar una orden CON % propio, usa el de la orden, no el default del vendedor", () => {
+    ordenesFacturablesMock.mockReturnValue([OC_B]);
     const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     elegirVendedor(container);
+    agregarOrden("OC-2025-0055");
 
-    const porcentaje = campoTrasEtiqueta(container, "% de comisión");
-    fireEvent.change(porcentaje, { target: { value: "8.00" } });
-    elegirOrden("OC-2025-0041");
-
-    expect(porcentaje.value).toBe("8.00");
-    // Comisión recalculada con el % capturado a mano: 1,183,200.00 * 8% = 94,656.00
-    expect(screen.getByText("$94,656.00")).toBeInTheDocument();
+    expect(screen.getByText(/10.00 %/)).toBeInTheDocument();
+    expect(screen.getAllByText("$50,000.00").length).toBe(2);
   });
 
-  it("cambiar de vendedor limpia la orden ya elegida, incluso bajo StrictMode", async () => {
+  it("Subtotal/IVA/Total acumulan la comisión de cada orden elegida, con su propio %", () => {
+    ordenesFacturablesMock.mockReturnValue([OC_A, OC_B]);
+    const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    elegirVendedor(container);
+    agregarOrden("OC-2025-0041");
+    agregarOrden("OC-2025-0055");
+
+    // Subtotal = 177,480.00 + 50,000.00 = 227,480.00
+    expect(screen.getByText("$227,480.00")).toBeInTheDocument();
+    // IVA = 227,480.00 * 16% = 36,396.80
+    expect(screen.getByText("$36,396.80")).toBeInTheDocument();
+    // Total = 227,480.00 + 36,396.80 = 263,876.80
+    expect(screen.getByText("$263,876.80")).toBeInTheDocument();
+  });
+
+  it("quitar una orden de la lista la regresa al buscador y baja el Subtotal", () => {
+    ordenesFacturablesMock.mockReturnValue([OC_A, OC_B]);
+    const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    elegirVendedor(container);
+    agregarOrden("OC-2025-0041");
+    agregarOrden("OC-2025-0055");
+    expect(screen.getByText("$227,480.00")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByTitle("Quitar de esta factura")[0]);
+
+    expect(screen.queryByText("$227,480.00")).toBeNull();
+    expect(screen.getAllByText("$50,000.00").length).toBe(2);
+    fireEvent.change(screen.getByPlaceholderText("Buscar por folio y agregar…"), { target: { value: "0041" } });
+    expect(screen.getByText("OC-2025-0041 — Grupo Bimbo")).toBeInTheDocument();
+  });
+
+  it("cambiar de vendedor limpia las órdenes ya elegidas", () => {
     ordenesFacturablesMock.mockImplementation((id: string) => (id === "vd-1" ? [OC_A] : [OC_B]));
-    const { container } = render(
-      <StrictMode>
-        <FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />
-      </StrictMode>,
-    );
+    const { container } = render(<FacturaVendedorForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     elegirVendedor(container, "vd-1");
-    elegirOrden("OC-2025-0041");
-    expect(screen.getByDisplayValue("OC-2025-0041 — Grupo Bimbo")).toBeInTheDocument();
+    agregarOrden("OC-2025-0041");
+    expect(screen.getAllByText("$177,480.00").length).toBe(2);
 
     elegirVendedor(container, "vd-2");
-    expect(screen.queryByDisplayValue("OC-2025-0041 — Grupo Bimbo")).toBeNull();
+    expect(screen.queryByText("$177,480.00")).toBeNull();
+    expect(screen.getByText("Sin órdenes agregadas todavía.")).toBeInTheDocument();
   });
 
-  it("al guardar, onSubmit recibe vendedor_id, orden_id y el % capturado", async () => {
-    ordenesFacturablesMock.mockReturnValue([OC_A]);
+  it("al guardar con órdenes elegidas, onSubmit recibe ordenes_ids con ambas", async () => {
+    ordenesFacturablesMock.mockReturnValue([OC_A, OC_B]);
     const onSubmit = vi.fn();
     const { container } = render(<FacturaVendedorForm onSubmit={onSubmit} onCancel={vi.fn()} />);
     elegirVendedor(container);
-    elegirOrden("OC-2025-0041");
-    fireEvent.change(campoTrasEtiqueta(container, "Subtotal"), { target: { value: "1020000.00" } });
-    fireEvent.change(campoTrasEtiqueta(container, "IVA"), { target: { value: "163200.00" } });
+    agregarOrden("OC-2025-0041");
+    agregarOrden("OC-2025-0055");
 
+    fireEvent.change(campoTrasEtiqueta(container, "Fecha de la factura"), { target: { value: "2026-04-10" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const payload = onSubmit.mock.calls[0][0];
     expect(payload.vendedor_id).toBe("vd-1");
-    expect(payload.orden_id).toBe("oc-a");
-    expect(payload.porcentaje_comision_vendedor).toBe("15.00");
+    expect(payload.ordenes_ids).toEqual(["oc-a", "oc-b"]);
   });
 
-  it("en edición, precarga vendedor/orden ya asignadas y el combo de vendedor sigue editable", async () => {
-    ordenesFacturablesMock.mockReturnValue([OC_A]);
-    const onSubmit = vi.fn();
+  it("fix: en edición, el vendedor se puede reasignar y la sección de asignación precarga lo ya asignado", async () => {
+    ordenesFacturablesMock.mockReturnValue([]);
     render(
       <FacturaVendedorForm
         isEdit
         defaultValues={{
           vendedor_id: "vd-1",
-          orden_id: "oc-a",
-          folio_factura_vendedor: "VEN-2025-0287",
+          folio_factura_vendedor: "VE-2025-0287",
           fecha_factura_vendedor: "2025-06-08",
-          monto_factura_vendedor: "1020000.00",
-          iva_factura_vendedor: "163200.00",
-          porcentaje_comision_vendedor: "15.00",
         }}
-        onSubmit={onSubmit}
+        ordenesIniciales={[
+          {
+            id: "fvo-1",
+            factura_vendedor_id: "fv-1",
+            orden_id: "oc-a",
+            porcentaje_comision_snap: "15.00",
+            comision_calculada: "177480.00",
+            folio_orden: "OC-2025-0041",
+            numero_orden_cliente: "PO-BIMBO-0419",
+            anunciante: "Grupo Bimbo",
+            producto: null,
+            orden_total: "1183200.00",
+          },
+        ]}
+        onSubmit={vi.fn()}
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByDisplayValue("Juan Pérez")).toBeEnabled();
-    expect(screen.getByDisplayValue("OC-2025-0041 — Grupo Bimbo")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Carmen Aristegui")).toBeEnabled();
+    expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
+    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+  });
+
+  it("en edición, cambiar de vendedor limpia las órdenes ya asignadas (eran del vendedor anterior)", async () => {
+    ordenesFacturablesMock.mockImplementation((id: string) => (id === "vd-1" ? [OC_A] : [OC_B]));
+    const { container } = render(
+      <FacturaVendedorForm
+        isEdit
+        defaultValues={{
+          vendedor_id: "vd-1",
+          folio_factura_vendedor: "VE-2025-0287",
+          fecha_factura_vendedor: "2025-06-08",
+        }}
+        ordenesIniciales={[
+          {
+            id: "fvo-1",
+            factura_vendedor_id: "fv-1",
+            orden_id: "oc-a",
+            porcentaje_comision_snap: "15.00",
+            comision_calculada: "177480.00",
+            folio_orden: "OC-2025-0041",
+            numero_orden_cliente: "PO-BIMBO-0419",
+            anunciante: "Grupo Bimbo",
+            producto: null,
+            orden_total: "1183200.00",
+          },
+        ]}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByDisplayValue("Carmen Aristegui");
+    expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
+
+    elegirVendedor(container, "vd-2");
+    expect(screen.queryByText("OC-2025-0041")).toBeNull();
+    expect(screen.getByText("Sin órdenes agregadas todavía.")).toBeInTheDocument();
+  });
+
+  it("fix: en edición, precarga las órdenes ya asignadas y sobreviven al doble-render de StrictMode", async () => {
+    ordenesFacturablesMock.mockReturnValue([]);
+    const onSubmit = vi.fn();
+    render(
+      <StrictMode>
+        <FacturaVendedorForm
+          isEdit
+          defaultValues={{
+            vendedor_id: "vd-1",
+            folio_factura_vendedor: "VE-2025-0287",
+            fecha_factura_vendedor: "2025-06-08",
+          }}
+          ordenesIniciales={[
+            {
+              id: "fvo-1",
+              factura_vendedor_id: "fv-1",
+              orden_id: "oc-a",
+              porcentaje_comision_snap: "15.00",
+              comision_calculada: "177480.00",
+              folio_orden: "OC-2025-0041",
+              numero_orden_cliente: "PO-BIMBO-0419",
+              anunciante: "Grupo Bimbo",
+              producto: null,
+              orden_total: "1183200.00",
+            },
+          ]}
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />
+      </StrictMode>,
+    );
+    await screen.findByDisplayValue("Carmen Aristegui");
+    expect(screen.getAllByText("$177,480.00").length).toBe(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].vendedor_id).toBe("vd-1");
-    expect(onSubmit.mock.calls[0][0].orden_id).toBe("oc-a");
+    expect(onSubmit.mock.calls[0][0].ordenes_ids).toEqual(["oc-a"]);
   });
 
   it("subir el PDF llama a adjuntosFacturacionApi.subir con el tipo correcto y lo incluye al guardar", async () => {
@@ -193,17 +301,13 @@ describe("FacturaVendedorForm", () => {
     const onSubmit = vi.fn();
     const { container } = render(<FacturaVendedorForm onSubmit={onSubmit} onCancel={vi.fn()} />);
     elegirVendedor(container);
-    elegirOrden("OC-2025-0041");
-    fireEvent.change(campoTrasEtiqueta(container, "Subtotal"), { target: { value: "1020000.00" } });
-    fireEvent.change(campoTrasEtiqueta(container, "IVA"), { target: { value: "163200.00" } });
+    agregarOrden("OC-2025-0041");
 
     const archivo = new File(["contenido"], "factura.pdf", { type: "application/pdf" });
     const inputArchivo = container.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(inputArchivo, { target: { files: [archivo] } });
 
     await waitFor(() => expect(subirMock).toHaveBeenCalledWith("factura_vendedor_pdf", archivo));
-    // ADR-207: el nombre se trunca a 5 letras + extensión (ya no se muestra el ref
-    // completo) — el ref completo sigue en el `title` del tooltip.
     const texto = await screen.findByText("factu...pdf");
     expect(texto).toHaveAttribute("title", "facturacion/proveedor/vendedor/pdf/abc_factura.pdf");
 

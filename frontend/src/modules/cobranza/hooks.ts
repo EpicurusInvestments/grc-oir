@@ -10,7 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { facturaAfiliadoApi } from "@/modules/facturacion/api";
+import { facturaAfiliadoApi, facturaAgenciaApi, facturaVendedorApi } from "@/modules/facturacion/api";
 
 import {
   afiliadosInfo,
@@ -290,6 +290,28 @@ export function useAsignacionesFacturaAfiliado(facturaAfiliadoId: string | null)
     queryKey: [K_REQUISICIONES, "asignaciones-factura-afiliado", facturaAfiliadoId],
     queryFn: () => facturaAfiliadoApi.asignaciones(facturaAfiliadoId as string),
     enabled: !!facturaAfiliadoId,
+  });
+}
+
+/** Mismo criterio que `useAsignacionesFacturaAfiliado`, para `pago_agencia`: desde el
+ *  ADR que volvió N:M la relación FacturaAgencia↔OrdenCliente, esa factura ya no tiene
+ *  un `orden_id` directo — puede cubrir varias órdenes, hay que resolverlas vía su
+ *  propio endpoint de órdenes (`facturaAgenciaApi.ordenes`, ya enriquecido con
+ *  `folio_orden`). */
+export function useOrdenesFacturaAgencia(facturaAgenciaId: string | null) {
+  return useQuery({
+    queryKey: [K_REQUISICIONES, "ordenes-factura-agencia", facturaAgenciaId],
+    queryFn: () => facturaAgenciaApi.ordenes(facturaAgenciaId as string),
+    enabled: !!facturaAgenciaId,
+  });
+}
+
+/** Mismo criterio, para `comision_vendedor` (`FacturaVendedor` también N:M ahora). */
+export function useOrdenesFacturaVendedor(facturaVendedorId: string | null) {
+  return useQuery({
+    queryKey: [K_REQUISICIONES, "ordenes-factura-vendedor", facturaVendedorId],
+    queryFn: () => facturaVendedorApi.ordenes(facturaVendedorId as string),
+    enabled: !!facturaVendedorId,
   });
 }
 

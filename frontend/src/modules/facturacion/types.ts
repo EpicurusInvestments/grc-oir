@@ -264,17 +264,23 @@ export interface FacturaAfiliadoOrden {
 }
 
 // ── FacturaAgencia ────────────────────────────────────────────────────────────
+// ADR nuevo (petición del usuario, con captura, 2026-11-06) — SUSTITUYE el criterio de
+// ADR-079: la relación con OrdenCliente deja de ser 1:1-por-factura (un solo `orden_id`)
+// y pasa a ser N:M vía `FacturaAgenciaOrden`, mismo patrón que `FacturaAfiliadoOrden` —
+// una factura de agencia acumula VARIAS órdenes, cada una con su propio % ya pactado.
 export interface FacturaAgencia {
   factura_agencia_id: string;
   agencia_id: string;
-  orden_id: string;
   folio_factura_agencia: string | null;
   fecha_factura_agencia: string;
+  /** Los 3 se CALCULAN en el backend (suma de las comisiones de las órdenes elegidas) —
+   *  ya no se capturan a mano. */
   monto_factura_agencia: string;
   iva_factura_agencia: string;
   total_factura_agencia: string;
-  porcentaje_comision_agencia: string | null;
-  comision_agencia: string | null;
+  /** Alias de `monto_factura_agencia` (mismo valor) — se conserva con este nombre
+   *  porque la pantalla aprobada lo muestra en "Monto comisión". */
+  comision_agencia: string;
   archivo_nombre: string | null;
   archivo_path: string | null;
   /** Factura de la agencia subida en PDF/XML por separado (ADR-079, mismo criterio que
@@ -286,49 +292,44 @@ export interface FacturaAgencia {
   created_by: string;
   created_at: string;
   updated_at: string | null;
-  /** Resueltos por el backend en lote — el front no pide la agencia/orden aparte para
-   *  mostrar nombre/folio legibles en la lista y el detalle. */
+  /** Resuelto por el backend en lote — el front no pide la agencia aparte para mostrar
+   *  su nombre en la lista y el detalle. */
   agencia: string | null;
-  folio_orden: string | null;
-  numero_orden_cliente: string | null;
-  anunciante: string | null;
-  producto: string | null;
-  orden_total: string | null;
+  /** Cuántas OrdenCliente tiene esta factura (columna "Órdenes asig." de la lista) —
+   *  mismo criterio que `ordenes_asignadas` en `FacturaAfiliado`. */
+  ordenes_asignadas: number;
 }
 
 export interface FacturaAgenciaCreate {
   agencia_id: string;
-  orden_id: string;
   folio_factura_agencia?: string | null;
   fecha_factura_agencia: string;
-  monto_factura_agencia: string;
-  iva_factura_agencia: string;
-  /** Si se omite, el backend toma el default del catálogo Agencia. */
-  porcentaje_comision_agencia?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  /** Órdenes elegidas en el combo "Buscar y agregar" (al menos 1: sin órdenes no hay
+   *  comisión que calcular). El mismo orden puede estar en OTRAS facturas de agencia
+   *  (parcialidades, ADR-079), pero no repetido en ESTA. */
+  ordenes_ids: string[];
 }
 
 /** Edición (`PUT /agencias/{id}`): hace todo lo que hace el alta — puede reasignar la
- *  agencia y la orden relacionada (recalcula `comision_agencia` contra la orden que
- *  quede, nueva o la que ya tenía). El servicio rechaza con 409 si la factura ya está
- *  `autorizada`/`pagada`. */
+ *  agencia y editar qué órdenes tiene asignadas (`ordenes_ids` reconcilia EXACTAMENTE
+ *  como pide la lista: agrega, quita, deja intactas las que siguen). El servicio
+ *  rechaza con 409 si la factura ya está `autorizada`/`pagada`. */
 export interface FacturaAgenciaUpdate {
   agencia_id?: string;
-  orden_id?: string;
   folio_factura_agencia?: string | null;
   fecha_factura_agencia?: string;
-  monto_factura_agencia?: string;
-  iva_factura_agencia?: string;
-  porcentaje_comision_agencia?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  ordenes_ids?: string[];
 }
 
-/** Fila del combo "Orden relacionada" (alta/edición de FacturaAgencia): una OC
+/** Fila del combo "Buscar y agregar" (alta/edición de FacturaAgencia): una OC
  *  `orden_cerrada` de la agencia elegida. `total` alimenta la previsualización en vivo
- *  de la comisión (`total * %/100`); `porcentaje_comision_agencia_default` precarga el
- *  campo de % (editable) — mismo criterio que el combo de OI en FacturaAfiliado. */
+ *  de la comisión de ESA orden (`total * %/100`); el `%` que se usaría es el de la
+ *  orden (`porcentaje_comision_agencia_snap`) si lo tiene, si no el default del
+ *  catálogo de la agencia — mismo respaldo que usa el backend al calcular. */
 export interface OrdenClienteFacturableAgencia {
   orden_id: string;
   folio_orden: string;
@@ -336,7 +337,25 @@ export interface OrdenClienteFacturableAgencia {
   anunciante: string | null;
   producto: string | null;
   total: string;
+  porcentaje_comision_agencia_snap: string | null;
   porcentaje_comision_agencia_default: string | null;
+}
+
+/** Fila de `FacturaAgenciaOrden` (puente N:M) — una orden acumulada en una factura de
+ *  agencia, con su `%` congelado al agregarla y la comisión ya calculada sobre esa
+ *  orden. `folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` se
+ *  resuelven en el backend en lote (mismo criterio que `FacturaAfiliadoOrden`). */
+export interface FacturaAgenciaOrden {
+  id: string;
+  factura_agencia_id: string;
+  orden_id: string;
+  porcentaje_comision_snap: string;
+  comision_calculada: string;
+  folio_orden: string;
+  numero_orden_cliente: string;
+  anunciante: string | null;
+  producto: string | null;
+  orden_total: string | null;
 }
 
 // ── FacturaVendedor ───────────────────────────────────────────────────────────
@@ -344,63 +363,60 @@ export interface OrdenClienteFacturableAgencia {
  *  pero para la comisión del vendedor PRINCIPAL de la orden (no el secundario). A
  *  diferencia de `FacturaAgencia`, no lleva `archivo_nombre`/`archivo_path`: al ser
  *  nueva, no arrastra los campos legado que esas dos entidades sí tienen desde antes
- *  de separar PDF/XML. */
+ *  de separar PDF/XML.
+ *
+ *  ADR nuevo (petición del usuario, con captura, 2026-11-06) — mismo cambio que
+ *  ADR-239 hizo para `FacturaAgencia`: la relación con OrdenCliente deja de ser
+ *  1:1-por-factura y pasa a ser N:M vía `FacturaVendedorOrden`. */
 export interface FacturaVendedor {
   factura_vendedor_id: string;
   vendedor_id: string;
-  orden_id: string;
   folio_factura_vendedor: string | null;
   fecha_factura_vendedor: string;
+  /** Los 3 se CALCULAN en el backend (suma de las comisiones de las órdenes elegidas). */
   monto_factura_vendedor: string;
   iva_factura_vendedor: string;
   total_factura_vendedor: string;
-  porcentaje_comision_vendedor: string | null;
-  comision_vendedor: string | null;
+  /** Alias de `monto_factura_vendedor` (mismo valor). */
+  comision_vendedor: string;
   archivo_pdf_path: string | null;
   archivo_xml_path: string | null;
   estatus_factura_vendedor: EstatusProveedor;
   created_by: string;
   created_at: string;
   updated_at: string | null;
-  /** Resueltos por el backend en lote — mismo criterio que `FacturaAgencia`. */
+  /** Resuelto por el backend en lote. */
   vendedor: string | null;
-  folio_orden: string | null;
-  numero_orden_cliente: string | null;
-  anunciante: string | null;
-  producto: string | null;
-  orden_total: string | null;
+  /** Cuántas OrdenCliente tiene esta factura (columna "Órdenes asig." de la lista). */
+  ordenes_asignadas: number;
 }
 
 export interface FacturaVendedorCreate {
   vendedor_id: string;
-  orden_id: string;
   folio_factura_vendedor?: string | null;
   fecha_factura_vendedor: string;
-  monto_factura_vendedor: string;
-  iva_factura_vendedor: string;
-  /** Si se omite, el backend toma el default del catálogo Vendedor. */
-  porcentaje_comision_vendedor?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  /** Órdenes elegidas en el combo "Buscar y agregar" (al menos 1). */
+  ordenes_ids: string[];
 }
 
 /** Edición (`PUT /vendedores/{id}`): igual que `FacturaAgenciaUpdate`, puede reasignar
- *  vendedor y orden relacionada. El servicio rechaza con 409 si ya está
- *  `autorizada`/`pagada`. */
+ *  vendedor y editar qué órdenes tiene asignadas. El servicio rechaza con 409 si ya
+ *  está `autorizada`/`pagada`. */
 export interface FacturaVendedorUpdate {
   vendedor_id?: string;
-  orden_id?: string;
   folio_factura_vendedor?: string | null;
   fecha_factura_vendedor?: string;
-  monto_factura_vendedor?: string;
-  iva_factura_vendedor?: string;
-  porcentaje_comision_vendedor?: string | null;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  ordenes_ids?: string[];
 }
 
-/** Fila del combo "Orden relacionada" (alta/edición de FacturaVendedor): una OC
- *  `orden_cerrada` cuyo `vendedor_principal_id` es el vendedor elegido. */
+/** Fila del combo "Buscar y agregar" (alta/edición de FacturaVendedor): una OC
+ *  `orden_cerrada` cuyo `vendedor_principal_id` es el vendedor elegido. El `%` que se
+ *  usaría es el de la orden (`porcentaje_comision_vendedor_snap`) si lo tiene, si no
+ *  el default del catálogo del vendedor. */
 export interface OrdenClienteFacturableVendedor {
   orden_id: string;
   folio_orden: string;
@@ -408,7 +424,23 @@ export interface OrdenClienteFacturableVendedor {
   anunciante: string | null;
   producto: string | null;
   total: string;
+  porcentaje_comision_vendedor_snap: string | null;
   porcentaje_comision_vendedor_default: string | null;
+}
+
+/** Fila de `FacturaVendedorOrden` (puente N:M) — mismo criterio que
+ *  `FacturaAgenciaOrden`. */
+export interface FacturaVendedorOrden {
+  id: string;
+  factura_vendedor_id: string;
+  orden_id: string;
+  porcentaje_comision_snap: string;
+  comision_calculada: string;
+  folio_orden: string;
+  numero_orden_cliente: string;
+  anunciante: string | null;
+  producto: string | null;
+  orden_total: string | null;
 }
 
 // ── CostoAdicional ────────────────────────────────────────────────────────────

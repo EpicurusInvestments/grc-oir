@@ -1381,31 +1381,34 @@ def test_solo_se_asigna_costo_a_una_oe_cerrada(
     assert r.status_code == 409
 
 
-# ── Comisión de agencia ───────────────────────────────────────────────────────
-def test_comision_se_calcula_sobre_el_total_de_la_orden(
+# ── Comisión de agencia (ADR nuevo: N:M vía FacturaAgenciaOrden, varias órdenes por
+# factura, cada una con su propio % pactado) ──────────────────────────────────
+def test_comision_se_calcula_sobre_el_total_de_la_orden_con_su_propio_porcentaje_snap(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
     orden_id = _orden(db, cat, "orden_cerrada", "OC-AG")
+    db.get(OrdenCliente, orden_id).porcentaje_comision_agencia_snap = Decimal("15.00")
     db.commit()
     r = client.post(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "1160.00",
-            "iva_factura_agencia": "185.60",
-            "porcentaje_comision_agencia": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
-    # OrdenCliente.total = 11600.00 · 10% = 1160.00
-    assert r.json()["comision_agencia"] == "1160.00"
-    assert r.json()["total_factura_agencia"] == "1345.60"
+    # OrdenCliente.total = 11600.00 · 15% (el % de LA ORDEN, no el default del catálogo) = 1740.00
+    assert r.json()["comision_agencia"] == "1740.00"
+    assert r.json()["monto_factura_agencia"] == "1740.00"
+    assert r.json()["iva_factura_agencia"] == "278.40"
+    assert r.json()["total_factura_agencia"] == "2018.40"
 
 
-def test_el_porcentaje_se_sugiere_del_catalogo_si_no_viene(
+def test_el_porcentaje_se_sugiere_del_catalogo_si_la_orden_no_trae_snap(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     orden_id = _orden(db, cat, "orden_cerrada", "OC-AG2")
@@ -1414,52 +1417,83 @@ def test_el_porcentaje_se_sugiere_del_catalogo_si_no_viene(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "100.00",
-            "iva_factura_agencia": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
-    assert r.status_code == 201
-    assert r.json()["porcentaje_comision_agencia"] == "10.00"  # default del catálogo
+    assert r.status_code == 201, r.text
+    # Default del catálogo (10%): 11600.00 * 10% = 1160.00
     assert r.json()["comision_agencia"] == "1160.00"
 
 
-def test_alta_factura_agencia_trae_agencia_y_orden_denormalizados(
+def test_varias_ordenes_acumulan_comision_cada_una_con_su_propio_porcentaje(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """El alta ya trae `agencia`/`folio_orden`/`anunciante`/`producto`/`orden_total` en
-    la MISMA respuesta (sin esperar al próximo GET) — mismo criterio que
-    `_enriquecida()` en `factura_afiliado.py`."""
+    """Petición del usuario, con captura: permitir varias órdenes en la misma factura
+    de agencia, acumulando los totales de comisión — cada orden con su propio %."""
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
+    orden_1 = _orden(db, cat, "orden_cerrada", "OC-AG-M1", subtotal=Decimal("10000.00"))
+    db.get(OrdenCliente, orden_1).porcentaje_comision_agencia_snap = Decimal("10.00")
+    orden_2 = _orden(db, cat, "orden_cerrada", "OC-AG-M2", subtotal=Decimal("5000.00"))
+    db.get(OrdenCliente, orden_2).porcentaje_comision_agencia_snap = Decimal("20.00")
+    db.commit()
+    # orden_1.total = 11600.00 * 10% = 1160.00 ; orden_2.total = 5800.00 * 20% = 1160.00
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_1), str(orden_2)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["comision_agencia"] == "2320.00"
+    assert body["monto_factura_agencia"] == "2320.00"
+    assert body["iva_factura_agencia"] == "371.20"
+    assert body["total_factura_agencia"] == "2691.20"
+    assert body["ordenes_asignadas"] == 2
+
+    ordenes = client.get(
+        f"/api/v1/facturacion/agencias/{body['factura_agencia_id']}/ordenes",
+        headers=_hdr("cxp"),
+    ).json()
+    por_orden = {o["orden_id"]: o for o in ordenes}
+    assert por_orden[str(orden_1)]["porcentaje_comision_snap"] == "10.00"
+    assert por_orden[str(orden_1)]["comision_calculada"] == "1160.00"
+    assert por_orden[str(orden_2)]["porcentaje_comision_snap"] == "20.00"
+    assert por_orden[str(orden_2)]["comision_calculada"] == "1160.00"
+
+
+def test_alta_factura_agencia_trae_agencia_y_conteo_de_ordenes_denormalizados(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El alta ya trae `agencia`/`ordenes_asignadas` en la MISMA respuesta (sin esperar
+    al próximo GET) — mismo criterio que `_enriquecida()` en `factura_afiliado.py`."""
     orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-ENRIQ", producto="Spot radio mayo")
     db.commit()
     r = client.post(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "1160.00",
-            "iva_factura_agencia": "185.60",
-            "porcentaje_comision_agencia": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["agencia"] == "Agencia Uno"
-    assert body["folio_orden"] == "OC-AG-ENRIQ"
-    assert body["numero_orden_cliente"] == "NUM-OC-AG-ENRIQ"
-    assert body["anunciante"] == "Anunciante Uno"
-    assert body["producto"] == "Spot radio mayo"
-    assert body["orden_total"] == "11600.00"
+    assert body["ordenes_asignadas"] == 1
 
     detalle = client.get(
         f"/api/v1/facturacion/agencias/{body['factura_agencia_id']}", headers=_hdr("cxp")
     ).json()
     assert detalle["agencia"] == "Agencia Uno"
-    assert detalle["folio_orden"] == "OC-AG-ENRIQ"
+    assert detalle["ordenes_asignadas"] == 1
 
     lista = client.get(
         "/api/v1/facturacion/agencias",
@@ -1470,7 +1504,91 @@ def test_alta_factura_agencia_trae_agencia_y_orden_denormalizados(
         f for f in lista["items"] if f["factura_agencia_id"] == body["factura_agencia_id"]
     )
     assert en_lista["agencia"] == "Agencia Uno"
-    assert en_lista["folio_orden"] == "OC-AG-ENRIQ"
+    assert en_lista["ordenes_asignadas"] == 1
+
+
+def test_alta_rechaza_factura_de_agencia_sin_ninguna_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_alta_rechaza_la_misma_orden_repetida_en_la_lista(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-DUP")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id), str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_sin_porcentaje_en_la_orden_ni_en_el_catalogo_la_comision_es_cero(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """`Agencia.porcentaje_comision_agencia_default` es NOT NULL (default 0 si no se
+    capturó) — sin `%` en ninguna parte, la comisión de esa orden es $0.00, no un error."""
+    from app.modules.catalogos.agencia import Agencia
+
+    agencia_sin_default_id = uuid.uuid4()
+    db.add(
+        Agencia(
+            agencia_id=agencia_sin_default_id,
+            nombre_agencia="Agencia Sin Default",
+            rfc_agencia="ASD900101AB1",
+        )
+    )
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-SINPCT")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(agencia_sin_default_id),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["comision_agencia"] == "0.00"
+
+
+def test_la_misma_orden_puede_estar_en_facturas_de_agencia_distintas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-079 (no cambia): parcialidades — la misma OC puede tener varias facturas de
+    agencia, solo no repetida DENTRO de la misma (ver test de rechazo arriba)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-PARCIAL")
+    db.commit()
+    for _ in range(2):
+        r = client.post(
+            "/api/v1/facturacion/agencias",
+            json={
+                "agencia_id": str(cat["agencia_id"]),
+                "fecha_factura_agencia": "2026-03-03",
+                "ordenes_ids": [str(orden_id)],
+            },
+            headers=_hdr("cxp"),
+        )
+        assert r.status_code == 201, r.text
 
 
 def test_factura_agencia_captura_y_edita_archivo_pdf_xml(
@@ -1485,10 +1603,8 @@ def test_factura_agencia_captura_y_edita_archivo_pdf_xml(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "1160.00",
-            "iva_factura_agencia": "185.60",
+            "ordenes_ids": [str(orden_id)],
             "archivo_pdf_path": "facturacion/proveedor/agencia/pdf/abc_factura.pdf",
             "archivo_xml_path": "facturacion/proveedor/agencia/xml/abc_factura.xml",
         },
@@ -1542,6 +1658,7 @@ def test_ordenes_facturables_agencia_solo_lista_las_cerradas_de_esa_agencia(
     assert items[0]["anunciante"] == "Anunciante Uno"
     assert items[0]["producto"] == "Radio spot"
     assert items[0]["total"] == "11600.00"
+    assert items[0]["porcentaje_comision_agencia_snap"] is None
     assert items[0]["porcentaje_comision_agencia_default"] == "10.00"
 
     # Una agencia SIN órdenes cerradas propias → combo vacío (no las de otra agencia).
@@ -1553,11 +1670,11 @@ def test_ordenes_facturables_agencia_solo_lista_las_cerradas_de_esa_agencia(
     assert vacio == []
 
 
-def test_editar_factura_agencia_permite_reasignar_agencia_y_orden(
+def test_editar_factura_agencia_permite_reasignar_agencia_y_ordenes(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """Petición del usuario: la edición hace todo lo que hace el alta — reasignar
-    agencia y orden relacionada, recalculando la comisión contra la NUEVA orden."""
+    agencia y las órdenes elegidas, recalculando la comisión contra las NUEVAS."""
     from app.modules.catalogos.agencia import Agencia
 
     orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-EDIT-1", subtotal=Decimal("10000.00"))
@@ -1578,33 +1695,32 @@ def test_editar_factura_agencia_permite_reasignar_agencia_y_orden(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "1160.00",
-            "iva_factura_agencia": "185.60",
-            "porcentaje_comision_agencia": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert alta.status_code == 201, alta.text
     fid = alta.json()["factura_agencia_id"]
-    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% = 1160.00
+    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% (default de la NUEVA agencia) = 1160.00
     r = client.put(
         f"/api/v1/facturacion/agencias/{fid}",
         json={
             "agencia_id": str(otra_agencia_id),
-            "orden_id": str(otra_orden_id),
-            "porcentaje_comision_agencia": "20.00",
+            "ordenes_ids": [str(otra_orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["agencia_id"] == str(otra_agencia_id)
-    assert body["orden_id"] == str(otra_orden_id)
     assert body["agencia"] == "Agencia Dos"
-    assert body["folio_orden"] == "OC-AG-EDIT-2"
     assert body["comision_agencia"] == "1160.00"
+
+    ordenes = client.get(
+        f"/api/v1/facturacion/agencias/{fid}/ordenes", headers=_hdr("cxp")
+    ).json()
+    assert [o["orden_id"] for o in ordenes] == [str(otra_orden_id)]
 
 
 def test_editar_factura_agencia_agencia_inexistente_400(
@@ -1626,7 +1742,7 @@ def test_editar_factura_agencia_orden_inexistente_400(
     fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-SIMPLE-2")
     r = client.put(
         f"/api/v1/facturacion/agencias/{fid}",
-        json={"orden_id": str(uuid.uuid4())},
+        json={"ordenes_ids": [str(uuid.uuid4())]},
         headers=_hdr("cxp"),
     )
     assert r.status_code == 400
@@ -1664,11 +1780,9 @@ def test_lista_facturas_agencia_ordena_por_mas_reciente_primero(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "folio_factura_agencia": "AG-ORDEN-1",
             "fecha_factura_agencia": "2026-06-01",
-            "monto_factura_agencia": "100.00",
-            "iva_factura_agencia": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
@@ -1678,11 +1792,9 @@ def test_lista_facturas_agencia_ordena_por_mas_reciente_primero(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "folio_factura_agencia": "AG-ORDEN-2",
             "fecha_factura_agencia": "2026-01-01",
-            "monto_factura_agencia": "100.00",
-            "iva_factura_agencia": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
@@ -1708,10 +1820,8 @@ def _crear_factura_agencia_simple(
         "/api/v1/facturacion/agencias",
         json={
             "agencia_id": str(cat["agencia_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_agencia": "2026-03-03",
-            "monto_factura_agencia": "100.00",
-            "iva_factura_agencia": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
@@ -1719,31 +1829,33 @@ def _crear_factura_agencia_simple(
     return r.json()["factura_agencia_id"]
 
 
-# ── FacturaVendedor (entidad nueva, paridad con FacturaAgencia) ───────────────────
-def test_comision_vendedor_se_calcula_sobre_el_total_de_la_orden(
+# ── FacturaVendedor (ADR nuevo, mismo cambio que ADR-239 hizo para FacturaAgencia:
+# N:M vía FacturaVendedorOrden, varias órdenes por factura, cada una con su propio %) ──
+def test_comision_vendedor_se_calcula_con_su_propio_porcentaje_snap(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
     orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND")
+    db.get(OrdenCliente, orden_id).porcentaje_comision_vendedor_principal_snap = Decimal("15.00")
     db.commit()
     r = client.post(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "1160.00",
-            "iva_factura_vendedor": "185.60",
-            "porcentaje_comision_vendedor": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
-    # OrdenCliente.total = 11600.00 · 10% = 1160.00
-    assert r.json()["comision_vendedor"] == "1160.00"
-    assert r.json()["total_factura_vendedor"] == "1345.60"
+    # OrdenCliente.total = 11600.00 · 15% (el % de LA ORDEN, no el default del catálogo) = 1740.00
+    assert r.json()["comision_vendedor"] == "1740.00"
+    assert r.json()["iva_factura_vendedor"] == "278.40"
+    assert r.json()["total_factura_vendedor"] == "2018.40"
 
 
-def test_el_porcentaje_de_vendedor_se_sugiere_del_catalogo_si_no_viene(
+def test_el_porcentaje_de_vendedor_se_sugiere_del_catalogo_si_la_orden_no_trae_snap(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     vendedor_con_pct_id = uuid.uuid4()
@@ -1754,32 +1866,88 @@ def test_el_porcentaje_de_vendedor_se_sugiere_del_catalogo_si_no_viene(
             porcentaje_comision_default=Decimal("10.00"),
         )
     )
-    orden_id = _orden(
-        db, cat, "orden_cerrada", "OC-VEND2", subtotal=Decimal("10000.00")
+    orden_id = uuid.uuid4()
+    from app.modules.ordenes.orden_cliente import OrdenCliente as _OC
+
+    db.add(
+        _OC(
+            orden_id=orden_id,
+            folio_orden="OC-VEND2",
+            numero_orden_cliente="NUM-OC-VEND2",
+            fecha_venta=date(2026, 1, 10),
+            anio_venta=2026,
+            mes_venta=1,
+            empresa_facturadora_id=cat["empresa_id"],
+            vendedor_principal_id=vendedor_con_pct_id,
+            anunciante_id=cat["anunciante_id"],
+            agencia_id=cat["agencia_id"],
+            fecha_inicio_campania=date(2026, 2, 1),
+            fecha_fin_campania=date(2026, 2, 28),
+            total_dias_campania=28,
+            duracion_spot="30s",
+            precio_unitario=Decimal("1000.00"),
+            total_spots=10,
+            subtotal=Decimal("10000.00"),
+            iva=Decimal("1600.00"),
+            total=Decimal("11600.00"),
+            estatus_orden="orden_cerrada",
+            created_by=ADMIN_ID,
+        )
     )
     db.commit()
     r = client.post(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(vendedor_con_pct_id),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "100.00",
-            "iva_factura_vendedor": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
-    assert r.json()["porcentaje_comision_vendedor"] == "10.00"  # default del catálogo
-    assert r.json()["comision_vendedor"] == "1160.00"
+    assert r.json()["comision_vendedor"] == "1160.00"  # default del catálogo (10%)
 
 
-def test_alta_factura_vendedor_trae_vendedor_y_orden_denormalizados(
+def test_varias_ordenes_acumulan_comision_de_vendedor_cada_una_con_su_propio_porcentaje(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """El alta ya trae `vendedor`/`folio_orden`/`anunciante`/`producto`/`orden_total`
-    en la MISMA respuesta (sin esperar al próximo GET) — mismo criterio que
-    `_enriquecida()` en `factura_agencia.py`."""
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
+    orden_1 = _orden(db, cat, "orden_cerrada", "OC-VEND-M1", subtotal=Decimal("10000.00"))
+    db.get(OrdenCliente, orden_1).porcentaje_comision_vendedor_principal_snap = Decimal("10.00")
+    orden_2 = _orden(db, cat, "orden_cerrada", "OC-VEND-M2", subtotal=Decimal("5000.00"))
+    db.get(OrdenCliente, orden_2).porcentaje_comision_vendedor_principal_snap = Decimal("20.00")
+    db.commit()
+    # orden_1.total = 11600.00 * 10% = 1160.00 ; orden_2.total = 5800.00 * 20% = 1160.00
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(orden_1), str(orden_2)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["comision_vendedor"] == "2320.00"
+    assert body["ordenes_asignadas"] == 2
+
+    ordenes = client.get(
+        f"/api/v1/facturacion/vendedores/{body['factura_vendedor_id']}/ordenes",
+        headers=_hdr("cxp"),
+    ).json()
+    por_orden = {o["orden_id"]: o for o in ordenes}
+    assert por_orden[str(orden_1)]["porcentaje_comision_snap"] == "10.00"
+    assert por_orden[str(orden_2)]["porcentaje_comision_snap"] == "20.00"
+
+
+def test_alta_factura_vendedor_trae_vendedor_y_conteo_de_ordenes_denormalizados(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """El alta ya trae `vendedor`/`ordenes_asignadas` en la MISMA respuesta (sin
+    esperar al próximo GET) — mismo criterio que `_enriquecida()` en
+    `factura_agencia.py`."""
     orden_id = _orden(
         db, cat, "orden_cerrada", "OC-VEND-ENRIQ", producto="Spot radio mayo"
     )
@@ -1788,28 +1956,21 @@ def test_alta_factura_vendedor_trae_vendedor_y_orden_denormalizados(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "1160.00",
-            "iva_factura_vendedor": "185.60",
-            "porcentaje_comision_vendedor": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["vendedor"] == "Vendedor Uno"
-    assert body["folio_orden"] == "OC-VEND-ENRIQ"
-    assert body["numero_orden_cliente"] == "NUM-OC-VEND-ENRIQ"
-    assert body["anunciante"] == "Anunciante Uno"
-    assert body["producto"] == "Spot radio mayo"
-    assert body["orden_total"] == "11600.00"
+    assert body["ordenes_asignadas"] == 1
 
     detalle = client.get(
         f"/api/v1/facturacion/vendedores/{body['factura_vendedor_id']}", headers=_hdr("cxp")
     ).json()
     assert detalle["vendedor"] == "Vendedor Uno"
-    assert detalle["folio_orden"] == "OC-VEND-ENRIQ"
+    assert detalle["ordenes_asignadas"] == 1
 
     lista = client.get(
         "/api/v1/facturacion/vendedores",
@@ -1820,7 +1981,41 @@ def test_alta_factura_vendedor_trae_vendedor_y_orden_denormalizados(
         f for f in lista["items"] if f["factura_vendedor_id"] == body["factura_vendedor_id"]
     )
     assert en_lista["vendedor"] == "Vendedor Uno"
-    assert en_lista["folio_orden"] == "OC-VEND-ENRIQ"
+    assert en_lista["ordenes_asignadas"] == 1
+
+
+def test_alta_rechaza_factura_de_vendedor_sin_ninguna_orden(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_la_misma_orden_puede_estar_en_facturas_de_vendedor_distintas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-PARCIAL")
+    db.commit()
+    for _ in range(2):
+        r = client.post(
+            "/api/v1/facturacion/vendedores",
+            json={
+                "vendedor_id": str(cat["vendedor_id"]),
+                "fecha_factura_vendedor": "2026-03-03",
+                "ordenes_ids": [str(orden_id)],
+            },
+            headers=_hdr("cxp"),
+        )
+        assert r.status_code == 201, r.text
 
 
 def test_ordenes_facturables_vendedor_solo_lista_las_del_vendedor_principal(
@@ -1854,6 +2049,7 @@ def test_ordenes_facturables_vendedor_solo_lista_las_del_vendedor_principal(
     assert items[0]["anunciante"] == "Anunciante Uno"
     assert items[0]["producto"] == "Radio spot"
     assert items[0]["total"] == "11600.00"
+    assert items[0]["porcentaje_comision_vendedor_snap"] is None
 
     # Otro vendedor (no es el principal de ninguna orden) → combo vacío.
     vacio = client.get(
@@ -1864,11 +2060,11 @@ def test_ordenes_facturables_vendedor_solo_lista_las_del_vendedor_principal(
     assert vacio == []
 
 
-def test_editar_factura_vendedor_permite_reasignar_vendedor_y_orden(
+def test_editar_factura_vendedor_permite_reasignar_vendedor_y_ordenes(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """La edición hace todo lo que hace el alta — reasignar vendedor y orden
-    relacionada, recalculando la comisión contra la NUEVA orden."""
+    """La edición hace todo lo que hace el alta — reasignar vendedor y las órdenes
+    elegidas, recalculando la comisión contra las NUEVAS."""
     orden_id = _orden(
         db, cat, "orden_cerrada", "OC-VEND-EDIT-1", subtotal=Decimal("10000.00")
     )
@@ -1890,33 +2086,32 @@ def test_editar_factura_vendedor_permite_reasignar_vendedor_y_orden(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "1160.00",
-            "iva_factura_vendedor": "185.60",
-            "porcentaje_comision_vendedor": "10.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert alta.status_code == 201, alta.text
     fid = alta.json()["factura_vendedor_id"]
-    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% = 1160.00
+    # OrdenCliente.total = 5000 * 1.16 = 5800.00 · 20% (default del NUEVO vendedor) = 1160.00
     r = client.put(
         f"/api/v1/facturacion/vendedores/{fid}",
         json={
             "vendedor_id": str(otro_vendedor_id),
-            "orden_id": str(otra_orden_id),
-            "porcentaje_comision_vendedor": "20.00",
+            "ordenes_ids": [str(otra_orden_id)],
         },
         headers=_hdr("cxp"),
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["vendedor_id"] == str(otro_vendedor_id)
-    assert body["orden_id"] == str(otra_orden_id)
     assert body["vendedor"] == "Vendedor Dos"
-    assert body["folio_orden"] == "OC-VEND-EDIT-2"
     assert body["comision_vendedor"] == "1160.00"
+
+    ordenes = client.get(
+        f"/api/v1/facturacion/vendedores/{fid}/ordenes", headers=_hdr("cxp")
+    ).json()
+    assert [o["orden_id"] for o in ordenes] == [str(otra_orden_id)]
 
 
 def test_editar_factura_vendedor_vendedor_inexistente_400(
@@ -1938,7 +2133,7 @@ def test_editar_factura_vendedor_orden_inexistente_400(
     fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-SIMPLE-2")
     r = client.put(
         f"/api/v1/facturacion/vendedores/{fid}",
-        json={"orden_id": str(uuid.uuid4())},
+        json={"ordenes_ids": [str(uuid.uuid4())]},
         headers=_hdr("cxp"),
     )
     assert r.status_code == 400
@@ -1976,11 +2171,9 @@ def test_lista_facturas_vendedor_ordena_por_mas_reciente_primero(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "folio_factura_vendedor": "VE-ORDEN-1",
             "fecha_factura_vendedor": "2026-06-01",
-            "monto_factura_vendedor": "100.00",
-            "iva_factura_vendedor": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
@@ -1990,11 +2183,9 @@ def test_lista_facturas_vendedor_ordena_por_mas_reciente_primero(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "folio_factura_vendedor": "VE-ORDEN-2",
             "fecha_factura_vendedor": "2026-01-01",
-            "monto_factura_vendedor": "100.00",
-            "iva_factura_vendedor": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )
@@ -2018,10 +2209,8 @@ def test_factura_vendedor_captura_y_edita_archivo_pdf_xml(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "1160.00",
-            "iva_factura_vendedor": "185.60",
+            "ordenes_ids": [str(orden_id)],
             "archivo_pdf_path": "facturacion/proveedor/vendedor/pdf/abc_factura.pdf",
             "archivo_xml_path": "facturacion/proveedor/vendedor/xml/abc_factura.xml",
         },
@@ -2053,10 +2242,8 @@ def _crear_factura_vendedor_simple(
         "/api/v1/facturacion/vendedores",
         json={
             "vendedor_id": str(cat["vendedor_id"]),
-            "orden_id": str(orden_id),
             "fecha_factura_vendedor": "2026-03-03",
-            "monto_factura_vendedor": "100.00",
-            "iva_factura_vendedor": "16.00",
+            "ordenes_ids": [str(orden_id)],
         },
         headers=_hdr("cxp"),
     )

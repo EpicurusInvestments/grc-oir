@@ -1,8 +1,9 @@
-/** Facturas de vendedor (F2): paridad exacta de `FacturasAgenciaPage.test.tsx` — timeline
- * con las 4 fases, tarjetas de importes, sección "Orden relacionada" y "Cálculo de
- * comisión" (denormalizadas por el backend), columnas homologadas en la lista, y
- * edición que permite reasignar vendedor/orden. Sin campos legado `archivo_nombre`/
- * `archivo_path`: esta entidad nace ya con PDF/XML por separado.
+/** Facturas de vendedor (F2) — ADR nuevo (petición del usuario, con captura,
+ * 2026-11-06), mismo cambio que para Facturas de agencia: la pantalla deja de mostrar
+ * una sola "Orden relacionada" y pasa a mostrar la sección "Órdenes asignadas" (N:M vía
+ * `FacturaVendedorOrden`), con la columna "Órdenes asig." homologada en la lista. Sin
+ * campos legado `archivo_nombre`/`archivo_path`: esta entidad nace ya con PDF/XML por
+ * separado.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,9 +11,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FacturasVendedorPage } from "../facturaVendedor/pages/FacturasVendedorPage";
-import type { FacturaVendedor } from "../types";
+import type { FacturaVendedor, FacturaVendedorOrden } from "../types";
 
 const listMock = vi.fn();
+const ordenesMock = vi.fn();
 const actualizarMock = vi.fn();
 const cambiarEstatusMock = vi.fn();
 const autorizarMock = vi.fn();
@@ -22,6 +24,7 @@ vi.mock("../api", () => ({
     list: (params: unknown) => listMock(params),
     create: vi.fn(),
     actualizar: (id: string, data: unknown) => actualizarMock(id, data),
+    ordenes: (id: string) => ordenesMock(id),
     ordenesFacturables: vi.fn().mockResolvedValue([]),
     cambiarEstatus: (...args: unknown[]) => cambiarEstatusMock(...args),
     autorizar: (...args: unknown[]) => autorizarMock(...args),
@@ -46,14 +49,12 @@ vi.mock("../api", () => ({
 const base: FacturaVendedor = {
   factura_vendedor_id: "fv-1",
   vendedor_id: "vd-1",
-  orden_id: "oc-1",
   folio_factura_vendedor: "VEN-2025-0287",
   fecha_factura_vendedor: "2025-06-08",
   monto_factura_vendedor: "177480.00",
-  iva_factura_vendedor: "28397.00",
-  total_factura_vendedor: "205877.00",
-  porcentaje_comision_vendedor: "15.00",
-  comision_vendedor: "150000.00",
+  iva_factura_vendedor: "28396.80",
+  total_factura_vendedor: "205876.80",
+  comision_vendedor: "177480.00",
   archivo_pdf_path: null,
   archivo_xml_path: null,
   estatus_factura_vendedor: "autorizada",
@@ -61,15 +62,25 @@ const base: FacturaVendedor = {
   created_at: "2025-06-08T10:00:00",
   updated_at: null,
   vendedor: "Juan Pérez",
+  ordenes_asignadas: 1,
+};
+
+const orden1: FacturaVendedorOrden = {
+  id: "fvo-1",
+  factura_vendedor_id: "fv-1",
+  orden_id: "oc-1",
+  porcentaje_comision_snap: "15.00",
+  comision_calculada: "177480.00",
   folio_orden: "OC-2025-0041",
   numero_orden_cliente: "PO-BIMBO-0419",
   anunciante: "Grupo Bimbo",
   producto: "Pan Bimbo Integral 680g",
-  orden_total: "1000000.00",
+  orden_total: "1183200.00",
 };
 
 function renderCon(factura: FacturaVendedor) {
   listMock.mockResolvedValue({ items: [factura], total: 1, page: 1, size: 20, pages: 1 });
+  ordenesMock.mockResolvedValue([orden1]);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -81,9 +92,8 @@ function renderCon(factura: FacturaVendedor) {
 async function abrirDetalle(factura: FacturaVendedor) {
   const utils = renderCon(factura);
   (await screen.findByText(factura.folio_factura_vendedor as string)).click();
-  // "Orden relacionada" también es el encabezado de columna de la lista — se espera
-  // por un texto que solo existe en el panel de detalle.
-  await screen.findByText("Cálculo de comisión");
+  await screen.findByText("Órdenes asignadas");
+  await waitFor(() => expect(screen.queryByText("Cargando…")).toBeNull());
   return utils;
 }
 
@@ -94,9 +104,10 @@ function panelDeDetalle(): HTMLElement {
   return document.querySelector(".detail-pane") as HTMLElement;
 }
 
-describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
+describe("FacturasVendedorPage — Órdenes asignadas (N:M)", () => {
   beforeEach(() => {
     listMock.mockReset();
+    ordenesMock.mockReset();
     actualizarMock.mockReset();
     cambiarEstatusMock.mockReset();
     autorizarMock.mockReset();
@@ -110,17 +121,17 @@ describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
     expect(timeline.getByText("Autorizada")).toBeInTheDocument();
   });
 
-  it("la lista muestra Folio, Vendedor, Orden relacionada, Fecha, Subtotal, Total y Estatus", async () => {
+  it("la lista muestra Folio, Vendedor, Fecha, Subtotal, Total, Órdenes asig. y Estatus", async () => {
     await abrirDetalle(base);
     const celda = screen
       .getAllByText("VEN-2025-0287")
       .find((el) => el.closest("tr")) as HTMLElement;
     const fila = within(celda.closest("tr") as HTMLElement);
     expect(fila.getByText("Juan Pérez")).toBeInTheDocument();
-    expect(fila.getByText("OC-2025-0041")).toBeInTheDocument();
     expect(fila.getByText("08/06/2025")).toBeInTheDocument();
     expect(fila.getByText("$177,480.00")).toBeInTheDocument();
-    expect(fila.getByText("$205,877.00")).toBeInTheDocument();
+    expect(fila.getByText("$205,876.80")).toBeInTheDocument();
+    expect(fila.getByText("1")).toBeInTheDocument();
     expect(fila.getByText("Autorizada")).toBeInTheDocument();
   });
 
@@ -128,28 +139,19 @@ describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
     await abrirDetalle(base);
     const panel = within(panelDeDetalle());
     expect(panel.getByText("Subtotal")).toBeInTheDocument();
-    expect(panel.getByText("$177,480.00")).toBeInTheDocument();
-    expect(panel.getByText("$28,397.00")).toBeInTheDocument();
-    expect(panel.getByText("$205,877.00")).toBeInTheDocument();
+    expect(panel.getAllByText("$177,480.00").length).toBe(2);
+    expect(panel.getByText("$28,396.80")).toBeInTheDocument();
+    expect(panel.getByText("$205,876.80")).toBeInTheDocument();
   });
 
-  it("la sección 'Orden relacionada' muestra folio, anunciante/producto y total de la OC", async () => {
+  it("la sección 'Órdenes asignadas' muestra folio, % propio, comisión y anunciante de cada orden", async () => {
     await abrirDetalle(base);
-    // "Orden relacionada"/el folio también aparecen en la lista (misma fila,
-    // seleccionada) — se acota al panel de detalle.
     const panel = within(panelDeDetalle());
-    expect(panel.getByText("Orden relacionada")).toBeInTheDocument();
+    expect(panel.getByText("Órdenes asignadas")).toBeInTheDocument();
     expect(panel.getByText("OC-2025-0041")).toBeInTheDocument();
-    expect(panel.getByText("Grupo Bimbo · Pan Bimbo Integral 680g")).toBeInTheDocument();
-    expect(panel.getByText("$1,000,000.00")).toBeInTheDocument();
-  });
-
-  it("la sección 'Cálculo de comisión' muestra % aplicado y monto calculado", async () => {
-    await abrirDetalle(base);
-    expect(screen.getByText("Cálculo de comisión")).toBeInTheDocument();
-    expect(screen.getByText("15.00 %")).toBeInTheDocument();
-    expect(screen.getByText("$150,000.00")).toBeInTheDocument();
-    expect(screen.getByText(/Sobre venta total c\/IVA de la orden/)).toBeInTheDocument();
+    expect(panel.getByText(/15\.00 %/)).toBeInTheDocument();
+    expect(panel.getByText(/Grupo Bimbo/)).toBeInTheDocument();
+    expect(panel.getAllByText("$177,480.00").length).toBe(2);
   });
 
   it("muestra el archivo adjunto (PDF/XML) cuando existe", async () => {
@@ -172,7 +174,7 @@ describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
     expect(screen.queryByRole("button", { name: "Marcar pagada" })).toBeNull();
   });
 
-  it("una factura 'recibida' sí permite editar, y precarga vendedor/orden ya asignadas", async () => {
+  it("una factura 'recibida' sí permite editar, y precarga vendedor/órdenes ya asignadas", async () => {
     await abrirDetalle({ ...base, estatus_factura_vendedor: "recibida" });
     const boton = screen.getByRole("button", { name: "Editar" });
     expect(boton).toBeEnabled();
@@ -180,12 +182,12 @@ describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
     fireEvent.click(boton);
     expect(await screen.findByText("Editar factura de vendedor")).toBeInTheDocument();
     expect(screen.getByDisplayValue("VEN-2025-0287")).toBeInTheDocument();
-    // fix: el vendedor ya se puede reasignar al editar (antes no había edición alguna).
     const comboVendedor = await screen.findByDisplayValue("Juan Pérez");
     expect(comboVendedor).toBeEnabled();
+    expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
   });
 
-  it("guardar la edición llama a actualizar con el id correcto, vendedor_id y orden_id", async () => {
+  it("guardar la edición llama a actualizar con el id correcto, vendedor_id y ordenes_ids", async () => {
     actualizarMock.mockResolvedValue({ ...base, estatus_factura_vendedor: "recibida" });
     await abrirDetalle({ ...base, estatus_factura_vendedor: "recibida" });
     fireEvent.click(screen.getByRole("button", { name: "Editar" }));
@@ -197,9 +199,8 @@ describe("FacturasVendedorPage — paridad con Facturas de agencia", () => {
     const [id, payload] = actualizarMock.mock.calls[0];
     expect(id).toBe("fv-1");
     expect(payload.vendedor_id).toBe("vd-1");
-    expect(payload.orden_id).toBe("oc-1");
+    expect(payload.ordenes_ids).toEqual(["oc-1"]);
 
-    // Vuelve a la vista de detalle (ya no el formulario).
-    expect(await screen.findByText("Cálculo de comisión")).toBeInTheDocument();
+    expect(await screen.findByText("Órdenes asignadas")).toBeInTheDocument();
   });
 });

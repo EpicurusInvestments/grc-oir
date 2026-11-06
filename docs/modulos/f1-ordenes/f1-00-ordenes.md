@@ -52,6 +52,16 @@ consecutivo no se reinicie; una OE nueva bajo una OC vieja conserva el prefijo `
 (deriva del folio real de su padre, nunca asume el formato nuevo). Detalle completo en
 `docs/arquitectura.md` (ADR-237).
 
+**ADR-238 (bug reportado por el usuario, con captura) — fechas de "Campaña y montos":**
+el calendario de `OrdenClienteForm.tsx` adelantaba un día (bloqueaba elegir "hoy") por
+calcular el mínimo con `new Date().toISOString()`, que convierte a UTC antes de cortar
+la fecha — México es UTC-6 todo el año, así que desde las 18:00 hora local el día en
+UTC ya era el siguiente. Además "Fin de campaña" no tenía `min` en el `<input>`, así
+que el calendario nativo dejaba elegir una fecha anterior a "Inicio de campaña" (solo
+se atrapaba al guardar, vía Zod). Fix: helper `hoyLocal()` (componentes de fecha
+LOCALES, nunca `toISOString()`) y `min={fechaInicio || hoyLocal()}` en Fin de campaña.
+Detalle completo en `docs/arquitectura.md` (ADR-238).
+
 **Checklist de Vo.Bo. (ELIMINADO — ver ADR-100):** existió una tabla hija
 `OrdenClienteVoBoItem` (ADR-033, NO JSON: 10 ítems fijos `ITEMS_VOBO`, cada uno con
 `completado`/`usuario_id`/`fecha_completado`) que gateaba la transición `recibida →
