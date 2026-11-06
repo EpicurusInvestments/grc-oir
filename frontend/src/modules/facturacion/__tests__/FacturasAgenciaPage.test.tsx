@@ -1,7 +1,8 @@
-/** Facturas de agencia (F2): pantalla llevada a la misma paridad que Facturas de
- * afiliado — timeline con las 4 fases, tarjetas de importes, sección "Orden
- * relacionada" y "Cálculo de comisión" (denormalizadas por el backend), columnas
- * homologadas en la lista, y edición que permite reasignar agencia/orden.
+/** Facturas de agencia (F2) — ADR nuevo (petición del usuario, con captura,
+ * 2026-11-06) que SUSTITUYE el criterio de ADR-079: la pantalla deja de mostrar una
+ * sola "Orden relacionada" y pasa a mostrar la sección "Órdenes asignadas" (N:M vía
+ * `FacturaAgenciaOrden`, mismo patrón que Facturas de afiliado), con la columna
+ * "Órdenes asig." homologada en la lista.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,9 +10,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FacturasAgenciaPage } from "../facturaAgencia/pages/FacturasAgenciaPage";
-import type { FacturaAgencia } from "../types";
+import type { FacturaAgencia, FacturaAgenciaOrden } from "../types";
 
 const listMock = vi.fn();
+const ordenesMock = vi.fn();
 const actualizarMock = vi.fn();
 const cambiarEstatusMock = vi.fn();
 const autorizarMock = vi.fn();
@@ -21,6 +23,7 @@ vi.mock("../api", () => ({
     list: (params: unknown) => listMock(params),
     create: vi.fn(),
     actualizar: (id: string, data: unknown) => actualizarMock(id, data),
+    ordenes: (id: string) => ordenesMock(id),
     ordenesFacturables: vi.fn().mockResolvedValue([]),
     cambiarEstatus: (...args: unknown[]) => cambiarEstatusMock(...args),
     autorizar: (...args: unknown[]) => autorizarMock(...args),
@@ -43,14 +46,12 @@ vi.mock("../api", () => ({
 const base: FacturaAgencia = {
   factura_agencia_id: "fg-1",
   agencia_id: "ag-1",
-  orden_id: "oc-1",
   folio_factura_agencia: "OMD-2025-0287",
   fecha_factura_agencia: "2025-06-08",
   monto_factura_agencia: "177480.00",
-  iva_factura_agencia: "28397.00",
-  total_factura_agencia: "205877.00",
-  porcentaje_comision_agencia: "15.00",
-  comision_agencia: "150000.00",
+  iva_factura_agencia: "28396.80",
+  total_factura_agencia: "205876.80",
+  comision_agencia: "177480.00",
   archivo_nombre: null,
   archivo_path: null,
   archivo_pdf_path: null,
@@ -60,15 +61,25 @@ const base: FacturaAgencia = {
   created_at: "2025-06-08T10:00:00",
   updated_at: null,
   agencia: "OMD México",
+  ordenes_asignadas: 1,
+};
+
+const orden1: FacturaAgenciaOrden = {
+  id: "fao-1",
+  factura_agencia_id: "fg-1",
+  orden_id: "oc-1",
+  porcentaje_comision_snap: "15.00",
+  comision_calculada: "177480.00",
   folio_orden: "OC-2025-0041",
   numero_orden_cliente: "PO-BIMBO-0419",
   anunciante: "Grupo Bimbo",
   producto: "Pan Bimbo Integral 680g",
-  orden_total: "1000000.00",
+  orden_total: "1183200.00",
 };
 
 function renderCon(factura: FacturaAgencia) {
   listMock.mockResolvedValue({ items: [factura], total: 1, page: 1, size: 20, pages: 1 });
+  ordenesMock.mockResolvedValue([orden1]);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -80,9 +91,10 @@ function renderCon(factura: FacturaAgencia) {
 async function abrirDetalle(factura: FacturaAgencia) {
   const utils = renderCon(factura);
   (await screen.findByText(factura.folio_factura_agencia as string)).click();
-  // "Orden relacionada" también es el encabezado de columna de la lista — se espera
-  // por un texto que solo existe en el panel de detalle.
-  await screen.findByText("Cálculo de comisión");
+  await screen.findByText("Órdenes asignadas");
+  // Las órdenes resuelven en un tick aparte (otra consulta) — se espera a que termine
+  // antes de aserciones que dependan de su contenido.
+  await waitFor(() => expect(screen.queryByText("Cargando…")).toBeNull());
   return utils;
 }
 
@@ -93,9 +105,10 @@ function panelDeDetalle(): HTMLElement {
   return document.querySelector(".detail-pane") as HTMLElement;
 }
 
-describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
+describe("FacturasAgenciaPage — Órdenes asignadas (N:M)", () => {
   beforeEach(() => {
     listMock.mockReset();
+    ordenesMock.mockReset();
     actualizarMock.mockReset();
     cambiarEstatusMock.mockReset();
     autorizarMock.mockReset();
@@ -109,17 +122,17 @@ describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
     expect(timeline.getByText("Autorizada")).toBeInTheDocument();
   });
 
-  it("la lista muestra Folio, Agencia, Orden relacionada, Fecha, Subtotal, Total y Estatus", async () => {
+  it("la lista muestra Folio, Agencia, Fecha, Subtotal, Total, Órdenes asig. y Estatus", async () => {
     await abrirDetalle(base);
     const celda = screen
       .getAllByText("OMD-2025-0287")
       .find((el) => el.closest("tr")) as HTMLElement;
     const fila = within(celda.closest("tr") as HTMLElement);
     expect(fila.getByText("OMD México")).toBeInTheDocument();
-    expect(fila.getByText("OC-2025-0041")).toBeInTheDocument();
     expect(fila.getByText("08/06/2025")).toBeInTheDocument();
     expect(fila.getByText("$177,480.00")).toBeInTheDocument();
-    expect(fila.getByText("$205,877.00")).toBeInTheDocument();
+    expect(fila.getByText("$205,876.80")).toBeInTheDocument();
+    expect(fila.getByText("1")).toBeInTheDocument();
     expect(fila.getByText("Autorizada")).toBeInTheDocument();
   });
 
@@ -127,28 +140,22 @@ describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
     await abrirDetalle(base);
     const panel = within(panelDeDetalle());
     expect(panel.getByText("Subtotal")).toBeInTheDocument();
-    expect(panel.getByText("$177,480.00")).toBeInTheDocument();
-    expect(panel.getByText("$28,397.00")).toBeInTheDocument();
-    expect(panel.getByText("$205,877.00")).toBeInTheDocument();
+    // "$177,480.00" también aparece en el renglón de la orden (única asignada) — ver
+    // la prueba de "Órdenes asignadas" más abajo para esa aserción acotada.
+    expect(panel.getAllByText("$177,480.00").length).toBe(2);
+    expect(panel.getByText("$28,396.80")).toBeInTheDocument();
+    expect(panel.getByText("$205,876.80")).toBeInTheDocument();
   });
 
-  it("la sección 'Orden relacionada' muestra folio, anunciante/producto y total de la OC", async () => {
+  it("la sección 'Órdenes asignadas' muestra folio, % propio, comisión y anunciante de cada orden", async () => {
     await abrirDetalle(base);
-    // "Orden relacionada"/el folio también aparecen en la lista (misma fila,
-    // seleccionada) — se acota al panel de detalle.
     const panel = within(panelDeDetalle());
-    expect(panel.getByText("Orden relacionada")).toBeInTheDocument();
+    expect(panel.getByText("Órdenes asignadas")).toBeInTheDocument();
     expect(panel.getByText("OC-2025-0041")).toBeInTheDocument();
-    expect(panel.getByText("Grupo Bimbo · Pan Bimbo Integral 680g")).toBeInTheDocument();
-    expect(panel.getByText("$1,000,000.00")).toBeInTheDocument();
-  });
-
-  it("la sección 'Cálculo de comisión' muestra % aplicado y monto calculado", async () => {
-    await abrirDetalle(base);
-    expect(screen.getByText("Cálculo de comisión")).toBeInTheDocument();
-    expect(screen.getByText("15.00 %")).toBeInTheDocument();
-    expect(screen.getByText("$150,000.00")).toBeInTheDocument();
-    expect(screen.getByText(/Sobre venta total c\/IVA de la orden/)).toBeInTheDocument();
+    expect(panel.getByText(/15\.00 %/)).toBeInTheDocument();
+    expect(panel.getByText(/Grupo Bimbo/)).toBeInTheDocument();
+    // Única orden: aparece en el renglón Y en la tarjeta Subtotal (misma cifra).
+    expect(panel.getAllByText("$177,480.00").length).toBe(2);
   });
 
   it("muestra el archivo adjunto (PDF/XML) cuando existe", async () => {
@@ -171,7 +178,7 @@ describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
     expect(screen.queryByRole("button", { name: "Marcar pagada" })).toBeNull();
   });
 
-  it("una factura 'recibida' sí permite editar, y precarga agencia/orden ya asignadas", async () => {
+  it("una factura 'recibida' sí permite editar, y precarga agencia/órdenes ya asignadas", async () => {
     await abrirDetalle({ ...base, estatus_factura_agencia: "recibida" });
     const boton = screen.getByRole("button", { name: "Editar" });
     expect(boton).toBeEnabled();
@@ -179,12 +186,12 @@ describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
     fireEvent.click(boton);
     expect(await screen.findByText("Editar factura de agencia")).toBeInTheDocument();
     expect(screen.getByDisplayValue("OMD-2025-0287")).toBeInTheDocument();
-    // fix: la agencia ya se puede reasignar al editar (antes no había edición alguna).
     const comboAgencia = await screen.findByDisplayValue("OMD México");
     expect(comboAgencia).toBeEnabled();
+    expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
   });
 
-  it("guardar la edición llama a actualizar con el id correcto, agencia_id y orden_id", async () => {
+  it("guardar la edición llama a actualizar con el id correcto, agencia_id y ordenes_ids", async () => {
     actualizarMock.mockResolvedValue({ ...base, estatus_factura_agencia: "recibida" });
     await abrirDetalle({ ...base, estatus_factura_agencia: "recibida" });
     fireEvent.click(screen.getByRole("button", { name: "Editar" }));
@@ -196,9 +203,9 @@ describe("FacturasAgenciaPage — paridad con Facturas de afiliado", () => {
     const [id, payload] = actualizarMock.mock.calls[0];
     expect(id).toBe("fg-1");
     expect(payload.agencia_id).toBe("ag-1");
-    expect(payload.orden_id).toBe("oc-1");
+    expect(payload.ordenes_ids).toEqual(["oc-1"]);
 
     // Vuelve a la vista de detalle (ya no el formulario).
-    expect(await screen.findByText("Cálculo de comisión")).toBeInTheDocument();
+    expect(await screen.findByText("Órdenes asignadas")).toBeInTheDocument();
   });
 });

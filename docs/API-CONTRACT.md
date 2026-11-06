@@ -1084,9 +1084,17 @@ aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de c
   factura entre las `OrdenEstacion` a las que se asignó (`FacturaAfiliadoOrden`). Devuelve
   una lista simple, no paginada: son pocas por factura.
 - **`GET /facturacion/agencias`** (`costos:leer`) — facturas recibidas de agencias.
-  Filtros: `agencia_id`, `orden_id`, `estatus_factura_agencia`. `q` busca en el folio
-  externo.
+  Filtros: `agencia_id`, `estatus_factura_agencia`. `q` busca en el folio externo.
 - **`GET /facturacion/agencias/{id}`** (`costos:leer`).
+- **`GET /facturacion/agencias/{id}/ordenes`** (`costos:leer`, ADR-239) — las órdenes
+  acumuladas en esa factura (`FacturaAgenciaOrden`), cada una con su propio `%` y
+  comisión. Mismo criterio que `/afiliados/{id}/ordenes`: lista simple, no paginada.
+- **`GET /facturacion/vendedores`** (`costos:leer`) — facturas recibidas de vendedores
+  (comisión del vendedor PRINCIPAL). Filtros: `vendedor_id`, `estatus_factura_vendedor`.
+  `q` busca en el folio externo.
+- **`GET /facturacion/vendedores/{id}`** (`costos:leer`).
+- **`GET /facturacion/vendedores/{id}/ordenes`** (`costos:leer`, ADR-240) — mismo
+  criterio que `/agencias/{id}/ordenes` (`FacturaVendedorOrden`).
 - **`GET /facturacion/costos`** (`costos:leer`) — costos adicionales. Filtros:
   `tipo_costo` (`nomina`|`overhead`), `orden_id`, `periodo_contable` (`YYYY-MM`). `q`
   busca en la descripción.
@@ -1112,15 +1120,25 @@ patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
   vigentes** → 409 `conflicto`; las canceladas no cuentan (ADR-047). Ojo: esa regla ya
   **no** la sostiene el esquema —no es expresable sobre la tabla puente, porque
   `estado_facturacion` vive en `factura_cliente`— sino el servicio, tanto al dar de alta
-  como al armar la bandeja. `FacturaAgencia` es 1:N sobre la misma OC.
+  como al armar la bandeja.
+- **N:M OC ↔ FacturaAgencia/FacturaVendedor** (`factura_agencia_orden`/
+  `factura_vendedor_orden`, ADR-239/ADR-240 — SUSTITUYEN el criterio 1:1-por-factura de
+  ADR-079/082): una factura de agencia o de vendedor acumula varias órdenes; la misma
+  OC sí puede repartirse entre facturas distintas de la misma entidad (parcialidades),
+  igual criterio que abajo para `FacturaAfiliadoOrden`. Ambos cambios se hicieron en la
+  misma entrega (petición del usuario).
 - **Una OE no se asigna dos veces a la misma factura de afiliado**
   (`uq_factura_afiliado_orden_factura_oe`); la misma OE sí puede repartirse entre facturas
-  distintas (parcialidades de la emisora).
+  distintas (parcialidades de la emisora). Misma regla para `FacturaAgenciaOrden`/
+  `FacturaVendedorOrden` (`uq_factura_agencia_orden_factura_oc`/
+  `uq_factura_vendedor_orden_factura_oc`), con OC en vez de OE.
 - **Montos**: `total_* = monto/subtotal + iva` con CHECK de igualdad envuelto en
   `ROUND(x, 2)` (ADR-039). En `FacturaCliente` además `iva_factura = subtotal * 0.16`,
-  porque ahí el IVA es derivado; en las facturas de proveedor el IVA es **capturado**
-  (la spec lo marca "Manual": pueden traer retenciones o exentos), así que no se les
-  impone la tasa.
+  porque ahí el IVA es derivado; en `FacturaAfiliado` el IVA sigue siendo **capturado**
+  (la spec lo marca "Manual": la factura real del afiliado puede traer retenciones o
+  exentos). En `FacturaAgencia`/`FacturaVendedor` (ADR-239/240) el IVA TAMBIÉN pasó a
+  calcularse a la tasa central — ya no hay una factura real de un tercero que
+  reconciliar, es 100% lo que el sistema calculó de las órdenes elegidas.
 - **Dos desviaciones aditivas** respecto a la spec (catálogos que nunca se construyeron en
   F0): `layout_factura` es texto libre nullable (no FK a `LayoutFactura`) y
   `metodo_pago_clave` es texto sin FK (`MetodoPago` vive en `ConstantesSistema`, grupo
@@ -1230,14 +1248,25 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   una orden cuya factura se canceló vuelve a aparecer aquí y puede facturarse de nuevo
   (ADR-047).
 
-#### FacturaAfiliado / FacturaAgencia
+#### FacturaAfiliado / FacturaAgencia / FacturaVendedor
 
-- **`POST /facturacion/afiliados`**, **`POST /facturacion/agencias`** (`costos:crear`) —
-  captura de CxP. `total_* = monto + iva` calculado. En afiliado, `razon_social_afiliada`
-  se hereda del catálogo. En agencia, `comision_agencia = OrdenCliente.total * porcentaje
-  / 100`, con el porcentaje sugerido del catálogo Agencia si no se captura, y persistido.
+- **`POST /facturacion/afiliados`**, **`POST /facturacion/agencias`**,
+  **`POST /facturacion/vendedores`** (`costos:crear`) — captura de CxP.
+  `total_* = monto + iva` calculado. En afiliado, `razon_social_afiliada` se hereda del
+  catálogo; `monto_factura_afiliado`/`iva_factura_afiliado` siguen siendo **Manual**
+  (reconcilian contra la factura real del afiliado, posibles retenciones).
+  En agencia (ADR-239, SUSTITUYE ADR-079) y vendedor (ADR-240, SUSTITUYE ADR-082,
+  mismo día y mismo patrón), `ordenes_ids: UUID[]` (mínimo 1) reemplaza al antiguo
+  `orden_id` único: `monto_*`/`iva_*`/`total_*`/`comision_*` se CALCULAN como la suma de
+  `OrdenCliente.total * porcentaje_comision_snap / 100` de cada orden elegida (cada una
+  con su propio `%`, el de la orden o si no el default del catálogo Agencia/Vendedor),
+  más IVA a la tasa central — ya no se aceptan como entrada. **400** si `ordenes_ids`
+  viene vacío, repite el mismo id, o alguno no existe.
 - **`PUT .../{id}`** (`costos:editar`) — **409** si ya está `autorizada` o `pagada`.
-  Recalcula total y comisión si cambian sus insumos.
+  En afiliado recalcula el total si cambian sus insumos. En agencia/vendedor,
+  `ordenes_ids` reconcilia EXACTAMENTE como pide la lista (agrega, quita, deja intacto
+  lo que sigue — mismo criterio que `ordenes_estacion_ids` de Afiliado) y recalcula
+  monto/iva/total/comisión contra el nuevo conjunto.
 - **`POST .../{id}/estatus`** (`costos:editar`) — transiciones **operativas** de CxP:
   `recibida ↔ en_revision` y `autorizada → pagada`. Pedir `autorizada` por aquí da **403**
   y remite al canal dedicado.
@@ -1247,11 +1276,14 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   valida dentro del servicio → **403** para cualquier otra área, incluida la CxP que
   capturó. Mismo diseño que `PATCH /ordenes/clientes/{id}/comisiones` en F1. Ver ADR-046.
 
-#### FacturaAfiliadoOrden y CostoAdicional
+#### FacturaAfiliadoOrden / FacturaAgenciaOrden / FacturaVendedorOrden y CostoAdicional
 
 - **`POST /facturacion/afiliados/{id}/ordenes`** (`costos:editar`) — reparte una porción
   del costo a una `OrdenEstacion`. **400** si la OE no está `cerrada`; **409** si esa OE ya
-  está asignada a esta factura.
+  está asignada a esta factura. `FacturaAgenciaOrden`/`FacturaVendedorOrden`
+  (ADR-239/240) no tienen un endpoint equivalente de "agregar una sola": se gestionan
+  completo vía `ordenes_ids` en el alta y la edición (no hay un monto libre que
+  capturar aparte, el de cada fila siempre se deriva de `%` × `OrdenCliente.total`).
 - **`POST /facturacion/costos`**, **`PUT /facturacion/costos/{id}`** (`costos:crear` /
   `costos:editar`). `periodo_contable` valida `YYYY-MM` con mes 01–12 en el schema
   (**422**): el CHECK de la tabla solo puede garantizar la forma, ver ADR-045. `orden_id`

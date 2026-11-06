@@ -70,6 +70,17 @@ import type { EstadoOC, OrdenClienteInput } from "../../types";
 
 const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
 
+// ADR-238 (bug reportado por el usuario): `new Date().toISOString()` convierte a UTC antes
+// de cortar la fecha — en México (UTC-6), desde las 18:00 hora local el día en UTC ya es
+// el siguiente, así que "hoy" se calculaba mal y el calendario bloqueaba el día real. Esta
+// función arma la fecha ISO a partir de los componentes LOCALES (año/mes/día), nunca de UTC.
+const hoyLocal = () => {
+  const d = new Date();
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mes}-${dia}`;
+};
+
 // ADR-180: clave base (sin sufijo) del grupo MotivoCambio reservada para estas fechas.
 const CLAVE_BASE_MOTIVO_FECHA = "cambiofecha";
 
@@ -145,7 +156,7 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     .refine(
       (d) =>
         d.fecha_venta === fechaVentaOriginal ||
-        d.fecha_venta >= new Date().toISOString().slice(0, 10),
+        d.fecha_venta >= hoyLocal(),
       {
         path: ["fecha_venta"],
         message: "La fecha de venta no puede ser una fecha pasada.",
@@ -154,7 +165,7 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     .refine(
       (d) =>
         d.fecha_inicio_campania === fechaInicioOriginal ||
-        d.fecha_inicio_campania >= new Date().toISOString().slice(0, 10),
+        d.fecha_inicio_campania >= hoyLocal(),
       {
         path: ["fecha_inicio_campania"],
         message: "La fecha de inicio no puede ser una fecha pasada.",
@@ -225,7 +236,7 @@ export function OrdenClienteForm({
     resolver: zodResolver(buildSchema(defaultValues?.fecha_inicio_campania ?? "", defaultValues?.fecha_venta ?? "")),
     defaultValues: {
       numero_orden_cliente: defaultValues?.numero_orden_cliente ?? "",
-      fecha_venta: defaultValues?.fecha_venta ?? new Date().toISOString().slice(0, 10),
+      fecha_venta: defaultValues?.fecha_venta ?? hoyLocal(),
       empresa_facturadora_id: defaultValues?.empresa_facturadora_id ?? "",
       anunciante_id: defaultValues?.anunciante_id ?? "",
       agencia_id: defaultValues?.agencia_id ?? "",
@@ -534,7 +545,7 @@ export function OrdenClienteForm({
                   className="fi"
                   type="date"
                   disabled={congelado}
-                  min={new Date().toISOString().slice(0, 10)}
+                  min={hoyLocal()}
                   {...register("fecha_venta")}
                 />
                 <div className="fe">{errors.fecha_venta?.message}</div>
@@ -661,14 +672,20 @@ export function OrdenClienteForm({
                   className="fi"
                   type="date"
                   disabled={congelado}
-                  min={new Date().toISOString().slice(0, 10)}
+                  min={hoyLocal()}
                   {...register("fecha_inicio_campania")}
                 />
                 <div className="fe">{errors.fecha_inicio_campania?.message}</div>
               </div>
               <div>
                 <div className="fl fl-required">Fin de campaña</div>
-                <input className="fi" type="date" disabled={congelado} {...register("fecha_fin_campania")} />
+                <input
+                  className="fi"
+                  type="date"
+                  disabled={congelado}
+                  min={fechaInicio || hoyLocal()}
+                  {...register("fecha_fin_campania")}
+                />
                 <div className="fe">{errors.fecha_fin_campania?.message}</div>
               </div>
               <div>

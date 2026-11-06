@@ -313,7 +313,6 @@ class FacturaAgenciaDisponibleRead(BaseModel):
 
     factura_agencia_id: uuid.UUID
     agencia_id: uuid.UUID
-    orden_id: uuid.UUID
     folio_factura_agencia: str | None = None
     total_factura_agencia: Decimal
 
@@ -323,7 +322,6 @@ class FacturaVendedorDisponibleRead(BaseModel):
 
     factura_vendedor_id: uuid.UUID
     vendedor_id: uuid.UUID
-    orden_id: uuid.UUID
     folio_factura_vendedor: str | None = None
     total_factura_vendedor: Decimal
 

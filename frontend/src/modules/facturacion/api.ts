@@ -25,11 +25,13 @@ import type {
   FacturaAfiliadoUpdate,
   FacturaAgencia,
   FacturaAgenciaCreate,
+  FacturaAgenciaOrden,
   FacturaAgenciaUpdate,
   FacturaCliente,
   FacturaClienteCreate,
   FacturaVendedor,
   FacturaVendedorCreate,
+  FacturaVendedorOrden,
   FacturaVendedorUpdate,
   OpcionCatalogo,
   OrdenClienteFacturableAgencia,
@@ -243,7 +245,7 @@ export const facturaAfiliadoApi = {
 // ── FacturaAgencia ────────────────────────────────────────────────────────────
 export interface FiltrosFacturaAgencia extends ListParams {
   estatus_factura_agencia?: string;
-  orden_id?: string;
+  agencia_id?: string;
 }
 
 export const facturaAgenciaApi = {
@@ -259,7 +261,12 @@ export const facturaAgenciaApi = {
     const { data } = await apiClient.put<FacturaAgencia>(`${BASE}/agencias/${id}`, payload);
     return data;
   },
-  /** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` de esa agencia. */
+  /** Órdenes acumuladas en esta factura (detalle + precargado al editar). */
+  async ordenes(id: string) {
+    const { data } = await apiClient.get<FacturaAgenciaOrden[]>(`${BASE}/agencias/${id}/ordenes`);
+    return data;
+  },
+  /** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` de esa agencia. */
   async ordenesFacturables(agenciaId: string) {
     const { data } = await apiClient.get<OrdenClienteFacturableAgencia[]>(
       `${BASE}/agencias/ordenes-facturables`,
@@ -282,7 +289,7 @@ export const facturaAgenciaApi = {
 // ── FacturaVendedor ───────────────────────────────────────────────────────────
 export interface FiltrosFacturaVendedor extends ListParams {
   estatus_factura_vendedor?: string;
-  orden_id?: string;
+  vendedor_id?: string;
 }
 
 export const facturaVendedorApi = {
@@ -298,7 +305,12 @@ export const facturaVendedorApi = {
     const { data } = await apiClient.put<FacturaVendedor>(`${BASE}/vendedores/${id}`, payload);
     return data;
   },
-  /** Combo "Orden relacionada" del alta/edición: OC `orden_cerrada` cuyo vendedor
+  /** Órdenes acumuladas en esta factura (detalle + precargado al editar). */
+  async ordenes(id: string) {
+    const { data } = await apiClient.get<FacturaVendedorOrden[]>(`${BASE}/vendedores/${id}/ordenes`);
+    return data;
+  },
+  /** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` cuyo vendedor
    *  principal es el elegido. */
   async ordenesFacturables(vendedorId: string) {
     const { data } = await apiClient.get<OrdenClienteFacturableVendedor[]>(

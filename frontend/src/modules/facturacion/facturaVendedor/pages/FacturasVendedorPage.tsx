@@ -4,11 +4,13 @@
  * (esta entidad nace ya con `archivo_pdf_path`/`archivo_xml_path` por separado).
  *
  * Misma máquina de estados y misma regla de autorización que agencia/afiliado.
- * La relación con la OrdenCliente es 1:N — una misma orden puede tener varias facturas
- * de vendedor (parcialidades).
+ *
+ * ADR nuevo (petición del usuario, con captura, 2026-11-06) — mismo cambio que ADR-239
+ * hizo para `FacturaAgencia`: la relación con OrdenCliente pasa de 1:1-por-factura a
+ * N:M vía `FacturaVendedorOrden` — una factura de vendedor acumula VARIAS órdenes.
  *
  * Alta y edición comparten el mismo formulario (`FacturaVendedorForm`): la edición
- * puede reasignar vendedor y orden.
+ * puede reasignar vendedor y editar qué órdenes tiene asignadas.
  */
 
 import { useState } from "react";
@@ -18,7 +20,7 @@ import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } fr
 
 import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
-import { useFacturasVendedor } from "../../hooks";
+import { useFacturasVendedor, useOrdenesVendedor } from "../../hooks";
 import {
   ESTATUS_PROVEEDOR,
   ESTATUS_PROVEEDOR_LABEL,
@@ -108,6 +110,7 @@ export function FacturasVendedorPage() {
     estatus_factura_vendedor: filtro === "todas" ? undefined : filtro,
   };
   const { list, crear, actualizar, cambiarEstatus, autorizar } = useFacturasVendedor(filtros);
+  const ordenes = useOrdenesVendedor(selected?.factura_vendedor_id ?? null);
 
   const mensajeDeError = (e: unknown): string =>
     e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
@@ -161,13 +164,10 @@ export function FacturasVendedorPage() {
         isEdit
         defaultValues={{
           vendedor_id: selected.vendedor_id,
-          orden_id: selected.orden_id,
           folio_factura_vendedor: selected.folio_factura_vendedor ?? undefined,
           fecha_factura_vendedor: selected.fecha_factura_vendedor,
-          monto_factura_vendedor: selected.monto_factura_vendedor,
-          iva_factura_vendedor: selected.iva_factura_vendedor,
-          porcentaje_comision_vendedor: selected.porcentaje_comision_vendedor ?? undefined,
         }}
+        ordenesIniciales={ordenes.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}
         submitting={actualizar.isPending}
@@ -229,45 +229,38 @@ export function FacturasVendedorPage() {
           </div>
 
           <div className="sec">
-            Orden relacionada <FieldTag origin="derivado" />
+            Órdenes asignadas <FieldTag origin="derivado" />
           </div>
-          <div
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r)",
-              padding: "9px 11px",
-              marginBottom: 11,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
-                {oGuion(selected.folio_orden)}
-              </span>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
-                {fmtMoneda(selected.orden_total)}
-              </span>
+          {ordenes.isLoading && <div className="fv muted">Cargando…</div>}
+          {!ordenes.isLoading && (ordenes.data?.length ?? 0) === 0 && (
+            <div className="fv muted" style={{ fontSize: 12 }}>
+              Sin órdenes asignadas.
             </div>
-            {(selected.anunciante || selected.producto) && (
-              <div style={{ fontSize: 11, color: "var(--text3)" }}>
-                {[selected.anunciante, selected.producto].filter(Boolean).join(" · ")}
+          )}
+          {(ordenes.data ?? []).map((o) => (
+            <div
+              key={o.id}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r)",
+                padding: "9px 11px",
+                marginBottom: 5,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
+                  {oGuion(o.folio_orden)}
+                </span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+                  {fmtMoneda(o.comision_calculada)}
+                </span>
               </div>
-            )}
-          </div>
-
-          <div className="sec">Cálculo de comisión</div>
-          <div className="fl">% Comisión aplicada</div>
-          <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtPorcentaje(selected.porcentaje_comision_vendedor)}
-          </div>
-          <div className="fl">
-            Monto comisión <FieldTag origin="calculado" />
-          </div>
-          <div className="fv mono" style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtMoneda(selected.comision_vendedor)}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text3)", marginTop: -6 }}>
-            Sobre venta total c/IVA de la orden ({fmtMoneda(selected.orden_total)})
-          </div>
+              <div style={{ fontSize: 11, color: "var(--text3)" }}>
+                {fmtPorcentaje(o.porcentaje_comision_snap)} sobre {fmtMoneda(o.orden_total)}
+                {o.anunciante ? ` · ${o.anunciante}` : ""}
+              </div>
+            </div>
+          ))}
 
           <div className="sec">Fecha</div>
           <div className="fv mono">{fmtFecha(selected.fecha_factura_vendedor)}</div>
@@ -358,13 +351,15 @@ export function FacturasVendedorPage() {
           <tr>
             <th style={{ width: "14%" }}>Folio</th>
             <th style={{ width: "18%" }}>Vendedor</th>
-            <th style={{ width: "16%" }}>Orden relacionada</th>
             <th style={{ width: "10%" }}>Fecha</th>
             <th className="td-right" style={{ width: "13%" }}>
               Subtotal
             </th>
             <th className="td-right" style={{ width: "13%" }}>
               Total
+            </th>
+            <th className="td-center" style={{ width: 90 }}>
+              Órdenes asig.
             </th>
             <th className="td-center" style={{ width: 130 }}>
               Estatus
@@ -385,10 +380,10 @@ export function FacturasVendedorPage() {
             >
               <td className="td-main mono">{oGuion(f.folio_factura_vendedor)}</td>
               <td className="td-2">{oGuion(f.vendedor)}</td>
-              <td className="td-2 mono">{oGuion(f.folio_orden)}</td>
               <td className="td-2 mono">{fmtFecha(f.fecha_factura_vendedor)}</td>
               <td className="td-2 td-right">{fmtMoneda(f.monto_factura_vendedor)}</td>
               <td className="td-2 td-right">{fmtMoneda(f.total_factura_vendedor)}</td>
+              <td className="td-center">{f.ordenes_asignadas}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_vendedor)}`}>
                   {ESTATUS_PROVEEDOR_LABEL[f.estatus_factura_vendedor]}

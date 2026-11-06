@@ -14,6 +14,17 @@ import { agencias, anunciantes, contratos, marcas, vendedores } from "../state/c
 import { fieldByLabelText } from "./domHelpers";
 import { makeOCInput } from "./fixtures";
 
+// ADR-238: misma fórmula local (no UTC) que `hoyLocal()` del formulario — evita que estas
+// pruebas se vuelvan flaky por el desfase de huso horario, y los offsets relativos a "hoy"
+// (en vez de fechas fijas) evitan que se vuelvan obsoletas conforme pasan los días.
+function fechaLocalConOffset(diasOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + diasOffset);
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
 // ADR-167: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" —
 // mock del catálogo (sin pegarle a la red real desde jsdom), 2 productos: uno con
 // duraciones reales (Spot) y uno cuyo único registro es "sin resultado" (Mención).
@@ -388,9 +399,14 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
 
     // Hay que mover también Fin de campaña: el default (2025-06-30) quedaría antes que
     // el nuevo Inicio, lo que violaría "fin >= inicio" y bloquearía el envío por esa
-    // razón (no por el motivo, que es lo que esta prueba quiere aislar).
-    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fin de campaña"), { target: { value: "2026-12-15" } });
-    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), { target: { value: "2026-11-01" } });
+    // razón (no por el motivo, que es lo que esta prueba quiere aislar). Offsets relativos
+    // a "hoy" (no fechas fijas) para que la prueba no caduque con el paso del tiempo.
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fin de campaña"), {
+      target: { value: fechaLocalConOffset(45) },
+    });
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
+      target: { value: fechaLocalConOffset(10) },
+    });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio"), {
       target: { value: "Se redujo el periodo" },
     });
@@ -503,7 +519,7 @@ describe("Spots bonificables (ADR-067)", () => {
 describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
   it("al crear, una fecha de inicio pasada muestra error y no llama a onGuardar", async () => {
     const { container, onGuardar } = renderForm();
-    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const ayer = fechaLocalConOffset(-1);
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
       target: { value: ayer },
     });
@@ -532,7 +548,7 @@ describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
       estatusActual: "orden_interna",
       defaultValues,
     });
-    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const ayer = fechaLocalConOffset(-1);
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
       target: { value: ayer },
     });
@@ -546,7 +562,7 @@ describe("Validación: fecha de inicio de campaña no puede ser pasada", () => {
 describe("Validación: fecha de venta no puede ser pasada", () => {
   it("al crear, una fecha de venta pasada muestra error y no llama a onGuardar", async () => {
     const { container, onGuardar } = renderForm();
-    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const ayer = fechaLocalConOffset(-1);
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
       target: { value: ayer },
     });
@@ -575,7 +591,7 @@ describe("Validación: fecha de venta no puede ser pasada", () => {
       estatusActual: "orden_interna",
       defaultValues,
     });
-    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const ayer = fechaLocalConOffset(-1);
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fecha de venta"), {
       target: { value: ayer },
     });

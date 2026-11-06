@@ -343,7 +343,6 @@ export interface FacturaAfiliadoInfo {
 export interface FacturaAgenciaInfo {
   factura_agencia_id: string;
   agencia_id: string;
-  orden_id: string;
   folio_factura_agencia: string | null;
   total_factura_agencia: string;
 }
@@ -353,7 +352,6 @@ export interface FacturaAgenciaInfo {
 export interface FacturaVendedorInfo {
   factura_vendedor_id: string;
   vendedor_id: string;
-  orden_id: string;
   folio_factura_vendedor: string | null;
   total_factura_vendedor: string;
 }

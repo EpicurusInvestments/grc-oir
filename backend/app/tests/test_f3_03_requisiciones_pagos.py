@@ -190,19 +190,23 @@ def _factura_afiliado(db: Session, cat: dict[str, uuid.UUID], total: Decimal) ->
 
 
 def _factura_agencia(
-    db: Session, cat: dict[str, uuid.UUID], orden_id: uuid.UUID, total: Decimal
+    db: Session, cat: dict[str, uuid.UUID], _orden_id: uuid.UUID, total: Decimal
 ) -> uuid.UUID:
+    """`_orden_id` ya no se persiste en `FacturaAgencia` (ADR nuevo: N:M vía
+    `FacturaAgenciaOrden`) — se deja el parámetro para no tocar las llamadas existentes,
+    estas pruebas solo verifican la exclusión por requisición, no el reparto por orden."""
     factura_id = uuid.uuid4()
     monto = (total / Decimal("1.16")).quantize(Decimal("0.01"))
+    iva = (monto * Decimal("0.16")).quantize(Decimal("0.01"))
     db.add(
         FacturaAgencia(
             factura_agencia_id=factura_id,
             agencia_id=cat["agencia_id"],
-            orden_id=orden_id,
             fecha_factura_agencia=date(2026, 3, 1),
             monto_factura_agencia=monto,
-            iva_factura_agencia=(total - monto).quantize(Decimal("0.01")),
-            total_factura_agencia=total,
+            iva_factura_agencia=iva,
+            total_factura_agencia=(monto + iva).quantize(Decimal("0.01")),
+            comision_agencia=monto,
             estatus_factura_agencia=EstatusFacturaProveedor.AUTORIZADA.value,
             created_by=ADMIN_ID,
         )
@@ -212,19 +216,23 @@ def _factura_agencia(
 
 
 def _factura_vendedor(
-    db: Session, cat: dict[str, uuid.UUID], orden_id: uuid.UUID, total: Decimal
+    db: Session, cat: dict[str, uuid.UUID], _orden_id: uuid.UUID, total: Decimal
 ) -> uuid.UUID:
+    """`_orden_id` ya no se persiste en `FacturaVendedor` (ADR nuevo: N:M vía
+    `FacturaVendedorOrden`) — se deja el parámetro para no tocar las llamadas
+    existentes, estas pruebas solo verifican la exclusión por requisición."""
     factura_id = uuid.uuid4()
     monto = (total / Decimal("1.16")).quantize(Decimal("0.01"))
+    iva = (monto * Decimal("0.16")).quantize(Decimal("0.01"))
     db.add(
         FacturaVendedor(
             factura_vendedor_id=factura_id,
             vendedor_id=cat["vendedor_id"],
-            orden_id=orden_id,
             fecha_factura_vendedor=date(2026, 3, 1),
             monto_factura_vendedor=monto,
-            iva_factura_vendedor=(total - monto).quantize(Decimal("0.01")),
-            total_factura_vendedor=total,
+            iva_factura_vendedor=iva,
+            total_factura_vendedor=(monto + iva).quantize(Decimal("0.01")),
+            comision_vendedor=monto,
             estatus_factura_vendedor=EstatusFacturaProveedor.AUTORIZADA.value,
             created_by=ADMIN_ID,
         )
