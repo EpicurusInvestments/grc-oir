@@ -9989,3 +9989,21 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   encima de las de Agencia, suite completa de backend 100% verde (exit 0), `ruff`
   limpio. Frontend — `tsc --noEmit`/`eslint` limpios, suites `facturacion` (172
   contando ambos módulos) y `cobranza` verdes tras el fix de `RequisicionesPage.tsx`.
+
+### ADR-241 — "Pagos recibidos" (F3): el buscador de la toolbar también cubre el número de pago (parcialidad)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-09 (petición del usuario, probando la
+  pantalla en vivo tras el restart: "corrige esta pantalla que busque por pago,
+  referencia y factura"). ADR-233 ya había extendido el filtro de `PagosClientePage.tsx`
+  más allá de solo `referencia_pago` (agregando fecha, factura y monto formateados/crudo),
+  pero se quedó fuera `numero_pago` (columna "Número de parcialidad") — el usuario podía
+  ver el número de parcialidad en la tabla pero no encontrar un pago tecleándolo.
+- **Diseño:** se agrega `p.numero_pago ?? ""` al arreglo de campos comparados en el
+  `useMemo` de `items` (mismo criterio: comparación insensible a mayúsculas/minúsculas,
+  substring). Placeholder de la caja de búsqueda actualizado de "Buscar fecha,
+  referencia, factura o monto…" a "Buscar pago, referencia, factura, fecha o monto…"
+  para reflejar el campo nuevo. Sin cambios de API: sigue siendo un filtro en memoria
+  sobre los datos ya traídos por `useHistorialPagosCliente`/`useNoAsignados`.
+- **Verificado:** nueva prueba en `PagosClientePage.test.tsx` ("el buscador filtra por
+  número de pago, referencia y factura") más la suite completa del archivo (12/12
+  verdes) y `tsc --noEmit` limpio.

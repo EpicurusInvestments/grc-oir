@@ -154,6 +154,25 @@ describe("PagosClientePage", () => {
     expect(facturasEnOrden(container)).toEqual(["F-002", "F-001", "F-999"]);
   });
 
+  // Petición del usuario: el buscador de la toolbar debe filtrar por número de pago
+  // (parcialidad), referencia y factura — no solo por fecha/monto.
+  it("el buscador filtra por número de pago, referencia y factura", () => {
+    const pagoConParcialidad = { ...pagoA, numero_pago: "2 de 3" };
+    const { container } = renderPagina([pagoConParcialidad, pagoB, pagoViejo]);
+    const buscador = screen.getByPlaceholderText(
+      "Buscar pago, referencia, factura, fecha o monto…",
+    );
+
+    fireEvent.change(buscador, { target: { value: "2 de 3" } });
+    expect(facturasEnOrden(container)).toEqual(["F-002"]);
+
+    fireEvent.change(buscador, { target: { value: "REF-B" } });
+    expect(facturasEnOrden(container)).toEqual(["F-001"]);
+
+    fireEvent.change(buscador, { target: { value: "F-999" } });
+    expect(facturasEnOrden(container)).toEqual(["F-999"]);
+  });
+
   it("cambiar el combo a 'Fecha y Factura' reordena por Factura (asc) dentro del mismo día", () => {
     const { container } = renderPagina();
     fireEvent.change(screen.getByDisplayValue("Ordenar: Fecha y Referencia"), {
