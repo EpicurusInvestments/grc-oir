@@ -52,6 +52,12 @@ consecutivo no se reinicie; una OE nueva bajo una OC vieja conserva el prefijo `
 (deriva del folio real de su padre, nunca asume el formato nuevo). Detalle completo en
 `docs/arquitectura.md` (ADR-237).
 
+**ADR-254 (bug, petición del usuario) — el primer folio salía en `000041`, no `000001`:**
+`_siguiente_folio()` tenía un piso fijo (`maximo = 40`) sin ningún ADR que lo
+justificara, desde el primer commit de F1 — con la tabla vacía siempre ganaba el piso
+(`40 + 1 = 41`). Piso cambiado a `0`. Detalle completo en `docs/arquitectura.md`
+(ADR-254).
+
 **ADR-238 (bug reportado por el usuario, con captura) — fechas de "Campaña y montos":**
 el calendario de `OrdenClienteForm.tsx` adelantaba un día (bloqueaba elegir "hoy") por
 calcular el mínimo con `new Date().toISOString()`, que convierte a UTC antes de cortar
@@ -114,6 +120,22 @@ propio historial de tarifa (`listarHistorialTarifaOrdenEstacionApi`, igual que y
 `OrdenEstacionDetailPanel.tsx`) para PRESELECCIONAR el combo con el motivo más reciente,
 en vez de arrancar siempre vacío. Sin cambios de backend ni migraciones. Detalle completo
 en `docs/arquitectura.md` (ADR-251).
+
+**ADR-252 (petición del usuario, con captura) — columna "Spots" retirada también de la
+captura MANUAL en "Capturar reales":** antes solo se ocultaba con un layout cargado
+(ADR-247); ahora se quita siempre (ya no es editable por fila, solo la hora) y la tabla
+usa `tableLayout: "fixed"` con anchos explícitos para no estirarse con espacio vacío.
+Detalle completo en `docs/arquitectura.md` (ADR-252).
+
+**ADR-253 (bug, petición del usuario, con captura real) — 2 bugs en "Capturar reales
+desde layout":** (1) el balance de "los días nuevos exceden el total de spots" (backend)
+comparaba contra la cuota ASIGNADA original de la OE en vez de lo que de verdad queda
+VERIFICADO tras el mismo avance (contaba dos veces los spots que el layout baja a 0 por
+faltante); (2) "fuera de horario" (frontend) comparaba la hora real contra el renglón
+puntual que le tocó por el emparejamiento cronológico (ADR-174b) en vez de contra la
+ventana del DÍA COMPLETO (ver `ventanaDelDia`, `RealesForm.tsx`) — por eso desfases
+similares quedaban unos marcados y otros no, según qué slot les tocara. Detalle completo
+en `docs/arquitectura.md` (ADR-253).
 
 **Checklist de Vo.Bo. (ELIMINADO — ver ADR-100):** existió una tabla hija
 `OrdenClienteVoBoItem` (ADR-033, NO JSON: 10 ítems fijos `ITEMS_VOBO`, cada uno con
@@ -243,7 +265,17 @@ los días sin asignación propia; `OrdenEstacionDia.orden_estacion_audio_id` (nu
 guarda la excepción puntual de un día, asignada con
 `PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Lista blanca propia
 (`EXTENSIONES_AUDIO_ORDENES`: mp3/wav/ogg) y tope propio (`S3_MAX_AUDIO_BYTES`, 15 MB) —
-ninguno comparte constante con los adjuntos de documentos (ADR-042). En el frontend, la
+ninguno comparte constante con los adjuntos de documentos (ADR-042).
+
+**ADR-257 (bug, petición del usuario, con captura) — la firma de MP3 rechazaba
+archivos reales:** solo cubría 3 de las 18 combinaciones válidas del "frame sync" de
+MPEG audio (versión MPEG1/2/2.5 × layer I/II/III × protección CRC) — un audio real de
+monitoreo de radiodifusora en MPEG1 Layer II (`0xFF 0xFC`, sin tag ID3) se rechazaba
+con "El contenido del archivo no corresponde a la extensión declarada.". Se completan
+las 18 combinaciones válidas; las reservadas siguen rechazándose. Detalle completo en
+`docs/arquitectura.md` (ADR-257).
+
+En el frontend, la
 sección "Material a Transmitir" requiere el `orden_estacion_id` ya creado — vive en
 `OrdenEstacionDetailPanel.tsx` (el detalle, junto a los PDFs — ADR-106 corrigió esto: el
 usuario no la encontraba porque solo vivía en el formulario de edición, no en la vista de

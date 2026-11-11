@@ -171,7 +171,31 @@ _MAGIC_POR_EXTENSION: dict[str, tuple[bytes, ...]] = {
     # FUERA por ahora: su firma ("ftyp") no vive en el byte 0 sino en el 4, y no vale la
     # pena generalizar el chequeo de firmas para un caso no pedido todavia — el tope de
     # tamano y la lista blanca ya son "modificables en un futuro" (ver S3_MAX_AUDIO_BYTES).
-    "mp3": (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"),
+    #
+    # ADR-257 (corrige un bug real, petición del usuario con captura): el "frame sync"
+    # de un MP3 son los primeros 11 bits en 1 (byte 0 = 0xFF, los 3 bits altos del byte 1
+    # también en 1), seguidos de 2 bits de versión MPEG (1/2/2.5, "01" reservado no
+    # existe) + 2 de layer (I/II/III, "00" reservado no existe) + 1 de protección CRC —
+    # 18 combinaciones válidas en total. La lista original solo cubría 3 (MPEG1 Layer III
+    # sin CRC, MPEG2 Layer III con/sin CRC) y rechazaba archivos .mp3 REALES con
+    # cualquier otra combinación — el caso reportado: un audio de monitoreo de
+    # radiodifusora en MPEG1 Layer II (`0xFF 0xFC`/`0xFD`), común en sistemas de
+    # grabación al aire, nunca estuvo en la lista. Se completan las 18 combinaciones
+    # válidas; quedan fuera, a propósito, los bytes con versión o layer "reservado" (bits
+    # `01` de versión, `00` de layer) — ningún encoder real los produce, y seguir
+    # excluyéndolos no le cuesta nada a un archivo legítimo.
+    "mp3": (
+        b"ID3",
+        b"\xff\xe2", b"\xff\xe3",  # MPEG2.5 Layer III (con/sin CRC)
+        b"\xff\xe4", b"\xff\xe5",  # MPEG2.5 Layer II
+        b"\xff\xe6", b"\xff\xe7",  # MPEG2.5 Layer I
+        b"\xff\xf2", b"\xff\xf3",  # MPEG2 Layer III
+        b"\xff\xf4", b"\xff\xf5",  # MPEG2 Layer II
+        b"\xff\xf6", b"\xff\xf7",  # MPEG2 Layer I
+        b"\xff\xfa", b"\xff\xfb",  # MPEG1 Layer III
+        b"\xff\xfc", b"\xff\xfd",  # MPEG1 Layer II
+        b"\xff\xfe", b"\xff\xff",  # MPEG1 Layer I
+    ),
     "wav": (b"RIFF",),
     "ogg": (b"OggS",),
     # ADR-146 ("Carga de Órdenes Reales Desde Layout"): csv/txt son texto plano, sin una
@@ -277,7 +301,10 @@ def _parece_xml(contenido: bytes) -> bool:
 
 
 def leer_adjunto(
-    archivo: UploadFile, *, max_bytes: int, extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES
+    archivo: UploadFile,
+    *,
+    max_bytes: int,
+    extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES,
 ) -> tuple[bytes, str, str]:
     """Lee y valida un `UploadFile` contra una lista blanca de extensiones.
 

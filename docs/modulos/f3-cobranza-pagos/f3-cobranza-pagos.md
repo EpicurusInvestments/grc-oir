@@ -182,6 +182,14 @@ copiado al timbrar) — `_apply_filters` ahora usa `facturado_directo = True/Fal
 vez de `agencia_id IS NULL`/`agencia_id = Y`, en AMBOS modos del picker de Pago
 Múltiple. Migración `2e0c8a75aad5` + backfill `4f286d68a07f`.
 
+**ADR-256 (petición del usuario, "NEW FEATURE") — checkbox "Pagado en sistema
+externo":** mismo criterio que `FacturaCliente.facturado_en_sistema_externo` (ADR-248,
+F2) — nuevo campo `pagado_en_sistema_externo: bool` (default `False`) en `PagoCliente`,
+disponible tanto en el pago individual (`RegistrarPagoForm.tsx`) como en el pago
+múltiple (`PagoMultipleForm.tsx`, viaja a CADA `PagoCliente` del lote incluido el
+huérfano por sobrante). Solo IDENTIFICA el pago — sin ningún efecto en el flujo ni en
+los cálculos. Migración `7b931c7fdb4e`.
+
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
 factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M

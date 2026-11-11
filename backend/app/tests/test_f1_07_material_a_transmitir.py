@@ -104,6 +104,44 @@ def test_extensiones_audio_no_incluyen_m4a_ni_ejecutables() -> None:
     assert "exe" not in EXTENSIONES_AUDIO_ORDENES
 
 
+# ADR-257 (corrige un bug real, petición del usuario con captura): un audio real de
+# monitoreo de radiodifusora ("XHFAJ FM 91.3 MHZ.mp3") se rechazó con "El contenido del
+# archivo no corresponde a la extensión declarada" — era un MP3 válido (MPEG1 Layer II,
+# sin tag ID3), pero la lista de firmas solo cubría 3 de las 18 combinaciones válidas de
+# "frame sync" de MPEG audio.
+@pytest.mark.parametrize(
+    "segundo_byte",
+    [
+        0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7,  # MPEG2.5
+        0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7,  # MPEG2
+        0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,  # MPEG1
+    ],
+)
+def test_leer_adjunto_acepta_todas_las_combinaciones_validas_de_frame_sync_mp3(
+    segundo_byte: int,
+) -> None:
+    contenido = bytes([0xFF, segundo_byte]) + b"\x00" * 40
+    contenido_leido, _, extension = leer_adjunto(
+        _ArchivoFalso("audio.mp3", contenido),
+        max_bytes=1024,
+        extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES,
+    )
+    assert contenido_leido == contenido
+    assert extension == "mp3"
+
+
+def test_leer_adjunto_rechaza_combinaciones_reservadas_de_mp3() -> None:
+    """Las combinaciones con versión o layer "reservado" (que ningún encoder real
+    produce) siguen sin aceptarse — no es una lista negra, se sigue validando la firma."""
+    for segundo_byte in (0xE8, 0xE9, 0xEA, 0xEB, 0xF8, 0xF9, 0xE0, 0xE1, 0xF0, 0xF1):
+        with pytest.raises(ArchivoNoPermitidoError):
+            leer_adjunto(
+                _ArchivoFalso("audio.mp3", bytes([0xFF, segundo_byte]) + b"\x00" * 40),
+                max_bytes=1024,
+                extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES,
+            )
+
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # Fixtures (mismo patrón que test_f1_06_ordenes_pdf.py)
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -792,7 +830,6 @@ def _crear_oc_oe_http(client: TestClient, cat: dict[str, uuid.UUID]) -> str:
             "orden_id": orden_id,
             "estacion_id": str(cat["estacion"]),
             "producto_tarifa": "spot",
-            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_spot": "800.00",
             "dias": [
@@ -959,7 +996,6 @@ def test_http_crear_oe_con_material_staging_previo(
         json={
             "orden_id": orden_id,
             "estacion_id": str(cat["estacion"]),
-            "producto_tarifa": "spot",
             "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_spot": "800.00",

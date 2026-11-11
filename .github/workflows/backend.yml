@@ -34,15 +34,13 @@ jobs:
       - name: Ruff (lint)
         working-directory: ./backend
         run: uv run ruff check .
-        continue-on-error: true      # TEMPORAL: reporta pero no bloquea (deuda de lint de F1, a limpiar con el dev)
       - name: Mypy (tipos)
         working-directory: ./backend
         run: uv run mypy .
-        continue-on-error: true      # TEMPORAL: reporta pero no bloquea
+        continue-on-error: true      # TEMPORAL: 335 errores preexistentes (ADR-255), casi todos union-attr en tests (db.get(...) sin check de None) — limpieza pendiente, no bloquea
       - name: Pytest (pruebas)
         working-directory: ./backend
         run: uv run pytest
-        continue-on-error: true      # TEMPORAL Y A REVERTIR PRONTO: 10 pruebas de F2 fallan (deuda). Revisar con el dev y REACTIVAR el bloqueo.
 
   build-and-deploy:
     name: Build, push y deploy a DEV

@@ -8,8 +8,6 @@ Contrato (`test_s3_adjuntos.py`).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,9 +16,9 @@ from app.core.errors import register_error_handlers
 from app.integrations.almacenamiento import get_almacenamiento
 from app.integrations.almacenamiento.adapter_local import AlmacenamientoLocal
 from app.integrations.almacenamiento.documentos import (
+    EXTENSIONES_ADJUNTO_ORDENES,
     ArchivoDemasiadoGrandeError,
     ArchivoNoPermitidoError,
-    EXTENSIONES_ADJUNTO_ORDENES,
     leer_adjunto,
 )
 from app.modules.ordenes.adjuntos import router as adjuntos_router

@@ -29,6 +29,9 @@ Tipos permitidos: feat, fix, docs, test, refactor, chore, perf.
 - Descripción del PR: qué cambia, por qué, cómo probarlo, capturas si hay UI.
 - Revisores requeridos: [[POR LLENAR: cuántos y quiénes]].
 - El PR debe pasar: pruebas, lint, mypy/tsc [[POR LLENAR: pipeline CI definitivo]].
+  En el backend (`.github/workflows/backend.yml`, ADR-255), Ruff y Pytest SÍ bloquean el
+  pipeline; Mypy sigue en `continue-on-error` (335 avisos preexistentes, limpieza
+  pendiente — ver `docs/arquitectura.md`, ADR-255).
 
 ## Versionado y entregas
 

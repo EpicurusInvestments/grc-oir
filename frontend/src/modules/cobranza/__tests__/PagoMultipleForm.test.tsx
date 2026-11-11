@@ -151,6 +151,33 @@ describe("PagoMultipleForm", () => {
     await waitFor(() => expect(onRegistrado).toHaveBeenCalledTimes(1));
   });
 
+  // ADR-256 (petición del usuario, "NEW FEATURE"): "Pagado en sistema externo" — solo
+  // identifica el pago, sin ningún efecto hoy (mismo criterio que ADR-248).
+  it("ADR-256: el checkbox 'Pagado en sistema externo' se manda true/false según se marque", async () => {
+    const { container } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6960" } });
+    await screen.findByText("01 · Efectivo");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, {
+      target: { value: "01" },
+    });
+    fireEvent.change(container.querySelectorAll("select.fsel")[1], { target: { value: "cc-1" } });
+    const checkboxPendiente = container.querySelectorAll("tbody tr")[0].querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement;
+    fireEvent.click(checkboxPendiente);
+    fireEvent.click(screen.getByLabelText("Pagado en sistema externo"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago múltiple" }));
+
+    await waitFor(() => expect(crearMultipleMock).toHaveBeenCalledTimes(1));
+    expect(crearMultipleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ pagado_en_sistema_externo: true }),
+    );
+  });
+
   it("si la suma asignada excede el monto total del pago, no registra y avisa", async () => {
     const { container } = renderForm();
     await elegirAnunciante(container);

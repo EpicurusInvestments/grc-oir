@@ -362,6 +362,62 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     expect(screen.queryByText("fuera de horario")).toBeNull();
   });
 
+  it("ADR-253 (corrige un bug real, petición del usuario con captura): 'fuera de horario' compara contra la ventana del DÍA COMPLETO, no contra el renglón puntual que le tocó por el emparejamiento cronológico", async () => {
+    // Simula el reparto de un rango (`repartirHoras`/ADR-186): 2 spots del MISMO día,
+    // cada uno con su propio `hora_inicio` pero AMBOS comparten `hora_termino` (19:00,
+    // el fin del rango capturado) — el bug comparaba la hora real contra el renglón que
+    // le tocó (p.ej. el de las 13:00), marcando "fuera de horario" una hora que en
+    // realidad cae dentro del día completo (07:00–19:00).
+    const diaA = makeRow({
+      orden_estacion_dia_id: "dia-a",
+      fecha: "2025-06-01",
+      hora_inicio: "07:00",
+      hora_termino: "19:00",
+      spots_diarios: 1,
+    });
+    const diaB = makeRow({
+      orden_estacion_dia_id: "dia-b",
+      fecha: "2025-06-01",
+      hora_inicio: "13:00",
+      hora_termino: "19:00",
+      spots_diarios: 1,
+    });
+    const oe = makeOE({ periodo_transmision: [diaA, diaB] });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-ch4",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      aplicados: [
+        { orden_estacion_dia_id: "dia-a", fecha_transmision: "2025-06-01", hora_inicio: "07:00", spots: 1, hora_real: "06:00" },
+        // 09:00 es ANTES del hora_inicio del renglón que le tocó (13:00) pero cae
+        // dentro de la ventana del día completo (07:00–19:00) — no debe marcarse.
+        { orden_estacion_dia_id: "dia-b", fecha_transmision: "2025-06-01", hora_inicio: "13:00", spots: 1, hora_real: "09:00" },
+      ],
+      nuevos: [],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    // dia-a: 06:00 SÍ cae fuera de la ventana del día (antes de las 07:00).
+    await waitFor(() => expect(screen.getByText("fuera de horario")).toBeInTheDocument());
+    // dia-b: 09:00 está dentro de la ventana del día (07:00–19:00) — una sola marca.
+    expect(screen.getAllByText("fuera de horario")).toHaveLength(1);
+  });
+
   it("ADR-151: sin cargar ningún layout, la tabla sigue el flujo normal de siempre (periodo_transmision completo)", async () => {
     const diaA = makeRow({ orden_estacion_dia_id: "dia-a", fecha: "2025-06-01", spots_diarios: 10 });
     const diaB = makeRow({ orden_estacion_dia_id: "dia-b", fecha: "2025-06-02", spots_diarios: 5 });

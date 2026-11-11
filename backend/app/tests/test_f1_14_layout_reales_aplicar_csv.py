@@ -620,7 +620,9 @@ def test_hora_distinta_misma_fecha_se_aplica_con_la_hora_real_sin_tocar_spots(
 
     # Los de DIA_1 (match exacto): `hora_real` igual a la programada.
     dia1_am = next(
-        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
     )
     assert dia1_am.hora_real == time(7, 0)
 
@@ -686,10 +688,14 @@ def test_emparejamiento_cronologico_entre_varios_horarios_de_la_misma_fecha(
     )
     assert resultado.nuevos == []
     primero = next(
-        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(7, 0)
     )
     segundo = next(
-        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
     )
     assert primero.hora_real == time(9, 0)
     assert primero.spots == 10
@@ -715,7 +721,9 @@ def test_mas_registros_que_programados_en_la_misma_fecha_el_extra_es_dia_nuevo(
     )
     assert resultado.errores == []
     dia2_match = next(
-        a for a in resultado.aplicados if a.fecha_transmision == _DIA_2 and a.hora_inicio == time(7, 0)
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_2 and a.hora_inicio == time(7, 0)
     )
     assert dia2_match.hora_real == time(7, 0)
     assert dia2_match.spots == 8
@@ -741,7 +749,9 @@ def test_menos_registros_que_programados_en_la_misma_fecha_marca_faltante(
         oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
     )
     faltante = next(
-        a for a in resultado.aplicados if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_1 and a.hora_inicio == time(20, 0)
     )
     assert faltante.spots == 0
     assert faltante.hora_real is None
@@ -901,6 +911,51 @@ def test_avanzar_reales_dia_nuevo_excede_balance_spots_400(
             ),
             VENTAS,
         )
+
+
+def test_avanzar_reales_dia_nuevo_no_excede_balance_si_otros_dias_bajan_por_faltante(
+    db: Session, oe_svc: OrdenEstacionService, oe, tmp_path
+) -> None:
+    """ADR-253 (corrige un bug real, petición del usuario con captura): el balance NO se
+    valida contra la cuota ASIGNADA original de esta OE (10+5+8=23), sino contra lo que
+    de verdad queda VERIFICADO tras este mismo avance. Aquí el layout solo trae la fecha
+    de `_DIA_2` — los 2 días de `_DIA_1` (10+5=15 spots) bajan a 0 por "faltante"
+    (ADR-157), así que el total real queda en 0+0+8=8, no 23. Con total_spots=100 de la
+    OC, pedir 85 spots nuevos (23+85=108 > 100 con la cuota vieja, pero 8+85=93 <= 100
+    con lo verificado) debía aceptarse — antes de este fix se rechazaba con
+    'Los días nuevos del layout exceden el total de spots de la orden.' aun sin exceder
+    nada en realidad."""
+    almacenamiento = AlmacenamientoLocal(tmp_path)
+    contenido = _csv(f"Radio Disney,{_DIA_2},07:00,8")
+    resultado = oe_svc.agregar_layout_real(
+        oe.orden_estacion_id, _ArchivoFalso("layout.csv", contenido), VENTAS, almacenamiento
+    )
+    faltantes = [
+        a
+        for a in resultado.aplicados
+        if a.fecha_transmision == _DIA_1 and a.spots == 0
+    ]
+    assert len(faltantes) == 2  # DIA_1 07:00 y DIA_1 20:00, ninguno mencionado en el archivo
+
+    otra_fecha = _DIA_1 + timedelta(days=10)  # dentro de la campaña
+    resultado_avance = oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[
+                OrdenEstacionDiaRealIn(
+                    orden_estacion_dia_id=f.orden_estacion_dia_id, spots_verificados=0
+                )
+                for f in faltantes
+            ],
+            dias_nuevos=[
+                OrdenEstacionDiaNuevoIn(
+                    fecha_transmision=otra_fecha, hora_inicio=time(9, 0), spots=85
+                )
+            ],
+        ),
+        VENTAS,
+    )
+    assert resultado_avance.estatus == "cerrada"
 
 
 def test_avanzar_reales_dia_nuevo_ya_existe_mismo_fecha_hora_400(

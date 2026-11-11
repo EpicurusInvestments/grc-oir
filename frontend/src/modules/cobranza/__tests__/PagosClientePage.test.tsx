@@ -74,6 +74,7 @@ function pago(
     numero_pago: null,
     cuenta_contable_id: null,
     pago_multiple_id: null,
+    pagado_en_sistema_externo: false,
     created_by: "dev.admin",
     created_at: "2026-03-10",
     ...overrides,

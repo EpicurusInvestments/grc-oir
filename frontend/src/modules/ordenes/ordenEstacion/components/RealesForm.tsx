@@ -43,6 +43,21 @@
  * en spots) — nunca mezclados con la bonificación de los días ya existentes. Descuentos
  * y cambios de horario se dejan EXACTAMENTE igual (conteo de días/filas, no de spots) —
  * petición explícita del usuario, "solo son las bonificaciones".
+ *
+ * ADR-252 (petición del usuario, con captura): la columna "Spots" se quita también de la
+ * captura MANUAL (antes solo se quitaba con layout cargado, ADR-247) — ya no es editable
+ * por fila; solo queda editable la hora. Columnas con ancho fijo (`tableLayout: "fixed"`,
+ * tabla sin `width: 100%`) para que no se estiren con espacio vacío.
+ *
+ * ADR-253 (corrige 2 bugs reales, petición del usuario con captura de una carga de
+ * layout real): (1) "fuera de horario" comparaba la hora real contra el renglón
+ * PUNTUAL que le tocó en el emparejamiento cronológico (ADR-174b) en vez de contra la
+ * ventana del DÍA COMPLETO — dos renglones con desfaces similares terminaban uno
+ * marcado y el otro no, según si el slot que les tocó por orden era temprano o tardío
+ * en el día (ver `ventanaDelDia`). (2) el balance de "los días nuevos exceden el total
+ * de spots de la orden" (backend, `orden_estacion.py`) comparaba contra la cuota
+ * ASIGNADA original de esta OE en vez de contra lo que de verdad queda VERIFICADO tras
+ * este mismo avance — contaba dos veces los spots que el layout bajó a 0 por faltante.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -91,8 +106,43 @@ function distinto(a: PeriodoTransmisionRow, b: PeriodoTransmisionRow): boolean {
 // si cae fuera de la VENTANA completa programada para ese día (inicio–término), no solo
 // si difiere del punto de inicio (eso era comparar contra una proyección, no un rango
 // real — ver el comentario de cabecera). Solo informativo, nunca bloquea el avance.
-function horaFueraDeVentana(horaReal: string, programado: PeriodoTransmisionRow): boolean {
-  return horaReal < programado.hora_inicio || horaReal > programado.hora_termino;
+function horaFueraDeVentana(horaReal: string, ventana: { hora_inicio: string; hora_termino: string }): boolean {
+  return horaReal < ventana.hora_inicio || horaReal > ventana.hora_termino;
+}
+
+// ADR-253 (corrige un bug real, petición del usuario con captura): "fuera de horario" NO
+// debe compararse contra el renglón programado que le tocó a esta hora real en el
+// emparejamiento cronológico (ADR-174b), sino contra la ventana del DÍA COMPLETO (la hora
+// más temprana a la más tardía entre TODOS los spots programados de esa fecha). Por qué:
+// tras repartir un rango con varios spots (`repartirHoras`/ADR-186), cada renglón guarda
+// su PROPIO `hora_inicio` pero TODOS comparten el `hora_termino` del grupo — comparar
+// contra el renglón puntual que le tocó por orden cronológico (no por slot) daba
+// resultados arbitrarios: un spot real emparejado con un slot TEMPRANO del día (p.ej.
+// 10:00) se marcaba "fuera de horario" por llegar 1h15 después, mientras otro emparejado
+// con un slot TARDÍO (p.ej. 13:00 o 16:00) pasaba colado con el mismo tipo de desfase,
+// solo porque el `hora_termino` compartido (19:00) seguía cubriéndolo. El reporte real: 2
+// spots con desfaces de 37min/1h15 marcados "fuera de horario" y otros 2 con desfaces
+// de 48min/51min sin marca, en la MISMA orden — la única ventana que tiene sentido
+// comparar es la del día, no la del slot que le tocó por casualidad en el reparto.
+function ventanaDelDia(
+  oe: OrdenEstacion,
+  fecha: string,
+): { hora_inicio: string; hora_termino: string } | null {
+  const filas = oe.periodo_transmision.filter((r) => r.fecha === fecha && !r.cancelada);
+  if (filas.length === 0) return null;
+  return filas.reduce<{ hora_inicio: string; hora_termino: string }>(
+    (acc, row) => {
+      const p = programadoEfectivo(oe, row);
+      return {
+        hora_inicio: p.hora_inicio < acc.hora_inicio ? p.hora_inicio : acc.hora_inicio,
+        hora_termino: p.hora_termino > acc.hora_termino ? p.hora_termino : acc.hora_termino,
+      };
+    },
+    (() => {
+      const primero = programadoEfectivo(oe, filas[0]);
+      return { hora_inicio: primero.hora_inicio, hora_termino: primero.hora_termino };
+    })(),
+  );
 }
 
 // ADR-152 (petición del usuario): antes de "Avanzar a 2.3", avisa en la MISMA tabla
@@ -410,19 +460,15 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 300px", gap: 24, alignContent: "start" }}>
         <div>
-          <table className="cat-table" style={{ fontSize: 12 }}>
+          <table className="cat-table" style={{ fontSize: 12, width: "auto", tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th>Día</th>
-                <th>Fecha</th>
+                <th style={{ width: 90 }}>Día</th>
+                <th style={{ width: 100 }}>Fecha</th>
                 {/* ADR-247 (petición del usuario): angostada — solo necesita un valor
                     (HH:MM:SS), no un rango. */}
                 <th style={{ width: 100 }}>Horario de transmisión</th>
-                {/* ADR-247 (petición del usuario): con un layout cargado cada fila ya es
-                    1 spot (o la suma de duplicados exactos del archivo) — la columna no
-                    aporta nada ahí; se conserva solo en la captura manual. */}
-                {!layoutCargado && <th className="td-center">Spots</th>}
-                <th className="td-center">Resultado</th>
+                <th className="td-center" style={{ width: 150 }}>Resultado</th>
                 <th style={{ width: 140 }} />
               </tr>
             </thead>
@@ -438,7 +484,8 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   // ADR-247: un día puede quedar fuera de horario Y tener diferencia de
                   // spots a la vez — las dos marcas se muestran juntas, no son
                   // excluyentes entre sí. Ver `horaFueraDeVentana` (solo informativo).
-                  const horaFuera = modificado && horaFueraDeVentana(fila.hora_inicio, programado);
+                  const ventana = ventanaDelDia(oe, row.fecha);
+                  const horaFuera = modificado && !!ventana && horaFueraDeVentana(fila.hora_inicio, ventana);
 
                   return (
                     <tr key={diaId} style={modificado ? { background: "var(--amber-bg)" } : undefined}>
@@ -462,15 +509,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                               }
                             />
                           </td>
-                          <td className="td-center">
-                            <input
-                              type="number"
-                              className="fi"
-                              style={{ marginBottom: 0, textAlign: "center", fontFamily: "var(--mono)" }}
-                              value={fila.spots_diarios}
-                              onChange={(e) => actualizarDraft(diaId, { spots_diarios: Number.parseInt(e.target.value, 10) || 0 })}
-                            />
-                          </td>
                           <td className="td-center">—</td>
                           <td>
                             <button type="button" className="btn btn-xs btn-teal" onClick={() => cerrarEdicion(programado)}>
@@ -481,7 +519,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                       ) : (
                         <>
                           <td className="td-mono">{fila.hora_inicio}</td>
-                          <td className="td-center td-mono">{fila.spots_diarios}</td>
                           <td className="td-center">
                             {!modificado ? (
                               <span style={{ fontSize: 11, color: "var(--green-text)" }}>sin cambio</span>
@@ -526,7 +563,8 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   const programado = programadoEfectivo(oe, original);
                   const modificado = !ov.editing && distinto(programado, ov);
                   const diff = modificado ? ov.spots_diarios - programado.spots_diarios : 0;
-                  const horaFuera = modificado && horaFueraDeVentana(ov.hora_inicio, programado);
+                  const ventana = ventanaDelDia(oe, original.fecha);
+                  const horaFuera = modificado && !!ventana && horaFueraDeVentana(ov.hora_inicio, ventana);
 
                   return (
                     <tr key={diaId} style={{ background: "var(--amber-bg)" }}>

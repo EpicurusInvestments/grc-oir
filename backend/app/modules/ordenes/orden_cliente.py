@@ -607,9 +607,13 @@ class OrdenClienteService(
         subiendo aunque cambie el año/mes de venta — `AAAA-MM` es solo la etiqueta del
         momento en que se creó, no particiona el consecutivo. Escanea folios en AMBOS
         formatos (`OS-AAAA-MM-######` nuevo y `OC-AAAA-####` viejo, ADR-237) porque las
-        órdenes viejas no se regeneran y el consecutivo debe seguir siendo uno solo."""
+        órdenes viejas no se regeneran y el consecutivo debe seguir siendo uno solo.
+
+        ADR-254 (corrige un bug real, petición del usuario): el piso era 40 (sin ningún
+        ADR que lo justificara — quedó así desde el primer commit de F1), así que con la
+        tabla vacía el primer folio salía en 000041, no 000001. Piso en 0."""
         existentes = db.scalars(select(OrdenCliente.folio_orden)).all()
-        maximo = 40
+        maximo = 0
         for folio in existentes:
             m = _FOLIO_RE_NUEVO.match(folio) or _FOLIO_RE_VIEJO.match(folio)
             if m:

@@ -740,6 +740,44 @@ def test_pago_multiple_registra_un_pago_por_factura_con_el_mismo_lote(
     assert c2["importe_cobrado"] == "5000.00"
 
 
+# ADR-256 (petición del usuario, "NEW FEATURE"): "Pagado en sistema externo" — mismo
+# criterio que ADR-248 (facturado_en_sistema_externo), solo identifica el pago.
+def test_pago_individual_acepta_pagado_en_sistema_externo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+
+    pago = _pago("1000.00", cat)
+    pago["pagado_en_sistema_externo"] = True
+    r = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos", json=pago, headers=_hdr("cxc")
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["pagado_en_sistema_externo"] is True
+
+    r_sin_marcar = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos", json=_pago("500.00", cat),
+        headers=_hdr("cxc"),
+    )
+    assert r_sin_marcar.status_code == 201, r_sin_marcar.text
+    assert r_sin_marcar.json()["pagado_en_sistema_externo"] is False
+
+
+def test_pago_multiple_acepta_pagado_en_sistema_externo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2012")
+    cobranza_1 = _cobranza_id(db, factura_1)
+
+    payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "11600.00"}])
+    payload["monto_total_pago"] = "11600.00"
+    payload["pagado_en_sistema_externo"] = True
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 201, r.text
+    assert r.json()[0]["pagado_en_sistema_externo"] is True
+
+
 def test_pago_multiple_rechaza_si_la_suma_excede_el_monto_total(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

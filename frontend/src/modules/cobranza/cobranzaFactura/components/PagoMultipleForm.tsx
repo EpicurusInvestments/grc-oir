@@ -68,6 +68,9 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
   const [fechaDeposito, setFechaDeposito] = useState(origenHuerfano?.fecha_deposito ?? "");
   const [referencia, setReferencia] = useState(origenHuerfano?.referencia_pago ?? "");
   const [cuentaContable, setCuentaContable] = useState(origenHuerfano?.cuenta_contable_id ?? "");
+  // ADR-256 (petición del usuario, "NEW FEATURE"): mismo criterio que "Facturado en
+  // sistema externo" (ADR-248) — solo identifica el pago, sin ningún efecto hoy.
+  const [pagadoExterno, setPagadoExterno] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Montos por renglón — SOLO existen para facturas marcadas (seleccionadas). Quitar la
@@ -131,6 +134,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
       setFechaDeposito("");
       setReferencia("");
       setCuentaContable("");
+      setPagadoExterno(false);
     }
     setMontos({});
     setError(null);
@@ -222,6 +226,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
           numero_pago: f.siguiente_numero_pago,
         })),
         pago_origen_id: origenHuerfano?.pagoId ?? null,
+        pagado_en_sistema_externo: pagadoExterno,
       },
       {
         onSuccess: onRegistrado,
@@ -387,6 +392,14 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                 />
               </div>
             </div>
+            <label className="check-box" style={{ marginTop: 10, marginBottom: 0 }}>
+              <input
+                type="checkbox"
+                checked={pagadoExterno}
+                onChange={(e) => setPagadoExterno(e.target.checked)}
+              />
+              <div className="check-box-title">Pagado en sistema externo</div>
+            </label>
           </div>
 
           {clienteId && (

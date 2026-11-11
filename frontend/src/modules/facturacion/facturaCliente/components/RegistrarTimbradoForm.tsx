@@ -148,14 +148,7 @@ export function RegistrarTimbradoForm({
                 checked={facturadoExterno}
                 onChange={(e) => setFacturadoExterno(e.target.checked)}
               />
-              <div>
-                <div className="check-box-title">Facturado en sistema externo</div>
-                <div className="check-box-desc">
-                  Marca esta opción si la factura se timbró en otro sistema (p. ej. OIR). Solo
-                  identifica la factura — el monto para OIR sigue siendo el que ya se asignó
-                  aquí; el folio/archivo cargado puede traer un monto distinto.
-                </div>
-              </div>
+              <div className="check-box-title">Facturado en sistema externo</div>
             </label>
             {error && <div className="fe">{error}</div>}
           </div>

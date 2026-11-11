@@ -72,6 +72,9 @@ export function RegistrarPagoForm({
   const [formaPago, setFormaPago] = useState("");
   const [fechaDeposito, setFechaDeposito] = useState("");
   const [cuentaContable, setCuentaContable] = useState("");
+  // ADR-256 (petición del usuario, "NEW FEATURE"): mismo criterio que "Facturado en
+  // sistema externo" (ADR-248) — solo identifica el pago, sin ningún efecto hoy.
+  const [pagadoExterno, setPagadoExterno] = useState(false);
 
   // Fix (petición del usuario): antes "Registrar pago" solo validaba AL HACER CLIC
   // (adentro de `confirmar()`) — el botón mismo siempre estaba habilitado, sin ninguna
@@ -127,6 +130,7 @@ export function RegistrarPagoForm({
       cuenta_contable_id: cuentaContable,
       archivo_path: archivoPath,
       archivo_nombre: archivoNombre,
+      pagado_en_sistema_externo: pagadoExterno,
     });
   };
 
@@ -288,6 +292,14 @@ export function RegistrarPagoForm({
                 setArchivoNombre(ref.split("/").pop() ?? ref);
               }}
             />
+            <label className="check-box" style={{ marginTop: 10, marginBottom: 0 }}>
+              <input
+                type="checkbox"
+                checked={pagadoExterno}
+                onChange={(e) => setPagadoExterno(e.target.checked)}
+              />
+              <div className="check-box-title">Pagado en sistema externo</div>
+            </label>
             {error && <div className="fe">{error}</div>}
           </div>
 

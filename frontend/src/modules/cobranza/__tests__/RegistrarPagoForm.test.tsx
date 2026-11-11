@@ -144,6 +144,45 @@ describe("Fix: 'Registrar pago' se deshabilita en vivo en vez de desaparecer", (
   });
 });
 
+// ADR-256 (petición del usuario, "NEW FEATURE"): "Pagado en sistema externo" — solo
+// identifica el pago, sin ningún efecto hoy (mismo criterio que ADR-248).
+describe("ADR-256: checkbox 'Pagado en sistema externo'", () => {
+  it("nace sin marcar y manda `false` si no se toca", async () => {
+    const { container, onConfirm } = renderForm();
+    fireEvent.change(screen.getByPlaceholderText("991800.00"), { target: { value: "500000" } });
+    await screen.findByText("03 · Transferencia");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, { target: { value: "03" } });
+    fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
+      target: { value: "SPEI-12345678" },
+    });
+    completarCamposNuevos(container);
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ pagado_en_sistema_externo: false }),
+    );
+  });
+
+  it("al marcarlo, manda `true` en el payload", async () => {
+    const { container, onConfirm } = renderForm();
+    fireEvent.change(screen.getByPlaceholderText("991800.00"), { target: { value: "500000" } });
+    await screen.findByText("03 · Transferencia");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, { target: { value: "03" } });
+    fireEvent.change(screen.getByPlaceholderText("SPEI-XXXXX / CHE-XXXX"), {
+      target: { value: "SPEI-12345678" },
+    });
+    completarCamposNuevos(container);
+    fireEvent.click(screen.getByLabelText("Pagado en sistema externo"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ pagado_en_sistema_externo: true }),
+    );
+  });
+});
+
 // ADR-226 (petición del usuario): "Número de pago" ya no se captura a mano.
 describe("'Número de pago' se precarga calculado y de solo lectura", () => {
   it("muestra el valor sugerido por el padre y no permite editarlo", () => {
