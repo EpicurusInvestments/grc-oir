@@ -18,7 +18,15 @@ import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE } from "./fixtures";
-import { listarAudiosOrdenEstacionApi } from "../adapters/escrituraApi";
+import { listarAudiosOrdenEstacionApi, listarHistorialTarifaOrdenEstacionApi } from "../adapters/escrituraApi";
+
+// ADR-246: "Motivo del cambio de tarifa" dejó de ser un `<select>` nativo — ahora es
+// `SearchableSelect` (escribir filtra, click en la opción confirma). Reemplaza el viejo
+// `fireEvent.change(select, { target: { value } })` para elegir una opción YA existente.
+async function elegirEnBuscable(input: HTMLElement, texto: string) {
+  fireEvent.change(input, { target: { value: texto } });
+  fireEvent.mouseDown(await screen.findByText(texto));
+}
 
 // ADR-109: sube el material a S3 en cuanto se elige (antes de guardar la OE) — se mockea
 // para no pegarle a la red real desde jsdom; el resto de `escrituraApi` sigue real.
@@ -26,6 +34,9 @@ import { listarAudiosOrdenEstacionApi } from "../adapters/escrituraApi";
 // llama para precargar el Material a Transmitir (ver `OrdenEstacionForm.tsx`); por
 // default no devuelve nada (la mayoría de las pruebas no clonan material), las que sí lo
 // verifican la sobreescriben con `mockResolvedValueOnce`.
+// Bug corregido (ADR-250): `listarHistorialTarifaOrdenEstacionApi` también se mockea —
+// al EDITAR, el formulario la llama para precargar "Motivo del cambio de tarifa" con el
+// motivo más reciente; por default sin historial (ver su propia descripción más abajo).
 vi.mock("../adapters/escrituraApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../adapters/escrituraApi")>();
   return {
@@ -36,6 +47,7 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => {
         Promise.resolve({ ref: `orden_estacion/audios/abc_${archivo.name}`, nombre_archivo: archivo.name }),
       ),
     listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
+    listarHistorialTarifaOrdenEstacionApi: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -61,6 +73,10 @@ vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
 
 // ADR-183: catálogo Constantes del Sistema (grupo MotivoCambio, clave CambioTarifa) para
 // el select de "Motivo del cambio de tarifa".
+// ADR-246: `crearMotivoCambio` mockeado aparte — el combo ahora es "creatable" (ver
+// `SearchableSelect`); ninguna prueba de este archivo dispara ese flujo todavía, pero el
+// hook lo llama incondicionalmente (`useCrearMotivoCambio`).
+const crearMotivoCambioMock = vi.fn();
 vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
   constanteApi: {
     list: vi.fn().mockResolvedValue({
@@ -73,6 +89,7 @@ vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
       size: 100,
       pages: 1,
     }),
+    crearMotivoCambio: (payload: unknown) => crearMotivoCambioMock(payload),
   },
 }));
 
@@ -384,7 +401,6 @@ describe("ADR-210: 'Clonar' precarga una OE nueva con los datos de otra, sin act
             orden_estacion_dia_id: "dia-vieja-1",
             orden_estacion_audio_id: "audio-viejo-1",
             cancelada: true,
-            hora_real: "09:05",
           },
         ],
       },
@@ -680,13 +696,14 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeDisabled();
 
-    // ADR-183/183b: "Motivo del cambio de tarifa" es un select con las Descripciones
-    // del catálogo MotivoCambio/CambioTarifa — se espera a que cargue (mock); se MUESTRA
-    // (siempre habilitado) porque lo último que se tocó fue la tarifa misma.
-    await screen.findByText("Por oferta de la emisora");
-    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    // ADR-183/183b/246: "Motivo del cambio de tarifa" es un combo "creatable" con las
+    // Descripciones del catálogo MotivoCambio/CambioTarifa — se espera a que cargue
+    // (mock); se MUESTRA (siempre habilitado) porque lo último que se tocó fue la
+    // tarifa misma.
+    await screen.findByPlaceholderText("Por qué el precio no coincide con la tarifa del catálogo…");
+    const motivoSelect = fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa");
     expect(motivoSelect).toBeEnabled();
-    fireEvent.change(motivoSelect, { target: { value: "Por incremento de tarifa" } });
+    await elegirEnBuscable(motivoSelect, "Por incremento de tarifa");
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar Orden de Transmisión" }));
@@ -704,15 +721,15 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
       clonarDesde: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "60s", precio_spot: 900 },
     });
 
-    await screen.findByText("Por oferta de la emisora");
+    await screen.findByPlaceholderText("Por qué el precio no coincide con la tarifa del catálogo…");
     expect(
       screen.getByText(/El precio no coincide con la tarifa sugerida del catálogo: captura el motivo del cambio\./),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar Orden de Transmisión" })).toBeDisabled();
 
-    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    const motivoSelect = fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa");
     expect(motivoSelect).toBeEnabled();
-    fireEvent.change(motivoSelect, { target: { value: "Por incremento de tarifa" } });
+    await elegirEnBuscable(motivoSelect, "Por incremento de tarifa");
     // El período clonado (1 día, dentro de la campaña de la OC) ya alcanza para guardar
     // — solo falta el material (mock por default sin ninguno clonado, ADR-210).
     await screen.findByText("Sin audios elegidos todavía.");
@@ -846,10 +863,10 @@ describe("Tarifa sugerida del catálogo y motivo de cambio — 1.3 (ADR-102/ADR-
 
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
 
-    await screen.findByText("Por oferta de la emisora");
-    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio de tarifa");
+    await screen.findByPlaceholderText("Por qué el precio no coincide con la tarifa del catálogo…");
+    const motivoSelect = fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio de tarifa");
     expect(motivoSelect).toBeEnabled();
-    fireEvent.change(motivoSelect, { target: { value: "Por oferta de la emisora" } });
+    await elegirEnBuscable(motivoSelect, "Por oferta de la emisora");
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     const [, input] = onGuardar.mock.calls[0];
     expect(input.precio_spot).toBe(950);
@@ -1204,6 +1221,39 @@ describe("Edición de OE existente (corrección de errores de captura, antes de 
     const [, input] = onGuardar.mock.calls[0];
     expect(input.precio_spot).toBe(750);
     expect(input.periodo_transmision).toHaveLength(1);
+  });
+
+  it("Bug corregido (petición del usuario, con captura — ADR-250): al reabrir con la tarifa ya divergente de una edición previa, retocarla precarga el motivo más reciente en vez de arrancar vacío", async () => {
+    vi.mocked(listarHistorialTarifaOrdenEstacionApi).mockResolvedValueOnce([
+      {
+        log_cambio_parametro_id: "log-1",
+        entidad: "OrdenEstacion",
+        entidad_id: "oe-x",
+        campo: "precio_spot",
+        valor_anterior: "1000.00",
+        valor_nuevo: "700.00",
+        usuario: "ventas1",
+        ip: null,
+        motivo_cambio: "Ajuste autorizado por dirección",
+        fecha_cambio: "2026-11-01T10:00:00",
+      },
+    ]);
+    const { container } = renderForm({
+      oc: { total_spots: 120, precio_unitario: 1000, anunciante_id: "an1" },
+      oe: { estacion_id: "es1", producto_tarifa: "spot", duracion_spot: "60s", precio_spot: 700 },
+    });
+
+    // La tarifa (700) ya diverge de la sugerida (1000, `ta-am-60-spot`) desde antes de
+    // abrir — pero nada se ha "tocado" en esta sesión (ADR-183b) y no cambió respecto a
+    // lo ya guardado (ADR-162), así que el motivo arranca OCULTO, como siempre. Al
+    // retocarla a un valor NUEVO, se vuelve el último campo tocado Y cambia respecto a lo
+    // guardado — el combo aparece — antes arrancaba vacío aunque el motivo ya existiera
+    // en `LogCambioParametro`; ahora se precarga con el más reciente.
+    expect(screen.queryByText("Motivo del cambio de tarifa")).toBeNull();
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "650" } });
+
+    const motivoSelect = await screen.findByDisplayValue("Ajuste autorizado por dirección");
+    expect(motivoSelect).toBeEnabled();
   });
 });
 

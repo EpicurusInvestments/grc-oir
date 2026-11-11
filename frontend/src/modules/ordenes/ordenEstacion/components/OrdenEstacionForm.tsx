@@ -55,15 +55,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
+import { useConstantes, useCrearMotivoCambio } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { ApiRequestError } from "@/shared/lib/apiClient";
+import type { HistorialCambio } from "@/shared/types";
 import { MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import {
   asignarAudioDiaApi,
   listarAudiosOrdenEstacionApi,
+  listarHistorialTarifaOrdenEstacionApi,
   subirMaterialStagingApi,
 } from "../../adapters/escrituraApi";
 import { ordenEstacionAudioFromApi } from "../../adapters/fromApi";
@@ -156,6 +158,33 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
   );
   const [precioSpot, setPrecioSpot] = useState(origen ? String(origen.precio_spot) : "");
   const [motivoCambioTarifa, setMotivoCambioTarifa] = useState("");
+  // Bug corregido (petición del usuario, con captura — mismo fix que en
+  // OrdenClienteForm.tsx/ADR-250): al reabrir para editar, el motivo de un cambio de
+  // tarifa anterior nunca se recargaba aquí (solo vivía en `LogCambioParametro`, ya
+  // consumido en el panel de SOLO LECTURA de `OrdenEstacionDetailPanel.tsx` vía
+  // `historial-tarifa`, nunca en este formulario). Se trae el mismo historial y se
+  // precarga el motivo MÁS RECIENTE para `precio_spot` — editable, no se exige de nuevo
+  // si no se vuelve a tocar la tarifa (eso sigue gobernado por `requiereMotivoTarifa`,
+  // sin cambios).
+  const [historialTarifa, setHistorialTarifa] = useState<HistorialCambio[]>([]);
+  useEffect(() => {
+    if (!oe) return;
+    let cancelado = false;
+    listarHistorialTarifaOrdenEstacionApi(oe.id)
+      .then((dtos) => {
+        if (!cancelado) setHistorialTarifa(dtos);
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [oe]);
+  useEffect(() => {
+    const ultimo = [...historialTarifa]
+      .filter((h) => h.campo === "precio_spot" && h.motivo_cambio)
+      .sort((a, b) => b.fecha_cambio.localeCompare(a.fecha_cambio))[0];
+    if (ultimo?.motivo_cambio) setMotivoCambioTarifa(ultimo.motivo_cambio);
+  }, [historialTarifa]);
   // ADR-183b (petición del usuario): "Motivo del cambio de tarifa" solo se MUESTRA si lo
   // último que el usuario tocó fue la tarifa misma (y de verdad diverge) — tocar después
   // cualquier otro campo de esta sección (Estación, Producto, Duración, Spots
@@ -165,8 +194,8 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
   const [observaciones, setObservaciones] = useState(origen?.observaciones_estacion ?? "");
   // ADR-210: al clonar, las filas se copian SIN `orden_estacion_dia_id` (no existen
   // todavía — son días NUEVOS), SIN `orden_estacion_audio_id` (el audio de la OE
-  // anterior no aplica aquí) y SIN `cancelada`/`hora_real` (historial de la OE
-  // anterior, no de esta). Al editar, se usa la propia OE tal cual, como siempre.
+  // anterior no aplica aquí) y SIN `cancelada` (historial de la OE anterior, no de
+  // esta). Al editar, se usa la propia OE tal cual, como siempre.
   const [periodo, setPeriodo] = useState<PeriodoTransmisionRow[]>(() => {
     if (oe) return oe.periodo_transmision;
     if (clonarDesde) {
@@ -434,9 +463,10 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
       return clave === CLAVE_BASE_MOTIVO_TARIFA || clave.startsWith(`${CLAVE_BASE_MOTIVO_TARIFA}_`);
     });
   }, [motivosTarifaQuery.data]);
-  // Si el catálogo no tiene ninguna opción (vacío o falló la carga), cae al input de
-  // texto libre para no bloquear el guardado por eso.
-  const motivoTarifaComoTexto = !motivosTarifaQuery.isLoading && motivosCambioTarifa.length === 0;
+  // ADR-246 (petición del usuario): combo "creatable" — si el motivo escrito no está en
+  // el catálogo, se ofrece crearlo ahí mismo (alta automática, grupo MotivoCambio, clave
+  // CambioTarifa_N). Reemplaza el fallback a texto libre de ADR-183.
+  const crearMotivoTarifa = useCrearMotivoCambio();
 
   // Auto-carga `precioSpot` con la tarifa sugerida SOLO si el campo está vacío o todavía
   // tiene la ÚLTIMA sugerencia sin tocar — así no pisa un valor que el usuario ya escribió
@@ -833,30 +863,26 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
                             <div className="fl fl-required" style={{ marginTop: 6 }}>
                               Motivo del cambio de tarifa
                             </div>
-                            {motivoTarifaComoTexto ? (
-                              <input
-                                className="fi"
-                                placeholder="Por qué el precio no coincide con la tarifa del catálogo…"
-                                value={motivoCambioTarifa}
-                                onChange={(e) => setMotivoCambioTarifa(e.target.value)}
-                              />
-                            ) : (
-                              <select
-                                className="fsel"
-                                disabled={motivosTarifaQuery.isLoading}
-                                value={motivoCambioTarifa}
-                                onChange={(e) => setMotivoCambioTarifa(e.target.value)}
-                              >
-                                <option value="">
-                                  {motivosTarifaQuery.isLoading ? "Cargando…" : "Selecciona…"}
-                                </option>
-                                {motivosCambioTarifa.map((m) => (
-                                  <option key={m.constante_sistema_id} value={m.descripcion}>
-                                    {m.descripcion}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
+                            <SearchableSelect
+                              value={motivoCambioTarifa}
+                              onChange={setMotivoCambioTarifa}
+                              options={motivosCambioTarifa.map((m) => ({
+                                value: m.descripcion,
+                                label: m.descripcion,
+                              }))}
+                              placeholder={
+                                motivosTarifaQuery.isLoading
+                                  ? "Cargando…"
+                                  : "Por qué el precio no coincide con la tarifa del catálogo…"
+                              }
+                              onCreate={(texto) =>
+                                crearMotivoTarifa.mutate(
+                                  { clave_base: "CambioTarifa", descripcion: texto },
+                                  { onSuccess: (nuevo) => setMotivoCambioTarifa(nuevo.descripcion) },
+                                )
+                              }
+                              creando={crearMotivoTarifa.isPending}
+                            />
                           </>
                         )}
                       </>

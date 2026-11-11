@@ -18,13 +18,22 @@
  *
  * ADR-174b (petición del usuario): el backend ahora empareja el layout contra lo
  * programado por FECHA (ya no fecha+hora exacta, ver `_parsear_layout_reales_csv` en
- * `orden_estacion.py`). Un día con hora distinta llega marcado `cambioHorario`/
- * `horaReal` — `onLayoutAplicado` refleja esa hora REAL en la fila (lo que de verdad
- * pasó) y la manda aparte (`hora_real`) para que el backend genere su Incidencia de
- * cambio de horario, independiente de si también cambiaron los spots (las dos pueden
- * coexistir). Un día NUEVO del layout (registro extra en la misma fecha, o una fecha
- * sin nada programado) ahora SIEMPRE genera su Incidencia de bonificación al crearse
- * (antes, ADR-149, nunca generaba ninguna).
+ * `orden_estacion.py`). `onLayoutAplicado` refleja la hora REAL (`horaReal`, lo que de
+ * verdad pasó) en la fila. Un día NUEVO del layout (registro extra en la misma fecha, o
+ * una fecha sin nada programado) ahora SIEMPRE genera su Incidencia de bonificación al
+ * crearse (antes, ADR-149, nunca generaba ninguna).
+ *
+ * ADR-247 (petición del usuario, con capturas): `horaReal` ahora SIEMPRE viene del
+ * backend (antes solo si difería de la programada) — ya NO se audita ningún "cambio de
+ * horario" como Incidencia automática (comparar contra una única hora programada era,
+ * en la práctica, comparar contra una PROYECCIÓN: un día con varios spots programados a
+ * la misma `hora_inicio`, no horarios reales distintos por spot). En su lugar, cada fila
+ * se marca "fuera de horario" (solo visual, nunca bloquea "Avanzar a 2.3") si su hora
+ * real cae fuera de la VENTANA completa programada para ese día
+ * (`hora_inicio`–`hora_termino`, no solo distinta del punto de inicio). De paso se quita
+ * la columna "Spots" de la vista con layout cargado (cada fila ya es 1 spot — la
+ * columna no aporta nada ahí) y se angosta "Horario de transmisión" (solo necesita un
+ * valor, no un rango).
  *
  * ADR-176 (petición del usuario, probando en vivo el layout de ADR-174b): el panel
  * "Al avanzar a 2.3 se generarán" cuenta la bonificación en SPOTS (`bonifSpots`, suma
@@ -76,6 +85,14 @@ type DiaNuevoDraft = LayoutRealNuevo & { editing: boolean };
 
 function distinto(a: PeriodoTransmisionRow, b: PeriodoTransmisionRow): boolean {
   return a.hora_inicio !== b.hora_inicio || a.hora_termino !== b.hora_termino || a.spots_diarios !== b.spots_diarios;
+}
+
+// ADR-247 (petición del usuario): la hora real de una fila se marca "fuera de horario"
+// si cae fuera de la VENTANA completa programada para ese día (inicio–término), no solo
+// si difiere del punto de inicio (eso era comparar contra una proyección, no un rango
+// real — ver el comentario de cabecera). Solo informativo, nunca bloquea el avance.
+function horaFueraDeVentana(horaReal: string, programado: PeriodoTransmisionRow): boolean {
+  return horaReal < programado.hora_inicio || horaReal > programado.hora_termino;
 }
 
 // ADR-152 (petición del usuario): antes de "Avanzar a 2.3", avisa en la MISMA tabla
@@ -275,13 +292,11 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
         ...programado,
         spots_diarios: a.spots,
         editing: false,
-        // ADR-174b (petición del usuario): el layout reportó una hora distinta a la
-        // programada — la fila refleja la hora REAL (lo que de verdad pasó, que es lo
-        // que esta pantalla captura), y se manda al backend por separado (`hora_real`)
-        // para que genere su propia Incidencia de cambio de horario al avanzar.
-        ...(a.cambioHorario && a.horaReal
-          ? { hora_inicio: a.horaReal, hora_termino: a.horaReal, hora_real: a.horaReal }
-          : {}),
+        // ADR-247 (petición del usuario): la fila SIEMPRE refleja la hora REAL que
+        // reportó el layout (lo que de verdad pasó, que es lo que esta pantalla
+        // captura) — ya no depende de si difiere de la programada; el backend ya no
+        // hace nada con ella (no se manda, no genera Incidencia).
+        ...(a.horaReal ? { hora_inicio: a.horaReal, hora_termino: a.horaReal } : {}),
       };
     });
     setOverrides(overridesNuevos);
@@ -323,12 +338,13 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
   // confundía cuando el total real de spots de bonificación era otro. `bonifSpots` SUMA
   // la magnitud de la diferencia de cada día ya existente (no +1 por día); los
   // registros NUEVOS se cuentan aparte (`nuevosSpots`), nunca mezclados con la
-  // bonificación de los ya existentes. El resto (descuentos, cambios de horario) se
-  // deja exactamente como ya se calculaba (conteo de días/filas afectadas, petición
-  // explícita del usuario).
+  // bonificación de los ya existentes. El resto (descuentos) se deja exactamente como
+  // ya se calculaba (conteo de días/filas afectadas, petición explícita del usuario).
+  // ADR-247: "fuera de horario" ya NO se cuenta aquí — no genera ninguna Incidencia, así
+  // que no pertenece al panel "Al avanzar a 2.3 se generarán" (se marca por fila, ver
+  // `horaFueraDeVentana`, más abajo en la tabla).
   let bonifSpots = 0;
   let nDesc = 0;
-  let nCambioHorario = 0;
   let montoNeto = 0;
   oe.periodo_transmision.forEach((row) => {
     const programado = programadoEfectivo(oe, row);
@@ -342,9 +358,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
       if (diff > 0) bonifSpots += diff;
       else if (diff < 0) nDesc++;
       montoNeto += diff * (oe.precio_spot || 0);
-      // ADR-174b: el cambio de horario genera su PROPIA incidencia, independiente de
-      // si también cambiaron los spots (ambas pueden coexistir en el mismo día).
-      if (ov.hora_real) nCambioHorario++;
     }
   });
   // ADR-160/ADR-174b (petición del usuario): un día NUEVO propuesto por el layout
@@ -376,7 +389,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
         hora_termino: o.hora_termino,
         spots_diarios: o.spots_diarios,
         orden_estacion_dia_id: o.orden_estacion_dia_id,
-        hora_real: o.hora_real ?? null,
       }));
     onAvanzar(horariosReales, {
       notasTransmision: notas.trim() || null,
@@ -403,8 +415,13 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
               <tr>
                 <th>Día</th>
                 <th>Fecha</th>
-                <th>Horario de transmisión</th>
-                <th className="td-center">Spots</th>
+                {/* ADR-247 (petición del usuario): angostada — solo necesita un valor
+                    (HH:MM:SS), no un rango. */}
+                <th style={{ width: 100 }}>Horario de transmisión</th>
+                {/* ADR-247 (petición del usuario): con un layout cargado cada fila ya es
+                    1 spot (o la suma de duplicados exactos del archivo) — la columna no
+                    aporta nada ahí; se conserva solo en la captura manual. */}
+                {!layoutCargado && <th className="td-center">Spots</th>}
                 <th className="td-center">Resultado</th>
                 <th style={{ width: 140 }} />
               </tr>
@@ -418,9 +435,10 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   const modificado = ov && !ov.editing && distinto(programado, ov);
                   const fila = ov ?? programado;
                   const diff = modificado ? fila.spots_diarios - programado.spots_diarios : 0;
-                  // ADR-174b: un día puede cambiar de horario Y de spots a la vez — las
-                  // dos marcas se muestran juntas, no son excluyentes entre sí.
-                  const horaCambio = modificado && fila.hora_inicio !== programado.hora_inicio;
+                  // ADR-247: un día puede quedar fuera de horario Y tener diferencia de
+                  // spots a la vez — las dos marcas se muestran juntas, no son
+                  // excluyentes entre sí. Ver `horaFueraDeVentana` (solo informativo).
+                  const horaFuera = modificado && horaFueraDeVentana(fila.hora_inicio, programado);
 
                   return (
                     <tr key={diaId} style={modificado ? { background: "var(--amber-bg)" } : undefined}>
@@ -471,7 +489,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                               <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
                                 {diff > 0 && <span className="badge b-teal">+{diff} bonif.</span>}
                                 {diff < 0 && <span className="badge b-red">{diff} desc.</span>}
-                                {horaCambio && <span className="badge b-amber">cambio horario</span>}
+                                {horaFuera && <span className="badge b-amber">fuera de horario</span>}
                               </div>
                             )}
                           </td>
@@ -508,7 +526,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   const programado = programadoEfectivo(oe, original);
                   const modificado = !ov.editing && distinto(programado, ov);
                   const diff = modificado ? ov.spots_diarios - programado.spots_diarios : 0;
-                  const horaCambio = modificado && ov.hora_inicio !== programado.hora_inicio;
+                  const horaFuera = modificado && horaFueraDeVentana(ov.hora_inicio, programado);
 
                   return (
                     <tr key={diaId} style={{ background: "var(--amber-bg)" }}>
@@ -532,15 +550,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                               }
                             />
                           </td>
-                          <td className="td-center">
-                            <input
-                              type="number"
-                              className="fi"
-                              style={{ marginBottom: 0, textAlign: "center", fontFamily: "var(--mono)" }}
-                              value={ov.spots_diarios}
-                              onChange={(e) => actualizarDraft(diaId, { spots_diarios: Number.parseInt(e.target.value, 10) || 0 })}
-                            />
-                          </td>
                           <td className="td-center">—</td>
                           <td>
                             <button type="button" className="btn btn-xs btn-teal" onClick={() => cerrarEdicionEnLayout(diaId)}>
@@ -551,7 +560,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                       ) : (
                         <>
                           <td className="td-mono">{ov.hora_inicio}</td>
-                          <td className="td-center td-mono">{ov.spots_diarios}</td>
                           <td className="td-center">
                             {!modificado ? (
                               <span style={{ fontSize: 11, color: "var(--green-text)" }}>sin cambio</span>
@@ -559,7 +567,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                               <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
                                 {diff > 0 && <span className="badge b-teal">+{diff} bonif.</span>}
                                 {diff < 0 && <span className="badge b-red">{diff} desc.</span>}
-                                {horaCambio && <span className="badge b-amber">cambio horario</span>}
+                                {horaFuera && <span className="badge b-amber">fuera de horario</span>}
                               </div>
                             )}
                           </td>
@@ -617,17 +625,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                               onChange={(e) => actualizarDraftNuevo(i, { hora: e.target.value })}
                             />
                           </td>
-                          <td className="td-center">
-                            <input
-                              type="number"
-                              className="fi"
-                              style={{ marginBottom: 0, textAlign: "center", fontFamily: "var(--mono)" }}
-                              value={d.spots}
-                              onChange={(e) =>
-                                actualizarDraftNuevo(i, { spots: Number.parseInt(e.target.value, 10) || 0 })
-                              }
-                            />
-                          </td>
                           <td className="td-center">—</td>
                           <td>
                             <button type="button" className="btn btn-xs btn-teal" onClick={() => cerrarEdicionNuevo(i)}>
@@ -639,7 +636,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                         <>
                           <td className="td-mono">{d.fecha}</td>
                           <td className="td-mono">{d.hora}</td>
-                          <td className="td-center td-mono">{d.spots}</td>
                           <td className="td-center">
                             <span className="badge b-purple">Nuevo</span>
                             {motivoInvalido && (
@@ -700,7 +696,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
 
         <div className="info-panel">
           <div className="info-panel-title">Al avanzar a 2.3 se generarán</div>
-          {bonifSpots + nDesc + nCambioHorario + nuevosSpots === 0 ? (
+          {bonifSpots + nDesc + nuevosSpots === 0 ? (
             <div className="fv muted" style={{ fontSize: 12 }}>
               Ninguna incidencia — lo real coincide con lo programado.
             </div>
@@ -714,11 +710,6 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
               {nDesc > 0 && (
                 <div className="fv" style={{ fontSize: 12 }}>
                   • {nDesc} descuento(s)
-                </div>
-              )}
-              {nCambioHorario > 0 && (
-                <div className="fv" style={{ fontSize: 12 }}>
-                  • {nCambioHorario} cambio(s) de horario
                 </div>
               )}
               {nuevosSpots > 0 && (

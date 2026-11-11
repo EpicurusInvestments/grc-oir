@@ -157,12 +157,16 @@ Solo para `ConstantesSistema` (Admin). Detalle completo en **ADR-025** y en `API
   `fecha_inicio_campania`/`fecha_fin_campania` en `OrdenClienteForm.tsx` usa la clave
   `CambioFecha*` del mismo grupo — ver ADR-180 en `docs/arquitectura.md` y
   `docs/modulos/f1-ordenes/f1-00-ordenes.md`.
+- **Conectado a Orden de Servicio (F1) en ADR-244:** el "Motivo del cambio" compartido
+  por los 3 % de comisión (vendedor principal/secundario/agencia) en
+  `OrdenClienteForm.tsx` usa la clave `CambioComision*` del mismo grupo — ver ADR-244 en
+  `docs/arquitectura.md`.
 - **Conectado a Orden de Transmisión (F1) en ADR-183:** el "Motivo del cambio de tarifa"
   de `OrdenEstacionForm.tsx` (alta y edición, cuando `precio_spot` diverge de la tarifa
   sugerida) usa la MISMA clave `CambioTarifa*` que ya usa Tarifa (ADR-179) — ver ADR-183
-  en `docs/arquitectura.md` y `docs/modulos/f1-ordenes/f1-00-ordenes.md`. Las demás
-  pantallas con un motivo en texto libre (comisiones de vendedor/agencia, cancelar
-  transmisión...) siguen pendientes.
+  en `docs/arquitectura.md` y `docs/modulos/f1-ordenes/f1-00-ordenes.md`. Estos 4 son,
+  hasta ahora, todos los combos conectados a este catálogo; otras pantallas con un motivo
+  en texto libre (p.ej. cancelar transmisión) siguen pendientes.
 - **Verificado:** backend, 6 pruebas nuevas en `test_f0_05_constantes.py` (autogenera
   sufijo, secuencia independiente por clave base, case-insensitive, los demás grupos
   siguen rechazando duplicados, HTTP de punta a punta); `ruff check` limpio; migración con
@@ -170,10 +174,23 @@ Solo para `ConstantesSistema` (Admin). Detalle completo en **ADR-025** y en `API
   sobreviven la recreación de tabla en modo batch). Frontend, `tsc --noEmit`/`eslint`
   limpios (sin suite de pruebas propia — mismo hueco preexistente que Tarifa/Agencia).
 
+**ADR-246 (petición del usuario) — alta rápida de un motivo nuevo, directo desde el
+combo:** los 4 combos "Motivo del cambio" (Tarifa, Orden de Servicio × fecha/comisión,
+Orden de Transmisión × tarifa) ahora son "creatable" (`SearchableSelect`) — si lo que se
+escribe no está en el catálogo, ofrecen "+ Crear "..."" y lo dan de alta ahí mismo, vía un
+endpoint DEDICADO (`POST /constantes/motivos-cambio`) que fuerza `grupo=MotivoCambio`
+(nunca cualquier otro grupo) y permiso ANGOSTO `motivos_cambio:crear` (Ventas/Dirección) —
+no el `catalogos:crear` general de esta sección (que sigue siendo solo Admin). Ver ADR-246
+en `docs/arquitectura.md` para el detalle completo y por qué hizo falta un permiso aparte.
+
 ## Roles / permisos
 - **Lectura:** todas las áreas operativas.
 - **Edición (manual y carga masiva):** Admin (IT) únicamente por ahora. Más adelante se
   podrá definir si otro rol asume esta responsabilidad (se afinará en F5).
+- **Excepción angosta (ADR-246):** crear filas del grupo `MotivoCambio` desde los 4 combos
+  "Motivo del cambio" — Ventas y Dirección, vía el permiso separado
+  `motivos_cambio:crear` (endpoint dedicado, nunca el genérico). No habilita ninguna otra
+  operación sobre el resto del catálogo.
 
 ## Reglas de negocio clave
 - Estos catálogos NO se editan en operación normal; cambian poco y de forma controlada.

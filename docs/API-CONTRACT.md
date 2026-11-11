@@ -676,6 +676,16 @@ CSV. `multipart/form-data`: `archivo` (.csv), `commit` (bool, default `false`),
   errores_estructura, filas: [ { numero, grupo, clave, estado, motivo } ] }` donde `estado` ∈
   `creada | actualizada | omitida | rechazada`.
 
+**`POST /catalogos/constantes/motivos-cambio`** (ADR-246, permiso **angosto**
+`motivos_cambio:crear` — **ventas** y **dirección**, NO el `catalogos:crear` general de
+arriba) — alta rápida de un motivo nuevo desde los 4 combos "Motivo del cambio"
+(Tarifa/Orden de Servicio × fecha y comisión/Orden de Transmisión × tarifa), sin pasar por
+la pantalla de Constantes del Sistema. Body: `{ clave_base, descripcion }` — **sin**
+`grupo`: el servidor lo fuerza siempre a `MotivoCambio`, nunca llega del cliente (así el
+endpoint no puede dar de alta nada fuera de ese grupo, aunque el área tenga el permiso).
+Responde **201** con el `ConstanteSistemaRead` completo (`clave` ya con el sufijo
+secuencial, p.ej. `clave_base="CambioComision"` → `clave="CambioComision_3"` si ya había 2).
+
 **`/catalogos/cuentas-contables`** — campos: `cuenta_contable_id`, `codigo_cuenta` (req.,
 **único case-insensitive**), `nombre_cuenta` (req.), `tipo_cuenta` (req., ENUM:
 `ingreso | costo | gasto | activo | pasivo`; inválido → **422**), `activo`, `created_at`,
@@ -772,20 +782,31 @@ Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de Orden
     (texto plano) — la lista blanca de extensión es la única defensa para esos 2.
     Responde `{archivo, aplicados, nuevos, errores}`
     (`OrdenEstacionLayoutRealSubidoRead`): el archivo se guarda siempre; si es `.csv`,
-    **ADR-147/ADR-149** lo parsea (columnas `Estacion, Fecha, Hora, Spots` — Spots
-    opcional, default 1), agrupa las filas VÁLIDAS por `fecha_transmision` +
-    `hora_inicio` exactas y SUMA sus `Spots` dentro de cada grupo (`Estacion` debe
+    **ADR-147/ADR-149** lo parsea (columnas `Estacion, Fecha, Hora` — **ADR-247,
+    petición del usuario: el layout que se comunica al afiliado ya no incluye
+    `Spots`**, cada fila del archivo representa un spot; `Spots` se sigue aceptando
+    como columna OPCIONAL por robustez si algún archivo todavía la trae, pero no se
+    documenta ni se exige — default 1), agrupa las filas VÁLIDAS por `fecha_transmision`
+    + `hora_inicio` exactas y SUMA sus `Spots` dentro de cada grupo (`Estacion` debe
     coincidir normalizada con la de esta OE). **ADR-174b** (reemplaza el criterio de
     emparejamiento de ADR-147/149/157, que era por fecha+hora EXACTA): cada grupo se
     reagrupa por FECHA solamente y se empareja, dentro de cada fecha, CRONOLÓGICAMENTE
     contra los días YA programados de esa fecha (ambos lados ordenados por hora, 1º
     con 1º, 2º con 2º...):
     - Un par emparejado → `aplicados`
-      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots, cambio_horario,
-      hora_real}` — `hora_inicio` es la PROGRAMADA, sin cambio; si la hora del archivo
-      difiere, `cambio_horario=true` y `hora_real` trae la hora reportada).
+      (`{orden_estacion_dia_id, fecha_transmision, hora_inicio, spots, hora_real}` —
+      `hora_inicio` es la PROGRAMADA, sin cambio; `hora_real` SIEMPRE trae la hora que
+      reportó el archivo para ese par — **ADR-247**, antes solo si diferían de la
+      programada. Ya NO se audita ningún "cambio de horario" como `Incidencia`
+      automática al avanzar — comparar contra una única `hora_inicio` programada era,
+      en la práctica, comparar contra una PROYECCIÓN (un día con varios spots
+      programados a la misma hora, no horarios reales distintos por spot). El
+      frontend decide, comparando `hora_real` contra la VENTANA completa programada
+      de ese día (`hora_inicio`–`hora_fin`), si vale la pena marcarla "fuera de
+      horario" — solo visual, nunca bloquea el avance).
     - Programados de esa fecha que sobran (el archivo trajo menos registros de los
-      programados) → `aplicados` con `spots=0` (faltante, ADR-157, sin cambio).
+      programados) → `aplicados` con `spots=0` (faltante, ADR-157, sin cambio, sin
+      `hora_real`).
     - Grupos del archivo que sobran (más registros de los programados para esa fecha,
       o una fecha sin ningún día programado) → `nuevos`
       (`{fecha_transmision, hora_inicio, spots}` — propuesta de día NUEVO a crear al
@@ -858,7 +879,14 @@ descuento_afiliado|sin_resolucion`).
 que `contrato_id`/`marca_id` (si vienen) pertenezcan al `anunciante_id` de la orden.
 **ADR-100:** nace DIRECTO en `capturada` — no hay checklist ni paso intermedio (`recibida`
 sigue en el enum por la spec, pero queda inalcanzable por este flujo). Los 3 % de
-comisión pueden capturarse aquí libremente (Ventas) — es alta, no auditoría con motivo.
+comisión pueden capturarse aquí libremente (Ventas) — es alta, no "cambio", así que por
+default no pide motivo (ADR-029). **ADR-249 (petición del usuario) — excepción puntual:**
+si alguno de los 3 % capturados diverge del sugerido del catálogo
+(`Vendedor.porcentaje_comision_default`/`Agencia.porcentaje_comision_agencia_default`,
+tolerancia `0.01`), SÍ exige `motivo_cambio_comision` (campo TRANSITORIO, no es columna,
+compartido entre los 3 % igual que en edición) — **400 `error_dominio`** si falta. Se
+audita en `LogCambioParametro` con ese motivo (antes siempre `motivo=None` en el alta).
+Si todos coinciden con el catálogo, sigue sin pedir nada (ADR-029 intacto para ese caso).
 **ADR-167/168:** `producto_tarifa` (**req.**, 1–60 caracteres, **NUEVO** — no confundir
 con `producto`, la "Campaña" en texto libre; ADR-168: obligatorio al crear, igual que
 `OrdenEstacion.producto_tarifa`, ADR-106) y `duracion_spot` (opcional, ≤60 caracteres,
@@ -948,11 +976,11 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
   arriba), `notas_transmision`, `reporte_reales_ref` (el backend lo sigue aceptando sin
   cambios; **ADR-146**: el frontend de "Capturar Reales" ya no muestra esta sección
   ("Reporte del afiliado") ni la manda al avanzar — mismo criterio que ADR-143 con
-  `reporte_programados_ref`); cada excepción en `dias` acepta además `hora_real`
-  (**ADR-174b**, opcional): la hora REAL que reportó el layout si difiere de la
-  programada — el servicio genera una `Incidencia` `cambio_horario` ADEMÁS de la de
-  spots si también difieren (nunca la reemplaza; `diferencia_spots=0`/sin
-  `monto_ajuste`, puramente informativa). `dias_nuevos` (**ADR-149**, opcional —
+  `reporte_programados_ref`). **ADR-247** (reemplaza ADR-174b): cada excepción en
+  `dias` YA NO acepta `hora_real` — se quitó el campo del todo, junto con la
+  `Incidencia` automática `cambio_horario` que generaba (ver el endpoint de layout,
+  arriba, para el reemplazo: la hora real se refleja solo en la vista previa del
+  layout, sin auditarse como incidencia). `dias_nuevos` (**ADR-149**, opcional —
   `{fecha_transmision, hora_inicio, spots > 0}[]`): crea días que NO existían, propuestos
   por "Carga de Órdenes Reales Desde Layout" cuando el archivo trae más registros para
   una fecha de los que había programados, o una fecha sin ningún día programado
@@ -970,8 +998,9 @@ día cae fuera del rango de campaña. Si la OC estaba en `capturada`, la promuev
   `OrdenEstacion` (dato histórico preservado) pero ya no se escriben desde aquí. Crea
   **una `Verificacion` por CADA día** de la OE (spec — no solo los listados); genera una
   `Incidencia` automática (`faltante`/`excedente`, `monto_ajuste = diferencia ×
-  precio_spot`, `resolucion="pendiente"`) por cada día con diferencia, más la de
-  `cambio_horario` descrita arriba cuando aplica. 409 si la OE no
+  precio_spot`, `resolucion="pendiente"`) por cada día con diferencia de spots —
+  **ADR-247**: ya NO genera ninguna `Incidencia` `cambio_horario` (ver arriba). 409 si
+  la OE no
   está en `asignada` ni en `en_transmision`. Si TODAS las OE de la OC quedan `cerrada`, la
   OC pasa de `en_transmision` a `en_verificacion` automáticamente.
 
@@ -1189,10 +1218,14 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 - **`POST /facturacion/clientes/{id}/enviar-a-timbrado`** (`facturacion:editar`).
 - **`POST /facturacion/clientes/{id}/timbrar`** (`facturacion:editar`) — body:
   `folio_fiscal_sat`, `fecha_timbrado`, y opcionalmente `xml_path`/`pdf_path` (claves de
-  almacenamiento devueltas por el endpoint de adjuntos). **Promueve la `OrdenCliente` a
-  `facturada`** en la MISMA transacción (handoff con F1). Si la OC no admite esa
-  transición, el 409 aborta también el timbrado: no queda factura timbrada con la orden
-  desincronizada.
+  almacenamiento devueltas por el endpoint de adjuntos) y `facturado_en_sistema_externo`
+  (bool, default `false` — **ADR-248**, petición del usuario: solo IDENTIFICA que la
+  factura en realidad se facturó en otro sistema, p.ej. OIR; no cambia ningún cálculo ni
+  ninguna otra parte del flujo — el monto para OIR sigue siendo `total_factura`, el que
+  ya calculó este sistema desde las órdenes, nunca el del folio/archivo cargado aquí).
+  **Promueve la `OrdenCliente` a `facturada`** en la MISMA transacción (handoff con F1).
+  Si la OC no admite esa transición, el 409 aborta también el timbrado: no queda factura
+  timbrada con la orden desincronizada.
 - **`POST /facturacion/clientes/{id}/entregar`** (`facturacion:editar`) — body opcional
   `fecha_entrega_factura` (default: hoy).
 - **`POST /facturacion/clientes/{id}/cancelar`** (`facturacion:editar`) — desde los 4

@@ -9,6 +9,11 @@
  * XML y PDF son OPCIONALES (igual que hoy en `TimbrarInput`): el prototipo aprobado los
  * marca como obligatorios, pero endurecer esa regla es una decisión de negocio aparte —
  * aquí solo se habilita la carga real (antes ni siquiera existían estos 2 campos).
+ *
+ * ADR-248 (petición del usuario, "NEW FEATURE"): checkbox "Facturado en sistema
+ * externo" — solo IDENTIFICA la factura (p.ej. cuando en realidad se facturó en OIR),
+ * el resto del flujo sigue tal cual: el monto para OIR es el que ya se calculó en este
+ * sistema (`total_factura`), nunca el del folio/archivo cargado aquí.
  */
 
 import { useState } from "react";
@@ -40,6 +45,9 @@ export function RegistrarTimbradoForm({
   const [serie, setSerie] = useState("");
   const [xmlPath, setXmlPath] = useState<string | null>(null);
   const [pdfPath, setPdfPath] = useState<string | null>(null);
+  // ADR-248 (petición del usuario, "NEW FEATURE"): solo identifica la factura — el
+  // resto del flujo (el monto para OIR) sigue tal cual, viene de este sistema.
+  const [facturadoExterno, setFacturadoExterno] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const confirmar = () => {
@@ -53,6 +61,7 @@ export function RegistrarTimbradoForm({
       serie_timbrado: serie.trim() || null,
       xml_path: xmlPath,
       pdf_path: pdfPath,
+      facturado_en_sistema_externo: facturadoExterno,
     });
   };
 
@@ -133,6 +142,21 @@ export function RegistrarTimbradoForm({
                 />
               </div>
             </div>
+            <label className="check-box" style={{ marginTop: 10, marginBottom: 0 }}>
+              <input
+                type="checkbox"
+                checked={facturadoExterno}
+                onChange={(e) => setFacturadoExterno(e.target.checked)}
+              />
+              <div>
+                <div className="check-box-title">Facturado en sistema externo</div>
+                <div className="check-box-desc">
+                  Marca esta opción si la factura se timbró en otro sistema (p. ej. OIR). Solo
+                  identifica la factura — el monto para OIR sigue siendo el que ya se asignó
+                  aquí; el folio/archivo cargado puede traer un monto distinto.
+                </div>
+              </div>
+            </label>
             {error && <div className="fe">{error}</div>}
           </div>
 

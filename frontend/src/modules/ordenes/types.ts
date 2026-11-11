@@ -41,12 +41,6 @@ export interface PeriodoTransmisionRow {
   /** ADR-104: `true` = este día ya se canceló ("Cancelar transmisión") — de solo
    *  lectura en la grid, no se vuelve a editar. */
   cancelada?: boolean;
-  /** ADR-174b (petición del usuario): hora REAL de transmisión que reportó el layout
-   *  de "Capturar Reales", si difiere de la programada (`hora_inicio`, que no cambia
-   *  aquí) — el backend la compara contra `OrdenEstacionDia.hora_inicio` y genera la
-   *  `Incidencia` de cambio de horario cuando difieren. `null`/`undefined` = no aplica
-   *  (no vino del layout, o coincide con la programada). */
-  hora_real?: string | null;
 }
 
 export interface OrdenCliente {
@@ -135,15 +129,16 @@ export interface OrdenEstacionLayoutReal {
   nombre_archivo: string;
 }
 
-/** ADR-147/ADR-149/ADR-174b: una fecha del layout CSV que sí hizo match (por fecha,
- *  cronológico — ADR-174b) con un día real de la OE — trae el `spots` (ya sumado si
- *  2+ filas compartían la misma fecha+hora) a aplicar como override de ese día.
- *  `cambioHorario`/`horaReal`: si el archivo reportó este día con una hora distinta a
- *  la programada, `cambioHorario` viene en `true` y `horaReal` trae la hora real. */
+/** ADR-147/ADR-149/ADR-174b/ADR-247: una fecha del layout CSV que sí hizo match (por
+ *  fecha, cronológico — ADR-174b) con un día real de la OE — trae el `spots` (ya
+ *  sumado si 2+ filas compartían la misma fecha+hora) a aplicar como override de ese
+ *  día. `horaReal` SIEMPRE trae la hora que reportó el archivo para este día (ADR-247,
+ *  antes solo si difería de la programada) — `RealesForm.tsx` decide, comparándola
+ *  contra la ventana `hora_inicio`/`hora_termino` programada, si vale la pena marcarla
+ *  como "fuera de horario" (solo visual, ya no genera ninguna Incidencia). */
 export interface LayoutRealAplicado {
   ordenEstacionDiaId: string;
   spots: number;
-  cambioHorario: boolean;
   horaReal: string | null;
 }
 

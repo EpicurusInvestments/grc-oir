@@ -234,6 +234,13 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                     {selected.ordenes.length > 1 && ` +${selected.ordenes.length - 1}`}
                   </span>
                 )}
+                {/* ADR-248 (petición del usuario): también consultable en el detalle,
+                    no solo al registrar el timbrado. */}
+                {selected.facturado_en_sistema_externo && (
+                  <span className="badge b-purple" title="Se facturó en otro sistema (p.ej. OIR); el monto de arriba es el que calculó este sistema, no el del archivo/folio cargado.">
+                    Facturado en sistema externo
+                  </span>
+                )}
               </div>
             </div>
           </div>

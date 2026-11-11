@@ -123,6 +123,11 @@ export interface FacturaCliente {
   serie_timbrado: string | null;
   xml_path: string | null;
   pdf_path: string | null;
+  /** ADR-248 (petición del usuario, "NEW FEATURE"): solo IDENTIFICA que esta factura en
+   *  realidad se facturó en otro sistema (p.ej. OIR) — no cambia ningún cálculo: el
+   *  monto para OIR sigue siendo `total_factura` de arriba, el que ya calculó este
+   *  sistema. */
+  facturado_en_sistema_externo: boolean;
   created_by: string;
   created_at: string;
   updated_at: string | null;
@@ -173,6 +178,9 @@ export interface TimbrarInput {
   serie_timbrado?: string | null;
   xml_path?: string | null;
   pdf_path?: string | null;
+  /** ADR-248 (petición del usuario, "NEW FEATURE"): "Facturado en sistema externo" —
+   *  solo identifica la factura, no cambia el monto ni ninguna otra parte del flujo. */
+  facturado_en_sistema_externo?: boolean;
 }
 
 // ── FacturaAfiliado ───────────────────────────────────────────────────────────

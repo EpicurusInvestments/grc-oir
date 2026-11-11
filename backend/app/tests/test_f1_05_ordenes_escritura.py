@@ -350,19 +350,115 @@ def test_crear_oc_contrato_de_otro_anunciante_400(
         oc_svc.create(_oc_payload(cat, anunciante_id=cat["otro_anunciante"]), VENTAS)
 
 
-def test_crear_oc_comision_auditada_sin_motivo(
-    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+# ── Bug corregido (petición del usuario, con captura): no se puede facturar a la
+# agencia sin haber seleccionado una ─────────────────────────────────────────
+def test_crear_oc_factura_a_la_agencia_sin_agencia_400(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    with pytest.raises(DomainError):
+        oc_svc.create(
+            _oc_payload(cat, agencia_id=None, afiliado_factura_directo_al_cliente=True),
+            VENTAS,
+        )
+
+
+def test_crear_oc_factura_a_la_agencia_con_agencia_ok(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
     oc = oc_svc.create(
-        _oc_payload(cat, porcentaje_comision_vendedor_principal_snap=Decimal("5.00")), VENTAS
+        _oc_payload(cat, afiliado_factura_directo_al_cliente=True), VENTAS
+    )
+    assert oc.afiliado_factura_directo_al_cliente is True
+    assert oc.agencia_id == cat["agencia"]
+
+
+def test_editar_oc_quitar_agencia_mientras_factura_a_la_agencia_400(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(
+        _oc_payload(cat, afiliado_factura_directo_al_cliente=True), VENTAS
+    )
+    with pytest.raises(DomainError):
+        oc_svc.update(oc.orden_id, OrdenClienteUpdate(agencia_id=None), VENTAS)
+
+
+def test_crear_oc_comision_auditada_sin_motivo_si_coincide_con_el_catalogo(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-249 (reversa puntual de ADR-029 para el caso de divergencia, ver el test de
+    abajo): capturar un % IGUAL al sugerido del catálogo (`cat["vendedor"]` default
+    4.00) sigue sin pedir motivo — ADR-029 original intacto para este caso."""
+    oc = oc_svc.create(
+        _oc_payload(cat, porcentaje_comision_vendedor_principal_snap=Decimal("4.00")), VENTAS
     )
     logs = db.scalars(
         select(LogCambioParametro).where(LogCambioParametro.entidad_id == str(oc.orden_id))
     ).all()
     assert len(logs) == 1
     assert logs[0].valor_anterior is None
-    assert logs[0].valor_nuevo == "5.00"
+    assert logs[0].valor_nuevo == "4.00"
     assert logs[0].motivo_cambio is None
+
+
+# ADR-249 (petición del usuario): "también debe aplicar cuando es una nueva orden" — en
+# alta, el motivo se exige si el % capturado diverge del sugerido del catálogo (mismo
+# criterio que el badge "sobrescrito" del frontend), aunque sea la primera vez que se
+# captura (no hay valor previo guardado contra qué comparar).
+def test_crear_oc_rechaza_comision_que_diverge_del_catalogo_sin_motivo(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    with pytest.raises(DomainError):
+        oc_svc.create(
+            _oc_payload(cat, porcentaje_comision_vendedor_principal_snap=Decimal("5.00")), VENTAS
+        )
+
+
+def test_crear_oc_acepta_comision_que_diverge_del_catalogo_con_motivo(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(
+        _oc_payload(
+            cat,
+            porcentaje_comision_vendedor_principal_snap=Decimal("5.00"),
+            motivo_cambio_comision="Negociación comercial con el cliente",
+        ),
+        VENTAS,
+    )
+    logs = db.scalars(
+        select(LogCambioParametro).where(LogCambioParametro.entidad_id == str(oc.orden_id))
+    ).all()
+    assert len(logs) == 1
+    assert logs[0].valor_nuevo == "5.00"
+    assert logs[0].motivo_cambio == "Negociación comercial con el cliente"
+
+
+def test_crear_oc_con_dos_comisiones_divergentes_un_solo_motivo_cubre_las_dos(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario (probando en vivo, con captura): modificar vendedor
+    principal Y agencia a la vez — un solo motivo compartido debe bastar para ambas,
+    mismo criterio que ya usa la edición."""
+    oc = oc_svc.create(
+        _oc_payload(
+            cat,
+            porcentaje_comision_vendedor_principal_snap=Decimal("9.00"),  # catálogo: 4.00
+            porcentaje_comision_agencia_snap=Decimal("20.00"),  # catálogo: 15.00
+            motivo_cambio_comision="Negociación comercial distinta al % default del catálogo",
+        ),
+        VENTAS,
+    )
+    logs = db.scalars(
+        select(LogCambioParametro).where(LogCambioParametro.entidad_id == str(oc.orden_id))
+    ).all()
+    campos = {log.campo: log for log in logs}
+    assert set(campos) == {
+        "porcentaje_comision_vendedor_principal_snap",
+        "porcentaje_comision_agencia_snap",
+    }
+    assert campos["porcentaje_comision_vendedor_principal_snap"].valor_nuevo == "9.00"
+    assert campos["porcentaje_comision_agencia_snap"].valor_nuevo == "20.00"
+    for log in logs:
+        assert log.motivo_cambio == "Negociación comercial distinta al % default del catálogo"
 
 
 # ── Sin checklist de Vo.Bo. (ADR-100) ─────────────────────────────────────────

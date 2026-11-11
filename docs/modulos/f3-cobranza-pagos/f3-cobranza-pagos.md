@@ -152,6 +152,11 @@ referencia, factura o monto:** la caja de búsqueda solo comparaba contra
 (como se ven en la tabla), el monto crudo y el número de factura de la cobranza. Solo
 cambia el filtro en memoria de `PagosClientePage.tsx`, sin tocar la API.
 
+**ADR-241 (petición del usuario) — el buscador también cubre el número de pago
+(parcialidad):** faltaba `numero_pago` (columna "Número de parcialidad") en el filtro
+de ADR-233. Se agrega al mismo arreglo comparado; placeholder actualizado a "Buscar
+pago, referencia, factura, fecha o monto…".
+
 **ADR-234 (petición del usuario, con captura) — la referencia sube al encabezado del
 detalle de un pago:** en vez de ir hasta abajo de "Datos del pago" con el tamaño normal,
 la referencia ahora se muestra en el encabezado del panel, a la derecha y al mismo nivel

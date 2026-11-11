@@ -55,11 +55,11 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import type { Anunciante } from "@/modules/catalogos/anunciante/types";
-import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
+import { useConstantes, useCrearMotivoCambio } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import type { Estacion } from "@/modules/catalogos/estacion/types";
-import { FieldTag, MoneyInput, SavingOverlay } from "@/shared/ui";
+import { FieldTag, MoneyInput, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { calcularNetaPreview, fmtMoneda } from "../format";
 import type { TarifaPlazaCreate } from "../types";
@@ -196,9 +196,11 @@ export function TarifaForm({
       return clave === CLAVE_BASE_MOTIVO_TARIFA || clave.startsWith(`${CLAVE_BASE_MOTIVO_TARIFA}_`);
     });
   }, [motivosQuery.data]);
-  // Si el catálogo aún no tiene ninguna opción (vacío o falló la carga), se cae al input
-  // de texto libre para no bloquear la edición de la tarifa por eso.
-  const motivoComoTexto = !motivosQuery.isLoading && motivosCambioTarifa.length === 0;
+  // ADR-246 (petición del usuario): combo "creatable" — si el usuario escribe un motivo
+  // que no está en el catálogo, se ofrece crearlo ahí mismo (alta automática en
+  // Constantes del Sistema, grupo MotivoCambio, clave CambioTarifa_N). Reemplaza el
+  // fallback a texto libre de ADR-179 (ya no hace falta: el combo cubre ambos casos).
+  const crearMotivoTarifa = useCrearMotivoCambio();
 
   const netaPreview = calcularNetaPreview(watch("tarifa_bruta"), watch("descuento_pct"));
   const netaTexto = Number.isFinite(netaPreview) ? fmtMoneda(netaPreview) : "—";
@@ -346,29 +348,20 @@ export function TarifaForm({
                 (si modificas la tarifa bruta o el descuento)
               </span>
             </div>
-            {motivoComoTexto ? (
-              <input
-                className="fi"
-                placeholder="Requerido al modificar el valor…"
-                disabled={!algunSensibleCambio}
-                {...register("motivo_cambio")}
-              />
-            ) : (
-              <select
-                className="fsel"
-                disabled={motivosQuery.isLoading || !algunSensibleCambio}
-                {...register("motivo_cambio")}
-              >
-                <option value="">
-                  {motivosQuery.isLoading ? "Cargando…" : "Selecciona…"}
-                </option>
-                {motivosCambioTarifa.map((m) => (
-                  <option key={m.constante_sistema_id} value={m.descripcion}>
-                    {m.descripcion}
-                  </option>
-                ))}
-              </select>
-            )}
+            <SearchableSelect
+              value={watch("motivo_cambio") ?? ""}
+              onChange={(v) => setValue("motivo_cambio", v)}
+              options={motivosCambioTarifa.map((m) => ({ value: m.descripcion, label: m.descripcion }))}
+              placeholder={motivosQuery.isLoading ? "Cargando…" : "Selecciona o escribe un motivo…"}
+              disabled={!algunSensibleCambio}
+              onCreate={(texto) =>
+                crearMotivoTarifa.mutate(
+                  { clave_base: "CambioTarifa", descripcion: texto },
+                  { onSuccess: (nuevo) => setValue("motivo_cambio", nuevo.descripcion) },
+                )
+              }
+              creando={crearMotivoTarifa.isPending}
+            />
             <div className="fe">{errors.motivo_cambio?.message}</div>
           </>
         )}

@@ -166,14 +166,15 @@ export interface OrdenEstacionLayoutRealApiDTO {
   created_at: string;
 }
 
-/** ADR-147/ADR-149: una fecha+hora del CSV de layout que sí hizo match con un día real
- * de la OE — `spots` ya viene sumado si 2+ filas compartían la misma fecha+hora. */
+/** ADR-147/ADR-149/ADR-247: una fecha+hora del CSV de layout que sí hizo match con un
+ * día real de la OE — `spots` ya viene sumado si 2+ filas compartían la misma
+ * fecha+hora. `hora_real` siempre trae la hora real reportada por el archivo (ADR-247,
+ * antes solo si difería de la programada). */
 export interface LayoutRealAplicadoApiDTO {
   orden_estacion_dia_id: string;
   fecha_transmision: string;
   hora_inicio: string;
   spots: number;
-  cambio_horario: boolean;
   hora_real: string | null;
 }
 

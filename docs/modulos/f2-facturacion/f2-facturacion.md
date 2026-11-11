@@ -174,6 +174,17 @@ preparada → enviada_a_timbrado → timbrada → entregada → cobrada
 llenan al pasar a `timbrada` (vía el mismo endpoint genérico de adjuntos que F1, ver
 "Adjuntos" abajo, para XML/PDF).
 
+**ADR-248 (petición del usuario, "NEW FEATURE") — checkbox "Facturado en sistema
+externo":** en "Registrar respuesta del timbrado", además de los campos de arriba, se
+agrega `facturado_en_sistema_externo` (bool, default `False`) — solo IDENTIFICA que
+esta factura en realidad se facturó en otro sistema (p.ej. OIR). No cambia ningún
+cálculo ni ninguna otra parte del flujo: el monto para OIR sigue siendo
+`total_factura`, derivado de las órdenes por ESTE sistema; el folio/archivo que se
+carga en esa pantalla puede traer un monto distinto, y es justo eso lo que el campo
+distingue. Se consulta también en el panel de detalle de la factura (badge "Facturado
+en sistema externo"), no solo al momento de registrar el timbrado. Sin backfill: el
+default `False` es correcto para toda factura ya timbrada antes de esta feature.
+
 **Orden de la lista (ADR-202, petición del usuario):** "Facturas al cliente" ordena por
 Fecha (`fecha_factura`) y No. factura (`numero_factura`), AMBAS descendentes — a
 diferencia de FacturaAgencia/FacturaAfiliado/FacturaVendedor (ADR-086, que ordenan por

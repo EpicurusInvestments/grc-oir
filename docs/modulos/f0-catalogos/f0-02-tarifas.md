@@ -31,6 +31,12 @@
 > opción activa, el campo cae de regreso al input de texto libre. Ver ADR-179 en
 > `docs/arquitectura.md`.
 >
+> **ADR-246 (petición del usuario, 2026-11-10):** ese `<select>` pasa a `SearchableSelect`
+> "creatable" — si se escribe un motivo que no está en el catálogo, se ofrece "+ Crear
+> "..."" y se da de alta ahí mismo (grupo `MotivoCambio`, permiso angosto
+> `motivos_cambio:crear`, Ventas/Dirección). Reemplaza el fallback a texto libre de
+> ADR-179 (ya no hace falta). Ver ADR-246 en `docs/arquitectura.md`.
+>
 > **ADR-177 (petición del usuario, 2026-10-09):** se agrega `anunciante_id` (FK a
 > `Anunciante`, selector "Anunciante", PRIMER campo del formulario) — la llave de la
 > tarifa pasa de (Emisora+Producto+Duración) a (**Anunciante**+Emisora+Producto+

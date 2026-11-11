@@ -448,6 +448,12 @@ class OrdenClienteCreate(BaseModel):
     )
     observaciones_predefinidas: str | None = Field(default=None, max_length=1000)
     observaciones_libres: str | None = Field(default=None, max_length=1000)
+    # ADR-249 (petición del usuario, reversa puntual de ADR-029): transitorio — nunca
+    # llega a la BD (se descarta en `create()`). El servicio solo lo exige si algún % de
+    # comisión capturado diverge del sugerido del catálogo (mismo criterio que el badge
+    # "sobrescrito" del frontend) — si todos quedan tal cual el catálogo los sugirió, la
+    # captura inicial sigue sin pedir motivo, como ya decía ADR-029.
+    motivo_cambio_comision: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _valida_fechas(self) -> OrdenClienteCreate:
@@ -650,6 +656,21 @@ class OrdenClienteService(
                     },
                 )
 
+    def _validar_facturacion_agencia(
+        self, agencia_id: uuid.UUID | None, afiliado_factura_directo_al_cliente: bool
+    ) -> None:
+        """Bug corregido (petición del usuario, con captura): no se puede dejar
+        "Facturación a la Agencia" (`afiliado_factura_directo_al_cliente = True`, nombre
+        de columna de la spec v2, sin cambio) sin una `agencia_id` — el front ya lo
+        impide en la UI (deshabilita el radio y revierte si se quita la agencia), pero
+        el backend es quien manda: cubre llamadas directas a la API y órdenes ya
+        guardadas con ese estado inconsistente antes de este fix."""
+        if afiliado_factura_directo_al_cliente and agencia_id is None:
+            raise DomainError(
+                "No se puede facturar a la agencia sin haber seleccionado una agencia.",
+                detalles={"agencia_id": None},
+            )
+
     # ── alta ──────────────────────────────────────────────────────────────────────
     def _calcular_montos(
         self, total_spots: int, cantidad_spots_bonificables: int, precio_unitario: Decimal
@@ -678,10 +699,53 @@ class OrdenClienteService(
             "total": subtotal + iva,
         }
 
+    def _requiere_motivo_comision_en_alta(self, db: Session, payload: dict[str, Any]) -> bool:
+        """ADR-249 (petición del usuario, reversa puntual de ADR-029): en alta, el
+        motivo compartido de los 3 % de comisión se exige SOLO si alguno de los
+        capturados diverge del % sugerido del catálogo del vendedor/agencia elegido —
+        mismo criterio que el badge "sobrescrito" del frontend (`esComisionOverride`,
+        tolerancia 0.01). Si todos quedan tal cual el catálogo los sugirió, la captura
+        inicial sigue sin pedir nada (el resto de ADR-029 no cambia)."""
+
+        def diverge(snap: Decimal | None, default: Decimal | None) -> bool:
+            if snap is None or default is None:
+                return False
+            return abs(snap - default) > Decimal("0.01")
+
+        vendedor_principal = db.get(Vendedor, payload["vendedor_principal_id"])
+        if diverge(
+            payload.get("porcentaje_comision_vendedor_principal_snap"),
+            vendedor_principal.porcentaje_comision_default if vendedor_principal else None,
+        ):
+            return True
+
+        vendedor_secundario_id = payload.get("vendedor_secundario_id")
+        if vendedor_secundario_id is not None:
+            vendedor_secundario = db.get(Vendedor, vendedor_secundario_id)
+            if diverge(
+                payload.get("porcentaje_comision_vendedor_secundario_snap"),
+                vendedor_secundario.porcentaje_comision_default if vendedor_secundario else None,
+            ):
+                return True
+
+        agencia_id = payload.get("agencia_id")
+        if agencia_id is not None:
+            agencia = db.get(Agencia, agencia_id)
+            if diverge(
+                payload.get("porcentaje_comision_agencia_snap"),
+                agencia.porcentaje_comision_agencia_default if agencia else None,
+            ):
+                return True
+
+        return False
+
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         db = self._repo.db
         self._validar_fks_y_relaciones(db, payload)
         self._validar_contrato_marca(db, payload, payload["anunciante_id"])
+        self._validar_facturacion_agencia(
+            payload.get("agencia_id"), payload["afiliado_factura_directo_al_cliente"]
+        )
 
         fecha_venta = payload["fecha_venta"]
         payload["anio_venta"] = fecha_venta.year
@@ -705,22 +769,32 @@ class OrdenClienteService(
 
     def create(self, data: OrdenClienteCreate, usuario: CurrentUser) -> OrdenClienteRead:
         payload = data.model_dump()
+        # ADR-249: transitorio — nunca llega a la BD (no es columna de `OrdenCliente`).
+        motivo_comision_raw = payload.pop("motivo_cambio_comision", None)
+        motivo_comision = motivo_comision_raw.strip() if motivo_comision_raw else None
 
         self._pre_create(payload, usuario)
         # ADR-100: sin checklist de Vo.Bo. — se guarda y pasa directo a `capturada`.
         payload["estatus_orden"] = EstatusOrden.CAPTURADA.value
 
-        obj = self.repo.create(payload)
         db = self._repo.db
+        if self._requiere_motivo_comision_en_alta(db, payload) and not motivo_comision:
+            raise DomainError(
+                "El motivo es obligatorio: alguno de los % de comisión capturados "
+                "difiere del sugerido por el catálogo.",
+            )
 
-        # Comisiones capturadas al vuelo: es ALTA, no "cambio" — sin motivo (mismo
-        # espíritu que `Contrato._pre_create` con `porcentaje_comision_contrato`).
-        # NOTA: se llama a `audit.log_cambio_parametro` directo, NO a
-        # `registrar_cambio_sensible` — esa función exige `field_permissions.verificar`
-        # (hoy hardcodeado a "solo Admin", el placeholder de F0), que bloquearía a
-        # Ventas. La autorización real de este campo ya la decide el ÁREA del endpoint
-        # (`ordenes:crear` = Ventas) y, después de la captura, el chequeo explícito de
-        # `actualizar_comisiones` (Dirección/Admin) — no el hook genérico de F0.
+        obj = self.repo.create(payload)
+
+        # Comisiones capturadas al vuelo: es ALTA, no "cambio" — motivo solo si de verdad
+        # diverge del catálogo (ADR-249, reversa puntual de ADR-029 para ese caso; el
+        # resto del criterio de ADR-029 no cambia). NOTA: se llama a
+        # `audit.log_cambio_parametro` directo, NO a `registrar_cambio_sensible` — esa
+        # función exige `field_permissions.verificar` (hoy hardcodeado a "solo Admin", el
+        # placeholder de F0), que bloquearía a Ventas. La autorización real de este campo
+        # ya la decide el ÁREA del endpoint (`ordenes:crear` = Ventas) y, después de la
+        # captura, el chequeo explícito de `actualizar_comisiones` (Dirección/Admin) — no
+        # el hook genérico de F0.
         for campo in CAMPOS_COMISION:
             valor = getattr(obj, campo)
             if valor is not None:
@@ -732,7 +806,7 @@ class OrdenClienteService(
                     anterior=None,
                     nuevo=valor,
                     usuario=usuario,
-                    motivo=None,
+                    motivo=motivo_comision,
                 )
         db.commit()
         db.refresh(obj)
@@ -751,6 +825,12 @@ class OrdenClienteService(
         self._validar_fks_y_relaciones(db, payload)
         anunciante_efectivo = payload.get("anunciante_id", obj.anunciante_id)
         self._validar_contrato_marca(db, payload, anunciante_efectivo)
+        afiliado_factura_efectivo = payload.get(
+            "afiliado_factura_directo_al_cliente", obj.afiliado_factura_directo_al_cliente
+        )
+        self._validar_facturacion_agencia(
+            payload.get("agencia_id", obj.agencia_id), afiliado_factura_efectivo
+        )
 
         if "fecha_inicio_campania" in payload or "fecha_fin_campania" in payload:
             f_ini = payload.get("fecha_inicio_campania", obj.fecha_inicio_campania)

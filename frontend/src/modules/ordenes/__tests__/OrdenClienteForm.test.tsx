@@ -25,6 +25,14 @@ function fechaLocalConOffset(diasOffset: number): string {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
+// ADR-246: los combos "Motivo del cambio" dejaron de ser `<select>` nativos — ahora son
+// `SearchableSelect` (escribir filtra, click en la opción confirma). Reemplaza el viejo
+// `fireEvent.change(select, { target: { value } })` para elegir una opción YA existente.
+async function elegirEnBuscable(input: HTMLElement, texto: string) {
+  fireEvent.change(input, { target: { value: texto } });
+  fireEvent.mouseDown(await screen.findByText(texto));
+}
+
 // ADR-167: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" —
 // mock del catálogo (sin pegarle a la red real desde jsdom), 2 productos: uno con
 // duraciones reales (Spot) y uno cuyo único registro es "sin resultado" (Mención).
@@ -46,6 +54,10 @@ vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
 
 // ADR-180: catálogo Constantes del Sistema (grupo MotivoCambio, clave CambioFecha) para
 // el select de "Motivo del cambio" de inicio/fin de campaña.
+// ADR-246 (petición del usuario): `crearMotivoCambio` mockeado aparte — el combo ahora es
+// "creatable" (ver `SearchableSelect`), así que escribir un motivo que no está en el
+// catálogo dispara esta mutación.
+const crearMotivoCambioMock = vi.fn();
 vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
   constanteApi: {
     list: vi.fn().mockResolvedValue({
@@ -58,6 +70,7 @@ vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
       size: 100,
       pages: 1,
     }),
+    crearMotivoCambio: (payload: unknown) => crearMotivoCambioMock(payload),
   },
 }));
 
@@ -155,7 +168,9 @@ function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}
 
 describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radio group mutuamente excluyente", () => {
   it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", () => {
-    renderForm();
+    const { container } = renderForm();
+    // ADR-242: "Facturación a la Agencia" exige tener una agencia seleccionada.
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
 
     // ADR-181: la etiqueta visible cambió a "Facturación a la Agencia" — el campo real
     // (`afiliado_factura_directo_al_cliente`) sigue siendo el mismo.
@@ -171,6 +186,56 @@ describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radi
     fireEvent.click(directa);
     expect(directa.checked).toBe(true);
     expect(agencia.checked).toBe(false);
+  });
+});
+
+describe("ADR-242 (bug reportado por el usuario, con captura): no se puede facturar a la agencia sin una agencia seleccionada", () => {
+  it("el radio 'Facturación a la Agencia' está deshabilitado mientras no haya agencia", () => {
+    const { container } = renderForm();
+    // Nota: no se simula un click sobre el radio deshabilitado — un `disabled` real en el
+    // navegador ya impide que el usuario lo seleccione; lo que prueba el bug es que el
+    // `disabled` esté puesto, no reimplementar el comportamiento nativo del DOM.
+    expect(screen.getByLabelText(/Facturación a la Agencia/)).toBeDisabled();
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
+    expect(screen.getByLabelText(/Facturación a la Agencia/)).toBeEnabled();
+  });
+
+  it("si se quita la agencia mientras 'Facturación a la Agencia' está activa, regresa a 'Facturación directa al cliente'", () => {
+    const defaultValues = makeOCInput({
+      anunciante_id: "an1",
+      agencia_id: "ag1",
+      afiliado_factura_directo_al_cliente: true,
+      facturacion_directa_cliente: false,
+    });
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    const directa = screen.getByLabelText(/Facturación directa al cliente/) as HTMLInputElement;
+    const agencia = screen.getByLabelText(/Facturación a la Agencia/) as HTMLInputElement;
+    expect(agencia.checked).toBe(true);
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "" } });
+
+    expect(agencia.checked).toBe(false);
+    expect(directa.checked).toBe(true);
+    expect(fieldByLabelText<HTMLTextAreaElement>(container, "Dirección de facturación").value).toBe(
+      "Televisa Publicidad SA de CV · RFC TPU900101XX1",
+    );
+  });
+
+  it("al guardar una orden ya existente sin agencia pero con 'Facturación a la Agencia' (estado inconsistente heredado), muestra el error bajo Agencia", async () => {
+    const defaultValues = makeOCInput({
+      anunciante_id: "an1",
+      agencia_id: null,
+      afiliado_factura_directo_al_cliente: true,
+      facturacion_directa_cliente: false,
+    });
+    const { onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar/ }));
+
+    expect(await screen.findByText(/Selecciona una agencia para poder facturar a la agencia/)).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
   });
 });
 
@@ -244,14 +309,29 @@ describe("Cascada anunciante → contrato / marca (1.7)", () => {
     expect(fieldByLabelText<HTMLSelectElement>(container, "Marca").value).toBe("");
   });
 
-  it("elegir un anunciante con agencia asociada sugiere la agencia y hereda la dirección de facturación", () => {
+  it("elegir un anunciante con agencia asociada sugiere la agencia, su % de comisión y hereda la dirección de facturación", () => {
     const { container } = renderForm();
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Anunciante"), { target: { value: "an1" } }); // agencia_id: ag1
 
     expect(fieldByLabelText<HTMLSelectElement>(container, "Agencia").value).toBe("ag1");
+    // Bug corregido (petición del usuario): la agencia sugerida por el anunciante
+    // también debe traer su % de comisión default (ag1 → 10), no dejarlo vacío.
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("10");
     expect(fieldByLabelText<HTMLInputElement>(container, "Dirección de facturación").value).toBe(
       "Televisa Publicidad SA de CV · RFC TPU900101XX1",
     );
+  });
+
+  it("si el % de comisión ya se había capturado a mano, sugerir la agencia del anunciante no lo sobrescribe", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia"), {
+      target: { value: "20" },
+    });
+
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Anunciante"), { target: { value: "an1" } }); // sugeriría ag1 → 10
+
+    expect(fieldByLabelText<HTMLSelectElement>(container, "Agencia").value).toBe("ag1");
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("20");
   });
 
   it("si el usuario ya eligió una agencia a mano, cambiar de anunciante no la sobrescribe (sugiere, no fuerza)", () => {
@@ -326,6 +406,74 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(screen.getByText(/sobrescrito \(cat: 5%\)/)).toBeInTheDocument();
   });
 
+  // ADR-249 (petición del usuario): "también debe aplicar cuando es una nueva orden" —
+  // en alta no hay un valor guardado contra qué comparar, así que el criterio es
+  // "diverge del % sugerido del catálogo" (mismo que el badge "sobrescrito" de arriba).
+  it("ADR-249: en alta, si el % diverge del catálogo, exige motivo y bloquea el guardado", async () => {
+    const defaultValues = makeOCInput({
+      vendedor_principal_id: "ve1", // default 5
+      porcentaje_comision_vendedor_principal_snap: 8,
+    });
+    const { onGuardar } = renderForm({ defaultValues });
+    // En alta no existe el combo de fecha (solo aplica en edición, ADR-180) — se
+    // espera directo a que resuelva la consulta compartida del catálogo MotivoCambio,
+    // usando el propio placeholder del combo de comisión como señal.
+    const motivoInput = (await screen.findByPlaceholderText(
+      "Requerido al modificar el valor…",
+    )) as HTMLInputElement;
+    expect(motivoInput.disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() =>
+      expect(screen.getByText("El motivo es obligatorio al cambiar un % de comisión.")).toBeInTheDocument(),
+    );
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
+  it("ADR-249: en alta, si el % coincide con el catálogo, NO exige motivo y permite guardar", async () => {
+    const defaultValues = makeOCInput({
+      vendedor_principal_id: "ve1",
+      porcentaje_comision_vendedor_principal_snap: 5, // = default de ve1
+    });
+    const { onGuardar } = renderForm({ defaultValues });
+    const motivoInput = (await screen.findByPlaceholderText(
+      "Requerido al modificar el valor…",
+    )) as HTMLInputElement;
+    expect(motivoInput.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
+  });
+
+  it("ADR-249: en alta, capturando el motivo cuando diverge, sí permite guardar", async () => {
+    const defaultValues = makeOCInput({
+      vendedor_principal_id: "ve1", // default 5
+      porcentaje_comision_vendedor_principal_snap: 8,
+    });
+    const { onGuardar } = renderForm({ defaultValues });
+    const motivoInput = await screen.findByPlaceholderText("Requerido al modificar el valor…");
+
+    // ADR-246: el combo es "creatable" — no hay "CambioComision" en el catálogo
+    // mockeado, así que escribir el motivo ofrece "+ Crear" (da de alta y confirma).
+    crearMotivoCambioMock.mockResolvedValue({
+      constante_sistema_id: "mc-nuevo",
+      grupo: "MotivoCambio",
+      clave: "CambioComision_1",
+      descripcion: "Negociación comercial con el cliente",
+      valor: null,
+      activo: true,
+    });
+    fireEvent.change(motivoInput, { target: { value: "Negociación comercial con el cliente" } });
+    fireEvent.mouseDown(await screen.findByText('+ Crear "Negociación comercial con el cliente"'));
+    await waitFor(() => expect(crearMotivoCambioMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
+    const [, opts] = onGuardar.mock.calls[0];
+    expect(opts.motivoComision).toBe("Negociación comercial con el cliente");
+  });
+
   it("fix: el campo 'Motivo del cambio' de comisión es UNO SOLO, compartido entre los 3 % (antes solo existía junto al de agencia)", () => {
     renderForm({ isEdit: true, estatusActual: "orden_interna" });
     // ADR-180: ahora hay 2 — el de comisión (uno solo para los 3 %, lo que prueba este
@@ -344,19 +492,111 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(onGuardar).not.toHaveBeenCalled();
   });
 
-  it("si sí se captura el motivo (compartido para los 3 %), se propaga con el cambio", async () => {
+  it("si sí se captura el motivo (compartido para los 3 %), se propaga con el cambio — y lo da de alta en el catálogo (ADR-246)", async () => {
     const defaultValues = makeOCInput({ agencia_id: "ag1", porcentaje_comision_agencia_snap: 15 });
     const { container, onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    // ADR-246: el catálogo mockeado no tiene ninguna clave "CambioComision" (solo
+    // "CambioFecha_*"), así que escribir ese motivo ofrece "+ Crear" — pero hay que
+    // esperar a que la consulta (compartida en caché con la de fecha) resuelva antes de
+    // interactuar, o todavía se ve el combo con "Cargando…".
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
+    crearMotivoCambioMock.mockResolvedValue({
+      constante_sistema_id: "mc-nuevo",
+      grupo: "MotivoCambio",
+      clave: "CambioComision_1",
+      descripcion: "Ajuste autorizado por dirección",
+      valor: null,
+      activo: true,
+    });
 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia"), { target: { value: "20" } });
     fireEvent.change(screen.getByPlaceholderText("Requerido al modificar el valor…"), {
       target: { value: "Ajuste autorizado por dirección" },
     });
+    fireEvent.mouseDown(await screen.findByText('+ Crear "Ajuste autorizado por dirección"'));
+
+    await waitFor(() =>
+      expect(crearMotivoCambioMock).toHaveBeenCalledWith({
+        clave_base: "CambioComision",
+        descripcion: "Ajuste autorizado por dirección",
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
     const [, opts] = onGuardar.mock.calls[0];
     expect(opts.motivoComision).toBe("Ajuste autorizado por dirección");
+  });
+
+  // ADR-244 (petición del usuario): antes el campo no tenía esta lógica — vivía siempre
+  // habilitado, igual estuviera editado un % o no (mismo bug que ADR-180 ya había
+  // corregido para fechas, pero nunca se replicó aquí).
+  it("ADR-244: el campo de motivo arranca deshabilitado y se habilita solo al cambiar un % de comisión", async () => {
+    // ag1 → catálogo 10: arranca SIN divergencia, para aislar el criterio "cambió en esta
+    // sesión" del de "ya diverge del catálogo" (ver siguiente test, bug corregido).
+    const defaultValues = makeOCInput({ agencia_id: "ag1", porcentaje_comision_agencia_snap: 10 });
+    const { container } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
+
+    const motivoInput = screen.getByPlaceholderText("Requerido al modificar el valor…") as HTMLInputElement;
+    expect(motivoInput.disabled).toBe(true);
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia"), { target: { value: "20" } });
+    expect(motivoInput.disabled).toBe(false);
+
+    fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia"), { target: { value: "10" } });
+    expect(motivoInput.disabled).toBe(true); // de vuelta al valor original: ya no "cambió"
+  });
+
+  it("Bug corregido (petición del usuario, con captura): si el % ya diverge del catálogo desde una edición previa, el combo arranca habilitado aunque no lo toques en esta sesión", async () => {
+    // ag1 → catálogo 10; defaultValues trae 15 (ya sobrescrito antes). Antes de este fix,
+    // el combo quedaba deshabilitado (inerte, sin poder abrirse) hasta retocar el %, lo
+    // que hacía parecer que un motivo recién creado en el catálogo "no salía".
+    const defaultValues = makeOCInput({ agencia_id: "ag1", porcentaje_comision_agencia_snap: 15 });
+    const { onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
+
+    const motivoInput = screen.getByPlaceholderText("Requerido al modificar el valor…") as HTMLInputElement;
+    expect(motivoInput.disabled).toBe(false);
+
+    // Nada cambió en esta sesión: guardar sin motivo sigue sin bloquearse.
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
+  });
+
+  it("Bug corregido (petición del usuario, con captura — ADR-250): el combo se precarga con el motivo más reciente del historial, no arranca vacío", async () => {
+    const defaultValues = makeOCInput({ agencia_id: "ag1", porcentaje_comision_agencia_snap: 15 });
+    const historialComisiones = [
+      {
+        log_cambio_parametro_id: "log-viejo",
+        entidad: "OrdenCliente",
+        entidad_id: "oc-1",
+        campo: "porcentaje_comision_agencia_snap",
+        valor_anterior: "10.00",
+        valor_nuevo: "15.00",
+        usuario: "ventas1",
+        ip: null,
+        motivo_cambio: "Negociación comercial distinta al % default del catálogo",
+        fecha_cambio: "2026-10-01T10:00:00",
+      },
+      {
+        log_cambio_parametro_id: "log-reciente",
+        entidad: "OrdenCliente",
+        entidad_id: "oc-1",
+        campo: "porcentaje_comision_agencia_snap",
+        valor_anterior: "15.00",
+        valor_nuevo: "15.00",
+        usuario: "ventas1",
+        ip: null,
+        motivo_cambio: "Ajuste en la comisión",
+        fecha_cambio: "2026-11-10T09:00:00",
+      },
+    ];
+    renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues, historialComisiones });
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
+
+    // El más reciente por `fecha_cambio` gana, no el primero del arreglo ni el más viejo.
+    expect(screen.getByDisplayValue("Ajuste en la comisión")).toBeInTheDocument();
   });
 });
 
@@ -368,8 +608,8 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
     // "Motivo del cambio" de fecha es el PRIMERO en el DOM (sección "Campaña y montos",
     // antes que "Equipo comercial y comisiones") — por eso `fieldByLabelText` (toma el
     // primer match) ya apunta al correcto sin necesitar desambiguar.
-    await screen.findByText("Se cancelaron spots");
-    const motivoSelect = fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio");
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
+    const motivoSelect = fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio");
     expect(motivoSelect.disabled).toBe(true);
 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), { target: { value: "2026-11-01" } });
@@ -379,7 +619,7 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
   it("cambiar una fecha sin elegir motivo bloquea el envío y marca el campo obligatorio", async () => {
     const defaultValues = makeOCInput();
     const { container, onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
-    await screen.findByText("Se cancelaron spots");
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Fin de campaña"), { target: { value: "2026-12-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
@@ -395,7 +635,7 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
   it("al elegir un motivo del catálogo, se guarda y se manda en el input", async () => {
     const defaultValues = makeOCInput();
     const { container, onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
-    await screen.findByText("Se cancelaron spots");
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
 
     // Hay que mover también Fin de campaña: el default (2025-06-30) quedaría antes que
     // el nuevo Inicio, lo que violaría "fin >= inicio" y bloquearía el envío por esa
@@ -407,9 +647,10 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Inicio de campaña"), {
       target: { value: fechaLocalConOffset(10) },
     });
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Motivo del cambio"), {
-      target: { value: "Se redujo el periodo" },
-    });
+    await elegirEnBuscable(
+      fieldByLabelText<HTMLInputElement>(container, "Motivo del cambio"),
+      "Se redujo el periodo",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     await waitFor(() => expect(onGuardar).toHaveBeenCalledTimes(1));
@@ -420,7 +661,7 @@ describe("ADR-180: motivo de cambio al editar fechas de campaña", () => {
   it("guardar sin tocar las fechas no manda motivo_cambio_fecha", async () => {
     const defaultValues = makeOCInput();
     const { onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
-    await screen.findByText("Se cancelaron spots");
+    await screen.findByPlaceholderText("Requerido al modificar la fecha…");
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 

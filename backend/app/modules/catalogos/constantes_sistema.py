@@ -157,6 +157,18 @@ class ConstanteSistemaCreate(BaseModel):
     valor: str | None = Field(default=None, max_length=200)
 
 
+class MotivoCambioCreate(BaseModel):
+    """Alta angosta para los combos "Motivo del cambio" (Tarifa/OrdenCliente/
+    OrdenEstacion, ADR-246): a diferencia de `ConstanteSistemaCreate` (que acepta
+    cualquier `grupo` y por eso exige el permiso amplio `catalogos:crear`, solo Admin),
+    aquí el `grupo` SIEMPRE es `MotivoCambio` — nunca llega del cliente — así que el
+    endpoint puede gatear con el permiso angosto `motivos_cambio:crear` (Ventas/
+    Dirección) sin abrir el resto del catálogo."""
+
+    clave_base: str = Field(min_length=1, max_length=100)
+    descripcion: str = Field(min_length=1, max_length=400)
+
+
 class ConstanteSistemaUpdate(BaseModel):
     # `grupo` y `clave` forman la identidad natural del registro: no se editan (se da de baja
     # y se crea otro). Solo se actualizan descripción y valor.
@@ -455,6 +467,27 @@ def conteos_constantes(
 ) -> list[ConteoGrupo]:
     """Conteo por grupo para las pills de la pantalla (todos los grupos, 0 si están vacíos)."""
     return svc.conteos(solo_activos=solo_activos)
+
+
+@router.post("/motivos-cambio", response_model=ConstanteSistemaRead, status_code=201)
+def crear_motivo_cambio(
+    payload: MotivoCambioCreate,
+    usuario: CurrentUser = Depends(requiere_permiso("motivos_cambio:crear")),
+    svc: ConstanteSistemaService = Depends(get_constante_service),
+) -> ConstanteSistemaRead:
+    """ADR-246 (petición del usuario): alta rápida de un motivo nuevo desde los combos
+    "Motivo del cambio" (Tarifa/OrdenCliente/OrdenEstacion), sin pasar por la pantalla de
+    Constantes del Sistema ni requerir el permiso amplio `catalogos:crear`. `grupo` se
+    fuerza aquí mismo a `MotivoCambio` — el servicio reutiliza `_pre_create`, que ya le
+    agrega el sufijo secuencial (`{clave_base}_{N}`, ADR-178)."""
+    return svc.create(
+        ConstanteSistemaCreate(
+            grupo=GrupoConstante.MOTIVO_CAMBIO,
+            clave=payload.clave_base,
+            descripcion=payload.descripcion,
+        ),
+        usuario,
+    )
 
 
 @router.post("/importar", response_model=ResultadoImportacion)

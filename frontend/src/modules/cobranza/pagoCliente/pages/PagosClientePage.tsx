@@ -104,15 +104,17 @@ export function PagosClientePage() {
 
   const items = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    // Petición del usuario: la búsqueda cubre fecha, referencia, factura y monto — no solo
-    // referencia. Se compara contra el texto formateado (como se ve en la tabla) y también
-    // contra el valor crudo del monto, para que "800" encuentre "$800.00".
+    // Petición del usuario: la búsqueda cubre número de pago (parcialidad), referencia,
+    // factura, fecha y monto — no solo referencia. Se compara contra el texto formateado
+    // (como se ve en la tabla) y también contra el valor crudo del monto, para que "800"
+    // encuentre "$800.00".
     const filtrados = qq
       ? itemsBase.filter((p) =>
           [
-            fmtFecha(p.fecha_pago_cliente),
+            p.numero_pago ?? "",
             p.referencia_pago ?? "",
             p.cobranza?.numero_factura ?? "",
+            fmtFecha(p.fecha_pago_cliente),
             p.monto_aplicado,
             fmtMoneda(p.monto_aplicado),
           ].some((campo) => campo.toLowerCase().includes(qq)),
@@ -434,7 +436,7 @@ export function PagosClientePage() {
       <div className="toolbar">
         <input
           className="search"
-          placeholder="Buscar fecha, referencia, factura o monto…"
+          placeholder="Buscar pago, referencia, factura, fecha o monto…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />

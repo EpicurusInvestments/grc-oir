@@ -44,11 +44,12 @@ import { useEffect, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
+import { useConstantes, useCrearMotivoCambio } from "@/modules/catalogos/constantesSistema/hooks";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { formatDomicilio } from "@/shared/lib/formatDomicilio";
-import { FieldTag, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
+import type { HistorialCambio } from "@/shared/types";
+import { FieldTag, MoneyInput, SavingOverlay, SearchableSelect, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { FROZEN_STATES, IVA_RATE, OBS_PREDEFINIDAS } from "../../constants";
@@ -83,6 +84,8 @@ const hoyLocal = () => {
 
 // ADR-180: clave base (sin sufijo) del grupo MotivoCambio reservada para estas fechas.
 const CLAVE_BASE_MOTIVO_FECHA = "cambiofecha";
+// ADR-244: ídem, para "Motivo del cambio" de los 3 % de comisión (antes texto libre).
+const CLAVE_BASE_MOTIVO_COMISION = "cambiocomision";
 
 // ADR-181: misma fórmula en 2 lugares (al elegir Anunciante, y al volver a "Facturación
 // directa al cliente") — un helper evita que diverjan.
@@ -178,6 +181,14 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     .refine((d) => Number(d.cantidad_spots_bonificables || 0) <= Number(d.total_spots || 0), {
       path: ["cantidad_spots_bonificables"],
       message: "No puede exceder el total de spots.",
+    })
+    // Bug corregido (petición del usuario, con captura): no se puede facturar a la
+    // agencia sin haber seleccionado una. El radio ya no se puede elegir sin agencia
+    // (ver JSX), pero este refine es el respaldo — p.ej. una orden ya guardada antes de
+    // este fix, con ese estado inconsistente, no podrá reguardarse sin corregirlo.
+    .refine((d) => !d.afiliado_factura_directo_al_cliente || !!d.agencia_id, {
+      path: ["agencia_id"],
+      message: "Selecciona una agencia para poder facturar a la agencia.",
     });
 }
 
@@ -199,6 +210,12 @@ interface OrdenClienteFormProps {
    *  propio `precio_spot`), pero conviene que quien edita sepa que ya hay órdenes
    *  internas con la tarifa vieja antes de tocarla. */
   oeCount?: number;
+  /** Bug corregido (petición del usuario, con captura — ADR-250): historial de
+   *  `LogCambioParametro` de ESTA OC (ya filtrado por `entidad_id`, viene de
+   *  `state.historialComisiones`) — se usa solo para precargar el combo "Motivo del
+   *  cambio" con el motivo MÁS RECIENTE de los 3 % de comisión al abrir en edición (antes
+   *  arrancaba siempre vacío, aunque el motivo ya existiera en la bitácora). */
+  historialComisiones?: HistorialCambio[];
   submitting?: boolean;
   submitError?: string | null;
   onGuardar: (input: OrdenClienteInput, opts: { motivoComision?: string }) => void;
@@ -213,6 +230,7 @@ export function OrdenClienteForm({
   estatusActual,
   defaultValues,
   oeCount = 0,
+  historialComisiones = [],
   submitting,
   submitError,
   onGuardar,
@@ -223,6 +241,18 @@ export function OrdenClienteForm({
   // excepción — el canal dedicado de comisiones (`PATCH /comisiones`) sigue existiendo en
   // el backend, pero este formulario ya no ofrece forma de llegar a él.
   const canEditComisiones = !congelado;
+
+  // Bug corregido (petición del usuario, con captura — ADR-250): el motivo más reciente
+  // de CUALQUIERA de los 3 % de comisión (el mismo criterio "compartido" que ya usa el
+  // resto del flujo) — precarga el combo en vez de arrancar siempre vacío.
+  const ultimoMotivoComision = useMemo(() => {
+    if (!isEdit) return "";
+    const ultimo = [...historialComisiones]
+      .filter((h) => (CAMPOS_SNAP as readonly string[]).includes(h.campo) && h.motivo_cambio)
+      .sort((a, b) => b.fecha_cambio.localeCompare(a.fecha_cambio))[0];
+    return ultimo?.motivo_cambio ?? "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {
     register,
@@ -265,7 +295,7 @@ export function OrdenClienteForm({
       observaciones_predefinidas: defaultValues?.observaciones_predefinidas ?? "",
       observaciones_libres: defaultValues?.observaciones_libres ?? "",
       odc_pdf_ref: defaultValues?.odc_pdf_ref ?? "",
-      motivo_cambio_comision: "",
+      motivo_cambio_comision: ultimoMotivoComision,
       motivo_cambio_fecha: "",
     },
   });
@@ -288,7 +318,18 @@ export function OrdenClienteForm({
     setValue("anunciante_id", id);
     const anunciante = anunciantes.find((a) => a.id === id);
     if (!anunciante) return;
-    if (anunciante.agencia_id && !watch("agencia_id")) setValue("agencia_id", anunciante.agencia_id);
+    // Bug corregido (petición del usuario): al autocargar la agencia por default del
+    // anunciante, también hay que autocargar su % de comisión — igual que hace
+    // `onAgenciaChange` cuando el usuario la elige a mano.
+    if (anunciante.agencia_id && !watch("agencia_id")) {
+      setValue("agencia_id", anunciante.agencia_id);
+      if (!watch("porcentaje_comision_agencia_snap")) {
+        const agencia = findAgencia(anunciante.agencia_id);
+        if (agencia) {
+          setValue("porcentaje_comision_agencia_snap", String(agencia.porcentaje_comision_agencia_default));
+        }
+      }
+    }
     if (!watch("direccion_facturacion")) {
       setValue("direccion_facturacion", direccionDeAnunciante(anunciante));
     }
@@ -316,6 +357,17 @@ export function OrdenClienteForm({
     // agencia" limpia el campo.
     const agencia = findAgencia(id);
     setValue("porcentaje_comision_agencia_snap", agencia ? String(agencia.porcentaje_comision_agencia_default) : "");
+    // Bug corregido (petición del usuario, con captura): no debe quedar "Facturación a
+    // la Agencia" seleccionada sin una agencia elegida — si se quita la agencia
+    // mientras esa opción está activa, se regresa a "Facturación directa al cliente"
+    // (el default del alta, ADR-141). El radio además ya no se puede ELEGIR sin
+    // agencia (ver `disabled` más abajo); esto cubre quitar la agencia después.
+    if (!id && watch("afiliado_factura_directo_al_cliente")) {
+      setValue("afiliado_factura_directo_al_cliente", false);
+      setValue("facturacion_directa_cliente", true);
+      const anunciante = anunciantes.find((a) => a.id === watch("anunciante_id"));
+      setValue("direccion_facturacion", anunciante ? direccionDeAnunciante(anunciante) : "");
+    }
   };
 
   // ── Producto/Duración desde el catálogo "Producto Duración" (ADR-167) ─────────
@@ -386,7 +438,10 @@ export function OrdenClienteForm({
       return clave === CLAVE_BASE_MOTIVO_FECHA || clave.startsWith(`${CLAVE_BASE_MOTIVO_FECHA}_`);
     });
   }, [motivosFechaQuery.data]);
-  const motivoFechaComoTexto = !motivosFechaQuery.isLoading && motivosCambioFecha.length === 0;
+  // ADR-246 (petición del usuario): combo "creatable" — reemplaza el fallback a texto
+  // libre de ADR-180 (ver también el de comisión, más abajo, y el de Tarifa en
+  // TarifaForm.tsx/OrdenEstacionForm.tsx — los 4 comparten el mismo mecanismo).
+  const crearMotivoFecha = useCrearMotivoCambio();
 
   const totalSpots = Number(watch("total_spots")) || 0;
   const spotsBonificables = Math.min(Number(watch("cantidad_spots_bonificables")) || 0, totalSpots);
@@ -410,6 +465,44 @@ export function OrdenClienteForm({
   const pctVp = watch("porcentaje_comision_vendedor_principal_snap");
   const pctVs = watch("porcentaje_comision_vendedor_secundario_snap");
   const pctAg = watch("porcentaje_comision_agencia_snap");
+
+  // ADR-244 (petición del usuario): "Motivo del cambio de comisión" ahora se puede
+  // deshabilitar/habilitar en vivo igual que `algunaFechaCambio` — antes solo se sabía
+  // si de verdad cambió algún % hasta el `construir()` del submit.
+  // ADR-249 (petición del usuario): en ALTA también exige motivo — pero ahí no hay un
+  // valor guardado contra qué comparar (es captura inicial, ADR-029), así que el
+  // criterio es distinto: diverge del % SUGERIDO DEL CATÁLOGO (mismo cálculo que ya usa
+  // el badge "sobrescrito", `esComisionOverride`) — si se deja tal cual lo sugirió el
+  // catálogo, no hace falta justificar nada. En EDICIÓN se conserva el criterio de
+  // siempre: diverge de `defaultValues` (lo guardado), nunca del catálogo de hoy (que
+  // pudo cambiar desde entonces por razones ajenas a esta orden).
+  const divergeDelCatalogo = (pct: string | undefined, defaultCatalogo: number | undefined) =>
+    defaultCatalogo != null && esComisionOverride(pct ? Number(pct) : null, defaultCatalogo);
+  // Bug corregido (petición del usuario, con captura): se calcula en AMBOS modos —en
+  // edición también— porque el combo de motivo debe poder consultarse/usarse siempre que
+  // algún % ya esté sobrescrito respecto al catálogo, no solo cuando lo tocas en esta
+  // sesión (ver uso en `disabled` del combo, más abajo).
+  const algunaComisionDivergeCatalogo =
+    divergeDelCatalogo(pctVp, findVendedor(vpId || null)?.porcentaje_comision_default) ||
+    divergeDelCatalogo(pctVs, findVendedor(vsId || null)?.porcentaje_comision_default) ||
+    divergeDelCatalogo(pctAg, findAgencia(agId || null)?.porcentaje_comision_agencia_default);
+  const algunaComisionCambio = isEdit
+    ? CAMPOS_SNAP.some((campo) => {
+        const actual = watch(campo);
+        const nuevo = actual ? Number(actual) : null;
+        return nuevo !== (defaultValues?.[campo] ?? null);
+      })
+    : algunaComisionDivergeCatalogo;
+
+  const motivosComisionQuery = useConstantes().useList({ grupo: "MotivoCambio", activo: true, size: 100 });
+  const motivosCambioComision = useMemo(() => {
+    const items = motivosComisionQuery.data?.items ?? [];
+    return items.filter((c) => {
+      const clave = c.clave.trim().toLowerCase();
+      return clave === CLAVE_BASE_MOTIVO_COMISION || clave.startsWith(`${CLAVE_BASE_MOTIVO_COMISION}_`);
+    });
+  }, [motivosComisionQuery.data]);
+  const crearMotivoComision = useCrearMotivoCambio();
 
   const estimaciones = [
     vpId && pctVp ? { label: "Vendedor principal", pct: Number(pctVp), monto: (total * Number(pctVp)) / 100 } : null,
@@ -477,14 +570,21 @@ export function OrdenClienteForm({
         ? { motivo_cambio_fecha: data.motivo_cambio_fecha.trim() }
         : {}),
     };
-    const cambioComision = CAMPOS_SNAP.some((campo) => input[campo] !== (defaultValues?.[campo] ?? null));
-    return { input, motivoComision: cambioComision ? data.motivo_cambio_comision?.trim() || undefined : undefined, cambioComision };
+    // ADR-249 (petición del usuario): `algunaComisionCambio` ya cubre tanto edición
+    // (diverge de lo guardado) como alta (diverge del % sugerido del catálogo) — un
+    // solo criterio, calculado arriba, reutilizado aquí para no duplicar la regla.
+    return {
+      input,
+      motivoComision: algunaComisionCambio ? data.motivo_cambio_comision?.trim() || undefined : undefined,
+      cambioComision: algunaComisionCambio,
+    };
   };
 
-  /** Al editar, si de verdad cambió algún % de comisión o alguna fecha de campaña, el
+  /** Si de verdad cambió algún % de comisión (en alta: diverge del catálogo; en
+   * edición: diverge de lo guardado) o alguna fecha de campaña (solo edición), el
    * motivo correspondiente es obligatorio — ninguno lo exige el schema de Zod (que no
-   * conoce `defaultValues` al definirse), así que se valida aquí y se marca el error
-   * manualmente en el campo compartido de cada uno. */
+   * conoce `defaultValues` ni los catálogos al definirse), así que se valida aquí y se
+   * marca el error manualmente en el campo compartido de cada uno. */
   const construirYValidar = (data: FormValues) => {
     const { input, motivoComision, cambioComision } = construir(data);
     if (isEdit && algunaFechaCambio && !data.motivo_cambio_fecha?.trim()) {
@@ -494,7 +594,7 @@ export function OrdenClienteForm({
       });
       return null;
     }
-    if (isEdit && cambioComision && !motivoComision) {
+    if (cambioComision && !motivoComision) {
       setError("motivo_cambio_comision", { type: "manual", message: "El motivo es obligatorio al cambiar un % de comisión." });
       return null;
     }
@@ -607,6 +707,7 @@ export function OrdenClienteForm({
                     </option>
                   ))}
                 </select>
+                <div className="fe">{errors.agencia_id?.message}</div>
               </div>
             </div>
 
@@ -706,29 +807,20 @@ export function OrdenClienteForm({
                     (si modificas el inicio o el fin de campaña)
                   </span>
                 </div>
-                {motivoFechaComoTexto ? (
-                  <input
-                    className="fi"
-                    placeholder="Requerido al modificar la fecha…"
-                    disabled={!algunaFechaCambio}
-                    {...register("motivo_cambio_fecha")}
-                  />
-                ) : (
-                  <select
-                    className="fsel"
-                    disabled={motivosFechaQuery.isLoading || !algunaFechaCambio}
-                    {...register("motivo_cambio_fecha")}
-                  >
-                    <option value="">
-                      {motivosFechaQuery.isLoading ? "Cargando…" : "Selecciona…"}
-                    </option>
-                    {motivosCambioFecha.map((m) => (
-                      <option key={m.constante_sistema_id} value={m.descripcion}>
-                        {m.descripcion}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <SearchableSelect
+                  value={watch("motivo_cambio_fecha") ?? ""}
+                  onChange={(v) => setValue("motivo_cambio_fecha", v)}
+                  options={motivosCambioFecha.map((m) => ({ value: m.descripcion, label: m.descripcion }))}
+                  placeholder={motivosFechaQuery.isLoading ? "Cargando…" : "Requerido al modificar la fecha…"}
+                  disabled={!algunaFechaCambio}
+                  onCreate={(texto) =>
+                    crearMotivoFecha.mutate(
+                      { clave_base: "CambioFecha", descripcion: texto },
+                      { onSuccess: (nuevo) => setValue("motivo_cambio_fecha", nuevo.descripcion) },
+                    )
+                  }
+                  creando={crearMotivoFecha.isPending}
+                />
                 <div className="fe">{errors.motivo_cambio_fecha?.message}</div>
               </>
             )}
@@ -913,11 +1005,16 @@ export function OrdenClienteForm({
                   <div className="check-box-desc">Se factura al anunciante sin pasar por la agencia.</div>
                 </div>
               </label>
-              <label className="check-box" style={{ cursor: congelado ? "not-allowed" : "pointer" }}>
+              <label
+                className="check-box"
+                style={{ cursor: congelado || !agId ? "not-allowed" : "pointer" }}
+              >
                 <input
                   type="radio"
                   name="tipo_facturacion"
-                  disabled={congelado}
+                  // Bug corregido (petición del usuario, con captura): no se puede elegir
+                  // "Facturación a la Agencia" sin antes tener una agencia seleccionada.
+                  disabled={congelado || !agId}
                   checked={watch("afiliado_factura_directo_al_cliente")}
                   onChange={() => {
                     setValue("afiliado_factura_directo_al_cliente", true);
@@ -944,7 +1041,11 @@ export function OrdenClienteForm({
                 />
                 <div>
                   <div className="check-box-title">Facturación a la Agencia</div>
-                  <div className="check-box-desc">La agencia factura al anunciante.</div>
+                  <div className="check-box-desc">
+                    {agId
+                      ? "La agencia factura al anunciante."
+                      : "Selecciona una agencia para poder usar esta opción."}
+                  </div>
                 </div>
               </label>
             </div>
@@ -1088,12 +1189,34 @@ export function OrdenClienteForm({
             </div>
             {/* Compartido entre los 3 % de arriba (antes solo vivía junto al de agencia, lo
                 que dejaba sin dónde capturar el motivo un cambio de comisión de vendedor). */}
-            {isEdit && canEditComisiones && (
+            {/* ADR-249 (petición del usuario): visible también en ALTA (antes solo en
+                edición) — `canEditComisiones` ya es siempre `true` en alta (`congelado`
+                exige `isEdit`). Bug corregido (petición del usuario, con captura): en
+                edición el combo se habilitaba SOLO si el % cambiaba en esta sesión
+                (`algunaComisionCambio`), dejándolo inerte —sin poder abrirlo siquiera—
+                cuando el % ya venía sobrescrito de una edición anterior; ahora también se
+                habilita si diverge del catálogo ahora mismo (`algunaComisionDivergeCatalogo`),
+                aunque no lo hayas vuelto a tocar. El motivo sigue sin ser obligatorio para
+                guardar si no cambiaste nada. */}
+            {canEditComisiones && (
               <>
                 <div className="fl fl-required">
                   Motivo del cambio <span style={{ color: "var(--text3)", fontWeight: 400 }}>(si modificas cualquiera de los 3 % anteriores)</span>
                 </div>
-                <input className="fi" placeholder="Requerido al modificar el valor…" {...register("motivo_cambio_comision")} />
+                <SearchableSelect
+                  value={watch("motivo_cambio_comision") ?? ""}
+                  onChange={(v) => setValue("motivo_cambio_comision", v)}
+                  options={motivosCambioComision.map((m) => ({ value: m.descripcion, label: m.descripcion }))}
+                  placeholder={motivosComisionQuery.isLoading ? "Cargando…" : "Requerido al modificar el valor…"}
+                  disabled={!(algunaComisionCambio || algunaComisionDivergeCatalogo)}
+                  onCreate={(texto) =>
+                    crearMotivoComision.mutate(
+                      { clave_base: "CambioComision", descripcion: texto },
+                      { onSuccess: (nuevo) => setValue("motivo_cambio_comision", nuevo.descripcion) },
+                    )
+                  }
+                  creando={crearMotivoComision.isPending}
+                />
                 <div className="fe">{errors.motivo_cambio_comision?.message}</div>
               </>
             )}
