@@ -429,7 +429,6 @@ def _crear_oc_oe_http(client: TestClient, cat: dict[str, uuid.UUID]) -> str:
             "orden_id": orden_id,
             "estacion_id": str(cat["estacion"]),
             "producto_tarifa": "spot",
-            "producto_tarifa": "spot",
             "duracion_spot": "30s",
             "precio_spot": "800.00",
             "dias": [

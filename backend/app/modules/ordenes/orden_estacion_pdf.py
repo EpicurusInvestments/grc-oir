@@ -154,7 +154,9 @@ def _encabezado(
     "Horarios programados" también usa `logos_arriba=True`: en su referencia los logos
     van en su propio renglón, arriba del título — no centrados verticalmente junto al
     título/subtítulo como en servicio/reales (ADR-089)."""
-    grande, chico = (subtitulo, nombre_empresa) if subtitulo_primero else (nombre_empresa, subtitulo)
+    grande, chico = (
+        (subtitulo, nombre_empresa) if subtitulo_primero else (nombre_empresa, subtitulo)
+    )
     ancho_logo_col = 3.5 * cm
     logo_derecho = _logo_flowable("grc") if logo_grc else Spacer(1, _LOGO_ALTO)
     titulo_bloque = [Paragraph(grande, _TITULO), Paragraph(chico, _SUBTITULO)]
@@ -719,7 +721,9 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                         f"<b>CIUDAD:</b> {plaza.nombre_plaza.upper()}",
                         _CAMPO_LINEA,
                     ),
-                    Paragraph(f"<b>TOTAL SPOTS</b> &nbsp;&nbsp;{total_programado}", _CAMPO_LINEA_DER),
+                    Paragraph(
+                        f"<b>TOTAL SPOTS</b> &nbsp;&nbsp;{total_programado}", _CAMPO_LINEA_DER
+                    ),
                 ]
             ],
             colWidths=[_ANCHO_DISPONIBLE * 0.7, _ANCHO_DISPONIBLE * 0.3],

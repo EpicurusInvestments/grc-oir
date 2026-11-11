@@ -2481,27 +2481,57 @@ class OrdenEstacionService(
                         },
                     )
 
+            # ADR-253 (corrige un bug real, petición del usuario con captura): el balance
+            # NO debe compararse contra `spots_asignados` (la cuota original) de ESTA OE,
+            # sino contra lo que de verdad va a quedar VERIFICADO en ella tras este mismo
+            # avance — `overrides` ya trae, para cada día existente, su `spots_verificados`
+            # final (incluyendo los días "faltante" que el matemo del layout bajó a 0, ver
+            # `_parsear_layout_reales_csv`/ADR-174b). Usar la cuota original aquí contaba
+            # DOS VECES esos spots: una como "ya asignados" (sin descontar el faltante) y
+            # otra al crear los días nuevos — rechazando layouts que en realidad quedan
+            # exactos o por debajo del total de la orden (el caso reportado: 10 asignados,
+            # 2 días bajan a 0 por faltante, 1 día nuevo de 1 spot → total real 9+1=10, no
+            # 10+1=11). Las OE HERMANAS no cambian en este request, así que para ellas sigue
+            # usando su cuota asignada tal cual.
             hermanas_ids = db.scalars(
                 select(OrdenEstacion.orden_estacion_id).where(
-                    OrdenEstacion.orden_id == obj.orden_id
+                    OrdenEstacion.orden_id == obj.orden_id,
+                    OrdenEstacion.orden_estacion_id != obj.orden_estacion_id,
                 )
             ).all()
-            asignados_previos = (
-                db.scalar(
-                    select(func.coalesce(func.sum(OrdenEstacionDia.spots_asignados), 0)).where(
-                        OrdenEstacionDia.orden_estacion_id.in_(hermanas_ids),
-                        OrdenEstacionDia.cancelada == False,  # noqa: E712
+            asignados_otras_oe = (
+                (
+                    db.scalar(
+                        select(func.coalesce(func.sum(OrdenEstacionDia.spots_asignados), 0)).where(
+                            OrdenEstacionDia.orden_estacion_id.in_(hermanas_ids),
+                            OrdenEstacionDia.cancelada == False,  # noqa: E712
+                        )
                     )
+                    or 0
                 )
-                or 0
+                if hermanas_ids
+                else 0
+            )
+            verificado_esta_oe = sum(
+                overrides.get(
+                    dia.orden_estacion_dia_id,
+                    (
+                        dia.spots_programados
+                        if dia.spots_programados is not None
+                        else dia.spots_asignados
+                    ),
+                )
+                for dia in dias
+                if not dia.cancelada
             )
             spots_dias_nuevos = sum(d.spots for d in input_.dias_nuevos)
-            if asignados_previos + spots_dias_nuevos > oc_para_dias_nuevos.total_spots:
+            total_tras_este_avance = asignados_otras_oe + verificado_esta_oe + spots_dias_nuevos
+            if total_tras_este_avance > oc_para_dias_nuevos.total_spots:
                 raise DomainError(
                     "Los días nuevos del layout exceden el total de spots de la orden.",
                     detalles={
                         "total_oc": oc_para_dias_nuevos.total_spots,
-                        "ya_asignados": asignados_previos,
+                        "ya_asignados": asignados_otras_oe + verificado_esta_oe,
                         "nuevos": spots_dias_nuevos,
                     },
                 )

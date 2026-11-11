@@ -82,6 +82,9 @@ export interface PagoCliente {
   /** Comparten este id TODOS los `PagoCliente` creados en una misma captura de pago
    *  múltiple (trazabilidad) — `null` en un pago individual. */
   pago_multiple_id: string | null;
+  /** ADR-256 (petición del usuario, "NEW FEATURE"): solo IDENTIFICA que este pago se
+   *  registró/concilió en otro sistema (p.ej. OIR) — por ahora no tiene ningún efecto. */
+  pagado_en_sistema_externo: boolean;
   created_by: string;
   created_at: string;
 }
@@ -98,6 +101,8 @@ export interface PagoClienteCreate {
   fecha_deposito?: string | null;
   numero_pago?: string | null;
   cuenta_contable_id: string;
+  /** ADR-256 (petición del usuario, "NEW FEATURE") */
+  pagado_en_sistema_externo?: boolean;
 }
 
 /** Una factura seleccionada en el pago múltiple, el monto que se le asigna y SU
@@ -125,6 +130,8 @@ export interface PagoMultipleCreate {
   /** ADR-230 (petición del usuario): si este lote reparte un pago "huérfano" (sin
    *  asignar) ya existente, aquí va su id — se borra en la misma transacción. */
   pago_origen_id?: string | null;
+  /** ADR-256 (petición del usuario, "NEW FEATURE") */
+  pagado_en_sistema_externo?: boolean;
 }
 
 /** ADR-230 (petición del usuario): datos de un pago "huérfano" (sin asignar) que se

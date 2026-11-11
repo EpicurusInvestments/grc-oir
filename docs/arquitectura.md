@@ -10407,3 +10407,188 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   el `.catch` pero ruidoso). Suites de `OrdenClienteForm`/`OrdenEstacionForm`/
   `OrdenClienteListPage` en verde (166/166), `tsc --noEmit`/`eslint` limpios. Sin cambios
   de backend ni migraciones — los endpoints de historial ya existían.
+
+### ADR-252 — Bug: checkbox "Facturado en sistema externo" con texto sobrante; columna "Spots" de Capturar reales no se podía quitar en captura manual
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura).
+- **Parte 1 — `RegistrarTimbradoForm.tsx`:** el checkbox "Facturado en sistema externo"
+  traía un párrafo descriptivo debajo del título ("Marca esta opción si la factura se
+  timbró en otro sistema..."). El usuario pidió quitar el párrafo y dejar solo el título.
+- **Parte 2 — `RealesForm.tsx` (Capturar reales):** la columna "Spots" solo se ocultaba
+  con un layout cargado (ADR-247); en captura MANUAL seguía mostrándose y, peor, el
+  "Editar" de cada fila incluía un input numérico que permitía cambiar el conteo de
+  spots por fila a mano. El usuario pidió angostar las columnas (sin espacio sobrante) y
+  quitar del todo la columna — confirmado con `AskUserQuestion` que esto incluye perder
+  la capacidad de editar spots por fila en captura manual (solo queda editable la hora).
+- **Diseño:** tabla con `tableLayout: "fixed"` y `width: "auto"` (en vez de heredar el
+  `width: 100%` de `.cat-table`) más un ancho explícito por columna, para que no se
+  estire llenando el contenedor. Columna "Spots" y su input de edición eliminados de las
+  3 ramas de renderizado de filas (manual, layout aplicado, día nuevo del layout — estas
+  últimas dos ya no la tenían desde ADR-247).
+- **Verificado:** `RealesForm.test.tsx` 22/22 en verde sin cambios (ninguna prueba
+  dependía del input de spots en captura manual), `tsc --noEmit`/`eslint` limpios. Sin
+  cambios de backend.
+
+### ADR-253 — 2 bugs reales en "Capturar reales desde layout": balance de spots mal contado y "fuera de horario" comparado contra el renglón equivocado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura de una
+  prueba real: OT-2026-11-000045A, layout `Q Buenta Michoacan` con 10 registros contra
+  10 spots programados en 2 días). Reporte textual: "Esta validando mal el horario en
+  algunos casos" y "No esta contando bien los spots o bien esta contando los días, que
+  no es necesario porque da igual que sean mas días siempre y cuando no se salgan del
+  rango."
+- **Bug 1 — balance de spots (`orden_estacion.py`, `avanzar_reales`):** al crear los
+  días NUEVOS de un layout, el backend validaba
+  `asignados_previos (cuota ASIGNADA original de TODAS las OE hermanas, incluida ESTA) +
+  spots_dias_nuevos > oc.total_spots`. Esa cuota no se actualizaba con los `overrides`
+  del MISMO request — un día que el layout baja a 0 por "faltante" (ADR-157) seguía
+  contando con su spots ORIGINAL en la validación, así que el balance se evaluaba dos
+  veces: una vez como "ya asignado" (sin el descuento) y otra al sumar los días nuevos.
+  Caso real: 10 spots asignados, el layout deja 2 días en 0 (faltante) y propone 1 día
+  nuevo de 1 spot → total REAL tras el avance = 9 + 1 = 10 (justo el total de la orden,
+  debía aceptarse), pero la validación vieja calculaba 10 (cuota original, sin
+  descuento) + 1 = 11 > 10 y rechazaba con "Los días nuevos del layout exceden el total
+  de spots de la orden." **Fix:** el balance ahora usa, para las OE HERMANAS (sin tocar
+  en este request), su cuota asignada tal cual; para ESTA OE, la suma de
+  `overrides.get(dia_id, programado_efectivo)` de sus días existentes — lo que de
+  verdad va a quedar verificado tras este mismo avance — más los spots de los días
+  nuevos.
+- **Bug 2 — "fuera de horario" (`RealesForm.tsx`):** comparaba la hora real contra el
+  renglón PUNTUAL que le tocó en el emparejamiento cronológico (ADR-174b, por fecha,
+  1º con 1º / 2º con 2º...), no contra la ventana del día completo. Tras repartir un
+  rango con varios spots (`repartirHoras`/ADR-186, `CalendarioPeriodoTransmision.tsx`),
+  cada renglón programado guarda su PROPIO `hora_inicio` pero TODOS comparten el
+  `hora_termino` del grupo (el fin del rango capturado) — comparar contra el renglón que
+  le tocó por orden cronológico (no por slot) daba resultados arbitrarios: en el caso
+  real, 2 spots con desfases de 37min/1h15 quedaban marcados "fuera de horario" y otros
+  2 con desfases de 48min/51min (en la MISMA orden) no, solo porque les tocó un slot más
+  tardío cuyo `hora_termino` compartido seguía cubriéndolos. **Fix:** nueva función
+  `ventanaDelDia(oe, fecha)` que calcula la ventana real del DÍA completo (la hora más
+  temprana a la más tardía entre TODOS los spots programados de esa fecha, usando
+  `programadoEfectivo`) — `horaFueraDeVentana` ahora compara contra esa ventana, no
+  contra el renglón puntual emparejado.
+- **Verificado:** backend — nueva prueba
+  `test_avanzar_reales_dia_nuevo_no_excede_balance_si_otros_dias_bajan_por_faltante`
+  (reproduce el caso real: 2 días bajan a 0 por faltante, 1 día nuevo de 85 spots sobre
+  una OC de 100 con 23 ya asignados — antes se rechazaba, ahora se acepta) en
+  `test_f1_14_layout_reales_aplicar_csv.py` (29/29 en verde), suite completa de backend
+  100% verde. Frontend — nueva prueba en `RealesForm.test.tsx` (2 spots del mismo día,
+  horas reales emparejadas con renglones distintos, una SÍ fuera de la ventana del día y
+  la otra NO aunque esté antes del `hora_inicio` de "su" renglón) — 23/23 en verde,
+  `tsc --noEmit`/`eslint` limpios.
+
+### ADR-254 — Bug: el primer folio de OrdenCliente salía en 000041, no 000001
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, tras borrar todas
+  las órdenes de prueba con `borrar_transacciones.sql` tal y como lo había anticipado
+  otra sesión de diagnóstico).
+- **Diagnóstico:** `_siguiente_folio()` (`orden_cliente.py`) tenía un piso fijo,
+  `maximo = 40`, sin ningún ADR que lo justificara — existe desde el primer commit de
+  F1 (agosto), aparentemente un valor arbitrario de prueba que nunca se quitó. La
+  fórmula es `MAX(folio_existente, piso) + 1`, así que con la tabla vacía (sin folios
+  existentes) siempre ganaba el piso: `40 + 1 = 41`. No es dato de BD — ningún script de
+  limpieza puede corregirlo porque es una constante del código del backend.
+- **Fix:** piso cambiado a `0`. Con la tabla vacía, el primer folio ahora es
+  `OS-{año}-{mes}-000001`.
+- **Verificado:** `test_crear_oc_calcula_totales_y_folio` actualizada (esperaba
+  `000041`, ahora `000001`); `test_siguiente_folio_sigue_contando_los_folios_en_formato_viejo`
+  sin cambios (no dependía del piso). Suite de `test_f1_05_ordenes_escritura.py` en
+  verde. Sin migración — el piso no es dato persistido.
+
+### ADR-255 — CI del backend: reactivar el bloqueo de Pytest y Ruff, limpiar deuda de lint
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario: dudas sobre 3
+  "errors" en las annotations de un run de GitHub Actions — `Deploy Backend (DEV)`,
+  job "Pruebas y linters" — que salía en verde a pesar de ellos).
+- **Diagnóstico:** los 3 "errors" NO eran nuevos ni causados por el merge — los 3 pasos
+  del job (`Ruff`, `Mypy`, `Pytest`) ya llevaban `continue-on-error: true` desde hace
+  tiempo, marcados en el propio `backend.yml` como deuda TEMPORAL ("a limpiar con el
+  dev", "A REVERTIR PRONTO"). GitHub genera una annotation de error por cada paso que
+  truena con `exit code 1`, aunque `continue-on-error` evite que bloquee el job o el
+  deploy — de ahí la aparente contradicción (job "Success" con "errors" listados).
+  Verificado en local: Ruff tenía 17 errores (2 introducidos en el mismo día por el
+  fix de ADR-253 — línea larga —, 15 deuda preexistente de F1: 5 archivos de test con
+  la clave `"producto_tarifa"` duplicada por copy-paste, líneas largas en
+  `orden_estacion_pdf.py`/`documentos.py`, un import sin ordenar y uno sin usar en
+  `test_ordenes_adjuntos.py`); Pytest pasaba 100% (el comentario de "10 pruebas de F2
+  fallan" ya no era cierto — alguien las arregló y nunca se actualizó el workflow);
+  Mypy (no estaba instalado en el venv local, se instaló para verificar) encontró 335
+  errores reales en 28 archivos, casi todos el mismo patrón trivial en tests:
+  `db.get(...)`/`db.scalar(select(...))` devuelve `Modelo | None` y el test accede a un
+  atributo sin verificar antes que no sea `None` (en el test ya se sabe que existe —
+  no es un bug, es ruido de modo estricto) — limpiarlos todos es una tarea aparte, fuera
+  de alcance de esta sesión.
+- **Decisión (confirmada con el usuario):** limpiar los 17 errores de Ruff y reactivar
+  su bloqueo; reactivar el bloqueo de Pytest (ya pasa 100%); dejar Mypy en
+  `continue-on-error` hasta una limpieza dedicada de los 335 avisos.
+- **Verificado:** `ruff check .` limpio (0 errores), suite completa de `pytest` 100%
+  verde, `backend.yml` sin `continue-on-error` en los pasos de Ruff y Pytest (Mypy lo
+  conserva, con el comentario actualizado apuntando a este ADR).
+
+### ADR-256 — Cobranza: checkbox "Pagado en sistema externo" al registrar un pago del cliente
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, "NEW FEATURE", con
+  captura de "Registrar pago del cliente" y "Pago de Múltiples Facturas"): "es igual que
+  el de facturado en sistema externo, es solo una bandera que se carga en el pago, por
+  ahora no tiene ningún efecto." Pedido explícito: tanto para el pago individual como
+  para el pago múltiple.
+- **Diseño:** nuevo campo `pagado_en_sistema_externo` (bool, default `False`) en
+  `PagoCliente` — desviación aditiva fuera de la spec BD v2 (mismo criterio que
+  `facturado_en_sistema_externo`, ADR-248: un flag operativo nuevo, no un campo de la
+  especificación). Una sola tabla `PagoCliente` cubre AMBOS flujos (el pago múltiple
+  comparte `pago_multiple_id` entre sus filas), así que un solo campo nuevo basta:
+  - `PagoClienteCreate` (pago individual, también usado por `crear_sin_asignar`):
+    campo opcional, default `False` — `PagoClienteService.crear()`/`crear_sin_asignar()`
+    lo persisten vía `**data.model_dump()`, sin cambios en esos métodos.
+  - `PagoMultipleCreate`: mismo campo opcional — `crear_multiple()` ya arma
+    `comunes = data.model_dump(exclude={...})` y lo pasa con `**comunes` a CADA
+    `PagoCliente` del lote (incluido el huérfano por sobrante, ADR-230), así que ambos
+    heredan el flag sin código nuevo.
+  - `PagoClienteService.asignar()` (split de un huérfano, ADR-231): el único lugar que
+    arma un `PagoCliente` listando campos a mano en vez de `**comunes` — se agrega
+    `pagado_en_sistema_externo=pago.pagado_en_sistema_externo` explícitamente para que
+    el split no pierda el flag.
+  - Frontend: checkbox en `RegistrarPagoForm.tsx` (pago individual) y
+    `PagoMultipleForm.tsx` (pago múltiple), mismo patrón `check-box`/`check-box-title`
+    ya establecido (ADR-248, sin descripción — ver nota de ese mismo día sobre quitarle
+    el párrafo al de facturación). Sin badge en ningún detalle — a diferencia de
+    ADR-248, el usuario no pidió verlo en otro lado, solo que se capture.
+- **Migración:** `7b931c7fdb4e` (un solo paso, sin backfill — mismo criterio que
+  `d5e6f7a8b9c0`/ADR-248: ningún pago existente se registró nunca "en sistema externo"
+  bajo este concepto). `add_column` con `server_default='0'`, sin rama por dialecto; el
+  `downgrade` suelta el DEFAULT CONSTRAINT en SQL Server antes del `DROP COLUMN`.
+- **Verificado:** backend — 2 pruebas nuevas en `test_f3_02_cobranza_escritura.py`
+  (`test_pago_individual_acepta_pagado_en_sistema_externo`:
+  `True` cuando se marca, `False` por default si no; `test_pago_multiple_acepta_
+  pagado_en_sistema_externo`: el flag viaja a los `PagoCliente` creados por el lote),
+  roundtrip `upgrade`→`downgrade`→`upgrade` de la migración, suite completa de backend
+  verde (exit 0), `ruff` limpio. Frontend — 2 pruebas nuevas en
+  `RegistrarPagoForm.test.tsx` y 1 en `PagoMultipleForm.test.tsx` (el checkbox se manda
+  `true`/`false` según se marque o no), ajuste de tipos en `PagosClientePage.test.tsx`
+  (fixture `PagoClienteConCobranza` sin el campo nuevo, `tsc` lo marcó), suite completa
+  de frontend de cobranza verde (63/63), `tsc --noEmit`/`eslint` limpios.
+
+### ADR-257 — Bug: "Material a Transmitir" rechazaba archivos MP3 reales (firma incompleta)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura, al
+  subir "0C 20260605 160845 XHFAJ FM 91.3 MHZ.mp3" en "Nueva Orden de Transmisión" →
+  "Material a Transmitir"): "El contenido del archivo no corresponde a la extensión
+  declarada." sobre un `.mp3` genuino.
+- **Diagnóstico:** `_MAGIC_POR_EXTENSION["mp3"]` (`documentos.py`) solo reconocía 3
+  firmas (`ID3`, `\xff\xfb`, `\xff\xf3`, `\xff\xf2`) de las **18 combinaciones válidas**
+  del "frame sync" de MPEG audio: los primeros 11 bits en 1 (byte 0 = `0xFF`, los 3 bits
+  altos del byte 1 también en 1), + 2 bits de versión MPEG (1/2/2.5 — "01" es
+  reservado/no existe) + 2 de layer (I/II/III — "00" es reservado/no existe) + 1 de
+  protección CRC. El archivo real reportado es MPEG1 **Layer II** (`0xFF 0xFC`, sin tag
+  ID3) — formato común en sistemas de monitoreo/grabación al aire de radiodifusoras —,
+  que nunca estuvo en la lista original (pensada solo para Layer III, el formato típico
+  de música comprimida, no de monitoreo de transmisión).
+- **Fix:** se completan las 18 combinaciones válidas (ver tabla en el comentario de
+  `documentos.py`); se siguen rechazando, a propósito, los bytes con versión o layer
+  "reservado" — ningún encoder real los produce, así que no se pierde ninguna defensa
+  real. No se tocó `leer_adjunto()` ni la lista blanca de extensiones
+  (`EXTENSIONES_AUDIO_ORDENES`), solo el conjunto de firmas válidas para `mp3`.
+- **Verificado:** 2 pruebas nuevas en `test_f1_07_material_a_transmitir.py` —
+  parametrizada con las 18 combinaciones válidas (todas se aceptan) y otra con 10
+  combinaciones reservadas (todas se siguen rechazando) — suite completa de backend
+  verde (exit 0), `ruff` limpio. Sin cambios de frontend ni de esquema.

@@ -198,6 +198,11 @@ class PagoCliente(Base):
     #: Comparte este UUID TODO pago creado en UNA misma captura de pago múltiple
     #: (trazabilidad/agrupación) — `None` en un pago individual.
     pago_multiple_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(), default=None, index=True)
+    # ADR-256 (petición del usuario, "NEW FEATURE", mismo criterio que
+    # `FacturaCliente.facturado_en_sistema_externo`, ADR-248): solo IDENTIFICA que este
+    # pago en realidad se registró/concilió en otro sistema (p.ej. OIR) — no cambia
+    # ningún cálculo ni ninguna otra parte del flujo de cobranza.
+    pagado_en_sistema_externo: Mapped[bool] = mapped_column(default=False)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -286,6 +291,7 @@ class PagoClienteRead(BaseModel):
     numero_pago: str | None = None
     cuenta_contable_id: uuid.UUID | None = None
     pago_multiple_id: uuid.UUID | None = None
+    pagado_en_sistema_externo: bool = False
     created_by: uuid.UUID
     created_at: datetime
 
@@ -304,6 +310,8 @@ class PagoClienteCreate(BaseModel):
     fecha_deposito: date | None = None
     numero_pago: str | None = Field(default=None, max_length=20)
     cuenta_contable_id: uuid.UUID
+    # ADR-256 (petición del usuario, "NEW FEATURE")
+    pagado_en_sistema_externo: bool = False
 
 
 class PagoAsignarFacturaRequest(BaseModel):
@@ -362,6 +370,10 @@ class PagoMultipleCreate(BaseModel):
     #: como parte de ESTA MISMA transacción (si queda sobrante, se crea un huérfano
     #: nuevo y más chico, en vez del original). `None` = captura nueva normal.
     pago_origen_id: uuid.UUID | None = None
+    # ADR-256 (petición del usuario, "NEW FEATURE"): mismo flag que el pago individual —
+    # se incluye en `comunes` (ver `crear_multiple`), así que viaja a CADA `PagoCliente`
+    # del lote (incluido el "huérfano" por sobrante).
+    pagado_en_sistema_externo: bool = False
 
 
 # ── Repositorios ──────────────────────────────────────────────────────────────
@@ -777,6 +789,7 @@ class PagoClienteService:
                 numero_pago=siguiente_numero_pago,
                 cuenta_contable_id=pago.cuenta_contable_id,
                 pago_multiple_id=pago.pago_multiple_id,
+                pagado_en_sistema_externo=pago.pagado_en_sistema_externo,
                 created_by=resolver_usuario_id(db, usuario.username),
             )
             db.add(resultado)

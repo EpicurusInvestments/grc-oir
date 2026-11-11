@@ -262,7 +262,7 @@ def test_crear_oc_calcula_totales_y_folio(
     assert oc.mes_venta == 1
     assert oc.total_dias_campania == 28
     assert oc.estatus_orden == EstatusOrden.CAPTURADA  # ADR-100: sin Vo.Bo., directo aquí
-    assert oc.folio_orden == "OS-2026-01-000041"  # ADR-237: formato nuevo
+    assert oc.folio_orden == "OS-2026-01-000001"  # ADR-237: formato nuevo; ADR-254: piso en 0
 
 
 def test_siguiente_folio_sigue_contando_los_folios_en_formato_viejo(
