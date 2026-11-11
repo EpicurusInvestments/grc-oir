@@ -31,6 +31,17 @@ export function useConstantes() {
   return { ...catalog, useList, useConteos };
 }
 
+/** ADR-246: alta rápida de un motivo nuevo desde un combo "Motivo del cambio" — invalida
+ *  la lista (`["constante"]`) para que el nuevo motivo aparezca de inmediato en el combo
+ *  que lo originó (y en cualquier otro que comparta la misma query). */
+export function useCrearMotivoCambio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: constanteApi.crearMotivoCambio,
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
 /** Importación CSV. Previsualizar (commit=false) NO invalida; aplicar (commit=true) refresca
  *  la lista y los conteos (comparten el prefijo de key `["constante"]`). */
 export function useImportarConstantes() {

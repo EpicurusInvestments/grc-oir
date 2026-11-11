@@ -720,19 +720,21 @@ class OrdenEstacionLayoutRealRead(BaseModel):
 
 
 class LayoutRealAplicadoRead(BaseModel):
-    """ADR-147/ADR-149/ADR-174b: una fecha del CSV que sí hizo match con un día real de
-    esta OE — el frontend usa esto para reemplazar el override de "reales" de ese día.
-    `spots` ya viene SUMADO si 2+ filas del archivo compartían la misma fecha+hora
-    (petición del usuario). `hora_inicio` sigue siendo la hora PROGRAMADA de este día
-    (su identidad, sin cambio); si el archivo trajo una hora distinta para la misma
-    fecha (ADR-174b: el emparejamiento ahora es por fecha, cronológico), `cambio_horario`
-    viene en `True` y `hora_real` trae la hora que de verdad reportó el archivo."""
+    """ADR-147/ADR-149/ADR-174b/ADR-247: una fecha del CSV que sí hizo match con un día
+    real de esta OE — el frontend usa esto para reemplazar el override de "reales" de
+    ese día. `spots` ya viene SUMADO si 2+ filas del archivo compartían la misma
+    fecha+hora (petición del usuario). `hora_inicio` sigue siendo la hora PROGRAMADA de
+    este día (su identidad, sin cambio); `hora_real` trae la hora que de verdad reportó
+    el archivo para este día (SIEMPRE que haya match — ADR-247, antes solo si diferían;
+    el frontend decide ahí mismo, comparando contra la ventana `hora_inicio`/`hora_fin`
+    programada de ese día, si vale la pena marcarla como "fuera de horario" — ya no se
+    audita automáticamente como Incidencia, ver `avanzar_reales`). `None` solo para un
+    día programado que el archivo no mencionó en absoluto (faltante, `spots=0`)."""
 
     orden_estacion_dia_id: uuid.UUID
     fecha_transmision: date
     hora_inicio: time
     spots: int
-    cambio_horario: bool = False
     hora_real: time | None = None
 
 
@@ -937,12 +939,6 @@ class OrdenEstacionDiaRealIn(BaseModel):
     # motivo (varios spots/horarios por fecha).
     orden_estacion_dia_id: uuid.UUID
     spots_verificados: int = Field(ge=0)
-    # ADR-174b (petición del usuario): hora en la que REALMENTE se transmitió este día,
-    # si difiere de `OrdenEstacionDia.hora_inicio` (la programada, que no se toca) —
-    # `None` si no aplica (no viene del layout, o coincide con la programada). El
-    # servicio compara contra la hora programada y genera una `Incidencia` de tipo
-    # `cambio_horario` cuando difieren, ADEMÁS de la de spots si también difieren.
-    hora_real: time | None = Field(default=None)
 
 
 class OrdenEstacionDiaNuevoIn(BaseModel):
@@ -1099,11 +1095,16 @@ def _parsear_layout_reales_csv(
       cronológico").
     - Un par cuya hora coincide se comporta exactamente como antes (`aplicados`, con la
       suma de spots de ese grupo).
-    - Un par cuya hora NO coincide se marca `cambio_horario=True` con `hora_real` = la
-      hora que trajo el archivo — el día programado sigue siendo el mismo registro
-      (mismo `orden_estacion_dia_id`, su `hora_inicio` programada no cambia), pero
-      `avanzar_reales` generará además la `Incidencia` de cambio de horario (confirmado:
-      si ADEMÁS difieren los spots, se generan LAS DOS incidencias).
+    - `hora_real` siempre trae la hora que de verdad reportó el archivo para ese par
+      (ADR-247, antes solo si diferían de la programada) — el día programado sigue
+      siendo el mismo registro (mismo `orden_estacion_dia_id`, su `hora_inicio`
+      programada no cambia). Ya NO se audita ningún "cambio de horario" como
+      `Incidencia` automática al avanzar (ADR-247, petición del usuario: comparar contra
+      una hora programada única era, en la práctica, comparar contra una PROYECCIÓN —
+      cuando un día tiene varios spots programados a la misma `hora_inicio`, no horarios
+      reales distintos por spot — así que la señal no era confiable). El frontend
+      decide, con la ventana `hora_inicio`/`hora_fin` programada de ese día, si vale la
+      pena marcarlo como "fuera de horario" — solo visual, nunca bloquea el avance.
     - Programados de esa fecha que sobran (el archivo trajo menos registros para esa
       fecha de los que había programados) → `aplicados` con `spots=0` (mismo mecanismo
       de "faltante" que ya existía, ver ADR-157 abajo).
@@ -1242,15 +1243,13 @@ def _parsear_layout_reales_csv(
             dia = programados[i]
             hora_real = horas_reales[i]
             spots_total = grupos[(fecha, hora_real)]
-            cambia_horario = hora_real != dia.hora_inicio
             aplicados.append(
                 LayoutRealAplicadoRead(
                     orden_estacion_dia_id=dia.orden_estacion_dia_id,
                     fecha_transmision=dia.fecha_transmision,
                     hora_inicio=dia.hora_inicio,
                     spots=spots_total,
-                    cambio_horario=cambia_horario,
-                    hora_real=hora_real if cambia_horario else None,
+                    hora_real=hora_real,
                 )
             )
 
@@ -2430,13 +2429,6 @@ class OrdenEstacionService(
             )
         db = self._repo.db
         overrides = {d.orden_estacion_dia_id: d.spots_verificados for d in input_.dias}
-        # ADR-174b (petición del usuario): hora REAL de transmisión, si el layout la
-        # reportó distinta a la programada (`OrdenEstacionDia.hora_inicio`, que no
-        # cambia). Dispara una `Incidencia` de cambio de horario ADEMÁS de la de spots
-        # (si también difieren) — nunca la reemplaza.
-        horas_reales = {
-            d.orden_estacion_dia_id: d.hora_real for d in input_.dias if d.hora_real is not None
-        }
         dias = list(self._repo.listar_dias(orden_estacion_id))
         usuario_id = resolver_usuario_id(db, usuario.username)
         hoy = date.today()
@@ -2577,34 +2569,6 @@ class OrdenEstacionService(
                         fecha_incidencia=dia.fecha_transmision,
                         resolucion=ResolucionIncidencia.PENDIENTE.value,
                         monto_ajuste=(Decimal(diferencia) * obj.precio_spot).quantize(CENTAVOS),
-                    )
-                )
-
-            # ADR-174b (petición del usuario): el layout reportó este día con una hora
-            # distinta a la programada — se genera su propia `Incidencia` de cambio de
-            # horario, SEPARADA de la de spots de arriba (confirmado: si ambas cosas
-            # difieren, se generan las DOS). Puramente informativa: `diferencia_spots=0`
-            # y sin `monto_ajuste` — el impacto monetario de la diferencia de spots (si
-            # la hay) ya quedó cubierto por la Incidencia de arriba; esto no la duplica.
-            hora_real = horas_reales.get(dia.orden_estacion_dia_id)
-            if hora_real is not None and hora_real != dia.hora_inicio:
-                db.add(
-                    Incidencia(
-                        incidencia_id=uuid4(),
-                        verificacion_id=verificacion.verificacion_id,
-                        orden_estacion_id=obj.orden_estacion_id,
-                        tipo_incidencia=TipoIncidencia.CAMBIO_HORARIO.value,
-                        spots_ordenados=programado_efectivo,
-                        spots_ejecutados=verificado,
-                        diferencia_spots=0,
-                        descripcion_incidencia=(
-                            f"Horario programado {dia.hora_inicio.strftime('%H:%M')} -> "
-                            f"horario real {hora_real.strftime('%H:%M')}."
-                            + (f" {input_.notas_transmision}" if input_.notas_transmision else "")
-                        ),
-                        fecha_incidencia=dia.fecha_transmision,
-                        resolucion=ResolucionIncidencia.PENDIENTE.value,
-                        monto_ajuste=None,
                     )
                 )
 

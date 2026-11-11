@@ -10007,3 +10007,403 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 - **Verificado:** nueva prueba en `PagosClientePage.test.tsx` ("el buscador filtra por
   número de pago, referencia y factura") más la suite completa del archivo (12/12
   verdes) y `tsc --noEmit` limpio.
+
+### ADR-242 — OrdenCliente: la agencia sugerida por el anunciante no traía su % de comisión
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con captura: "cuando
+  el anunciante tiene asignada una agencia por default y se carga en automático en el
+  combo de la agencia, no está cargando la comisión de esa agencia preseleccionada").
+  `onAgenciaChange` (cuando el usuario elige la agencia a mano) sí autocargaba
+  `porcentaje_comision_agencia_snap` desde `Agencia.porcentaje_comision_agencia_default`,
+  pero `onAnuncianteChange` solo hacía `setValue("agencia_id", ...)` al sugerir la agencia
+  del anunciante, sin tocar el % — quedaba vacío hasta que el usuario reseleccionaba la
+  agencia a mano.
+- **Diseño:** en `OrdenClienteForm.tsx` (`onAnuncianteChange`), al autocargar
+  `agencia_id` desde `anunciante.agencia_id` (solo si el campo agencia estaba vacío, se
+  sigue respetando que no sobrescribe una elección manual), también se autocarga
+  `porcentaje_comision_agencia_snap` con `findAgencia(anunciante.agencia_id)
+  .porcentaje_comision_agencia_default` — mismo criterio que `onAgenciaChange`, y solo si
+  el % no se había capturado ya a mano.
+- **Verificado:** 2 pruebas en `OrdenClienteForm.test.tsx` — la existente ("elegir un
+  anunciante con agencia asociada sugiere la agencia...") extendida para afirmar el %
+  autocargado, más una nueva que confirma que un % ya capturado a mano no se sobrescribe
+  al cambiar de anunciante. Suite completa (47/47 verdes) y `tsc --noEmit` limpio.
+
+### ADR-243 — OrdenCliente: no se puede dejar "Facturación a la Agencia" sin una agencia
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con captura: "no te
+  debe permitir facturar a la agencia, si no seleccionaste una agencia" — la captura
+  mostraba el combo "Agencia" en "Sin agencia (venta directa)" con el radio "Facturación
+  a la Agencia" marcado). `afiliado_factura_directo_al_cliente = True` (nombre de columna
+  de la spec v2, "Facturación a la Agencia" en la UI) podía quedar activo sin
+  `agencia_id`: al elegir esa opción con una agencia ya puesta y luego quitarla del
+  combo, el radio no reaccionaba — quedaba en un estado inconsistente de negocio (¿a
+  quién factura, si no hay agencia?).
+- **Diseño (3 capas, defensa en profundidad):**
+  1. **UI:** en `OrdenClienteForm.tsx`, el radio "Facturación a la Agencia" ahora se
+     `disabled` cuando no hay `agencia_id` (con un hint: "Selecciona una agencia para
+     poder usar esta opción.") — no se puede ni elegir sin agencia.
+  2. **`onAgenciaChange`:** si el usuario quita la agencia (vuelve a "Sin agencia") con
+     esa opción ya activa, se revierte automáticamente a "Facturación directa al
+     cliente" (recalculando `direccion_facturacion` desde el Anunciante, mismo criterio
+     que el radio de esa opción).
+  3. **Zod (respaldo) + backend (autoridad real):** nuevo `.refine` a nivel de objeto en
+     el schema (`path: ["agencia_id"]`) y, en `OrdenClienteService` (`_pre_create`/
+     `_pre_update`), nuevo helper `_validar_facturacion_agencia` que rechaza con
+     `DomainError` si `afiliado_factura_directo_al_cliente` efectivo es `True` y
+     `agencia_id` efectivo es `None` — cubre llamadas directas a la API y órdenes YA
+     guardadas con el estado inconsistente antes de este fix (no podrán reguardarse sin
+     corregirlo).
+- **Verificado:** backend — 3 pruebas nuevas en `test_f1_05_ordenes_escritura.py`
+  (alta rechazada sin agencia, alta aceptada con agencia, edición rechazada al quitar la
+  agencia con la opción activa), suite completa de backend verde (exit 0), `ruff`
+  limpio. Frontend — 3 pruebas nuevas en `OrdenClienteForm.test.tsx` (radio
+  deshabilitado/habilitado, reversión automática al quitar la agencia, mensaje de error
+  al reguardar una orden con el estado heredado inconsistente) más la prueba existente
+  del radio group ajustada (ahora selecciona una agencia primero). Suite de `ordenes`
+  completa (282/282), `tsc --noEmit`/`eslint` limpios.
+
+### ADR-244 — OrdenCliente: "Motivo del cambio de comisión" pasa de texto libre a combo del catálogo
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario: nuevo `clave_base`
+  `CambioComision` en Constantes del Sistema/`MotivoCambio`, mismo mecanismo ya usado por
+  `CambioTarifa` (ADR-179/183, `TarifaForm.tsx`/`OrdenEstacionForm.tsx`) y `CambioFecha`
+  (ADR-178/180, el de inicio/fin de campaña en este MISMO formulario) — el motivo de
+  comisión (`motivo_cambio_comision`) era el único de los 3 que seguía siendo texto
+  libre, sin selector.
+- **Diseño:** en `OrdenClienteForm.tsx`, nueva constante `CLAVE_BASE_MOTIVO_COMISION =
+  "cambiocomision"`, un `useConstantes().useList({ grupo: "MotivoCambio", activo: true,
+  size: 100 })` filtrado por esa clave base (idéntico a `motivosCambioFecha`), y el
+  `<input>` de la sección "Equipo comercial y comisiones" se reemplaza por el mismo
+  patrón select-con-fallback-a-texto-libre (si el catálogo no tiene ninguna opción
+  activa, sigue aceptando texto libre — no bloquea el guardado por eso). De paso se
+  corrigió una inconsistencia menor: el campo nunca tenía un `disabled` basado en "¿de
+  verdad cambió algún %?" (a diferencia de fecha, que sí lo tenía desde ADR-180) — nuevo
+  `algunaComisionCambio` (calculado en render, mismo criterio que `algunaFechaCambio`)
+  ahora deshabilita el campo mientras los 3 % sigan iguales a `defaultValues`. Sin
+  cambios de esquema/backend: el campo y su validación (obligatorio solo si de verdad
+  cambió un %) ya existían.
+- **Datos sembrados (dev):** 3 filas en `MotivoCambio`/`CambioComision` (vía la API real,
+  no en `seed_dev.py` — ni `CambioTarifa` ni `CambioFecha` se siembran ahí tampoco, el
+  catálogo se captura por la pantalla): "Negociación comercial distinta al % default del
+  catálogo", "Corrección de error de captura", "Comisión especial pactada por
+  volumen/campaña".
+- **Verificado:** `OrdenClienteForm.test.tsx` — prueba existente ajustada (ahora espera a
+  que resuelva la consulta compartida de Constantes antes de interactuar con el combo) y
+  nueva prueba del `disabled`/`enabled` en vivo al cambiar y revertir un %. Suite
+  completa (51/51), `tsc --noEmit`/`eslint` limpios.
+
+### ADR-245 — PDFs de OrdenEstacion: cada uno trae el comentario que le corresponde (y se quitan los textos fijos "por default")
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con capturas de los
+  3 PDFs). Antes: PDF 1 "Orden de servicio" (`generar_pdf_servicio`) mostraba
+  `oe.observaciones_estacion` bajo "Observaciones" — el comentario de la OrdenEstacion,
+  no el de la OrdenCliente (que da nombre a este PDF: "orden de servicio" = OrdenCliente
+  en el glosario del proyecto, la pantalla de alta se llama literalmente "Nueva Orden de
+  Servicio"). PDF 2 "Horarios programados" (`generar_pdf_programados`) no mostraba NINGÚN
+  comentario. PDF 2 y 3 ("Horarios reales", `generar_pdf_reales`) mostraban un párrafo
+  fijo de ayuda ("Sin reporte detallado del afiliado adjunto…"/"Detalle agregado por
+  día…") cada vez que no había un reporte de afiliado cargado — texto genérico que el
+  usuario pidió quitar ("los comentarios que pones por default… no sirven").
+- **Diseño:** en `orden_estacion_pdf.py` — (1) `generar_pdf_servicio`: el párrafo
+  "Observaciones" ahora arma `" · ".join(oc.observaciones_predefinidas,
+  oc.observaciones_libres)` (mismo criterio de unión que `OrdenClienteDetailPanel.tsx`),
+  nunca `oe.observaciones_estacion`. (2) `generar_pdf_programados`: se agrega el mismo
+  párrafo "Observaciones" pero con `oe.observaciones_estacion` — el comentario de la
+  orden de transmisión (OrdenEstacion) vive aquí, no en Servicio. (3) Ambos
+  (`generar_pdf_programados`/`generar_pdf_reales`): se quita el `else` que mostraba el
+  texto fijo de ayuda cuando no hay `reporte_programados_ref`/`reporte_reales_ref` — sin
+  reemplazo, simplemente no se menciona el adjunto si no existe (el `if` que sí muestra
+  el nombre del archivo cuando SÍ está adjunto se conserva, es dato real, no relleno).
+  PDF 3 (reales) sigue sin mostrar ningún comentario — a propósito, por petición del
+  usuario.
+- **Verificado:** 5 pruebas nuevas en `test_f1_06_ordenes_pdf.py` (Servicio muestra el
+  comentario de la OC y NO el de la OE; Servicio sin comentario de OC muestra "—";
+  Programados muestra el comentario de la OE; Programados ya no muestra el texto fijo
+  sin adjunto; Reales no muestra ningún comentario ni el texto fijo). Suite completa del
+  archivo (29/29) y `ruff` limpio.
+
+### ADR-246 — Combos "Motivo del cambio" (Tarifa/OrdenCliente/OrdenEstacion): alta de un motivo nuevo al vuelo, directo en el catálogo
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario): "agregar un botón a
+  un costado del selector... o que desde el combo se pueda 'agregar un motivo'... que dé
+  de alta en el catálogo de constantes de manera automática". Se preguntó al usuario (vía
+  `AskUserQuestion`) entre un botón aparte o un combo "creatable" (escribir y ofrecer
+  "Crear..."), y entre acotar el permiso nuevo a Ventas o también Dirección/Admin — eligió
+  combo "creatable" y "Ventas + Dirección/Admin, roles revisables más adelante".
+- **Bloqueador detectado antes de programar:** el alta genérica de `ConstanteSistema`
+  (`POST /catalogos/constantes`) exige `catalogos:crear`, y en la matriz RBAC Ventas solo
+  tiene `READ` sobre catálogos (decisión deliberada de F0-00: "solo Admin escribe
+  catálogos") — a Ventas, que es quien captura Orden de Servicio/Orden de Transmisión/
+  Tarifa (donde viven los 4 combos), le tronaría 403.
+- **Diseño — 3 capas:**
+  1. **Backend, permiso angosto y SEPARADO de "catalogos":** nuevo módulo RBAC
+     `motivos_cambio` (`app/core/security.py`) con `Area.VENTAS`/`Area.DIRECCION` en
+     `WRITE` (Admin siempre WRITE vía `_nivel()`) — NO se amplía `catalogos` en general,
+     solo esta acción puntual.
+  2. **Backend, endpoint dedicado que fuerza el grupo:** `POST
+     /catalogos/constantes/motivos-cambio` (`constantes_sistema.py`), schema
+     `MotivoCambioCreate{clave_base, descripcion}` (sin campo `grupo`: nunca llega del
+     cliente, se fuerza a `GrupoConstante.MOTIVO_CAMBIO` en el propio endpoint) — gateado
+     con `requiere_permiso("motivos_cambio:crear")`, reutiliza
+     `ConstanteSistemaService.create()` (que ya le agrega el sufijo secuencial,
+     `_siguiente_clave_motivo_cambio`, ADR-178). Así el endpoint NUNCA puede dar de alta
+     nada fuera de `MotivoCambio`, aunque el área tenga el permiso.
+  3. **Frontend, combo "creatable":** `SearchableSelect` (`shared/ui/`) gana `onCreate`/
+     `creando` — si lo escrito no coincide (case-insensitive) con ninguna opción, ofrece
+     un renglón "+ Crear "...""; al elegirlo, dispara `onCreate(texto)` y cierra la
+     lista (quien usa el componente decide qué hacer, normalmente una mutación). También
+     se corrige que el input mostraba vacío si `value` no estaba entre `options`
+     (`seleccionada?.label ?? value`, antes `?? ""`) — necesario para que, justo después
+     de crear un motivo, se vea aunque la lista cacheada todavía no lo tenga.
+     `useCrearMotivoCambio()` (nuevo hook en `constantesSistema/hooks.ts`) invalida la
+     key `["constante"]` al resolver. Se aplica a los 4 combos existentes — reemplaza por
+     completo el fallback "cae a texto libre si el catálogo está vacío" de ADR-179/180/
+     183/244 (ya no hace falta: el combo cubre ambos casos) en `TarifaForm.tsx`,
+     `OrdenEstacionForm.tsx` (clave `CambioTarifa`) y `OrdenClienteForm.tsx` (claves
+     `CambioFecha`/`CambioComision`).
+- **Verificado:** backend — 4 pruebas nuevas en `test_f0_05_constantes.py` (Ventas y
+  Dirección pueden crear motivos, otra área no puede con 403, reusa el sufijo secuencial
+  existente), suite completa de backend verde (exit 0), `ruff` limpio. Frontend — 6
+  pruebas nuevas en `SearchableSelect.test.tsx` (filtra/selecciona, sin `onCreate` nunca
+  ofrece crear, ofrece crear solo si no coincide exacto, llama a `onCreate` con el texto
+  recortado y cierra la lista, `creando` bloquea un segundo click, `value` fuera de
+  `options` se muestra tal cual); pruebas existentes de `OrdenClienteForm.test.tsx`/
+  `OrdenEstacionForm.test.tsx` reescritas para el nuevo patrón de interacción (escribir +
+  click en la opción, en vez de `fireEvent.change` directo sobre un `&lt;select&gt;`
+  nativo) — ambas suites completas en verde, `tsc --noEmit`/`eslint` limpios.
+
+### ADR-247 — "Capturar Reales" vía layout: valida hora dentro de rango (soft), quita la auditoría automática de "cambio de horario"
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con capturas,
+  revisada y comentada ANTES de implementar — `AskUserQuestion` confirmó 2 puntos:
+  marcar-sin-bloquear la hora fuera de rango, e ignorar silenciosamente una columna
+  `Spots` sobrante en el layout). 4 puntos pedidos por el usuario:
+  1. Fecha dentro de campaña: ya se validaba (días nuevos, ADR-149/174b). Sin cambio.
+  2. Hora dentro de la ventana programada (`hora_inicio`–`hora_fin` del día): **nueva**,
+     solo informativa — "que la marque y deje que continúe con el procesamiento".
+  3. Ya no auditar "cambio de horario": se quita la `Incidencia` automática
+     `TipoIncidencia.CAMBIO_HORARIO` que generaba `avanzar_reales` cuando el layout
+     reportaba una hora distinta a `OrdenEstacionDia.hora_inicio` (ADR-174b). Motivo del
+     usuario: cuando un día tiene varios spots programados a la misma `hora_inicio`
+     (ADR-127), esa hora es una PROYECCIÓN, no un horario real por spot — comparar la
+     hora real contra ella no era una señal confiable.
+  4. Diferencias totales de spots: revisada, ya funcionaba bien (sin cambios).
+  Además, confirmado con el usuario: el layout CSV que se comunica al afiliado deja de
+  incluir `Spots` (`Estacion, Fecha, Hora` en vez de `Estacion, Fecha, Hora, Spots`) —
+  "aún no les hemos dado el layout, no hay problema si dejamos de meter el spot" (sin
+  archivos legacy que soportar). Consecuencia pedida por el usuario: la columna "Spots"
+  en pantalla ya no aporta nada con un layout cargado (cada fila ya es 1 spot) y se
+  retira ahí (se conserva intacta en la captura manual); "Horario de transmisión" se
+  angosta (antes sin ancho fijo).
+- **Diseño — backend** (`orden_estacion.py`): `TipoIncidencia.CAMBIO_HORARIO` (spec BD
+  v2, `incidencia.py`) **NO se toca** — sigue disponible para alta MANUAL a futuro, que
+  es justo lo que su propio diseño híbrido (ADR-031) ya preveía para ese tipo; lo que se
+  quita es la generación AUTOMÁTICA desde `avanzar_reales`, que nunca debió existir bajo
+  ese diseño. Se elimina `OrdenEstacionDiaRealIn.hora_real` (ya nada lo consume) y
+  `LayoutRealAplicadoRead.cambio_horario`; `hora_real` en `LayoutRealAplicadoRead` pasa
+  de "solo si difiere" a SIEMPRE poblado para un par emparejado (`None` solo en un día
+  programado que el archivo no mencionó). Nada de esto toca el CSV parser en sí
+  (`Estacion, Fecha, Hora, Spots` sigue aceptándose tal cual, `Spots` opcional — el
+  cambio de layout comunicado al afiliado es un cambio de QUÉ SE DOCUMENTA/ENVÍA, no de
+  qué el parser acepta).
+- **Diseño — frontend** (`RealesForm.tsx`): nuevo `horaFueraDeVentana(horaReal,
+  programado)` compara contra la ventana COMPLETA (`hora_inicio`–`hora_termino`), no
+  solo contra el punto de inicio como hacía la vieja `horaCambio`/`cambio_horario` —
+  badge renombrado "fuera de horario", solo informativo (nunca deshabilita "Avanzar a
+  2.3"), y ya NO se cuenta en el panel "Al avanzar a 2.3 se generarán" (no genera
+  ninguna Incidencia). `onLayoutAplicado` ya no gatea el reflejo de la hora real en
+  `cambioHorario` — la fila siempre muestra `horaReal` cuando el layout trae una
+  (unificado con el punto anterior: antes solo se mostraba si "cambiaba"). Columna
+  "Spots" retirada condicionalmente (`{!layoutCargado && <th>...}`) de la tabla y de las
+  2 filas que dependen de un layout (aplicados/nuevos) — la captura manual
+  (`!layoutCargado`) no se toca. "Horario de transmisión" gana `width: 100`.
+- **Reversibilidad (pregunta explícita del usuario):** sin migración de BD — el tipo de
+  incidencia del modelo se queda intacto, el cambio es 100% de código de aplicación
+  (servicio + UI). Revertir es un `git revert` de `orden_estacion.py`/`RealesForm.tsx` y
+  archivos relacionados, sin tocar datos ya persistidos.
+- **Verificado:** backend — `test_f1_14_layout_reales_aplicar_csv.py` (2 pruebas
+  reescritas, 1 renombrada: ya no auditan `cambio_horario`, `hora_real` siempre
+  poblado), 27/27 verdes en el archivo, suite completa de backend verde (exit 0), `ruff`
+  limpio. Frontend — `RealesForm.test.tsx` (3 pruebas nuevas/reescritas: badge "fuera de
+  horario" reemplaza "cambio horario", caso dentro-de-ventana no se marca, ya no
+  aparece en el panel), `OrdenEstacionForm.test.tsx` ajustada (fixture sin `hora_real`),
+  suites de `ordenes` y frontend completo en verde, `tsc --noEmit`/`eslint` limpios.
+
+### ADR-248 — Facturación: checkbox "Facturado en sistema externo" al registrar el timbrado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, "NEW FEATURE", con
+  captura de "Registrar respuesta del timbrado"): "cuando se factura en otro sistema
+  (ej. OIR)... solo será un check para identificar la factura, el resto del
+  funcionamiento se queda tal cual, el monto para OIR es el que ya se asignó en nuestro
+  sistema. La factura cargada seguramente tendrá un monto diferente." Pedido explícito
+  de ubicación: el check en "Registrar respuesta del timbrado", y que también se pueda
+  consultar en el detalle de la factura.
+- **Diseño:** nuevo campo `facturado_en_sistema_externo` (bool, default `False`) en
+  `FacturaCliente` — desviación aditiva fuera de la spec BD v2 (mismo criterio que
+  `facturado_directo`, ADR-236: un flag operativo nuevo, no un campo de la
+  especificación). Se agrega a `TimbrarIn` (opcional, default `False`) y
+  `FacturaClienteRead`; `FacturaClienteService.timbrar()` lo copia al modelo junto con
+  los demás campos de la respuesta del PAC — **sin tocar ningún cálculo**:
+  `subtotal_factura`/`iva_factura`/`total_factura` siguen siendo 100% derivados de las
+  órdenes, el checkbox no los toca ni los valida contra nada del folio/archivo cargado
+  (de hecho, el sistema nunca parseó montos de esos archivos — son solo evidencia).
+  Frontend: checkbox en `RegistrarTimbradoForm.tsx` (patrón `check-box`/`check-box-title`/
+  `check-box-desc` ya establecido en el proyecto, p.ej. `OrdenClienteForm.tsx`/
+  `ListasParaFacturarPage.tsx`) y badge nuevo (`b-purple`, junto a los demás badges del
+  encabezado del detalle: estado, razón social, folio de orden) en
+  `FacturasClientePage.tsx`, visible siempre que `facturado_en_sistema_externo` sea
+  `true` — cumple el segundo pedido del usuario ("que también se pueda consultar en
+  algún lado del detalle").
+- **Migración:** `d5e6f7a8b9c0` (un solo paso, sin backfill — ninguna factura ya
+  timbrada pudo haber usado este flag antes de que existiera, así que `default=False`
+  es correcto para el 100% de las filas existentes desde el día 1). `add_column` con
+  `server_default='0'`, igual en SQLite y SQL Server, sin rama por dialecto (mismo
+  criterio que `2e0c8a75aad5`, `facturado_directo`); el `downgrade` sí necesita soltar
+  el DEFAULT CONSTRAINT en SQL Server antes del `DROP COLUMN`.
+- **Verificado:** backend — 2 pruebas nuevas en `test_f2_02_facturacion_escritura.py`
+  (default `False` al timbrar sin marcarlo; `True` cuando se manda, sin afectar
+  `total_factura`), roundtrip `upgrade`→`downgrade`→`upgrade` de la migración, suite
+  completa de backend verde (exit 0), `ruff` limpio. Frontend — 4 pruebas nuevas en
+  `FacturasClientePage.test.tsx` (el checkbox se manda `true`/`false` según se marque o
+  no al registrar el timbrado, el badge aparece/no aparece en el detalle según el
+  flag), suite completa de frontend verde, `tsc --noEmit`/`eslint` limpios.
+
+### ADR-249 — OrdenCliente: "Motivo del cambio" de comisión también exige motivo en el ALTA
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con captura de
+  "Nueva Orden de Servicio" con 2 % ya "sobrescritos": "modifiqué los % de comisión
+  pero no sale el selector... también debe aplicar cuando es una nueva orden"). Se
+  confirmó con el usuario (`AskUserQuestion`) el disparador exacto: el motivo se exige
+  **solo si el % capturado diverge del % sugerido del catálogo** (mismo criterio que ya
+  usa el badge "sobrescrito" del frontend) — si se deja tal cual lo sugirió el
+  catálogo, la captura inicial sigue sin pedir nada.
+- **Contexto:** esto es una reversa PUNTUAL de **ADR-029**, que documentaba
+  explícitamente "captura inicial libre por Ventas — no es 'cambio', no requiere
+  motivo; editarlos DESPUÉS sí lo es". ADR-029 se mantiene vigente para el caso en que
+  el % capturado SÍ coincide con el catálogo (sigue sin pedir motivo); solo cambia
+  cuando diverge.
+- **Diseño — backend** (`orden_cliente.py`): nuevo campo transitorio
+  `OrdenClienteCreate.motivo_cambio_comision` (nunca llega a la BD, se hace `pop()` en
+  `create()` antes de `self.repo.create(payload)` — mismo patrón que
+  `motivo_cambio_fecha` en `OrdenClienteUpdate`). Nuevo
+  `_requiere_motivo_comision_en_alta(db, payload)`: consulta `Vendedor`/`Agencia` por
+  los ids capturados y compara cada % contra su `porcentaje_comision_default`/
+  `porcentaje_comision_agencia_default` (tolerancia `0.01`, igual que
+  `esComisionOverride` del frontend) — si CUALQUIERA diverge y no viene motivo, 400
+  `error_dominio`. El motivo (compartido entre los 3 %, como ya hacía la edición) se
+  usa para LAS TRES llamadas a `audit.log_cambio_parametro` en `create()` que antes
+  mandaban `motivo=None` siempre.
+- **Diseño — frontend** (`OrdenClienteForm.tsx`): `algunaComisionCambio` ahora es una
+  rama por modo — en EDICIÓN sigue comparando contra `defaultValues` (lo guardado,
+  SIN cambios); en ALTA compara contra el catálogo (`divergeDelCatalogo`, reutiliza
+  `esComisionOverride`, ya existente para el badge). El combo de motivo
+  (`SearchableSelect`, ADR-246) deja de estar condicionado a `isEdit` — ahora se
+  muestra siempre que `canEditComisiones` (que ya es `true` en alta, `congelado` exige
+  `isEdit`), habilitado/deshabilitado por el mismo `algunaComisionCambio` unificado.
+  `construir()`/`construirYValidar()` dejaron de recalcular su propio `cambioComision`
+  por separado (comparaba contra `null` en alta, sin sentido) — reutilizan
+  `algunaComisionCambio` directamente, y el guard de envío ya no excluye el alta
+  (`if (cambioComision && !motivoComision)`, antes `if (isEdit && ...)`).
+  `motivoComision` ahora también se manda en el ALTA: `crearOC(input, {
+  motivoComision })` (antes el alta ignoraba `opts.motivoComision` por completo) →
+  `ordenClienteCreateToApi(input, motivoComision)` → `motivo_cambio_comision` en el
+  body de `POST /ordenes/clientes`.
+- **Verificado:** backend — 1 prueba renombrada (`..._sin_motivo_si_coincide_con_el_catalogo`,
+  ya no diverge) + 2 pruebas nuevas en `test_f1_05_ordenes_escritura.py` (rechaza sin
+  motivo cuando diverge, acepta y audita con motivo cuando diverge), suite completa de
+  backend verde (exit 0), `ruff` limpio. Frontend — 3 pruebas nuevas en
+  `OrdenClienteForm.test.tsx` (exige motivo si diverge en alta, no exige si coincide,
+  el motivo capturado se manda con el alta — incluyendo el flujo "creatable" de
+  ADR-246), suite completa de `ordenes` y frontend entero en verde, `tsc --noEmit`/
+  `eslint` limpios.
+
+### ADR-250 — Bug: en edición, el combo "Motivo del cambio" de comisión quedaba inerte si el % ya venía sobrescrito de una sesión anterior
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con captura: "generé
+  un nuevo registro en motivos de cambio desde la OS pero al editar no sale el registro
+  que di de alta" — dos capturas: el registro `CambioComision_4` / "Ajuste en la
+  comisión" sí existía y estaba Activo en el catálogo, pero el combo de la orden se veía
+  vacío con solo el placeholder).
+- **Diagnóstico:** se descartó un problema de datos/caché — se confirmó por API
+  (`GET /catalogos/constantes?grupo=MotivoCambio`) que las 12 entradas, incluida la
+  recién creada, estaban correctas y activas. La causa real: `disabled={!algunaComisionCambio}`
+  en el combo (`OrdenClienteForm.tsx`). En EDICIÓN, `algunaComisionCambio` (ADR-180/ADR-244)
+  solo es `true` si el % **cambia en esa misma sesión** respecto a `defaultValues` (lo ya
+  guardado) — NO si ya diverge del catálogo desde una edición previa. Si el usuario abre
+  una orden donde la comisión ya quedó sobrescrita antes y no la vuelve a tocar, el combo
+  queda vacío y `disabled` — y un `<input disabled>` no abre la lista al hacer clic, por
+  lo que ningún motivo del catálogo "sale", ni siquiera el recién creado.
+- **Confirmado con el usuario** (`AskUserQuestion`): habilitar el combo también cuando el
+  % diverge del catálogo ahora mismo (mismo criterio que ya usa ADR-249 en alta), no solo
+  cuando se cambia en la sesión — sin tocar la regla de cuándo el motivo es
+  **obligatorio para guardar** (esa sigue siendo "cambió en esta sesión" en edición).
+- **Diseño:** nuevo `algunaComisionDivergeCatalogo` (se calcula siempre, en ambos modos,
+  reutilizando `divergeDelCatalogo`/`esComisionOverride`). El combo pasa a
+  `disabled={!(algunaComisionCambio || algunaComisionDivergeCatalogo)}`. En ALTA no cambia
+  nada (`algunaComisionCambio` ya era exactamente esa divergencia). En EDICIÓN, el combo
+  ahora se habilita si cambiaste algo en esta sesión **o** si el valor ya diverge del
+  catálogo, aunque no lo hayas tocado — pero guardar sin motivo sigue sin bloquearse si
+  no cambiaste nada.
+- **Verificado:** frontend — se ajustó la prueba ADR-244 ("arranca deshabilitado") para
+  partir de un % que SÍ coincide con el catálogo (antes partía ya divergente, lo que con
+  el fix la hacía empezar habilitada) y se agregó una prueba nueva que cubre exactamente
+  este bug (% ya divergente de una edición previa → combo arranca habilitado, guardar sin
+  tocarlo no exige motivo). Suite de `OrdenClienteForm.test.tsx` en verde (55/55),
+  `tsc --noEmit`/`eslint` limpios.
+
+### ADR-251 — Bug: el motivo capturado nunca se recargaba al reabrir para editar (comisión y tarifa)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-10 (petición del usuario, con captura, PROBANDO
+  EN VIVO justo después de ADR-250: "sigue el mismo problema... ya hasta le cambié el
+  porcentaje de 12 a 10 seleccionando un motivo y cuando vuelvo a editarlo no aparece
+  seleccionado el motivo"). ADR-250 corrigió un bug real (el combo quedaba `disabled`,
+  inerte) pero NO era la causa de fondo de este síntoma — con el combo ya habilitado, el
+  problema seguía: el motivo capturado jamás se recupera al reabrir, porque nunca viajó a
+  ningún lado recuperable.
+- **Diagnóstico:** `motivo_cambio_comision`/`motivo_cambio_tarifa` son, por diseño,
+  campos TRANSITORIOS — existen solo en memoria del formulario durante el submit, para
+  alimentar `LogCambioParametro` (`audit.log_cambio_parametro`); nunca se persisten como
+  columna de la orden, y nada en `OrdenClienteRead`/`OrdenEstacionRead` los expone de
+  vuelta. Por eso cada vez que se reabre para editar, el combo arranca vacío — el dato SÍ
+  existe (en la bitácora), pero el formulario de edición nunca lo pide. Investigación
+  confirmó que esto YA se resuelve a medias: el historial completo (`GET
+  .../historial-comisiones` y `GET .../historial-tarifa`, backend sin cambios, nada que
+  migrar) ya se consume en los paneles de detalle de SOLO LECTURA
+  (`OrdenClienteDetailPanel.tsx`/`OrdenEstacionDetailPanel.tsx`) — pero jamás llegaba a
+  `OrdenClienteForm.tsx`/`OrdenEstacionForm.tsx` (los formularios de EDICIÓN).
+- **Confirmado con el usuario** (`AskUserQuestion`): el combo debe PRESELECCIONARSE con el
+  motivo más reciente (editable) — no solo mostrarlo como texto informativo de solo
+  lectura — y el mismo fix aplica también a "Motivo del cambio de tarifa"
+  (`OrdenEstacionForm.tsx`), que tiene exactamente el mismo problema estructural.
+- **Diseño:**
+  - `OrdenClienteForm.tsx`: nueva prop `historialComisiones?: HistorialCambio[]`
+    (viene ya filtrada por `entidad_id` desde `OrdenClienteListPage.tsx`, que la toma de
+    `state.historialComisiones` — ya precargado globalmente, sin ninguna consulta nueva).
+    `ultimoMotivoComision` = el `motivo_cambio` del registro más reciente (`fecha_cambio`
+    desc) entre los 3 campos de comisión (`CAMPOS_SNAP`) — se usa como
+    `defaultValues.motivo_cambio_comision` de `useForm` (en vez de `""`), solo en edición.
+  - `OrdenEstacionForm.tsx`: a diferencia de comisión, el historial de tarifa NO estaba
+    precargado en ningún lado (el panel de detalle lo pide él mismo, bajo demanda) — se
+    replica el mismo patrón aquí: `useEffect` que llama
+    `listarHistorialTarifaOrdenEstacionApi(oe.id)` al editar, y otro `useEffect` que
+    precarga `motivoCambioTarifa` con el `motivo_cambio` más reciente para `campo ===
+    "precio_spot"`. Sin cambios a `tarifaEsUltimoCampoTocado`/`requiereMotivoTarifa`
+    (ADR-183b/ADR-162 siguen gobernando cuándo el combo se MUESTRA y cuándo el motivo es
+    obligatorio) — el fix solo cambia CON QUÉ arranca el combo cuando sí se muestra.
+  - En ambos formularios, si el usuario no vuelve a tocar el campo divergente, el motivo
+    precargado viaja tal cual sin reabrir la pregunta (mismo criterio ya usado para
+    "varias comisiones divergen a la vez, un solo motivo compartido cubre todas"); si lo
+    cambia a un valor NUEVO sin tocar el combo, el motivo viejo se reenvía con el cambio
+    nuevo — comportamiento aceptado explícitamente por el usuario al elegir "preseleccionar"
+    sobre "solo mostrar de lectura".
+- **Verificado:** frontend — nueva prueba en `OrdenClienteForm.test.tsx` (2 entradas de
+  historial con distinta fecha, se precarga la MÁS RECIENTE, no la primera del arreglo) y
+  en `OrdenEstacionForm.test.tsx` (tarifa ya divergente de una edición previa + historial
+  mockeado con `listarHistorialTarifaOrdenEstacionApi` → retocar la tarifa a un valor
+  nuevo muestra el combo YA precargado, en vez de vacío). Se mockeó también
+  `listarHistorialTarifaOrdenEstacionApi` en el `vi.mock` de `escrituraApi` de ese archivo
+  (antes pegaba a la red real desde jsdom en cualquier prueba de edición, silenciado por
+  el `.catch` pero ruidoso). Suites de `OrdenClienteForm`/`OrdenEstacionForm`/
+  `OrdenClienteListPage` en verde (166/166), `tsc --noEmit`/`eslint` limpios. Sin cambios
+  de backend ni migraciones — los endpoints de historial ya existían.

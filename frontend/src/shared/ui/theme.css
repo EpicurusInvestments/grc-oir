@@ -843,6 +843,12 @@ body {
   color: var(--text3);
   border-bottom: 1px solid var(--border-med);
 }
+/* SearchableSelect "creatable" (ADR-246): renglón "+ Crear "..."" al final de la lista. */
+.ssel-item-crear {
+  color: var(--blue-text);
+  font-weight: 600;
+  border-top: 1px solid var(--border-med);
+}
 .ssel-empty {
   padding: 8px 11px;
   font-size: 12px;

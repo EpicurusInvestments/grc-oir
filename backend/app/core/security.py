@@ -165,6 +165,13 @@ RBAC: dict[str, dict[Area, Acceso]] = {
     # de las áreas. El diccionario va VACÍO a propósito: no hay ningún área con acceso
     # además de Admin, que lo obtiene de `_nivel()` igual que en los demás módulos.
     "usuarios": {},
+    # ADR-246 (petición del usuario): permiso angosto y SEPARADO de "catalogos" — solo
+    # habilita crear filas del grupo `MotivoCambio` (vía un endpoint dedicado que fuerza
+    # ese grupo, nunca cualquier catálogo) desde los combos "Motivo del cambio" de
+    # Tarifa/OrdenCliente/OrdenEstacion. Ventas y Dirección capturan esas pantallas;
+    # el resto de "catalogos" sigue siendo solo-lectura para todos salvo Admin. Revisable
+    # cuando se afinen roles más adelante (nota del usuario).
+    "motivos_cambio": {Area.VENTAS: Acceso.WRITE, Area.DIRECCION: Acceso.WRITE},
 }
 
 

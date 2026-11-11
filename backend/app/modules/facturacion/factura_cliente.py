@@ -292,6 +292,12 @@ class FacturaCliente(Base):
     # nombre heredado de la spec — mismo criterio que los `*_ref` de F1 (ADR-042).
     xml_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
     pdf_path: Mapped[str | None] = mapped_column(Unicode(500), default=None)
+    # ADR-248 (petición del usuario, "NEW FEATURE"): solo IDENTIFICA que esta factura en
+    # realidad se facturó en otro sistema (p.ej. OIR) — el monto para OIR sigue siendo el
+    # que ya calculó ESTE sistema (subtotal_factura/iva_factura/total_factura arriba); el
+    # archivo/folio que se carga aquí puede traer un monto distinto, y es justo lo que
+    # este campo distingue. No cambia ningún cálculo ni ninguna otra parte del flujo.
+    facturado_en_sistema_externo: Mapped[bool] = mapped_column(default=False)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -435,6 +441,7 @@ class FacturaClienteRead(BaseModel):
     serie_timbrado: str | None = None
     xml_path: str | None = None
     pdf_path: str | None = None
+    facturado_en_sistema_externo: bool = False
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
@@ -585,6 +592,9 @@ class TimbrarIn(BaseModel):
     # Claves de almacenamiento devueltas por el endpoint de adjuntos (no rutas de disco).
     xml_path: str | None = Field(default=None, max_length=500)
     pdf_path: str | None = Field(default=None, max_length=500)
+    # ADR-248 (petición del usuario): "Facturado en sistema externo" — solo identifica la
+    # factura, no cambia ningún otro campo ni cálculo (ver el modelo, más abajo).
+    facturado_en_sistema_externo: bool = False
 
 
 class EntregarIn(BaseModel):
@@ -1257,6 +1267,7 @@ class FacturaClienteService(
             obj.xml_path = input_.xml_path
         if input_.pdf_path is not None:
             obj.pdf_path = input_.pdf_path
+        obj.facturado_en_sistema_externo = input_.facturado_en_sistema_externo
         obj.estado_facturacion = EstadoFacturacion.TIMBRADA.value
 
         # ── handoff con F1, misma sesión, antes del commit ──

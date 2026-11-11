@@ -11,7 +11,10 @@ import type { OrdenCliente, OrdenClienteInput, OrdenEstacionInput } from "../typ
 // ── OrdenCliente: alta ────────────────────────────────────────────────────────
 // ADR-100: sin checklist de Vo.Bo. — la orden se guarda y el backend la pasa directo a
 // `capturada`, sin ningún flag que lo pida desde aquí.
-export function ordenClienteCreateToApi(input: OrdenClienteInput) {
+// ADR-249 (petición del usuario): transitorio — el backend solo lo exige si algún % de
+// comisión capturado diverge del sugerido del catálogo (mismo criterio que
+// `motivo_cambio_fecha` en edición: nunca se persiste tal cual, solo audita).
+export function ordenClienteCreateToApi(input: OrdenClienteInput, motivoComision?: string) {
   return {
     numero_orden_cliente: input.numero_orden_cliente,
     fecha_venta: input.fecha_venta,
@@ -44,6 +47,7 @@ export function ordenClienteCreateToApi(input: OrdenClienteInput) {
     porcentaje_comision_agencia_snap: input.porcentaje_comision_agencia_snap,
     observaciones_predefinidas: input.observaciones_predefinidas || null,
     observaciones_libres: input.observaciones_libres || null,
+    motivo_cambio_comision: motivoComision || null,
   };
 }
 
@@ -161,9 +165,6 @@ export function realesToApi(input: AvanzarARealesInput) {
     dias: input.horariosReales.map((row) => ({
       orden_estacion_dia_id: row.orden_estacion_dia_id,
       spots_verificados: row.spots_diarios,
-      // ADR-174b: hora real reportada por el layout, si difiere de la programada — el
-      // backend genera la Incidencia de cambio de horario cuando corresponde.
-      hora_real: row.hora_real ?? null,
     })),
     // ADR-149: días propuestos por el layout que no existían — el backend los crea
     // (spots_solicitados = spots_asignados = spots_verificados = spots) solo aquí, al

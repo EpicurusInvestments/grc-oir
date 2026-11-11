@@ -730,3 +730,83 @@ def test_pdf_programados_agrupa_por_fecha_y_lista_los_materiales_distintos_separ
     texto = " ".join(_texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id)).split())
     assert texto.count("Material a Transmitir") == 1  # 1 SOLO renglón para esa fecha
     assert "uno.mp3, dos.mp3" in texto
+
+
+# ── Bug corregido (petición del usuario, con captura): cada PDF trae el comentario que
+# le corresponde — Servicio el de la OrdenCliente, Programados el de la OrdenEstacion,
+# Reales ninguno — y se quitan los textos fijos que se mostraban por default sin reporte
+# adjunto en Programados/Reales ("no sirven") ──────────────────────────────────────────
+def test_pdf_servicio_muestra_el_comentario_de_la_orden_de_servicio_no_el_de_la_estacion(
+    db: Session, oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(
+        _oc_payload(
+            cat,
+            observaciones_predefinidas="Urgente",
+            observaciones_libres="Confirmar con el cliente antes de transmitir",
+        ),
+        VENTAS,
+    )
+    oe = oe_svc.create(
+        _oe_payload(cat, oc.orden_id, observaciones_estacion="Comentario propio de la estación"),
+        VENTAS,
+    )
+
+    texto = _texto_pdf(generar_pdf_servicio(db, oe.orden_estacion_id))
+
+    assert "Urgente" in texto
+    assert "Confirmar con el cliente antes de transmitir" in texto
+    assert "Comentario propio de la estación" not in texto
+
+
+def test_pdf_servicio_sin_comentario_de_la_oc_muestra_guion(
+    db: Session, oc_svc: OrdenClienteService, oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id), VENTAS)
+
+    texto = _texto_pdf(generar_pdf_servicio(db, oe.orden_estacion_id))
+
+    assert "Observaciones:" in texto
+
+
+def test_pdf_programados_muestra_el_comentario_de_la_orden_de_transmision(
+    db: Session, oe_asignada
+) -> None:
+    _, oe = oe_asignada  # `_oe_payload` ya trae observaciones_estacion (ver fixture)
+
+    texto = _texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id))
+
+    assert "2 spots no transmitidos por corte" in texto
+
+
+def test_pdf_programados_sin_reporte_adjunto_ya_no_muestra_el_texto_fijo(
+    db: Session, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+
+    texto = _texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id))
+
+    assert "Sin reporte detallado" not in texto
+
+
+def test_pdf_reales_no_muestra_ningun_comentario(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada  # trae observaciones_estacion="2 spots no transmitidos por corte"
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)]
+        ),
+        VENTAS,
+    )
+
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id))
+
+    assert "2 spots no transmitidos por corte" not in texto
+    assert "Detalle agregado por día" not in texto

@@ -14,6 +14,7 @@ import type {
   ConstanteSistemaUpdate,
   ConteoGrupo,
   ModoDuplicados,
+  MotivoCambioCreate,
   ResultadoImportacion,
 } from "./types";
 
@@ -31,6 +32,15 @@ export const constanteApi = {
     const { data } = await apiClient.get<ConteoGrupo[]>(`${BASE}/conteos`, {
       params: { solo_activos: soloActivos },
     });
+    return data;
+  },
+
+  /** ADR-246: alta rápida de un motivo nuevo desde los combos "Motivo del cambio" — el
+   *  backend fuerza `grupo=MotivoCambio` y agrega el sufijo secuencial (`{clave_base}_{N}`),
+   *  permiso angosto `motivos_cambio:crear` (Ventas/Dirección), no el `catalogos:crear`
+   *  general. */
+  async crearMotivoCambio(payload: MotivoCambioCreate): Promise<ConstanteSistema> {
+    const { data } = await apiClient.post<ConstanteSistema>(`${BASE}/motivos-cambio`, payload);
     return data;
   },
 

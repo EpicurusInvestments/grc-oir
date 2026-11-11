@@ -129,8 +129,9 @@ function reducer(state: OrdenesState, action: Action): OrdenesState {
 interface OrdenesContextValue {
   state: OrdenesState;
   /** Crea una OrdenCliente nueva. ADR-100: sin checklist de Vo.Bo. — nace directo en
-   * `capturada`. */
-  crearOC: (input: OrdenClienteInput) => Promise<OrdenCliente>;
+   * `capturada`. `opts.motivoComision` (ADR-249): el formulario solo lo manda si algún
+   * % de comisión capturado diverge del sugerido del catálogo. */
+  crearOC: (input: OrdenClienteInput, opts?: { motivoComision?: string }) => Promise<OrdenCliente>;
   /** Actualiza una OrdenCliente existente. `auditoria.motivo` solo se manda si de verdad
    * cambió algún % de comisión (el formulario decide eso) — el backend valida quién puede
    * tocarlos (canal dedicado de comisiones, Dirección/Admin) y registra el motivo. */
@@ -175,8 +176,8 @@ export function OrdenesProvider({
   const value = useMemo<OrdenesContextValue>(
     () => ({
       state,
-      crearOC: async (input) => {
-        const dto = await crearOrdenClienteApi(ordenClienteCreateToApi(input));
+      crearOC: async (input, opts) => {
+        const dto = await crearOrdenClienteApi(ordenClienteCreateToApi(input, opts?.motivoComision));
         const oc = await refrescarOrdenCliente(dto.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
         return oc;

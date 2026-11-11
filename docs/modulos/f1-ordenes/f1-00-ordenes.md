@@ -62,6 +62,59 @@ se atrapaba al guardar, vía Zod). Fix: helper `hoyLocal()` (componentes de fech
 LOCALES, nunca `toISOString()`) y `min={fechaInicio || hoyLocal()}` en Fin de campaña.
 Detalle completo en `docs/arquitectura.md` (ADR-238).
 
+**ADR-242 (bug reportado por el usuario, con captura) — comisión de la agencia sugerida
+por el anunciante:** cuando el anunciante tiene agencia por default, `onAnuncianteChange`
+autocargaba `agencia_id` pero NO `porcentaje_comision_agencia_snap` (a diferencia de
+elegir la agencia a mano, que sí lo hace vía `onAgenciaChange`). Fix: `onAnuncianteChange`
+también autocarga el % desde `Agencia.porcentaje_comision_agencia_default` cuando el campo
+está vacío. Detalle completo en `docs/arquitectura.md` (ADR-242).
+
+**ADR-243 (bug reportado por el usuario, con captura) — "Facturación a la Agencia" sin
+agencia seleccionada:** el radio podía quedar activo con el combo "Agencia" en "Sin
+agencia (venta directa)" (p.ej. si se quitaba la agencia después de elegir la opción).
+Fix en 3 capas: el radio se deshabilita sin agencia; quitar la agencia con la opción
+activa revierte a "Facturación directa al cliente"; y tanto Zod (front) como
+`OrdenClienteService._validar_facturacion_agencia` (back, en `_pre_create`/`_pre_update`)
+rechazan la combinación como respaldo. Detalle completo en `docs/arquitectura.md`
+(ADR-243).
+
+**ADR-244 (petición del usuario) — "Motivo del cambio de comisión" pasa a combo del
+catálogo:** era el único de los 3 "motivo del cambio" (tarifa, fecha, comisión) que
+seguía siendo texto libre. Mismo mecanismo que `CambioTarifa`/`CambioFecha`: nuevo
+`clave_base` `CambioComision` en Constantes del Sistema/`MotivoCambio`, select con
+fallback a texto libre si el catálogo está vacío, y nuevo `disabled` en vivo
+(`algunaComisionCambio`) mientras ningún % realmente cambió. Detalle completo en
+`docs/arquitectura.md` (ADR-244).
+
+**ADR-249 (petición del usuario, con captura) — el motivo de comisión también se exige
+en el ALTA:** reversa puntual de ADR-029 ("captura inicial libre, sin motivo") — ahora
+SÍ se exige, pero solo si el % capturado diverge del sugerido del catálogo (mismo
+criterio que el badge "sobrescrito"; si coincide, sigue sin pedir nada, como decía
+ADR-029). El combo (ADR-246) deja de estar condicionado a `isEdit`: se muestra siempre,
+habilitado solo cuando hace falta. Backend: nuevo
+`OrdenClienteService._requiere_motivo_comision_en_alta`, compara contra
+`Vendedor.porcentaje_comision_default`/`Agencia.porcentaje_comision_agencia_default`.
+Detalle completo en `docs/arquitectura.md` (ADR-249).
+
+**ADR-250 (bug, petición del usuario, con captura) — en edición, el combo de motivo de
+comisión quedaba inerte si el % ya venía sobrescrito de una sesión anterior:** el
+`disabled` solo consideraba "cambió en esta sesión" (`algunaComisionCambio`), nunca "ya
+diverge del catálogo" — un `<input disabled>` no abre la lista, así que ningún motivo
+del catálogo se veía, ni siquiera uno recién creado. Ahora también se habilita con
+`algunaComisionDivergeCatalogo` (mismo criterio que ADR-249), sin cambiar cuándo el
+motivo es obligatorio para guardar. Detalle completo en `docs/arquitectura.md` (ADR-250).
+
+**ADR-251 (bug, petición del usuario, con captura) — el motivo capturado nunca se
+recargaba al reabrir para editar (comisión y tarifa):** `motivo_cambio_comision`/
+`motivo_cambio_tarifa` son transitorios (solo alimentan `LogCambioParametro`, nunca se
+persisten en la orden) y el formulario de edición nunca pedía ese historial — aunque ya
+se consumía, de solo lectura, en los paneles de detalle. Ahora `OrdenClienteForm.tsx`
+recibe `historialComisiones` (ya precargado en `state`) y `OrdenEstacionForm.tsx` pide su
+propio historial de tarifa (`listarHistorialTarifaOrdenEstacionApi`, igual que ya hacía
+`OrdenEstacionDetailPanel.tsx`) para PRESELECCIONAR el combo con el motivo más reciente,
+en vez de arrancar siempre vacío. Sin cambios de backend ni migraciones. Detalle completo
+en `docs/arquitectura.md` (ADR-251).
+
 **Checklist de Vo.Bo. (ELIMINADO — ver ADR-100):** existió una tabla hija
 `OrdenClienteVoBoItem` (ADR-033, NO JSON: 10 ítems fijos `ITEMS_VOBO`, cada uno con
 `completado`/`usuario_id`/`fecha_completado`) que gateaba la transición `recibida →
@@ -455,6 +508,27 @@ van en negritas:** `_campo_negrita`/`_campo_negrita_der` (exclusivas de
 `generar_pdf_reales`) envolvían etiqueta Y valor en `<b>` — ahora solo la etiqueta. Los
 PDFs de Servicio y Programados ya mostraban el valor sin negritas, sin cambio.
 
+**ADR-245 (bug reportado por el usuario, con capturas) — cada PDF trae el comentario que
+le corresponde:** PDF 1 (Servicio) mostraba `oe.observaciones_estacion` (comentario de la
+OrdenEstacion) bajo "Observaciones", cuando debía mostrar el de la OrdenCliente
+(`oc.observaciones_predefinidas`/`oc.observaciones_libres`, unidos con " · "). PDF 2
+(Programados) no mostraba ningún comentario — ahí es donde SÍ corresponde
+`oe.observaciones_estacion`. PDF 3 (Reales) sigue sin mostrar ningún comentario, a
+propósito. Se quitan además los párrafos fijos de ayuda que aparecían en Programados/
+Reales cuando no había reporte de afiliado adjunto (petición del usuario: no aportan
+nada) — se conserva el aviso real ("Reporte del afiliado adjunto: &lt;archivo&gt;") solo
+cuando SÍ hay uno. Detalle completo en `docs/arquitectura.md` (ADR-245).
+
+**ADR-246 (petición del usuario) — los combos "Motivo del cambio" permiten agregar uno
+nuevo al vuelo:** los 2 combos de `OrdenClienteForm.tsx` (fecha, ADR-180; comisión,
+ADR-244) y el de `OrdenEstacionForm.tsx` (tarifa, ADR-183) pasan a `SearchableSelect`
+"creatable" — si se escribe un motivo que no está en el catálogo, se ofrece "+ Crear
+"..."" y se da de alta ahí mismo (grupo `MotivoCambio`, permiso angosto nuevo
+`motivos_cambio:crear`, Ventas/Dirección). Reemplaza el fallback a texto libre de esos 3
+ADR (ya no hace falta). Detalle completo, incluyendo el bloqueador de RBAC detectado
+antes de programar, en `docs/arquitectura.md` (ADR-246) y
+`docs/modulos/f0-catalogos/f0-05-constantes-sistema.md`.
+
 **ADR-195 (petición del usuario) — "Orden de Servicio de origen" pone el Anunciante
 heredado del lado derecho:** en `OrdenEstacionForm.tsx`, el folio/selector de la OC y el
 bloque de Anunciante (heredado, ADR-182) se envuelven en un `.r2` (grid de 2 columnas) en
@@ -707,8 +781,10 @@ frontend (incluida la línea de `toApi.ts` que lo mandaba incondicionalmente en 
 adjuntos quedan intactos en el backend.
 
 **ADR-147 (petición del usuario) — el CSV de "Carga de Órdenes Reales Desde Layout" ya
-se parsea y reemplaza la tabla:** columnas `Estacion, Fecha, Hora, Spots` (Spots
-opcional, default 1). `Estacion` es un control (compara normalizado contra la estación
+se parsea y reemplaza la tabla:** columnas `Estacion, Fecha, Hora` (**ADR-247: el
+layout que se comunica al afiliado ya no incluye `Spots`** — cada fila ya es 1 spot; la
+columna se sigue aceptando como opcional por robustez, default 1, pero no se
+documenta/exige). `Estacion` es un control (compara normalizado contra la estación
 de esta OE, sin crear datos de otra). Subir un CSV REEMPLAZA COMPLETO lo cargado en la
 tabla de "Capturar Reales" — un día que no viene en el archivo vuelve a su valor
 programado (confirmado con el usuario). Una fila inválida (estación distinta, valor no
@@ -749,7 +825,8 @@ tabla sigue el flujo de SIEMPRE (`oe.periodo_transmision`, edición manual). En 
 un layout aporta algo útil, la tabla PRINCIPAL se reconstruye COMPLETA a partir de lo
 que trajo el archivo — ya NO hay una tabla aparte de "días nuevos": los días
 existentes que el layout tocó y las propuestas de día nuevo conviven en la MISMA
-tabla (columnas Día/Fecha/Horario/Spots/Resultado/Editar/✕, igual que siempre; un
+tabla (columnas Día/Fecha/Horario/Spots/Resultado/Editar/✕, igual que siempre —
+**ADR-247: columna Spots retirada cuando hay un layout cargado**, ver abajo; un
 día nuevo muestra "Nuevo" en Resultado en vez de bonif./desc./sin cambio). Un día del
 periodo original que NO viene en el archivo ya no se queda visible como "sin cambio"
 — se quita de la vista por completo (el backend lo sigue verificando igual al
@@ -804,6 +881,53 @@ marca `cambio_horario` sobre el MISMO registro, que genera su propia `Incidencia
 `cambio_horario` al avanzar (ADEMÁS de la de spots, si también difieren — nunca una
 reemplaza a la otra). Ver ADR-174b completo en `docs/arquitectura.md` para el detalle
 de emparejamiento y la Incidencia automática de los registros nuevos.
+**Superado por ADR-247** (ver justo abajo): la `Incidencia` automática `cambio_horario`
+se quitó por completo — el emparejamiento por fecha/cronológico de ADR-174b se
+conserva sin cambio.
+
+**ADR-247 (petición del usuario, con capturas) — revisión completa de "Capturar
+Reales" vía layout, con comentarios previos a implementar:** 4 cambios, todos
+confirmados con el usuario antes de tocar código:
+1. **Validar fecha dentro de campaña:** ya lo hacía (ADR-149/174b, días nuevos). Sin
+   cambio.
+2. **Validar hora dentro de la ventana programada (`hora_inicio`–`hora_fin` del día,
+   NUEVA):** se marca, no se bloquea (confirmado con el usuario: "solo marcarla y dejar
+   que continúe"). 100% frontend — `RealesForm.tsx` compara `hora_real` (que ahora
+   SIEMPRE llega del backend) contra la ventana completa de `programado`, no solo
+   contra `hora_inicio` como hacía la vieja `cambio_horario`. Badge "fuera de horario"
+   (ámbar, igual severidad que antes), nunca deshabilita "Avanzar a 2.3".
+3. **Ya no validar/auditar "cambio de horario":** se quita la `Incidencia` automática
+   `TipoIncidencia.CAMBIO_HORARIO` que generaba `avanzar_reales` — comparar contra una
+   única `hora_inicio` programada era, en la práctica, comparar contra una PROYECCIÓN
+   (un día con 3 spots programados a la misma hora, no 3 horarios reales distintos) —
+   señal poco confiable, tal como la describió el usuario. El tipo de incidencia (spec
+   BD v2, `incidencia.py`) NO se toca — sigue disponible para alta MANUAL a futuro
+   (`incidencia.py` ya documentaba que los 3 tipos no-automáticos, incluido éste, son
+   "de alta manual"; esta Incidencia automática nunca debió generarse sola). Backend:
+   `OrdenEstacionDiaRealIn.hora_real` se elimina (ya nada lo consume);
+   `LayoutRealAplicadoRead.cambio_horario` se elimina, `hora_real` pasa a SIEMPRE
+   poblarse para un par emparejado (antes solo si diferían).
+4. **Diferencias totales de spots:** ya funcionaba bien (revisado, sin bugs).
+   **Layout CSV:** columnas pasan de `Estacion, Fecha, Hora, Spots` a `Estacion, Fecha,
+   Hora` — confirmado con el usuario que no hay archivos ya enviados a afiliados con el
+   formato viejo, así que no hace falta compatibilidad especial (`Spots` se sigue
+   aceptando como opcional en el parser, por robustez, pero deja de documentarse/
+   exigirse). **Pantalla:** columna "Spots" se retira de la vista con layout cargado
+   (cada fila ya es 1 spot, o la suma de duplicados exactos del archivo — la columna no
+   aportaba nada ahí); se conserva intacta en la captura MANUAL (sin layout), donde
+   sigue siendo un valor editable con sentido propio. "Horario de transmisión" se
+   angosta (`width: 100`, antes sin ancho fijo) — solo necesita un valor (HH:MM:SS), no
+   un rango.
+- **Reversibilidad (pregunta explícita del usuario):** sin migración de BD (el tipo de
+  incidencia del modelo no se toca) — revertir es un `git revert` del código de
+  `orden_estacion.py`/`RealesForm.tsx`, sin tocar datos.
+- **Verificado:** backend — 2 pruebas reescritas + 1 renombrada en
+  `test_f1_14_layout_reales_aplicar_csv.py` (ya no auditan `cambio_horario`, `hora_real`
+  siempre poblado), suite completa (27/27) y del backend entero en verde, `ruff`
+  limpio. Frontend — 3 pruebas nuevas/reescritas en `RealesForm.test.tsx` (badge "fuera
+  de horario" en vez de "cambio horario", fuera-de-ventana vs. dentro-de-ventana, ya no
+  aparece en el panel "se generarán"), suite de `ordenes` completa y frontend entero en
+  verde, `tsc --noEmit`/`eslint` limpios.
 
 **ADR-160 (petición del usuario; renumerado de ADR-158 al fusionar con
 `fix/catalogos-correcciones-f0`, que ya usaba ADR-158/159):** el panel "Al avanzar a
@@ -866,10 +990,13 @@ ver ADR-030). Tabla REAL persistida: revierte una decisión previa del frontend-
 ### Incidencia (spec, 11 campos)
 PK `incidencia_id`. FK a `Verificacion` y (denormalizada) a `OrdenEstacion`. Modelo
 **híbrido** (ADR-031): la generación automática (al capturar una `Verificacion`) infiere
-`faltante`/`excedente` por diferencia de spots, y desde **ADR-174b** también
-`cambio_horario` (cuando "Carga de Órdenes Reales Desde Layout" reporta una hora
-distinta a la programada para la misma fecha — ver más abajo); `cambio_fecha` y
-`spot_no_emitido` quedan para alta manual (Tanda 5). `resolucion` (spec) se agrega
+`faltante`/`excedente` por diferencia de spots. ADR-174b había agregado también
+`cambio_horario` automática (cuando "Carga de Órdenes Reales Desde Layout" reportaba una
+hora distinta a la programada) — **ADR-247 la quitó**: comparar contra una única
+`hora_inicio` programada era, en la práctica, comparar contra una proyección, no un
+horario real por spot (ver la ficha del módulo, arriba). `cambio_horario`, `cambio_fecha`
+y `spot_no_emitido` quedan para alta manual (Tanda 5) — consistente con el diseño
+original de ADR-031, que ya los reservaba para eso. `resolucion` (spec) se agrega
 completo, default `pendiente`.
 
 ## Estados

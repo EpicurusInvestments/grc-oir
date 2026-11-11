@@ -645,10 +645,18 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
             )
         )
 
+    # Bug corregido (petición del usuario, con captura): este PDF es la "Orden de
+    # Servicio" — su comentario es el de la OrdenCliente (`oc.observaciones_predefinidas`
+    # / `oc.observaciones_libres`), NO el de la OrdenEstacion (`oe.observaciones_estacion`,
+    # que ahora solo aparece en el PDF de Programados — ver `generar_pdf_programados`).
+    # Mismo criterio de unión que `OrdenClienteDetailPanel.tsx` (" · " entre ambos).
+    comentario_oc = " · ".join(
+        t for t in (oc.observaciones_predefinidas, oc.observaciones_libres) if t
+    ) or "—"
     elementos.append(Spacer(1, 6))
     elementos.append(
         Paragraph(
-            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
+            f'<font color="red"><b>Observaciones:</b></font> {comentario_oc}',
             _VALOR,
         )
     )
@@ -731,20 +739,24 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         )
     )
 
+    # Bug corregido (petición del usuario, con captura): este PDF SÍ debe traer el
+    # comentario de la orden de transmisión (`oe.observaciones_estacion`) — antes no lo
+    # mostraba en ningún lado (vivía, por error, en el PDF de Servicio — ver
+    # `generar_pdf_servicio`). Se quita también el texto fijo que se mostraba cuando no
+    # hay reporte adjunto (petición del usuario: "los comentarios que pones por default
+    # ... no sirven") — sin reemplazo: simplemente no se menciona el adjunto si no existe.
     elementos.append(Spacer(1, 10))
+    elementos.append(
+        Paragraph(
+            f'<font color="red"><b>Observaciones:</b></font> {oe.observaciones_estacion or "—"}',
+            _VALOR,
+        )
+    )
     if oe.reporte_programados_ref:
+        elementos.append(Spacer(1, 6))
         elementos.append(
             Paragraph(
                 f"Reporte del afiliado adjunto: {_nombre_adjunto(oe.reporte_programados_ref)}",
-                _NOTA,
-            )
-        )
-    else:
-        elementos.append(
-            Paragraph(
-                "Sin reporte detallado del afiliado adjunto. Para incluir el detalle de horarios "
-                "específicos por spot, carga el archivo del afiliado desde la pantalla de captura "
-                "de programados.",
                 _NOTA,
             )
         )
@@ -835,19 +847,15 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         )
     )
 
+    # Bug corregido (petición del usuario, con captura): este PDF NO debe traer ningún
+    # comentario (ni de la OC ni de la OE) — y se quita el texto fijo que se mostraba
+    # cuando no hay reporte adjunto ("los comentarios que pones por default ... no
+    # sirven"), sin reemplazo.
     elementos.append(Spacer(1, 10))
     if oe.reporte_reales_ref:
         elementos.append(
             Paragraph(
                 f"Reporte del afiliado adjunto: {_nombre_adjunto(oe.reporte_reales_ref)}", _NOTA
-            )
-        )
-    else:
-        elementos.append(
-            Paragraph(
-                "Detalle agregado por día. Para detalle por spot individual (hora exacta, track, "
-                "ventana), carga el reporte del afiliado desde la pantalla de captura de reales.",
-                _NOTA,
             )
         )
 

@@ -221,7 +221,6 @@ export function layoutRealAplicadoFromApi(dto: LayoutRealAplicadoApiDTO): Layout
   return {
     ordenEstacionDiaId: dto.orden_estacion_dia_id,
     spots: dto.spots,
-    cambioHorario: dto.cambio_horario,
     horaReal: dto.hora_real,
   };
 }

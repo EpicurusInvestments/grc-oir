@@ -78,6 +78,7 @@ const base: FacturaCliente = {
   serie_timbrado: null,
   xml_path: null,
   pdf_path: null,
+  facturado_en_sistema_externo: false,
   created_by: "u-1",
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
@@ -215,6 +216,70 @@ describe("FacturasClientePage", () => {
     );
     // Al confirmar, vuelve a la vista normal de la factura (ya no muestra el formulario).
     expect(await screen.findByText("Marcar entregada →")).toBeInTheDocument();
+  });
+
+  // ADR-248 (petición del usuario, "NEW FEATURE"): checkbox "Facturado en sistema
+  // externo" — solo identifica la factura, no cambia nada más del flujo.
+  it("ADR-248: marcar 'Facturado en sistema externo' lo manda en el payload al registrar el timbrado", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.timbrar).mockResolvedValue({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      facturado_en_sistema_externo: true,
+    });
+    const { container } = renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    expect(await screen.findByText("Registrar timbrado")).toBeInTheDocument();
+    const folioInput = container.querySelector(
+      'input[placeholder="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"]',
+    ) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890" } });
+    fireEvent.click(screen.getByLabelText(/Facturado en sistema externo/));
+    screen.getByText("Registrar timbrado").click();
+
+    await waitFor(() =>
+      expect(facturaClienteApi.timbrar).toHaveBeenCalledWith(
+        "f-1",
+        expect.objectContaining({ facturado_en_sistema_externo: true }),
+      ),
+    );
+  });
+
+  it("ADR-248: sin marcar el checkbox, se manda 'facturado_en_sistema_externo: false'", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.timbrar).mockResolvedValue({ ...base, estado_facturacion: "timbrada" });
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    const folioInput = (await screen.findByPlaceholderText(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    )) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890" } });
+    screen.getByText("Registrar timbrado").click();
+
+    await waitFor(() =>
+      expect(facturaClienteApi.timbrar).toHaveBeenCalledWith(
+        "f-1",
+        expect.objectContaining({ facturado_en_sistema_externo: false }),
+      ),
+    );
+  });
+
+  it("ADR-248: una factura con facturado_en_sistema_externo muestra el badge en el detalle", async () => {
+    renderCon({ ...base, facturado_en_sistema_externo: true });
+    (await screen.findByText("A-1041")).click();
+    expect(await screen.findByText("Facturado en sistema externo")).toBeInTheDocument();
+  });
+
+  it("ADR-248: sin el flag, el detalle no muestra el badge", async () => {
+    renderCon({ ...base, facturado_en_sistema_externo: false });
+    (await screen.findByText("A-1041")).click();
+    await screen.findByText("Órdenes relacionadas");
+    expect(screen.queryByText("Facturado en sistema externo")).toBeNull();
   });
 
   it("fix: sin capturar el folio, no permite registrar el timbrado", async () => {

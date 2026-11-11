@@ -330,6 +330,57 @@ def test_http_ventas_lee_pero_no_crea(client: TestClient) -> None:
     assert r.json()["error"]["codigo"] == "sin_permiso"
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-246 (petición del usuario) — alta rápida de "Motivo del cambio" desde los combos
+# (Tarifa/OrdenCliente/OrdenEstacion), permiso ANGOSTO (`motivos_cambio:crear`), separado
+# del `catalogos:crear` general (solo Admin).
+# ══════════════════════════════════════════════════════════════════════════════
+def test_http_ventas_puede_crear_motivo_cambio(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/catalogos/constantes/motivos-cambio",
+        json={"clave_base": "CambioComision", "descripcion": "Ajuste pactado con el cliente"},
+        headers=_hdr("ventas"),
+    )
+    assert r.status_code == 201
+    assert r.json()["grupo"] == "MotivoCambio"
+    assert r.json()["clave"] == "CambioComision_1"
+    assert r.json()["descripcion"] == "Ajuste pactado con el cliente"
+
+
+def test_http_direccion_puede_crear_motivo_cambio(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/catalogos/constantes/motivos-cambio",
+        json={"clave_base": "CambioFecha", "descripcion": "Reprogramación acordada"},
+        headers=_hdr("direccion"),
+    )
+    assert r.status_code == 201
+
+
+def test_http_otra_area_no_puede_crear_motivo_cambio(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/catalogos/constantes/motivos-cambio",
+        json={"clave_base": "CambioTarifa", "descripcion": "Oferta especial"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 403
+    assert r.json()["error"]["codigo"] == "sin_permiso"
+
+
+def test_http_motivo_cambio_reusa_el_sufijo_secuencial_existente(client: TestClient) -> None:
+    client.post(
+        "/api/v1/catalogos/constantes",
+        json={"grupo": "MotivoCambio", "clave": "CambioTarifa", "descripcion": "Ya existente"},
+        headers=_hdr("admin"),
+    )
+    r = client.post(
+        "/api/v1/catalogos/constantes/motivos-cambio",
+        json={"clave_base": "CambioTarifa", "descripcion": "Negociación con el afiliado"},
+        headers=_hdr("ventas"),
+    )
+    assert r.status_code == 201
+    assert r.json()["clave"] == "CambioTarifa_2"
+
+
 def test_http_conteos_no_lo_eclipsa_item_id(client: TestClient) -> None:
     # /conteos es estática y debe resolverse antes que /{item_id} (UUID). 200, no 422.
     r = client.get("/api/v1/catalogos/constantes/conteos", headers=_hdr("admin"))

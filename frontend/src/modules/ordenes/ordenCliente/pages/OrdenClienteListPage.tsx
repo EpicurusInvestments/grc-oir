@@ -80,7 +80,9 @@ export function OrdenClienteListPage({
     setSubmitting(true);
     try {
       if (modo === "new") {
-        const nueva = await crearOC(input);
+        // ADR-249 (petición del usuario): en alta también se exige motivo si algún % de
+        // comisión diverge del sugerido del catálogo (el formulario ya decidió eso).
+        const nueva = await crearOC(input, { motivoComision: opts.motivoComision });
         setSelectedId(nueva.id);
         setModo("view");
         // ADR-100: alta unificada — al guardar la Orden de Servicio se encadena directo
@@ -107,6 +109,9 @@ export function OrdenClienteListPage({
         estatusActual={selected?.estatus_orden}
         defaultValues={modo === "edit" ? selected ?? undefined : undefined}
         oeCount={modo === "edit" && selected ? oesDeOC(state.ordenesEstacion, selected.id).length : 0}
+        historialComisiones={
+          modo === "edit" && selected ? state.historialComisiones.filter((h) => h.entidad_id === selected.id) : []
+        }
         submitError={submitError}
         submitting={submitting}
         onGuardar={onGuardar}

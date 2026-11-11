@@ -584,6 +584,36 @@ def test_timbrar_promueve_la_orden_a_facturada(
     # ── el handoff ──
     db.expire_all()
     assert db.get(OrdenCliente, orden_id).estatus_orden == "facturada"
+    # ADR-248: por default (no se marcó el checkbox), queda en False.
+    assert r.json()["facturado_en_sistema_externo"] is False
+
+
+# ADR-248 (petición del usuario, "NEW FEATURE"): "Facturado en sistema externo" — solo
+# identifica la factura, no cambia el monto ni ninguna otra parte del flujo.
+def test_timbrar_acepta_facturado_en_sistema_externo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, orden_id = _crear_factura(client, db, cat)
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/enviar-a-timbrado", headers=_hdr("facturacion")
+    )
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
+        json={
+            "folio_fiscal_sat": "ABC-123-DEF",
+            "fecha_timbrado": "2026-03-02",
+            "facturado_en_sistema_externo": True,
+        },
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["facturado_en_sistema_externo"] is True
+    # El monto que calculó ESTE sistema no se toca por el checkbox.
+    assert r.json()["total_factura"] == "11600.00"
+
+    r_get = client.get(f"/api/v1/facturacion/clientes/{factura_id}", headers=_hdr("facturacion"))
+    assert r_get.json()["facturado_en_sistema_externo"] is True
 
 
 def test_timbrar_es_idempotente(

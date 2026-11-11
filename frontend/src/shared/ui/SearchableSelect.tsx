@@ -19,6 +19,15 @@ interface SearchableSelectProps {
   emptyOptionLabel?: string;
   emptyResultsLabel?: string;
   disabled?: boolean;
+  /** ADR-246 (petición del usuario): "creatable" — si lo que se escribió no coincide con
+   *  ninguna opción, se ofrece un renglón "+ Crear "...""  al final de la lista. El
+   *  componente NO sabe cómo se crea (eso lo resuelve quien lo use, p.ej. con una mutación
+   *  que da de alta la opción en su catálogo); aquí solo se dispara `onCreate` con el
+   *  texto tecleado y se cierra la lista — quien llama decide cuándo/cómo actualizar
+   *  `value`/`options` (normalmente al resolver la mutación). */
+  onCreate?: (texto: string) => void;
+  /** Deshabilita el renglón "+ Crear" mientras la alta está en curso (evita doble-click). */
+  creando?: boolean;
 }
 
 export function SearchableSelect({
@@ -29,6 +38,8 @@ export function SearchableSelect({
   emptyOptionLabel,
   emptyResultsLabel = "Sin resultados.",
   disabled,
+  onCreate,
+  creando,
 }: SearchableSelectProps) {
   const [abierto, setAbierto] = useState(false);
   const [query, setQuery] = useState("");
@@ -52,8 +63,19 @@ export function SearchableSelect({
     ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
     : options;
 
+  const textoQuery = query.trim();
+  const yaExiste = options.some((o) => o.label.toLowerCase() === textoQuery.toLowerCase());
+  const ofrecerCrear = Boolean(onCreate) && textoQuery.length > 0 && !yaExiste;
+
   const elegir = (v: string) => {
     onChange(v);
+    setAbierto(false);
+    setQuery("");
+  };
+
+  const crear = () => {
+    if (creando) return;
+    onCreate?.(textoQuery);
     setAbierto(false);
     setQuery("");
   };
@@ -65,7 +87,7 @@ export function SearchableSelect({
         disabled={disabled}
         placeholder={placeholder}
         autoComplete="off"
-        value={abierto ? query : seleccionada?.label ?? ""}
+        value={abierto ? query : seleccionada?.label ?? value}
         onFocus={() => setAbierto(true)}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -82,7 +104,14 @@ export function SearchableSelect({
               {o.label}
             </div>
           ))}
-          {filtradas.length === 0 && <div className="ssel-empty">{emptyResultsLabel}</div>}
+          {filtradas.length === 0 && !ofrecerCrear && (
+            <div className="ssel-empty">{emptyResultsLabel}</div>
+          )}
+          {ofrecerCrear && (
+            <div className="ssel-item ssel-item-crear" onMouseDown={crear}>
+              {creando ? "Creando…" : `+ Crear "${textoQuery}"`}
+            </div>
+          )}
         </div>
       )}
     </div>

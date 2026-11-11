@@ -171,8 +171,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 15,
-          cambio_horario: false,
-          hora_real: null,
+          hora_real: "07:00",
         },
         // ADR-157: dia-b no viene en el archivo — el backend lo manda igual, en 0
         // (conciliación completa contra lo programado, no un "no se menciona = sin
@@ -182,7 +181,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-02",
           hora_inicio: "07:00",
           spots: 0,
-          cambio_horario: false,
           hora_real: null,
         },
       ],
@@ -202,8 +200,9 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     });
 
     // dia-a (aplicado) pasa a 15 spots, con bonificación de +5 sobre lo programado (10).
-    await waitFor(() => expect(screen.getByText("15")).toBeInTheDocument());
-    expect(screen.getByText("+5 bonif.")).toBeInTheDocument();
+    // ADR-247: la columna "Spots" ya no se muestra con un layout cargado — la señal es
+    // el badge de bonificación.
+    await waitFor(() => expect(screen.getByText("+5 bonif.")).toBeInTheDocument());
     // ADR-157 (petición del usuario, corrige ADR-151): dia-b no vino en el archivo —
     // sigue mostrándose (ya NO desaparece), marcado como descuento completo (-5).
     expect(screen.getByText("2025-06-02")).toBeInTheDocument();
@@ -215,7 +214,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     expect(screen.getByText(/Radio MTY/)).toBeInTheDocument();
   });
 
-  it("ADR-174b: un día con hora distinta (sin cambio de spots) se marca 'cambio horario' y muestra la hora REAL", async () => {
+  it("ADR-247 (petición del usuario, reemplaza ADR-174b): un día con hora REAL fuera de la ventana programada se marca 'fuera de horario', sin generar ninguna incidencia", async () => {
     const diaA = makeRow({
       orden_estacion_dia_id: "dia-a",
       fecha: "2025-06-01",
@@ -238,7 +237,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 10,
-          cambio_horario: true,
           hora_real: "09:00",
         },
       ],
@@ -260,16 +258,18 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
 
     // La fila muestra la hora REAL (09:00, lo que de verdad pasó), no la programada.
     await waitFor(() => expect(screen.getByText("09:00")).toBeInTheDocument());
-    expect(screen.getByText("cambio horario")).toBeInTheDocument();
+    expect(screen.getByText("fuera de horario")).toBeInTheDocument();
     // Los spots no cambiaron (10 == 10) — sin bonificación ni descuento.
     expect(screen.queryByText(/bonif\.|desc\./)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Avanzar a 2.3 →" }));
     const [horariosReales] = onAvanzar.mock.calls[0];
-    expect(horariosReales[0].hora_real).toBe("09:00");
+    // ADR-247: ya no se manda un campo `hora_real` aparte — la hora real YA ES
+    // `hora_inicio` de la fila (el backend ya no hace nada con una hora "distinta").
+    expect(horariosReales[0].hora_inicio).toBe("09:00");
   });
 
-  it("ADR-174b: un día con hora Y spots distintos muestra las DOS marcas (cambio horario + bonificación)", async () => {
+  it("ADR-247: un día con hora fuera de la ventana Y spots distintos muestra las DOS marcas (fuera de horario + bonificación)", async () => {
     const diaA = makeRow({
       orden_estacion_dia_id: "dia-a",
       fecha: "2025-06-01",
@@ -292,7 +292,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 11,
-          cambio_horario: true,
           hora_real: "09:00",
         },
       ],
@@ -312,8 +311,55 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     });
 
     await waitFor(() => expect(screen.getByText("+3 bonif.")).toBeInTheDocument());
-    expect(screen.getByText("cambio horario")).toBeInTheDocument();
-    expect(screen.getByText("1 cambio(s) de horario", { exact: false })).toBeInTheDocument();
+    // ADR-247: "fuera de horario" ya no genera ninguna incidencia — aparece UNA sola
+    // vez (el badge de la fila), no también como línea aparte en el panel "Al avanzar a
+    // 2.3 se generarán" (solo bonif./desc./registros nuevos).
+    expect(screen.getAllByText("fuera de horario")).toHaveLength(1);
+  });
+
+  it("ADR-247: una hora real DENTRO de la ventana programada no se marca 'fuera de horario'", async () => {
+    const diaA = makeRow({
+      orden_estacion_dia_id: "dia-a",
+      fecha: "2025-06-01",
+      hora_inicio: "07:00",
+      hora_termino: "22:00",
+      spots_diarios: 8,
+    });
+    const oe = makeOE({ periodo_transmision: [diaA] });
+
+    vi.mocked(subirLayoutRealOrdenEstacionApi).mockResolvedValueOnce({
+      archivo: {
+        orden_estacion_layout_real_id: "lr-ch3",
+        orden_estacion_id: oe.id,
+        nombre_archivo: "layout.csv",
+        created_at: "2026-09-30T00:00:00",
+      },
+      aplicados: [
+        {
+          orden_estacion_dia_id: "dia-a",
+          fecha_transmision: "2025-06-01",
+          hora_inicio: "07:00",
+          spots: 11, // distinto de lo programado, para que la fila se muestre "modificada"
+          hora_real: "09:00", // dentro de la ventana 07:00–22:00
+        },
+      ],
+      nuevos: [],
+      errores: [],
+    });
+
+    render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Carga de Órdenes Reales Desde Layout")).toBeInTheDocument(),
+    );
+    const inputs = screen.getAllByDisplayValue("") as HTMLInputElement[];
+    const inputLayout = inputs.filter((el) => el.type === "file")[2];
+    fireEvent.change(inputLayout, {
+      target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
+    });
+
+    await waitFor(() => expect(screen.getByText("+3 bonif.")).toBeInTheDocument());
+    expect(screen.queryByText("fuera de horario")).toBeNull();
   });
 
   it("ADR-151: sin cargar ningún layout, la tabla sigue el flujo normal de siempre (periodo_transmision completo)", async () => {
@@ -346,7 +392,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 10,
-          cambio_horario: false,
           hora_real: null,
         },
       ],
@@ -428,7 +473,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 10,
-          cambio_horario: false,
           hora_real: null,
         },
       ],
@@ -482,7 +526,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-01",
           hora_inicio: "07:00",
           spots: 3,
-          cambio_horario: false,
           hora_real: null,
         },
         {
@@ -490,7 +533,6 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
           fecha_transmision: "2025-06-02",
           hora_inicio: "07:00",
           spots: 4,
-          cambio_horario: false,
           hora_real: null,
         },
       ],

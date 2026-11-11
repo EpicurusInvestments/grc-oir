@@ -75,6 +75,14 @@ export interface ConstanteSistemaUpdate {
   valor?: string | null;
 }
 
+/** ADR-246 (petición del usuario): alta rápida de un motivo nuevo desde los combos
+ * "Motivo del cambio" (Tarifa/OrdenCliente/OrdenEstacion) — el backend fuerza
+ * `grupo=MotivoCambio`, nunca llega de aquí. */
+export interface MotivoCambioCreate {
+  clave_base: string;
+  descripcion: string;
+}
+
 /** `ListParams` + filtro por grupo. */
 export interface ConstantesListParams extends ListParams {
   grupo?: GrupoConstante | null;
