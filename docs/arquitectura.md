@@ -10874,10 +10874,18 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
      tal como pidió el usuario.
   4. Los 3 textos de ayuda bajo el combo se reescriben para describir de verdad el
      comportamiento (estados incluidos + exclusión de ya facturadas), en vez del texto
-     genérico/desactualizado. Ejemplo (afiliado): "Opcional: solo lista las órdenes
-     internas **cerradas** de este afiliado y que no estén asignadas a otra factura de
-     afiliado. Puedes elegir varias — la factura queda asignada a cada una al guardar."
-     (agencia/vendedor análogos, mencionando cerrada/facturada/cobrada).
+     genérico/desactualizado. Texto final, tras el ajuste del mismo día (petición del
+     usuario, con captura: "ya no solo puede seleccionar órdenes cerradas", viendo que
+     el de afiliado se había quedado diciendo solo "cerradas" mientras agencia/vendedor
+     ya decían "cerradas, facturadas o cobradas") — **los 3 quedan con el mismo rango de
+     estados en el texto**, aunque el filtro real de afiliado siga siendo
+     `OrdenEstacion.estatus == 'cerrada'` (sin cambio de comportamiento: una OE nunca
+     tiene un sub-estado posterior — ver diagnóstico del Punto 1 — así que "cerrada,
+     facturada o cobrada" describe el mismo conjunto de órdenes, en términos del estado
+     de la OC padre, que el usuario sí reconoce). Afiliado: "Opcional: solo lista las
+     órdenes internas de este afiliado ya **cerradas, facturadas o cobradas**, y que no
+     estén asignadas a otra factura de afiliado. Puedes elegir varias — la factura
+     queda asignada a cada una al guardar." (agencia/vendedor, mismo texto adaptado).
   5. Frontend: `FacturaAgenciaForm`/`FacturaVendedorForm` ganan la prop
      `facturaAgenciaIdActual`/`facturaVendedorIdActual` (mismo patrón que
      `facturaAfiliadoIdActual` desde ADR-217/228) para mandar `excluir_de_factura_id` al
