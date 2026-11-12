@@ -31,7 +31,13 @@ Tipos permitidos: feat, fix, docs, test, refactor, chore, perf.
 - El PR debe pasar: pruebas, lint, mypy/tsc [[POR LLENAR: pipeline CI definitivo]].
   En el backend (`.github/workflows/backend.yml`, ADR-255), Ruff y Pytest SÍ bloquean el
   pipeline; Mypy sigue en `continue-on-error` (335 avisos preexistentes, limpieza
-  pendiente — ver `docs/arquitectura.md`, ADR-255).
+  pendiente — ver `docs/arquitectura.md`, ADR-255). El backend corre CI con la MISMA
+  versión de Python que producción (`backend/.python-version` = `3.12`, fijada desde
+  ADR-262 — antes `uv` resolvía lo que encontrara en el runner, una versión distinta a
+  la del `Dockerfile`). Los archivos de referencia de sistemas externos
+  (`docs/referencias/*.txt`) van con `eol=crlf` forzado en `.gitattributes` (ADR-262) —
+  necesitan ese final de línea exacto para las pruebas que los comparan byte a byte,
+  sin importar el `core.autocrlf` de quien clona.
 
 ## Versionado y entregas
 

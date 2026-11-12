@@ -335,10 +335,14 @@ def test_crear_oc_fk_inexistente_404(
 
 
 def test_crear_oc_rechaza_fecha_inicio_pasada(cat: dict[str, uuid.UUID]) -> None:
+    # ADR-261: la validación compara contra "hoy" en hora de México, no la del proceso
+    # que corre la prueba (en CI, UTC) — con solo 1 día de margen, esta prueba podía
+    # fallar en la madrugada UTC (ahí "ayer en UTC" todavía es "hoy" en México). 2 días
+    # de margen la deja inequívocamente pasada sin importar en qué huso corra el runner.
     with pytest.raises(ValidationError):
         _oc_payload(
             cat,
-            fecha_inicio_campania=date.today() - timedelta(days=1),
+            fecha_inicio_campania=date.today() - timedelta(days=2),
             fecha_fin_campania=date.today() + timedelta(days=10),
         )
 
@@ -602,10 +606,12 @@ def test_editar_oc_rechaza_cambiar_fecha_inicio_a_pasada(
     """A diferencia del caso anterior, aquí sí se intenta CAMBIAR fecha_inicio_campania
     a un valor nuevo — ese nuevo valor no puede ser una fecha pasada."""
     oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    # ADR-261: ver el comentario de `test_crear_oc_rechaza_fecha_inicio_pasada` — 2 días
+    # de margen, no 1, para que la prueba no dependa de la hora/huso del runner.
     with pytest.raises(DomainError):
         oc_svc.update(
             oc.orden_id,
-            OrdenClienteUpdate(fecha_inicio_campania=date.today() - timedelta(days=1)),
+            OrdenClienteUpdate(fecha_inicio_campania=date.today() - timedelta(days=2)),
             VENTAS,
         )
 
