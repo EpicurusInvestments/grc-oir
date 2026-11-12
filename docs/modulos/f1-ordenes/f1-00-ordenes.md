@@ -266,9 +266,18 @@ dedicados (`POST`/`GET`/`DELETE /ordenes/estaciones/{id}/audios`), NO por el
 sola referencia que se reemplaza). El primero subido (`orden=0`) es el DEFAULT que usan
 los días sin asignación propia; `OrdenEstacionDia.orden_estacion_audio_id` (nullable)
 guarda la excepción puntual de un día, asignada con
-`PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Lista blanca propia
-(`EXTENSIONES_AUDIO_ORDENES`: mp3/wav/ogg) y tope propio (`S3_MAX_AUDIO_BYTES`, 15 MB) —
-ninguno comparte constante con los adjuntos de documentos (ADR-042).
+`PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Tope propio
+(`S3_MAX_AUDIO_BYTES`, 15 MB) — no comparte constante con los adjuntos de documentos
+(ADR-042).
+
+**ADR-266 (petición del usuario, con captura) — deja de ser lista BLANCA de audio:**
+antes solo mp3/wav/ogg (`EXTENSIONES_AUDIO_ORDENES`); ahora acepta CUALQUIER formato
+salvo ejecutables/scripts (lista NEGRA `EXTENSIONES_PELIGROSAS`, vía
+`leer_adjunto_libre` — mismo criterio que "Formato de Horarios Reales", ADR-123), tanto
+en la subida "real" (`agregar_audio`) como en el "staging" durante el alta
+(`/material-staging?tipo=audio`). `agregar_evidencia()` ("Evidencias de lo
+Transmitido"/Capturar Reales) NO cambió, sigue con la lista blanca de audio. Detalle
+completo en `docs/arquitectura.md` (ADR-266).
 
 **ADR-257 (bug, petición del usuario, con captura) — la firma de MP3 rechazaba
 archivos reales:** solo cubría 3 de las 18 combinaciones válidas del "frame sync" de

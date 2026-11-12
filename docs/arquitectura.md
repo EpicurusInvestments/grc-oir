@@ -10918,3 +10918,55 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   tamaño absoluto fijo.
 - **Verificado:** `RealesForm.test.tsx` (23 pruebas, ninguna dependía de anchos
   absolutos) sigue en verde; `tsc --noEmit` limpio.
+
+### ADR-266 — "Material a Transmitir": deja de ser lista blanca de audio, acepta cualquier formato salvo ejecutables/scripts
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario: "en Órdenes de
+  Transmisión, cuando carga el material de transmisión quita la restricción para que
+  permita subir cualquier tipo de archivo sin importar la extensión").
+- **Diagnóstico:** "Material a Transmitir" (ADR-103) validaba contra la lista BLANCA
+  `EXTENSIONES_AUDIO_ORDENES` (mp3/wav/ogg) en sus 2 rutas de subida — el endpoint
+  "real" sobre una OE ya creada (`OrdenEstacionService.agregar_audio()`,
+  `POST .../{id}/audios`) y el de "staging" durante el alta, antes de que exista la OE
+  (`material_staging.py`, `POST /material-staging?tipo=audio`) — más su contraparte en
+  el front (`MaterialATransmitir.tsx`/`OrdenEstacionForm.tsx`). El proyecto YA tenía el
+  patrón correcto para "cualquier formato" resuelto desde ADR-123 ("Formato de Horarios
+  Reales"): lista NEGRA (`leer_adjunto_libre`/`EXTENSIONES_PELIGROSAS`) — acepta
+  cualquier extensión salvo ejecutables/scripts, y además rechaza cualquier contenido
+  con firma de ejecutable de Windows ("MZ") sin importar la extensión declarada (un
+  "virus.exe" renombrado a "cosa.mp3" no se cuela). Se optó por reutilizar ESE patrón en
+  vez de quitar toda validación — mantiene la defensa real (OWASP: unrestricted file
+  upload) sin bloquear ningún formato de negocio legítimo.
+- **Fix:**
+  - `app/shared/adjuntos_router.py` (la factory compartida con los adjuntos de
+    documentos/facturación): nuevo parámetro opcional `extensiones_bloqueadas` —
+    default `None` mantiene el comportamiento de SIEMPRE (lista blanca vía
+    `leer_adjunto`) para esos otros consumidores; si se pasa, usa `leer_adjunto_libre`
+    (lista negra) en su lugar.
+  - `material_staging.py`: pasa `extensiones_bloqueadas=EXTENSIONES_PELIGROSAS` en vez
+    de `extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES`.
+  - `OrdenEstacionService.agregar_audio()`: mismo cambio, directo con
+    `leer_adjunto_libre`.
+  - Frontend (`MaterialATransmitir.tsx`, `OrdenEstacionForm.tsx` — sección de staging):
+    la validación de extensión pasa de lista blanca (`EXTENSIONES_AUDIO_ORDENES`) a
+    lista negra (reutiliza `EXTENSIONES_PELIGROSAS_FORMATO_REAL`, ya existente para
+    "Formato de Horarios Reales"); el `<input type="file">` pierde su `accept`
+    restrictivo (el selector del sistema operativo ya no filtra por audio).
+- **Alcance deliberado, NO tocado:** `agregar_evidencia()` ("Evidencias de lo
+  Transmitido"/Capturar Reales, ADR-119) y su contraparte `EvidenciasTransmitido.tsx`
+  siguen con la lista blanca de audio — el pedido fue específicamente sobre "Material a
+  Transmitir", no sobre Evidencias. `EXTENSIONES_AUDIO_ORDENES` sigue viva para eso (y
+  para los tests directos de `leer_adjunto` contra esa lista, que no cambiaron).
+- **Verificado:** backend — 2 tests viejos que esperaban 400 con un PDF se reemplazan
+  por 2 que esperan 201 (`test_http_subir_cualquier_formato_no_peligroso_se_acepta`,
+  `test_http_material_staging_acepta_cualquier_formato_no_peligroso`), más 4 nuevos que
+  confirman el bloqueo real (`test_http_subir_extension_peligrosa_400`,
+  `test_http_subir_ejecutable_renombrado_400`,
+  `test_http_material_staging_rechaza_extension_peligrosa`, y la firma `MZ`
+  independiente de extensión) — suite completa y `ruff` 100% verde. Frontend — 2 tests
+  nuevos en `OrdenEstacionForm.test.tsx` (acepta PDF, rechaza `.exe` sin llamar al
+  backend); el helper `inputDeMaterial()` (y su gemelo en
+  `OrdenEstacionListPage.test.tsx`) dejó de seleccionar el input por
+  `accept*=".mp3"` (ya no existe ese atributo) y ahora usa `input[type="file"]` a secas
+  (el formulario nunca renderiza más de uno a la vez) — suite completa del módulo
+  `ordenes` (295 pruebas), `tsc --noEmit` y `eslint` 100% verdes.

@@ -62,6 +62,7 @@ from app.integrations.almacenamiento.documentos import (
     EXTENSIONES_ADJUNTO_ORDENES,
     content_type_de_extension,
     leer_adjunto,
+    leer_adjunto_libre,
 )
 from app.integrations.almacenamiento.port import AlmacenamientoPort
 
@@ -86,6 +87,7 @@ def build_adjuntos_router(
     content_disposition: Literal["inline", "attachment"],
     quitar_prefijo_uuid_en_descarga: bool = False,
     extensiones_permitidas: frozenset[str] = EXTENSIONES_ADJUNTO_ORDENES,
+    extensiones_bloqueadas: frozenset[str] | None = None,
     max_bytes: int | None = None,
     prefix: str = "/adjuntos",
 ) -> APIRouter:
@@ -101,6 +103,14 @@ def build_adjuntos_router(
     — ADR-109 los necesita para un router SEPARADO de material de audio (tope propio de
     15 MB, y un prefijo de ruta propio para no chocar con el `/adjuntos` ya montado del
     mismo módulo).
+
+    `extensiones_bloqueadas` (ADR-266, default `None` = comportamiento de SIEMPRE, lista
+    BLANCA vía `leer_adjunto`): si se pasa, el router valida con `leer_adjunto_libre`
+    (lista NEGRA) en su lugar — acepta cualquier extensión salvo las bloqueadas, con
+    chequeo de firma de ejecutable de Windows sin importar la extensión declarada.
+    `extensiones_permitidas` se ignora en ese caso. Petición del usuario: "Material a
+    Transmitir" (`material_staging.py`) deja de ser lista blanca de audio para aceptar
+    cualquier formato.
     """
     tope_bytes = max_bytes if max_bytes is not None else settings.s3_max_pdf_bytes
     router = APIRouter(prefix=prefix, tags=[tag])
@@ -122,11 +132,18 @@ def build_adjuntos_router(
         La clave incluye un UUID para no colisionar entre entidades distintas que
         compartan el mismo prefijo.
         """
-        contenido, nombre_sano, extension = leer_adjunto(
-            archivo,
-            max_bytes=tope_bytes,
-            extensiones_permitidas=extensiones_permitidas,
-        )
+        if extensiones_bloqueadas is not None:
+            contenido, nombre_sano, extension = leer_adjunto_libre(
+                archivo,
+                max_bytes=tope_bytes,
+                extensiones_bloqueadas=extensiones_bloqueadas,
+            )
+        else:
+            contenido, nombre_sano, extension = leer_adjunto(
+                archivo,
+                max_bytes=tope_bytes,
+                extensiones_permitidas=extensiones_permitidas,
+            )
         nombre_clave = f"{uuid.uuid4().hex}_{nombre_sano}"
         clave = almacenamiento.subir(
             prefijo=prefijos[tipo],

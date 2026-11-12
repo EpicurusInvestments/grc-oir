@@ -1,10 +1,16 @@
 """Pruebas F1-07 · "Material a Transmitir" (ADR-103): audios de OrdenEstacion.
 
-Cubre: lista blanca de audio (`EXTENSIONES_AUDIO_ORDENES`) a nivel de `leer_adjunto`,
-las reglas de negocio del servicio (`agregar_audio`/`eliminar_audio`/`asignar_audio_dia`
-— orden por defecto, renumeración al borrar, override por día) y los endpoints HTTP
-completos (subir/listar/descargar/borrar + RBAC), con `AlmacenamientoLocal` en
-`tmp_path` (sin red ni credenciales), mismo patrón que `test_ordenes_adjuntos.py`.
+Cubre: lista blanca de audio (`EXTENSIONES_AUDIO_ORDENES`) a nivel de `leer_adjunto`
+(sigue viva, la usa `agregar_evidencia`/"Evidencias de lo Transmitido"), las reglas de
+negocio del servicio (`agregar_audio`/`eliminar_audio`/`asignar_audio_dia` — orden por
+defecto, renumeración al borrar, override por día) y los endpoints HTTP completos
+(subir/listar/descargar/borrar + RBAC), con `AlmacenamientoLocal` en `tmp_path` (sin red
+ni credenciales), mismo patrón que `test_ordenes_adjuntos.py`.
+
+ADR-266 (petición del usuario, con captura): "Material a Transmitir" (`agregar_audio` y
+`/material-staging?tipo=audio`) dejó de validar contra esa lista blanca — ahora acepta
+CUALQUIER formato salvo ejecutables/scripts (lista NEGRA `EXTENSIONES_PELIGROSAS`, vía
+`leer_adjunto_libre`), ver los bloques "ADR-266" más abajo.
 """
 
 from __future__ import annotations
@@ -894,9 +900,39 @@ def test_http_rbac_nominas_no_puede_subir_audio(
     assert r.status_code == 403
 
 
-def test_http_subir_formato_no_permitido_400(client: TestClient, cat: dict[str, uuid.UUID]) -> None:
+# ADR-266 (petición del usuario, con captura): "Material a Transmitir" deja de ser lista
+# BLANCA de audio — ahora lista NEGRA (acepta cualquier formato salvo
+# ejecutables/scripts), mismo criterio que "Formato de Horarios Reales". Reemplaza al
+# viejo `test_http_subir_formato_no_permitido_400` (un PDF ya NO se rechaza aquí).
+def test_http_subir_cualquier_formato_no_peligroso_se_acepta(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
     oe_id = _crear_oc_oe_http(client, cat)
     files = {"archivo": ("documento.pdf", b"%PDF-1.7", "application/pdf")}
+    r = client.post(
+        f"/api/v1/ordenes/estaciones/{oe_id}/audios", files=files, headers=_hdr("ventas")
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["nombre_archivo"] == "documento.pdf"
+
+
+def test_http_subir_extension_peligrosa_400(client: TestClient, cat: dict[str, uuid.UUID]) -> None:
+    oe_id = _crear_oc_oe_http(client, cat)
+    files = {"archivo": ("virus.exe", b"MZ" + b"\x00" * 40, "application/octet-stream")}
+    r = client.post(
+        f"/api/v1/ordenes/estaciones/{oe_id}/audios", files=files, headers=_hdr("ventas")
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["codigo"] == "archivo_no_permitido"
+
+
+def test_http_subir_ejecutable_renombrado_400(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    """La firma `MZ` (ejecutable/DLL de Windows) se rechaza sin importar la extensión
+    declarada — ver `leer_adjunto_libre`."""
+    oe_id = _crear_oc_oe_http(client, cat)
+    files = {"archivo": ("spot.mp3", b"MZ" + b"\x00" * 40, "audio/mpeg")}
     r = client.post(
         f"/api/v1/ordenes/estaciones/{oe_id}/audios", files=files, headers=_hdr("ventas")
     )
@@ -950,8 +986,19 @@ def test_http_material_staging_sube_sin_ningun_id_de_padre(client: TestClient) -
     assert body["ref"].startswith("orden_estacion/audios/")
 
 
-def test_http_material_staging_rechaza_formato_no_permitido(client: TestClient) -> None:
+# ADR-266: reemplaza al viejo `test_http_material_staging_rechaza_formato_no_permitido`
+# (un PDF ya NO se rechaza aquí — ver el bloque de arriba sobre el endpoint "real").
+def test_http_material_staging_acepta_cualquier_formato_no_peligroso(client: TestClient) -> None:
     files = {"archivo": ("documento.pdf", b"%PDF-1.7", "application/pdf")}
+    r = client.post(
+        "/api/v1/ordenes/material-staging?tipo=audio", files=files, headers=_hdr("ventas")
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["nombre_archivo"] == "documento.pdf"
+
+
+def test_http_material_staging_rechaza_extension_peligrosa(client: TestClient) -> None:
+    files = {"archivo": ("virus.exe", b"MZ" + b"\x00" * 40, "application/octet-stream")}
     r = client.post(
         "/api/v1/ordenes/material-staging?tipo=audio", files=files, headers=_hdr("ventas")
     )
