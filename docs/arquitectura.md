@@ -10625,3 +10625,32 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   `pytest` 100% verde (incluidas las 18 de `test_f1_06_ordenes_pdf.py`), `ruff check .`
   limpio, ambos con las versiones EXACTAS que fija el lockfile (no las que había en el
   venv contaminado).
+
+### ADR-259 — Bug real: "Abrir correo"/PDF de Servicio y Reales tronaban con 500 si `duracion_spot` era `None`
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: al dar
+  clic en "Abrir correo" e "Imprimir" de los PDFs de Servicio y Reales de una orden REAL
+  — OT-2026-11-000049A — la consola mostraba `Failed to load resource: ... 500` contra
+  `.../pdf/servicio` y `.../pdf/reales`; "Horarios programados" no fallaba).
+- **Diagnóstico:** `duracion_spot` es OPCIONAL desde ADR-168 (se puede omitir por
+  completo, p.ej. para un producto tipo "Mención"). `generar_pdf_servicio` (línea 570,
+  `_campo_der("Duración", oe.duracion_spot)`) y `generar_pdf_reales` (línea 808,
+  `_campo_negrita("DURACION", oe.duracion_spot)`) lo pasaban SIN envolver en `or "—"`
+  como `valor` de un `Paragraph` — reportlab exige que `text` sea una cadena, y truena
+  con `AttributeError: 'NoneType' object has no attribute 'split'` si recibe `None`
+  (ningún `except` genérico lo atrapa, así que sube como 500 crudo). `generar_pdf_
+  programados` NO tronaba con el mismo dato porque interpola `oe.duracion_spot` dentro
+  de un f-string (línea 712) — `None` se convierte al texto literal `"None"`, un bug de
+  despliegue silencioso (no un crash) que explica por qué solo 2 de los 3 PDFs fallaban
+  para la misma orden. **No reproducible con las fixtures de prueba existentes**
+  (siempre capturan `duracion_spot="30s"`) — se reprodujo primero contra una orden local
+  con el dato puesto a `NULL` a propósito, confirmando el traceback exacto antes de
+  tocar el código.
+- **Fix:** `oe.duracion_spot or "—"` en los 2 lugares de servicio/reales (mismo criterio
+  ya usado para `producto_tarifa`/`oc.producto` en ambos archivos); `oe.duracion_spot or
+  '—'` también en el f-string de programados, para que muestre "—" en vez de "None".
+- **Verificado:** 3 pruebas nuevas en `test_f1_06_ordenes_pdf.py` — servicio y reales con
+  `duracion_spot=None` generan el PDF sin tronar (antes false-negative: las fixtures
+  existentes nunca probaron este valor); programados con `duracion_spot=None` ya no
+  muestra el texto "None". Suite completa de backend verde (exit 0), `ruff` limpio. Sin
+  cambios de frontend ni de esquema — el campo ya era nullable desde ADR-168.

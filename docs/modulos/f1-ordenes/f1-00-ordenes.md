@@ -602,6 +602,15 @@ helper `_descripcion_estacion()` arma "Siglas Frecuencia TIPO Nombre" (mismo for
 ya usa el front en sus selectores, ADR-136/ADR-191), usado en la línea "ESTACION:" de
 Programados y en "EMISORA" (encabezado y columna del detalle) de Reales.
 
+**ADR-259 (bug real, petición del usuario, con captura) — PDF de Servicio y de Reales
+tronaban con 500 si `duracion_spot` era `None`:** campo opcional desde ADR-168 (se puede
+omitir, p.ej. "Mención") — ambos PDFs lo pasaban sin envolver en `or "—"` como `valor`
+de un `Paragraph`, y reportlab exige que `text` sea una cadena (`AttributeError:
+'NoneType' object has no attribute 'split'` si no lo es). Programados no tronaba
+(interpola con un f-string, `None` se vuelve el texto literal "None" — un bug de
+despliegue aparte, también corregido). Detalle completo en `docs/arquitectura.md`
+(ADR-259).
+
 **ADR-197 (petición del usuario) — "Material a Transmitir" permite elegir varios audios
 de un jalón:** el `<input type="file">` no tenía `multiple` — el selector de Windows solo
 dejaba marcar uno por apertura. Se agrega `multiple` en los 2 lugares donde existe esta
