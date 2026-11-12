@@ -125,7 +125,10 @@ en `docs/arquitectura.md` (ADR-251).
 captura MANUAL en "Capturar reales":** antes solo se ocultaba con un layout cargado
 (ADR-247); ahora se quita siempre (ya no es editable por fila, solo la hora) y la tabla
 usa `tableLayout: "fixed"` con anchos explícitos para no estirarse con espacio vacío.
-Detalle completo en `docs/arquitectura.md` (ADR-252).
+Detalle completo en `docs/arquitectura.md` (ADR-252). **ADR-265 corrige el efecto
+contrario** que esto dejó: con `width: "auto"`, la tabla se quedaba angosta y dejaba un
+hueco en blanco a la derecha de su columna — ahora es `width: "100%"` con los anchos de
+columna en `%` (no `px`), para que sí ocupen todo el ancho disponible.
 
 **ADR-253 (bug, petición del usuario, con captura real) — 2 bugs en "Capturar reales
 desde layout":** (1) el balance de "los días nuevos exceden el total de spots" (backend)

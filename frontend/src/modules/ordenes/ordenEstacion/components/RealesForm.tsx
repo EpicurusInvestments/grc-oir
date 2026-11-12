@@ -460,16 +460,22 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
 
       <div style={{ flex: 1, overflow: "auto", padding: 22, display: "grid", gridTemplateColumns: "1fr 300px", gap: 24, alignContent: "start" }}>
         <div>
-          <table className="cat-table" style={{ fontSize: 12, width: "auto", tableLayout: "fixed" }}>
+          {/* ADR-265 (petición del usuario, con captura): `width: "auto"` con
+              `tableLayout: "fixed"` hacía que la tabla se encogiera al ancho exacto de
+              sus columnas (suma de los `px` de cada `th`), dejando un hueco en blanco a
+              la derecha en vez de ocupar el ancho disponible de su columna del grid
+              (`1fr`). `width: "100%"` + anchos en `%` (en vez de `px`) hace que las
+              columnas se repartan todo el ancho disponible. */}
+          <table className="cat-table" style={{ fontSize: 12, width: "100%", tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ width: 90 }}>Día</th>
-                <th style={{ width: 100 }}>Fecha</th>
+                <th style={{ width: "15%" }}>Día</th>
+                <th style={{ width: "17%" }}>Fecha</th>
                 {/* ADR-247 (petición del usuario): angostada — solo necesita un valor
                     (HH:MM:SS), no un rango. */}
-                <th style={{ width: 100 }}>Horario de transmisión</th>
-                <th className="td-center" style={{ width: 150 }}>Resultado</th>
-                <th style={{ width: 140 }} />
+                <th style={{ width: "17%" }}>Horario de transmisión</th>
+                <th className="td-center" style={{ width: "26%" }}>Resultado</th>
+                <th style={{ width: "25%" }} />
               </tr>
             </thead>
             <tbody>

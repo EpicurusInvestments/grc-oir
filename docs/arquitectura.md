@@ -10900,3 +10900,21 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (no rotos sin razón): `test_editar_factura_agencia/vendedor_autorizada_no_permite_
   reasignar` ahora marcan la orden `cobrada` antes de autorizar, para seguir probando lo
   que probaban (que ya autorizada no se reedita) sin toparse con el candado nuevo.
+
+### ADR-265 — "Capturar reales": la tabla dejaba un hueco en blanco a la derecha en vez de ocupar todo el ancho
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con captura: la
+  tabla de días/horarios quedaba angosta, pegada a la izquierda, con mucho espacio en
+  blanco a la derecha dentro de su columna del layout).
+- **Diagnóstico:** `RealesForm.tsx` (ADR-252) le puso `tableLayout: "fixed"` a la tabla
+  para angostar columnas, pero la dejó con `width: "auto"` y anchos de columna en `px`
+  fijos (90+100+100+150+140 = 580px). Con `table-layout: fixed`, una tabla sin `width`
+  explícito no se estira a su contenedor: toma exactamente la suma de sus columnas y
+  listo — el resto de la celda `1fr` del grid (`gridTemplateColumns: "1fr 300px"`) se
+  queda vacío.
+- **Fix:** `width: "100%"` en la tabla, y los 5 anchos de columna pasan de `px` fijos a
+  `%` (15/17/17/26/25, mismas proporciones relativas que antes) — con `table-layout:
+  fixed`, las columnas ahora se reparten el 100% del ancho disponible en vez de un
+  tamaño absoluto fijo.
+- **Verificado:** `RealesForm.test.tsx` (23 pruebas, ninguna dependía de anchos
+  absolutos) sigue en verde; `tsc --noEmit` limpio.
