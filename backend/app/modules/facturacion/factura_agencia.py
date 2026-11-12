@@ -21,9 +21,19 @@ IVA a la tasa central (a diferencia de `FacturaAfiliado`, donde el IVA SÍ es "M
 porque ahí se reconcilia contra una factura real de un tercero con posibles retenciones;
 aquí ya no hay semejante reconciliación que hacer, es 100% lo que el sistema calculó).
 
-El orden puede seguir apareciendo en varias facturas de agencia distintas (no cambia esa
-regla de ADR-079: "una OC puede tener varias facturas de agencia"), pero no repetida
-dentro de la MISMA factura (`UniqueConstraint` en la puente).
+ADR-264 (petición del usuario, con captura) ajusta dos reglas más:
+- El combo "Buscar y agregar" ya NO sugiere una orden que ya esté en OTRA factura de
+  agencia (antes, ADR-079: "una OC puede tener varias facturas de agencia" sin límite —
+  mismo giro que ADR-217 ya le había dado a `FacturaAfiliado`). La validación DURA
+  (`_validar_ordenes`) no cambia: sigue aceptando un alta que mande explícito el id de
+  una orden ya facturada, por si de verdad hace falta una excepción.
+- Autorizar (`autorizar()`) se bloquea si alguna orden asignada todavía no está
+  `cobrada` — OIR no debe pagarle la comisión a la agencia antes de haber cobrado esa
+  orden al cliente.
+
+La misma orden puede repetirse en facturas distintas si se fuerza por API directa
+(parcialidad real, caso raro), pero no dentro de la MISMA factura (`UniqueConstraint`
+en la puente).
 
 `updated_at` es ADITIVO (la spec solo pide `created_at`) — ver `factura_afiliado.py`.
 """
@@ -429,18 +439,34 @@ class FacturaAgenciaService(
         return leidas
 
     def ordenes_facturables(
-        self, agencia_id: uuid.UUID
+        self, agencia_id: uuid.UUID, excluir_de_factura_id: uuid.UUID | None = None
     ) -> list[OrdenClienteFacturableAgenciaRead]:
-        """OC `orden_cerrada` de la agencia elegida — combo "Buscar y agregar" del
-        alta/edición. No excluye OC que ya tengan otra factura de agencia: la relación
-        sigue siendo N:M a propósito (parcialidades, ver docstring del módulo)."""
+        """OC de la agencia elegida ya `orden_cerrada`, `facturada` o `cobrada` — combo
+        "Buscar y agregar" del alta/edición (ADR-264: antes solo `orden_cerrada`; una OC
+        sigue siendo facturable a la agencia aunque F2/F3 ya la hayan avanzado más).
+
+        Excluye las que YA tienen una `FacturaAgenciaOrden` registrada en OTRA factura
+        — mismo criterio que `FacturaAfiliadoService.ordenes_facturables` (ADR-264
+        extiende esa política, antes exclusiva de afiliado, a agencia y vendedor: ya NO
+        es "parcialidades sin límite", aunque la validación DURA de `_validar_ordenes`
+        sigue sin tocarse, ver su docstring). Al EDITAR, `excluir_de_factura_id` es el id
+        de esa misma factura: sus propias asignaciones no cuentan como "ya facturadas".
+        """
         from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
-        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+        from app.modules.ordenes.orden_cliente import FROZEN_STATES_OC, OrdenCliente
 
         db = self._repo.db
         agencia = db.get(Agencia, agencia_id)
         porcentaje_default = agencia.porcentaje_comision_agencia_default if agencia else None
+
+        ya_facturadas_stmt = select(FacturaAgenciaOrden.orden_id)
+        if excluir_de_factura_id is not None:
+            ya_facturadas_stmt = ya_facturadas_stmt.where(
+                FacturaAgenciaOrden.factura_agencia_id != excluir_de_factura_id
+            )
+        ya_facturadas = set(db.scalars(ya_facturadas_stmt).all())
+
         filas = db.execute(
             select(
                 OrdenCliente.orden_id,
@@ -454,7 +480,7 @@ class FacturaAgenciaService(
             .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
             .where(
                 OrdenCliente.agencia_id == agencia_id,
-                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+                OrdenCliente.estatus_orden.in_(FROZEN_STATES_OC),
             )
             .order_by(OrdenCliente.folio_orden)
         ).all()
@@ -470,6 +496,7 @@ class FacturaAgenciaService(
                 porcentaje_comision_agencia_default=porcentaje_default,
             )
             for f in filas
+            if f.orden_id not in ya_facturadas
         ]
 
     def _validar_ordenes(
@@ -673,6 +700,29 @@ class FacturaAgenciaService(
         self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
 
+    def _validar_cobradas_antes_de_autorizar(self, factura_agencia_id: uuid.UUID) -> None:
+        """ADR-264 (petición del usuario, con captura): no se autoriza el pago a la
+        agencia hasta que el CLIENTE ya pagó esa orden — protege el flujo de caja (OIR
+        no desembolsa antes de haber cobrado). Si la factura no tiene órdenes asignadas
+        no hay nada que validar (pasa libre, igual que `FacturaAfiliado`)."""
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        db = self._repo.db
+        filas = db.execute(
+            select(OrdenCliente.folio_orden, OrdenCliente.estatus_orden)
+            .join(FacturaAgenciaOrden, FacturaAgenciaOrden.orden_id == OrdenCliente.orden_id)
+            .where(FacturaAgenciaOrden.factura_agencia_id == factura_agencia_id)
+        ).all()
+        pendientes = sorted(
+            {f.folio_orden for f in filas if f.estatus_orden != EstatusOrden.COBRADA.value}
+        )
+        if pendientes:
+            raise DomainError(
+                "No se puede autorizar el pago: la(s) orden(es) de servicio "
+                f"{', '.join(pendientes)} todavía no ha(n) sido cobrada(s) al cliente.",
+                detalles={"ordenes_pendientes_de_cobro": pendientes},
+            )
+
     def autorizar(self, factura_agencia_id: uuid.UUID, usuario: CurrentUser) -> FacturaAgenciaRead:
         """Canal dedicado `en_revision -> autorizada`. Solo Direccion/Admin — mismo
         diseno y motivo que en `FacturaAfiliado` (ver su docstring)."""
@@ -681,6 +731,7 @@ class FacturaAgenciaService(
                 f"El area '{usuario.area.value}' no puede autorizar facturas de agencia "
                 "- solo Direccion."
             )
+        self._validar_cobradas_antes_de_autorizar(factura_agencia_id)
         return self.transicionar(
             factura_agencia_id,
             EstatusFacturaProveedor.AUTORIZADA.value,
@@ -734,13 +785,17 @@ def listar_facturas_agencia(
 )
 def listar_ordenes_facturables_agencia(
     agencia_id: uuid.UUID = Query(...),
+    excluir_de_factura_id: uuid.UUID | None = Query(
+        None, description="Al editar: no excluye las órdenes de esta misma factura."
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
     svc: FacturaAgenciaService = Depends(get_factura_agencia_service),
 ) -> list[OrdenClienteFacturableAgenciaRead]:
-    """Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` de esa agencia.
-    Declarado ANTES de `/{item_id}` — si no, FastAPI intentaría parsear
-    "ordenes-facturables" como UUID de `item_id` y respondería 422."""
-    return svc.ordenes_facturables(agencia_id)
+    """Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada de esa
+    agencia, sin las que ya tienen factura registrada en OTRA (ADR-264). Declarado
+    ANTES de `/{item_id}` — si no, FastAPI intentaría parsear "ordenes-facturables"
+    como UUID de `item_id` y respondería 422."""
+    return svc.ordenes_facturables(agencia_id, excluir_de_factura_id)
 
 
 @router_agencias.get("/{item_id}", response_model=FacturaAgenciaRead)

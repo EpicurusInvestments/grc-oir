@@ -194,11 +194,14 @@ export function useFacturasAgencia(filtros: FiltrosFacturaAgencia) {
   return { list, crear, actualizar, cambiarEstatus, autorizar };
 }
 
-/** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` de esa agencia. */
-export function useOrdenesFacturablesAgencia(agenciaId: string | null) {
+/** Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada de esa
+ *  agencia, sin las que ya tienen factura registrada en OTRA (ADR-264).
+ *  `excluirDeFacturaId` es la factura en edición: sus propias órdenes no cuentan como
+ *  "ya facturadas" (mismo criterio que `useOrdenesFacturablesAfiliado`). */
+export function useOrdenesFacturablesAgencia(agenciaId: string | null, excluirDeFacturaId?: string | null) {
   return useQuery({
-    queryKey: [K_AGENCIAS, "ordenes-facturables", agenciaId],
-    queryFn: () => facturaAgenciaApi.ordenesFacturables(agenciaId as string),
+    queryKey: [K_AGENCIAS, "ordenes-facturables", agenciaId, excluirDeFacturaId],
+    queryFn: () => facturaAgenciaApi.ordenesFacturables(agenciaId as string, excluirDeFacturaId),
     enabled: !!agenciaId,
   });
 }
@@ -246,12 +249,13 @@ export function useFacturasVendedor(filtros: FiltrosFacturaVendedor) {
   return { list, crear, actualizar, cambiarEstatus, autorizar };
 }
 
-/** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` cuyo vendedor
- *  principal es el elegido. */
-export function useOrdenesFacturablesVendedor(vendedorId: string | null) {
+/** Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada cuyo
+ *  vendedor principal es el elegido, sin las que ya tienen factura registrada en OTRA
+ *  (ADR-264). `excluirDeFacturaId` es la factura en edición. */
+export function useOrdenesFacturablesVendedor(vendedorId: string | null, excluirDeFacturaId?: string | null) {
   return useQuery({
-    queryKey: [K_VENDEDORES, "ordenes-facturables", vendedorId],
-    queryFn: () => facturaVendedorApi.ordenesFacturables(vendedorId as string),
+    queryKey: [K_VENDEDORES, "ordenes-facturables", vendedorId, excluirDeFacturaId],
+    queryFn: () => facturaVendedorApi.ordenesFacturables(vendedorId as string, excluirDeFacturaId),
     enabled: !!vendedorId,
   });
 }

@@ -24,8 +24,8 @@ vi.mock("../hooks", () => ({
       { id: "ag-2", etiqueta: "Mindshare" },
     ],
   }),
-  useOrdenesFacturablesAgencia: (agenciaId: string | null) => ({
-    data: agenciaId ? ordenesFacturablesMock(agenciaId) : [],
+  useOrdenesFacturablesAgencia: (agenciaId: string | null, excluirDeFacturaId?: string) => ({
+    data: agenciaId ? ordenesFacturablesMock(agenciaId, excluirDeFacturaId) : [],
     isLoading: false,
   }),
 }));
@@ -217,6 +217,25 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     expect(await screen.findByDisplayValue("OMD México")).toBeEnabled();
     expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
     expect(screen.getAllByText("$177,480.00").length).toBe(2);
+  });
+
+  it("ADR-264: en edición, manda el id de la propia factura para que el combo no excluya sus propias órdenes", async () => {
+    ordenesFacturablesMock.mockReturnValue([]);
+    render(
+      <FacturaAgenciaForm
+        isEdit
+        defaultValues={{
+          agencia_id: "ag-1",
+          folio_factura_agencia: "OMD-2025-0287",
+          fecha_factura_agencia: "2025-06-08",
+        }}
+        facturaAgenciaIdActual="fa-1"
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByDisplayValue("OMD México");
+    expect(ordenesFacturablesMock).toHaveBeenCalledWith("ag-1", "fa-1");
   });
 
   it("en edición, cambiar de agencia limpia las órdenes ya asignadas (eran de la agencia anterior)", async () => {

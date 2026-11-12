@@ -54,6 +54,10 @@ interface OrdenSeleccionada {
 interface Props {
   isEdit?: boolean;
   defaultValues?: Valores;
+  /** Id de la factura en edición — se manda como `excluir_de_factura_id` al combo de
+   *  órdenes para que sus propias asignaciones no desaparezcan (ADR-264, mismo criterio
+   *  que `facturaAfiliadoIdActual` en FacturaAfiliadoForm). */
+  facturaAgenciaIdActual?: string;
   /** Órdenes ya guardadas, al editar — precargan la sección (el `useState` de abajo solo
    *  las toma como valor inicial, no se resincroniza si la prop cambia después del
    *  primer render) — mismo criterio que `asignacionesIniciales` en FacturaAfiliadoForm. */
@@ -71,6 +75,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 export function FacturaAgenciaForm({
   isEdit,
   defaultValues,
+  facturaAgenciaIdActual,
   ordenesIniciales,
   archivoPdfPathInicial = null,
   archivoXmlPathInicial = null,
@@ -104,7 +109,7 @@ export function FacturaAgenciaForm({
   const [archivoXmlPath, setArchivoXmlPath] = useState<string | null>(archivoXmlPathInicial);
 
   const agenciaId = watch("agencia_id");
-  const ordenesFacturables = useOrdenesFacturablesAgencia(agenciaId || null);
+  const ordenesFacturables = useOrdenesFacturablesAgencia(agenciaId || null, facturaAgenciaIdActual);
 
   // Fix (mismo criterio que el combo de OI en FacturaAfiliado): cambiar de agencia
   // limpia las órdenes ya elegidas — eran de la agencia ANTERIOR. Se compara contra la
@@ -141,8 +146,8 @@ export function FacturaAgenciaForm({
   };
 
   // Solo ofrece las que todavía no se eligieron en ESTA factura — una vez agregada,
-  // desaparece del buscador (el mismo orden SÍ puede estar en OTRAS facturas de
-  // agencia, parcialidades, ADR-079: el backend no las excluye del combo).
+  // desaparece del buscador. El backend (ADR-264) ya excluye del combo las que estén en
+  // OTRA factura de agencia, así que esto solo cubre la selección en curso.
   const opcionesDisponibles = (ordenesFacturables.data ?? []).filter(
     (oc) => !ordenesSeleccionadas.some((sel) => sel.orden_id === oc.orden_id),
   );
@@ -266,8 +271,8 @@ export function FacturaAgenciaForm({
               !agenciaId
                 ? "Selecciona primero una agencia."
                 : opcionesDisponibles.length === 0 && ordenesSeleccionadas.length > 0
-                  ? "Ya agregaste todas las órdenes cerradas de esta agencia."
-                  : "Esta agencia no tiene órdenes cerradas."
+                  ? "Ya agregaste todas las órdenes disponibles de esta agencia."
+                  : "Esta agencia no tiene órdenes disponibles para facturar."
             }
             options={opcionesDisponibles.map((oc) => ({
               value: oc.orden_id,
@@ -275,7 +280,8 @@ export function FacturaAgenciaForm({
             }))}
           />
           <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 11, display: "block" }}>
-            Solo lista las órdenes <strong>cerradas</strong> de esa agencia. Puedes elegir varias —
+            Solo lista las órdenes de esta agencia ya <strong>cerradas, facturadas o cobradas</strong>,
+            y que no estén asignadas a otra factura de agencia. Puedes elegir varias —
             cada una aporta su propia comisión, con el % ya pactado en ella.
           </div>
 

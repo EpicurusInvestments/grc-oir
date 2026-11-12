@@ -10798,3 +10798,105 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   `describe("Fix: no se puede repetir el mismo vendedor como principal y secundario")`
   (frontend, 2 pruebas) — suite completa de backend y frontend 100% verde, `ruff` y
   `tsc --noEmit` limpios.
+
+### ADR-264 — Facturas recibidas (afiliado/agencia/vendedor): combo de órdenes y candado de "cobrada" antes de autorizar
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con 6 capturas:
+  pantallas de "Facturas recibidas" — De afiliados/De agencias/De vendedores — y del
+  flujo Recibida → En revisión → Autorizada).
+- **Pedido textual, 4 partes:**
+  1. En el combo de selección de órdenes, que aparezcan las que le corresponden al
+     afiliado/agencia/vendedor elegido y que estén "de cerradas en adelante" (cerrada,
+     facturada o cobrada), no solo `orden_cerrada`.
+  2. Que una orden ya relacionada a OTRA factura no se vuelva a sugerir ("si no se
+     repetirían los pagos") — el usuario creía que esta validación ya existía.
+  3. **Lo más importante:** que "Autorizar" (paso 2→3, Dirección/Admin) se BLOQUEE si la
+     orden de servicio todavía no está pagada por el cliente — "si no, les va a dejar
+     autorizar [el pago] y luego no sale". Explícito: "Pasar a revisión" SÍ debe seguir
+     libre (para que CxP capture sin bloquearse), el candado es solo en autorizar.
+     Aplica igual a los 3 tipos.
+  4. El texto de ayuda bajo el combo ("Opcional: solo lista las órdenes internas de
+     este Afiliado...") ya no describe bien el comportamiento — ajustarlo.
+- **Diagnóstico (investigado antes de tocar código, con un subagente de exploración):**
+  - **Punto 1:** `FacturaAfiliadoService.ordenes_facturables()` filtra por
+    `OrdenEstacion.estatus == 'cerrada'` — correcto y SIN cambios: `OrdenEstacion` no
+    tiene un sub-estado posterior a `cerrada` (`FROZEN_STATES_OE` no incluye nada más
+    allá); es la `OrdenCliente` PADRE la que sigue avanzando a `facturada`/`cobrada`
+    mientras la OE se queda `cerrada` para siempre (confirmado leyendo
+    `marcar_facturada()`/`marcar_cobrada()` en `orden_cliente.py`: ninguno de los dos
+    toca `OrdenEstacion.estatus`). `FacturaAgenciaService`/`FacturaVendedorService.
+    ordenes_facturables()` sí filtraban por `OrdenCliente.estatus_orden ==
+    'orden_cerrada'` exacto — ahí SÍ hacía falta ampliar a `FROZEN_STATES_OC`
+    (`{orden_cerrada, facturada, cobrada}`).
+  - **Punto 2:** el usuario tenía razón A MEDIAS. `FacturaAfiliadoService.
+    ordenes_facturables()` YA excluía del combo las OE con una `FacturaAfiliadoOrden`
+    en OTRA factura — decisión tomada antes, en **ADR-217 Parte 2** ("en el combo no
+    deberían aparecer las órdenes que ya tengan una factura registrada"), que
+    deliberadamente dejó INTACTA la validación dura (`_validar_ordenes_estacion`):
+    sigue aceptando un alta que mande explícito el id de una OE ya facturada —
+    "parcialidades" sigue siendo posible si se fuerza, solo dejó de sugerirse. Pero
+    `FacturaAgenciaService`/`FacturaVendedorService` NUNCA habían recibido ese mismo
+    giro: sus módulos documentaban explícitamente lo contrario ("el orden puede seguir
+    apareciendo en varias facturas... no cambia esa regla de ADR-079/ADR-239", "el
+    backend no las excluye del combo") — confirmado leyendo el código, no asumido.
+  - **Punto 3:** no existía ningún candado de este tipo en ningún lado — ni en
+    `autorizar()` ni en `transicionar()` de los 3 servicios, ni usando los campos
+    `OrdenCliente.estatus_pago_afiliado`/`estatus_pago_agencia` (que existen en el
+    modelo pero están vestigiales: se escriben una sola vez, en `pendiente`, al crear
+    la OC, y nunca se vuelven a leer ni escribir en todo el backend — confirmado con
+    grep de todo el repo). La señal correcta y ya confiable para "el cliente pagó esta
+    orden" es `OrdenCliente.estatus_orden == 'cobrada'` (la marca `marcar_cobrada()` de
+    F1/F3, terminal, sin reversa) — no esos campos vestigiales ni ningún campo nuevo.
+- **Fix:**
+  1. `ordenes_facturables()` de agencia/vendedor: `OrdenCliente.estatus_orden ==
+     EstatusOrden.ORDEN_CERRADA.value` → `.in_(FROZEN_STATES_OC)`. Afiliado sin cambios
+     (ya correcto, ver diagnóstico).
+  2. `ordenes_facturables()` de agencia/vendedor gana `excluir_de_factura_id` (mismo
+     parámetro y mismo patrón que afiliado, ADR-217) y excluye del combo las órdenes con
+     una `FacturaAgenciaOrden`/`FacturaVendedorOrden` en OTRA factura. La validación
+     DURA (`_validar_ordenes`) NO se tocó en ninguno de los 3: sigue aceptando un alta
+     que mande explícito el id de una orden ya facturada (igual que afiliado desde
+     ADR-217) — confirmado que esto no rompe
+     `test_la_misma_orden_puede_estar_en_facturas_de_agencia/vendedor_distintas`
+     (siguen en verde, sin tocarlos).
+  3. Nuevo `_validar_cobradas_antes_de_autorizar()`/`_validar_cobradas_antes_de_
+     autorizar()` en los 3 servicios (`factura_afiliado.py`, `factura_agencia.py`,
+     `factura_vendedor.py`), llamado al PRINCIPIO de `autorizar()` (después del check de
+     área Dirección/Admin, antes de `transicionar()`): junta, por la factura, el folio y
+     `estatus_orden` de cada `OrdenCliente` involucrada (en afiliado, vía el JOIN
+     `OrdenEstacion.orden_id`; en agencia/vendedor, directo por `orden_id` de la
+     puente) — si alguna no está `cobrada`, `DomainError` listando los folios
+     pendientes ("No se puede autorizar el pago: la(s) orden(es) de servicio ... todavía
+     no ha(n) sido cobrada(s) al cliente."). Una factura SIN órdenes asignadas pasa
+     libre (nada que validar) — necesario para no romper
+     `test_direccion_y_admin_si_autorizan`, que autoriza una factura de afiliado vacía.
+     "Pasar a revisión" (`transicionar()` normal) NO lleva este candado — sigue libre,
+     tal como pidió el usuario.
+  4. Los 3 textos de ayuda bajo el combo se reescriben para describir de verdad el
+     comportamiento (estados incluidos + exclusión de ya facturadas), en vez del texto
+     genérico/desactualizado. Ejemplo (afiliado): "Opcional: solo lista las órdenes
+     internas **cerradas** de este afiliado y que no estén asignadas a otra factura de
+     afiliado. Puedes elegir varias — la factura queda asignada a cada una al guardar."
+     (agencia/vendedor análogos, mencionando cerrada/facturada/cobrada).
+  5. Frontend: `FacturaAgenciaForm`/`FacturaVendedorForm` ganan la prop
+     `facturaAgenciaIdActual`/`facturaVendedorIdActual` (mismo patrón que
+     `facturaAfiliadoIdActual` desde ADR-217/228) para mandar `excluir_de_factura_id` al
+     editar — sin esto, al editar una factura ya guardada sus propias órdenes
+     desaparecerían del combo.
+- **Decisión de alcance (para no sobre-corregir):** NO se tocó la validación DURA de
+  ninguno de los 3 servicios (acepta explícito un id ya usado en otra factura) ni se
+  agregó un check de estado en `_validar_ordenes` de agencia/vendedor (que hoy no valida
+  NINGÚN estado de la OC en el alta directa, a diferencia de afiliado) — el pedido del
+  usuario fue específicamente sobre el combo de selección y sobre autorizar, no sobre
+  cerrar por completo la vía de API directa; se documenta aquí como hueco conocido, no
+  como algo resuelto.
+- **Verificado:** suite completa de backend (pytest + ruff) y frontend (vitest + tsc)
+  100% verde. Pruebas nuevas: `test_ordenes_facturables_agencia/vendedor_incluye_
+  facturadas_y_cobradas`, `test_ordenes_facturables_agencia/vendedor_excluye_las_ya_
+  facturadas_en_otra_factura`, `test_ordenes_facturables_agencia/vendedor_excluir_de_
+  factura_id_no_oculta_sus_propias`, `test_autorizar_factura_afiliado/agencia/vendedor_
+  bloquea_si_la_orden_no_esta_cobrada` (backend); `ADR-264: en edición, manda el id de
+  la propia factura...` (frontend, agencia y vendedor). Tests preexistentes adaptados
+  (no rotos sin razón): `test_editar_factura_agencia/vendedor_autorizada_no_permite_
+  reasignar` ahora marcan la orden `cobrada` antes de autorizar, para seguir probando lo
+  que probaban (que ya autorizada no se reedita) sin toparse con el candado nuevo.

@@ -314,8 +314,9 @@ export function FacturaAfiliadoForm({
             }))}
           />
           <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 11, display: "block" }}>
-            Opcional: solo lista las órdenes internas <strong>cerradas</strong> de ese afiliado. Puedes
-            elegir varias — la factura queda asignada a cada una al guardar.
+            Opcional: solo lista las órdenes internas <strong>cerradas</strong> de este afiliado y que
+            no estén asignadas a otra factura de afiliado. Puedes elegir varias — la factura queda
+            asignada a cada una al guardar.
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>

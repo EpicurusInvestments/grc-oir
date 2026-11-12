@@ -225,6 +225,15 @@ puede reasignar (antes quedaba fijo) y la lista de OI llega precargada con lo ya
 asignado — el backend reconcilia al guardar: agrega lo nuevo, quita lo removido, deja
 intacto lo que sigue (no recalcula `monto_asignado` de lo que no se tocó).
 
+**ADR-264 (petición del usuario, con captura) — el combo también ADMITE OE
+`facturada`/`cobrada`, no solo `cerrada`** (se revisa el estado de la `OrdenCliente`
+PADRE, que sigue avanzando después de que la OE queda `cerrada`; la OE en sí no tiene
+sub-estado posterior). **Y `autorizar()` se bloquea si alguna OE asignada viene de una
+OC que todavía no está `cobrada`** — protege el flujo de caja (OIR no le paga al
+afiliado antes de haber cobrado esa orden al cliente); mensaje de dominio claro listando
+los folios pendientes. Misma regla, igual aplicada a `FacturaAgencia`/`FacturaVendedor`
+abajo.
+
 ### FacturaAfiliadoOrden (5 campos spec)
 Relación N:M `FacturaAfiliado` ↔ `OrdenEstacion` **cerrada** — permite repartir el costo
 de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacion`.
@@ -243,10 +252,12 @@ PK `factura_agencia_id`. FK a `Agencia`. Captura manual o carga, por **CxP**. Mi
 **ADR-239 (petición del usuario, con captura) SUSTITUYE el criterio de ADR-079 para
 esta entidad:** la relación con `OrdenCliente` deja de ser 1:1-por-factura (columna
 `orden_id` en la cabecera) y pasa a ser **N:M vía `FacturaAgenciaOrden`**, mismo patrón
-que `FacturaAfiliadoOrden` — una factura de agencia acumula VARIAS órdenes. La misma OC
-SÍ puede seguir apareciendo en facturas de agencia DISTINTAS (parcialidades, eso de
-ADR-079 no cambió), solo no repetida DENTRO de la misma factura
-(`UniqueConstraint(factura_agencia_id, orden_id)`). `porcentaje_comision_agencia`
+que `FacturaAfiliadoOrden` — una factura de agencia acumula VARIAS órdenes. La validación
+DURA sigue sin rechazar que la misma OC aparezca en facturas de agencia DISTINTAS
+(`UniqueConstraint(factura_agencia_id, orden_id)` solo impide repetirla DENTRO de la
+misma factura) — pero desde **ADR-264** el combo YA NO la sugiere si ya está en OTRA
+factura de agencia (mismo giro que ADR-217 le dio a `FacturaAfiliado`; ver el bloque
+ADR-264 de esa sección). `porcentaje_comision_agencia`
 (columna única de la cabecera) desaparece: cada fila de la puente congela su propio
 `porcentaje_comision_snap` (el `%` YA PACTADO de esa orden,
 `OrdenCliente.porcentaje_comision_agencia_snap`, con el default del catálogo Agencia
@@ -258,12 +269,15 @@ más IVA a la tasa central (a diferencia de `FacturaAfiliado`, donde el IVA sigu
 "Manual": ahí sí hay una factura real de un tercero que reconciliar, aquí ya no).
 
 **Combo "Buscar y agregar" (ADR-239, multi-selección — mismo patrón que el de OI en
-`FacturaAfiliado` desde ADR-083):** el alta/edición ofrecen agregar VARIAS OC
-`orden_cerrada` de la agencia elegida (`GET /agencias/ordenes-facturables?agencia_id=`,
-que ahora también trae el `%` propio de cada orden). La edición hace todo lo que hace
-el alta: puede reasignar agencia y editar qué órdenes tiene asignadas
-(`ordenes_ids: UUID[]`, reconciliado igual que `ordenes_estacion_ids` en
-`FacturaAfiliado`: agrega, quita, deja intacto lo que sigue).
+`FacturaAfiliado` desde ADR-083):** el alta/edición ofrecen agregar VARIAS OC de la
+agencia elegida, ya `orden_cerrada`, `facturada` o `cobrada` (ADR-264; antes solo
+`orden_cerrada`) y que no estén ya en otra factura de agencia (ADR-264;
+`GET /agencias/ordenes-facturables?agencia_id=&excluir_de_factura_id=`, que también trae
+el `%` propio de cada orden). La edición hace todo lo que hace el alta: puede reasignar
+agencia y editar qué órdenes tiene asignadas (`ordenes_ids: UUID[]`, reconciliado igual
+que `ordenes_estacion_ids` en `FacturaAfiliado`: agrega, quita, deja intacto lo que
+sigue). **`autorizar()` se bloquea (ADR-264) si alguna orden asignada no está
+`cobrada`** — mismo criterio y mismo mensaje que `FacturaAfiliado`.
 
 **`agencia`/`ordenes_asignadas` (no son columnas de la tabla):** resueltos en el
 servicio en lote, expuestos solo en `FacturaAgenciaRead` — `ordenes_asignadas` (mismo
@@ -281,7 +295,8 @@ tocar, pero ningún formulario los llena desde que existen estos dos.
 Tabla puente: `porcentaje_comision_snap` + `comision_calculada`, ambos congelados al
 agregar la orden (no se recalculan solos si la orden o el catálogo cambian después).
 `UniqueConstraint(factura_agencia_id, orden_id)`: la misma orden no se repite DENTRO de
-una factura, pero sí puede estar en otras (parcialidades). Mismo criterio de
+una factura; la validación dura sigue sin impedir que esté en otras, pero desde
+ADR-264 el combo ya no la sugiere si ya está en otra. Mismo criterio de
 denormalización que `FacturaAfiliadoOrden`: `FacturaAgenciaOrdenRead` resuelve
 `folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` en lote.
 **Replicado en la MISMA entrega para `FacturaVendedor`** (petición del usuario —
@@ -305,8 +320,11 @@ ADR-239, mismo patrón, aplicado a la MISMA entrega por petición explícita del
   `comision_vendedor` se CALCULAN (suma de comisiones + IVA a tasa central), ya no se
   capturan a mano. `ordenes_ids: UUID[]` reemplaza a `orden_id` en
   `FacturaVendedorCreate`/`Update`.
-- Combo "Buscar y agregar" (`GET /vendedores/ordenes-facturables?vendedor_id=`): solo
-  OC `orden_cerrada` cuyo `vendedor_principal_id` sea el vendedor elegido.
+- Combo "Buscar y agregar" (`GET /vendedores/ordenes-facturables?vendedor_id=&excluir_
+  de_factura_id=`): OC cuyo `vendedor_principal_id` sea el vendedor elegido, ya
+  `orden_cerrada`, `facturada` o `cobrada` (ADR-264) y que no estén ya en otra factura
+  de vendedor (ADR-264). **`autorizar()` se bloquea (ADR-264) si alguna orden asignada
+  no está `cobrada`** — mismo criterio que `FacturaAfiliado`/`FacturaAgencia`.
 - `vendedor`/`ordenes_asignadas` (no son columnas de la tabla): resueltos en el
   servicio en lote, mismo criterio que `FacturaAgencia`.
   `folio_orden`/`numero_orden_cliente`/`anunciante`/`producto`/`orden_total` viven en
