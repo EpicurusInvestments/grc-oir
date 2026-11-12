@@ -271,6 +271,29 @@ def test_pdf_servicio_se_genera_desde_asignada(db: Session, oe_asignada) -> None
     assert len(pdf) > 500
 
 
+# ADR-259 (corrige un bug real reportado por el usuario, con captura: "Request failed
+# with status code 500" al abrir/enviar por correo el PDF de una orden real):
+# `duracion_spot` es OPCIONAL desde ADR-168 (se puede omitir, p.ej. para "Mención") —
+# `generar_pdf_servicio`/`generar_pdf_reales` lo pasaban SIN envolver en `or "—"` como
+# `valor` de un `Paragraph`, y reportlab truena con `AttributeError: 'NoneType' object
+# has no attribute 'split'` si `text` no es una cadena. `generar_pdf_programados` no
+# tronaba porque lo interpola con un f-string (convierte `None` al texto "None"), pero
+# eso también era un bug de despliegue (mostraba "None" en vez de "—") — se corrige ahí
+# también.
+def test_pdf_servicio_no_truena_con_duracion_spot_none(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, duracion_spot=None), VENTAS)
+    pdf = generar_pdf_servicio(db, oe.orden_estacion_id)
+    assert pdf.startswith(b"%PDF")
+    texto = _texto_pdf(pdf)
+    assert "Duración" in texto
+
+
 def test_pdf_servicio_no_truena_con_muchos_dias(
     db: Session,
     oc_svc: OrdenClienteService,
@@ -307,6 +330,21 @@ def test_pdf_programados_se_genera_desde_asignada(db: Session, oe_asignada) -> N
     pdf = generar_pdf_programados(db, oe.orden_estacion_id)
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 500
+
+
+# ADR-259: a diferencia de servicio/reales, este PDF nunca TRONABA con
+# `duracion_spot=None` (lo interpola con un f-string) — pero sí mostraba el texto
+# "None" en vez de "—", un bug de despliegue aparte que se corrige en la misma pasada.
+def test_pdf_programados_muestra_guion_si_duracion_spot_es_none(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, duracion_spot=None), VENTAS)
+    texto = _texto_pdf(generar_pdf_programados(db, oe.orden_estacion_id))
+    assert "None" not in texto
 
 
 def test_pdf_programados_se_genera_tras_avanzar(
@@ -420,6 +458,30 @@ def test_pdf_reales_se_genera_tras_cerrar(
     pdf = generar_pdf_reales(db, oe.orden_estacion_id)
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 500
+
+
+# ADR-259: ver el comentario de `test_pdf_servicio_no_truena_con_duracion_spot_none`.
+def test_pdf_reales_no_truena_con_duracion_spot_none(
+    db: Session,
+    oc_svc: OrdenClienteService,
+    oe_svc: OrdenEstacionService,
+    cat: dict[str, uuid.UUID],
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat), VENTAS)
+    oe = oe_svc.create(_oe_payload(cat, oc.orden_id, duracion_spot=None), VENTAS)
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)]
+        ),
+        VENTAS,
+    )
+    pdf = generar_pdf_reales(db, oe.orden_estacion_id)
+    assert pdf.startswith(b"%PDF")
+    texto = _texto_pdf(pdf)
+    assert "DURACION" in texto.upper()
 
 
 def test_pdf_reales_no_truena_con_descripcion_larga(

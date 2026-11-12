@@ -567,7 +567,7 @@ def generar_pdf_servicio(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
     tabla_campos = Table(
         [
             _campo("Solicitud Orden", oc.numero_orden_cliente)
-            + _campo_der("Duración", oe.duracion_spot),
+            + _campo_der("Duración", oe.duracion_spot or "—"),
             _campo("Agencia", ctx.agencia.nombre_agencia if ctx.agencia else "Venta directa")
             + _campo_der("Total de Spots", str(total_spots)),
             _campo("Anunciante", ctx.anunciante.nombre_comercial)
@@ -709,7 +709,7 @@ def generar_pdf_programados(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         ),
         Paragraph(
             f"<b>No. DE ORDEN :</b> {oc.numero_orden_cliente}/{letra} &nbsp;&nbsp; "
-            f"<b>DURACION:</b> {oe.duracion_spot} &nbsp;/&nbsp; "
+            f"<b>DURACION:</b> {oe.duracion_spot or '—'} &nbsp;/&nbsp; "
             f"<b>PERIODO :</b> {_rango_campania(oc)}",
             _CAMPO_LINEA,
         ),
@@ -805,7 +805,7 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
                 # ADR-193 (petición del usuario): "MARCA"/"PRODUCTO" no aparecían — ambos
                 # campos distintos de "CAMPAÑA" (de arriba, `oc.producto` libre): MARCA
                 # es `ctx.marca`, PRODUCTO es `oe.producto_tarifa` (catálogo F0-06).
-                _campo_negrita("DURACION", oe.duracion_spot)
+                _campo_negrita("DURACION", (oe.duracion_spot or "—").upper())
                 + _campo_negrita_der(
                     "MARCA", (ctx.marca.nombre_marca if ctx.marca else "—").upper()
                 ),

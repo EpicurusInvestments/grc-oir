@@ -10592,3 +10592,134 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   parametrizada con las 18 combinaciones válidas (todas se aceptan) y otra con 10
   combinaciones reservadas (todas se siguen rechazando) — suite completa de backend
   verde (exit 0), `ruff` limpio. Sin cambios de frontend ni de esquema.
+
+### ADR-258 — CI del backend seguía fallando tras ADR-255: `pypdf` nunca estuvo declarado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: el
+  PR #57 desplegó con el job "Pruebas y linters" en rojo y "Build, push y deploy a DEV"
+  SALTADO por completo — justo el comportamiento esperado de ADR-255, que acababa de
+  quitarle `continue-on-error` a Ruff y Pytest).
+- **Diagnóstico:** el venv local (`backend/.venv`) usado para verificar ADR-255 estaba
+  **desincronizado de `uv.lock`** — tenía paquetes instalados con `pip install` directo
+  en vez de `uv sync` (entre ellos `pypdf`, usado por `test_f1_06_ordenes_pdf.py` para
+  leer de vuelta el texto de los PDFs generados y verificar su contenido), además de
+  versiones más nuevas de `ruff`/`starlette`/`uvicorn`/`sqlalchemy` que las fijadas en el
+  lockfile. Esto hizo que la verificación de ADR-255 ("suite completa de backend 100%
+  verde") fuera un FALSO POSITIVO: pasaba en ese venv contaminado, pero `pypdf` JAMÁS
+  estuvo en `pyproject.toml` ni en `uv.lock` — un `uv sync` limpio (exactamente lo que
+  hace el job de CI) nunca lo instala, así que esas 18 pruebas siempre tronaron ahí con
+  `ModuleNotFoundError: No module named 'pypdf'`. Antes de ADR-255 esto quedaba oculto
+  por el `continue-on-error` de Pytest; al quitarlo, la falla —que ya existía— se volvió
+  bloqueante por primera vez.
+- **Fix:** se agrega `pypdf>=5.0` al grupo `dev` de `pyproject.toml` (es dependencia de
+  PRUEBA, nunca se usa en código de producción — `reportlab` sigue siendo el único que
+  genera PDFs) y se corre `uv sync` para refrescar `uv.lock` (de paso corrige un drift
+  aparte: `email-validator`/`dnspython`, dependencias YA declaradas en `pyproject.toml`
+  desde ADR-105, que tampoco estaban en el lockfile commiteado).
+- **Lección de proceso:** verificar "suite verde" contra un venv que no se sabe si está
+  sincronizado con el lockfile no prueba nada sobre lo que CI realmente va a correr. A
+  partir de ahora, antes de tocar los `continue-on-error` de `backend.yml`, correr
+  `uv sync` primero (reinstala exactamente lo que fija `uv.lock`, igual que el job de
+  CI) y verificar DESPUÉS de eso.
+- **Verificado:** `uv sync` limpio (venv reconstruido desde `uv.lock`), suite completa de
+  `pytest` 100% verde (incluidas las 18 de `test_f1_06_ordenes_pdf.py`), `ruff check .`
+  limpio, ambos con las versiones EXACTAS que fija el lockfile (no las que había en el
+  venv contaminado).
+
+### ADR-259 — Bug real: "Abrir correo"/PDF de Servicio y Reales tronaban con 500 si `duracion_spot` era `None`
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: al dar
+  clic en "Abrir correo" e "Imprimir" de los PDFs de Servicio y Reales de una orden REAL
+  — OT-2026-11-000049A — la consola mostraba `Failed to load resource: ... 500` contra
+  `.../pdf/servicio` y `.../pdf/reales`; "Horarios programados" no fallaba).
+- **Diagnóstico:** `duracion_spot` es OPCIONAL desde ADR-168 (se puede omitir por
+  completo, p.ej. para un producto tipo "Mención"). `generar_pdf_servicio` (línea 570,
+  `_campo_der("Duración", oe.duracion_spot)`) y `generar_pdf_reales` (línea 808,
+  `_campo_negrita("DURACION", oe.duracion_spot)`) lo pasaban SIN envolver en `or "—"`
+  como `valor` de un `Paragraph` — reportlab exige que `text` sea una cadena, y truena
+  con `AttributeError: 'NoneType' object has no attribute 'split'` si recibe `None`
+  (ningún `except` genérico lo atrapa, así que sube como 500 crudo). `generar_pdf_
+  programados` NO tronaba con el mismo dato porque interpola `oe.duracion_spot` dentro
+  de un f-string (línea 712) — `None` se convierte al texto literal `"None"`, un bug de
+  despliegue silencioso (no un crash) que explica por qué solo 2 de los 3 PDFs fallaban
+  para la misma orden. **No reproducible con las fixtures de prueba existentes**
+  (siempre capturan `duracion_spot="30s"`) — se reprodujo primero contra una orden local
+  con el dato puesto a `NULL` a propósito, confirmando el traceback exacto antes de
+  tocar el código.
+- **Fix:** `oe.duracion_spot or "—"` en los 2 lugares de servicio/reales (mismo criterio
+  ya usado para `producto_tarifa`/`oc.producto` en ambos archivos); `oe.duracion_spot or
+  '—'` también en el f-string de programados, para que muestre "—" en vez de "None".
+- **Verificado:** 3 pruebas nuevas en `test_f1_06_ordenes_pdf.py` — servicio y reales con
+  `duracion_spot=None` generan el PDF sin tronar (antes false-negative: las fixtures
+  existentes nunca probaron este valor); programados con `duracion_spot=None` ya no
+  muestra el texto "None". Suite completa de backend verde (exit 0), `ruff` limpio. Sin
+  cambios de frontend ni de esquema — el campo ya era nullable desde ADR-168.
+
+### ADR-260 — Bug: un 422 de validación solo mostraba "Datos de entrada inválidos", sin decir qué campo
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: al dar
+  "Guardar" en "Nueva Orden de Servicio" en la demo, con "% comisión agencia" capturado
+  pero "Motivo del cambio" vacío, solo apareció "Datos de entrada inválidos" — sin forma
+  de saber qué corregir).
+- **Diagnóstico:** `core/errors.py` ya manda el detalle REAL de un 422 de Pydantic en
+  `detalles` (lista de `{loc, msg, type}` por cada campo rechazado) — pero `mensaje`
+  siempre es el texto genérico fijo "Datos de entrada inválidos", y el frontend
+  (`ApiRequestError`, `apiClient.ts`) solo exponía `detalles` como dato crudo sin
+  formatear; todas las pantallas que muestran `error.message` (el patrón más común en el
+  código, p.ej. `OrdenClienteListPage.tsx`) se quedaban con el texto genérico, sin el
+  campo ni la razón. Nota: la captura concreta de este reporte (comisión + motivo vacío)
+  no es, en sí, la causa de un 422 — `motivo_cambio_comision` es opcional a nivel de
+  Pydantic (`str | None`); el verdadero campo rechazado era otro, no visible en la
+  captura — exactamente el problema que describe este ADR: sin el detalle, no hay forma
+  de saberlo sin instrumentar.
+- **Fix:** `ApiRequestError` arma su `message` final en el propio constructor —si
+  `codigo === "validacion"` y `detalles` es la lista de Pydantic, concatena
+  `"campo: razón"` por cada entrada (quitando el primer elemento de `loc`, que es
+  siempre `"body"`/`"query"`/`"path"`, no útil para el usuario) al `mensaje` genérico.
+  Centralizado en una sola clase ya compartida por TODO el frontend — ningún formulario
+  necesitó tocarse para beneficiarse. `detalles` crudo se sigue exponiendo igual, para
+  quien ya lo use con un criterio propio (p.ej. `AgenciaCatalogPage.tsx` con
+  `dependencias_activas`).
+- **Verificado:** 3 pruebas nuevas en `apiClient.test.ts` (el mensaje se enriquece con
+  campo+razón; un error sin `detalles` o de otro código conserva su mensaje tal cual;
+  `detalles` crudo se sigue exponiendo). Suite completa de frontend sin nuevas fallas
+  (516/528, los mismos 12 fallos preexistentes de auth/sesión quedan fuera de alcance —
+  ver nota pendiente), `tsc --noEmit`/`eslint` limpios.
+
+### ADR-261 — Bug real: `fecha_inicio_campania` = HOY se rechazaba como "fecha pasada" entre las 18:00 y medianoche (hora de México)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con el cuerpo
+  completo de la respuesta 422 obtenido gracias a ADR-260: `mensaje: "Value error,
+  fecha_inicio_campania no puede ser una fecha pasada."`, con
+  `fecha_inicio_campania: "2026-11-11"` y el header `Date` de la respuesta en
+  `Thu, 12 Nov 2026 00:43:07 GMT`).
+- **Diagnóstico:** `OrdenClienteCreate._valida_fechas`/`OrdenClienteUpdate` comparaban
+  contra `date.today()` — que usa la zona horaria del PROCESO, no la del negocio. En el
+  contenedor (UTC), a las 18:43 hora de Ciudad de México (UTC-6) ya son las 00:43 UTC
+  del día SIGUIENTE: `date.today()` del servidor devolvía "12-nov" mientras el usuario,
+  en México, seguía legítimamente en "11-nov". Cualquier captura entre las 18:00 y las
+  23:59 hora de CDMX con `fecha_inicio_campania` = HOY quedaba rechazada como "pasada" —
+  una ventana de 6 horas todas las noches, exactamente el horario típico de oficina
+  tarde/noche en México.
+- **Fix:** nuevo helper `_hoy_mexico()` en `orden_cliente.py` —
+  `datetime.now(ZoneInfo("America/Mexico_City")).date()` — en vez de `date.today()`, en
+  los 3 lugares del archivo que lo usaban para decidir "hoy" sobre fechas de negocio:
+  la validación de alta, la de edición (`f_ini < date.today()`) y `fecha_cierre` al
+  cerrar una orden (mismo problema de fondo: quedaría fechada "mañana" si se cierra de
+  noche). Nueva dependencia **`tzdata`** (grupo principal, no solo dev): Windows y
+  algunas imágenes Linux "slim"/Alpine no traen la base de datos IANA de zonas horarias
+  de fábrica — sin este paquete, `ZoneInfo("America/Mexico_City")` truena con
+  `ZoneInfoNotFoundError` en esos entornos (confirmado: rompía la colección de pruebas
+  en este Windows de desarrollo hasta agregarlo).
+- **Alcance:** quedan otros `date.today()` en `orden_estacion.py`/`cobranza_factura.py`/
+  `facturacion/factura_cliente.py`/`requisicion.py` con el MISMO riesgo de fondo — no se
+  tocaron aquí (son defaults de valor o lógica de "vencida"/display, no gates que
+  RECHACEN la entrada del usuario con un error como este; menor severidad, pero el mismo
+  patrón). Pendiente evaluar si conviene centralizar `_hoy_mexico()` en `app/core/` y
+  aplicarlo también ahí.
+- **Verificado:** nueva prueba en `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oc_fecha_inicio_hoy_no_se_rechaza_si_el_servidor_ya_marca_manana_en_utc`)
+  — mockea `datetime.now()` al instante EXACTO del reporte (00:43 UTC del 12-nov) y
+  confirma que `fecha_inicio_campania = 2026-11-11` ya NO se rechaza (antes sí, con
+  `date.today()`), más un control de que una fecha genuinamente pasada EN MÉXICO sigue
+  rechazándose. Suite completa de backend verde (exit 0), `ruff` limpio.

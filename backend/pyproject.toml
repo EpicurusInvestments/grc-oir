@@ -27,6 +27,10 @@ dependencies = [
                        # WeasyPrint, que requiere Pango/GObject — probado y descartado por eso).
     "email-validator>=2.0",  # Valida el formato de `destinatario_email` (Pydantic
                              # EmailStr). Envío de PDFs por correo (ADR-105).
+    "tzdata>=2024.1",  # ADR-261: `zoneinfo.ZoneInfo("America/Mexico_City")` necesita la
+                       # base de datos IANA instalada — Windows (dev) y algunas imágenes
+                       # Linux "slim"/Alpine (prod) no la traen de fábrica; con este
+                       # paquete el proceso trae la suya propia, sin depender del SO.
 ]
 
 [dependency-groups]
@@ -36,6 +40,12 @@ dev = [
     "httpx>=0.27",        # cliente de pruebas para FastAPI TestClient
     "ruff>=0.5",
     "mypy>=1.10",
+    # ADR-258 (corrige un bug real): `test_f1_06_ordenes_pdf.py` lee de vuelta el texto
+    # de los PDFs generados (reportlab) para verificar su contenido — nunca estuvo
+    # declarada, así que un `uv sync` limpio (como el de CI) siempre tronaba esas 18
+    # pruebas con `ModuleNotFoundError`, enmascarado solo por el `continue-on-error` de
+    # Pytest (ADR-255 lo quitó, dejando la falla visible por primera vez).
+    "pypdf>=5.0",
 ]
 
 [build-system]

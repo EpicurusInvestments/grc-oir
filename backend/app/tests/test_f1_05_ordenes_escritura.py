@@ -343,6 +343,49 @@ def test_crear_oc_rechaza_fecha_inicio_pasada(cat: dict[str, uuid.UUID]) -> None
         )
 
 
+# ADR-261 (corrige un bug real, petición del usuario con captura): la regla de "fecha
+# pasada" usaba `date.today()`, que depende de la zona horaria del SERVIDOR (en el
+# contenedor, UTC) — un usuario en México (UTC-6) sigue en "hoy" entre las 18:00 y las
+# 23:59 hora de CDMX, mientras el servidor ya marca el día SIGUIENTE en UTC. Reportado
+# con una captura real: orden enviada a las 18:43 hora de CDMX (00:43 UTC del día
+# siguiente) con `fecha_inicio_campania` = HOY (hora de México) rechazada como "pasada".
+def test_crear_oc_fecha_inicio_hoy_no_se_rechaza_si_el_servidor_ya_marca_manana_en_utc(
+    cat: dict[str, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC
+    from datetime import datetime as _datetime_real
+
+    from app.modules.ordenes import orden_cliente as orden_cliente_mod
+
+    # 18:43 hora de Ciudad de México del 11-nov == 00:43 UTC del 12-nov (el caso real).
+    instante_utc = _datetime_real(2026, 11, 12, 0, 43, tzinfo=UTC)
+
+    class _DatetimeFalso(_datetime_real):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return instante_utc.astimezone(tz) if tz else instante_utc
+
+    monkeypatch.setattr(orden_cliente_mod, "datetime", _DatetimeFalso)
+
+    # Con el bug (usando `date.today()`, que en el servidor caería en UTC), "hoy" sería
+    # 2026-11-12 y esta fecha (2026-11-11, "hoy" en México) se hubiera rechazado.
+    oc = _oc_payload(
+        cat,
+        fecha_inicio_campania=date(2026, 11, 11),
+        fecha_fin_campania=date(2026, 11, 15),
+    )
+    assert oc.fecha_inicio_campania == date(2026, 11, 11)
+
+    # Control: la zona horaria de México sí sigue rechazando una fecha genuinamente
+    # pasada (ayer en México, no solo en UTC).
+    with pytest.raises(ValidationError):
+        _oc_payload(
+            cat,
+            fecha_inicio_campania=date(2026, 11, 10),
+            fecha_fin_campania=date(2026, 11, 15),
+        )
+
+
 def test_crear_oc_contrato_de_otro_anunciante_400(
     oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:

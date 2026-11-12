@@ -53,6 +53,35 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// ADR-260 (corrige un bug real, petición del usuario con captura): un 422 de Pydantic
+// (`core/errors.py`, código "validacion") siempre traía el mismo `mensaje` genérico
+// ("Datos de entrada inválidos") — el campo y la razón real vivían SOLO en `detalles`
+// (lista de `{loc, msg, type}`), que ningún formulario leía; el usuario se quedaba sin
+// saber QUÉ corregir. Se arma aquí, una sola vez, para que TODO formulario que ya
+// muestra `error.message` se beneficie sin tocar cada página una por una.
+interface _DetalleValidacionPydantic {
+  loc?: unknown;
+  msg?: unknown;
+}
+
+function _esDetalleValidacion(d: unknown): d is _DetalleValidacionPydantic {
+  return typeof d === "object" && d !== null && "msg" in d;
+}
+
+function _formatearMensajeValidacion(mensaje: string, detalles: unknown): string {
+  if (!Array.isArray(detalles) || detalles.length === 0) return mensaje;
+  const partes = detalles
+    .filter(_esDetalleValidacion)
+    .map((d) => {
+      // `loc` viene como ["body", "campo"] (o ["body", "campo", 0, "subcampo"] en listas
+      // anidadas) — se quita el primer elemento ("body"/"query"/"path", no útil aquí).
+      const campo = Array.isArray(d.loc) ? d.loc.slice(1).join(".") : null;
+      return campo ? `${campo}: ${d.msg}` : String(d.msg ?? "");
+    })
+    .filter(Boolean);
+  return partes.length > 0 ? `${mensaje} — ${partes.join("; ")}` : mensaje;
+}
+
 /** Error de API con el código del backend (sin_permiso, no_encontrado, ...). */
 export class ApiRequestError extends Error {
   codigo: string;
@@ -60,7 +89,7 @@ export class ApiRequestError extends Error {
   status?: number;
 
   constructor(codigo: string, mensaje: string, status?: number, detalles?: unknown) {
-    super(mensaje);
+    super(codigo === "validacion" ? _formatearMensajeValidacion(mensaje, detalles) : mensaje);
     this.name = "ApiRequestError";
     this.codigo = codigo;
     this.status = status;
