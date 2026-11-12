@@ -2,12 +2,22 @@
 
 Router SEPARADO de `adjuntos.py` (aunque usa la MISMA factory,
 `build_adjuntos_router`): ese router comparte lista blanca/tope de PDF
-(`EXTENSIONES_ADJUNTO_ORDENES`/`s3_max_pdf_bytes`) entre sus 5 tipos — el audio necesita
-su PROPIA lista blanca (`EXTENSIONES_AUDIO_ORDENES`, mp3/wav/ogg) y su PROPIO tope
-(`S3_MAX_AUDIO_BYTES`, 15 MB), así que no se le agrega como un tipo más de ese router
-(forzaría a los 5 tipos existentes a compartir el tope/lista blanca del audio, o al
-revés). Se monta en un prefijo de ruta PROPIO (`/material-staging`) para no chocar con
-el `/adjuntos` ya montado por ese otro router en el mismo módulo.
+(`EXTENSIONES_ADJUNTO_ORDENES`/`s3_max_pdf_bytes`) entre sus 5 tipos — "Material a
+Transmitir" necesita su PROPIO tope (`S3_MAX_AUDIO_BYTES`, 15 MB), así que no se le
+agrega como un tipo más de ese router (forzaría a los 5 tipos existentes a compartir su
+tope, o al revés). Se monta en un prefijo de ruta PROPIO (`/material-staging`) para no
+chocar con el `/adjuntos` ya montado por ese otro router en el mismo módulo.
+
+ADR-266 (petición del usuario, con captura): "Material a Transmitir" dejó de ser lista
+BLANCA de audio (`EXTENSIONES_AUDIO_ORDENES`, mp3/wav/ogg) — ahora es lista NEGRA
+(`extensiones_bloqueadas=EXTENSIONES_PELIGROSAS`, vía `leer_adjunto_libre`), igual
+criterio que "Formato de Horarios Reales": acepta cualquier formato salvo
+ejecutables/scripts, con chequeo de firma de ejecutable de Windows sin importar la
+extensión declarada. Mismo cambio aplicado al endpoint "real" (`POST .../{id}/audios`,
+ver `orden_estacion.py#agregar_audio`) — este módulo cubre la subida DURANTE el alta,
+antes de que exista el `orden_estacion_id`. `EXTENSIONES_AUDIO_ORDENES` sigue viva para
+"Evidencias de lo Transmitido"/Capturar Reales (`agregar_evidencia`), que NO cambió — el
+pedido fue específicamente sobre "Material a Transmitir".
 
 Por qué existe: el usuario pidió poder subir el material a transmitir DURANTE la
 captura de una OrdenEstacion nueva — antes de que exista un `orden_estacion_id` real
@@ -30,7 +40,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from app.core.config import settings
-from app.integrations.almacenamiento.documentos import EXTENSIONES_AUDIO_ORDENES
+from app.integrations.almacenamiento.documentos import EXTENSIONES_PELIGROSAS
 from app.shared.adjuntos_router import build_adjuntos_router
 
 
@@ -52,7 +62,7 @@ router = build_adjuntos_router(
     permiso_subir="ordenes:editar",
     permiso_descargar="ordenes:leer",
     content_disposition="attachment",
-    extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES,
+    extensiones_bloqueadas=EXTENSIONES_PELIGROSAS,
     max_bytes=settings.s3_max_audio_bytes,
     prefix="/material-staging",
 )

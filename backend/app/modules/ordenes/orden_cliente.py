@@ -633,6 +633,21 @@ class OrdenClienteService(
                 maximo = max(maximo, int(m.group(1)))
         return f"OS-{anio}-{mes:02d}-{maximo + 1:06d}"
 
+    def _validar_vendedores_distintos(
+        self, vendedor_principal_id: uuid.UUID | None, vendedor_secundario_id: uuid.UUID | None
+    ) -> None:
+        """ADR-263 (petición del usuario): el frontend ya filtra las opciones de cada
+        select para que no se pueda repetir el vendedor en ambos campos, pero el API se
+        valida igual — nada impide un PATCH/POST directo con el mismo id en los dos."""
+        if vendedor_secundario_id is not None and vendedor_secundario_id == vendedor_principal_id:
+            raise DomainError(
+                "El vendedor secundario no puede ser el mismo que el vendedor principal.",
+                detalles={
+                    "vendedor_principal_id": str(vendedor_principal_id),
+                    "vendedor_secundario_id": str(vendedor_secundario_id),
+                },
+            )
+
     def _validar_fks_y_relaciones(self, db: Session, payload: dict[str, Any]) -> None:
         if "empresa_facturadora_id" in payload:
             self._verificar_fk(
@@ -759,6 +774,9 @@ class OrdenClienteService(
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         db = self._repo.db
         self._validar_fks_y_relaciones(db, payload)
+        self._validar_vendedores_distintos(
+            payload["vendedor_principal_id"], payload.get("vendedor_secundario_id")
+        )
         self._validar_contrato_marca(db, payload, payload["anunciante_id"])
         self._validar_facturacion_agencia(
             payload.get("agencia_id"), payload["afiliado_factura_directo_al_cliente"]
@@ -840,6 +858,10 @@ class OrdenClienteService(
             )
         db = self._repo.db
         self._validar_fks_y_relaciones(db, payload)
+        if "vendedor_principal_id" in payload or "vendedor_secundario_id" in payload:
+            vp_efectivo = payload.get("vendedor_principal_id", obj.vendedor_principal_id)
+            vs_efectivo = payload.get("vendedor_secundario_id", obj.vendedor_secundario_id)
+            self._validar_vendedores_distintos(vp_efectivo, vs_efectivo)
         anunciante_efectivo = payload.get("anunciante_id", obj.anunciante_id)
         self._validar_contrato_marca(db, payload, anunciante_efectivo)
         afiliado_factura_efectivo = payload.get(

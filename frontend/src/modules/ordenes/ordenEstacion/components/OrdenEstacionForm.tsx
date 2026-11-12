@@ -72,7 +72,7 @@ import { ordenEstacionAudioFromApi } from "../../adapters/fromApi";
 import { asignarPorPosicion, CalendarioPeriodoTransmision } from "../../components/CalendarioPeriodoTransmision";
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
-import { AUDIO_ORDEN_ACCEPT, AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_AUDIO_ORDENES } from "../../constants";
+import { AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_PELIGROSAS_FORMATO_REAL } from "../../constants";
 import { fmtMonto, fmtPct } from "../../format";
 import {
   esActivo,
@@ -325,9 +325,12 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
     setSubiendoAudioStaging(true);
     try {
       for (const archivo of Array.from(archivos)) {
+        // ADR-266 (petición del usuario, con captura): ya NO es lista blanca de audio —
+        // mismo criterio que `MaterialATransmitir.tsx` (acepta cualquier formato salvo
+        // ejecutables/scripts; el backend revalida siempre).
         const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
-        if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
-          errores.push(`${archivo.name}: formato no permitido (usa ${EXTENSIONES_AUDIO_ORDENES.join(", ")}).`);
+        if ((EXTENSIONES_PELIGROSAS_FORMATO_REAL as readonly string[]).includes(ext)) {
+          errores.push(`${archivo.name}: formato ejecutable/script no permitido (.${ext}).`);
           continue;
         }
         if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
@@ -952,7 +955,6 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
                     className="file-input"
                     type="file"
                     multiple
-                    accept={AUDIO_ORDEN_ACCEPT}
                     // ADR-210: mientras se clona el material (`cargandoAudiosClon`), no se
                     // deja agregar uno nuevo — la respuesta de esa consulta REEMPLAZA
                     // `audiosStaging` entero, y perdería lo que el usuario acabara de subir

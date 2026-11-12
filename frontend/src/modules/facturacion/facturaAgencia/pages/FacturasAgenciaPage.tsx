@@ -171,6 +171,7 @@ export function FacturasAgenciaPage() {
           folio_factura_agencia: selected.folio_factura_agencia ?? undefined,
           fecha_factura_agencia: selected.fecha_factura_agencia,
         }}
+        facturaAgenciaIdActual={selected.factura_agencia_id}
         ordenesIniciales={ordenes.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}

@@ -85,11 +85,15 @@ sola referencia que se reemplaza, aquí hay una lista con altas/bajas independie
 Regla de asignación por defecto: el audio `orden=0` (el primero subido) es el que usa
 CUALQUIER día que no tenga su propio override; `OrdenEstacionDia.orden_estacion_audio_id`
 (nullable) guarda esa excepción puntual, asignada con `PUT .../dias/{dia_id}/audio` —
-otro endpoint dedicado, para no acoplarlo al reemplazo completo de `dias`. Lista blanca
-de formatos PROPIA (`EXTENSIONES_AUDIO_ORDENES`: mp3/wav/ogg — ver
-`app/integrations/almacenamiento/documentos.py`) y tope de tamaño PROPIO
-(`S3_MAX_AUDIO_BYTES`, 15 MB), NINGUNO de los dos comparte constante con los adjuntos de
-documentos (ADR-042) para no afectarlos.
+otro endpoint dedicado, para no acoplarlo al reemplazo completo de `dias`. Tope de
+tamaño PROPIO (`S3_MAX_AUDIO_BYTES`, 15 MB) — no comparte constante con los adjuntos de
+documentos (ADR-042) para no afectarlos. ADR-266 (petición del usuario, con captura):
+`agregar_audio()` dejó de validar contra la lista blanca `EXTENSIONES_AUDIO_ORDENES`
+(mp3/wav/ogg) — ahora acepta cualquier formato salvo ejecutables/scripts
+(`leer_adjunto_libre`/`EXTENSIONES_PELIGROSAS`, ver
+`app/integrations/almacenamiento/documentos.py`). `EXTENSIONES_AUDIO_ORDENES` sigue
+viva para `agregar_evidencia()` ("Evidencias de lo Transmitido"/Capturar Reales, ADR-119
+abajo), que NO cambió.
 """
 
 from __future__ import annotations
@@ -128,6 +132,7 @@ from app.integrations.almacenamiento import get_almacenamiento
 from app.integrations.almacenamiento.documentos import (
     EXTENSIONES_AUDIO_ORDENES,
     EXTENSIONES_LAYOUT_REALES,
+    EXTENSIONES_PELIGROSAS,
     EXTENSIONES_PELIGROSAS_O_AUDIO,
     content_type_de_extension,
     leer_adjunto,
@@ -1336,10 +1341,16 @@ class OrdenEstacionService(
         db = self._repo.db
         self._get_or_404(orden_estacion_id)
 
-        contenido, nombre_sano, extension = leer_adjunto(
+        # ADR-266 (petición del usuario, con captura): "Material a Transmitir" deja de
+        # ser lista BLANCA de audio — ahora lista NEGRA (`leer_adjunto_libre`, igual
+        # criterio que "Formato de Horarios Reales"): acepta cualquier formato salvo
+        # ejecutables/scripts, con chequeo de firma de ejecutable de Windows sin
+        # importar la extensión declarada. `agregar_evidencia()` (Capturar Reales) NO
+        # cambió — sigue con la lista blanca `EXTENSIONES_AUDIO_ORDENES`.
+        contenido, nombre_sano, extension = leer_adjunto_libre(
             archivo,
             max_bytes=settings.s3_max_audio_bytes,
-            extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES,
+            extensiones_bloqueadas=EXTENSIONES_PELIGROSAS,
         )
         siguiente_orden = (
             db.scalar(

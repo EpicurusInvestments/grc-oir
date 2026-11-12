@@ -125,7 +125,10 @@ en `docs/arquitectura.md` (ADR-251).
 captura MANUAL en "Capturar reales":** antes solo se ocultaba con un layout cargado
 (ADR-247); ahora se quita siempre (ya no es editable por fila, solo la hora) y la tabla
 usa `tableLayout: "fixed"` con anchos explícitos para no estirarse con espacio vacío.
-Detalle completo en `docs/arquitectura.md` (ADR-252).
+Detalle completo en `docs/arquitectura.md` (ADR-252). **ADR-265 corrige el efecto
+contrario** que esto dejó: con `width: "auto"`, la tabla se quedaba angosta y dejaba un
+hueco en blanco a la derecha de su columna — ahora es `width: "100%"` con los anchos de
+columna en `%` (no `px`), para que sí ocupen todo el ancho disponible.
 
 **ADR-253 (bug, petición del usuario, con captura real) — 2 bugs en "Capturar reales
 desde layout":** (1) el balance de "los días nuevos exceden el total de spots" (backend)
@@ -263,9 +266,18 @@ dedicados (`POST`/`GET`/`DELETE /ordenes/estaciones/{id}/audios`), NO por el
 sola referencia que se reemplaza). El primero subido (`orden=0`) es el DEFAULT que usan
 los días sin asignación propia; `OrdenEstacionDia.orden_estacion_audio_id` (nullable)
 guarda la excepción puntual de un día, asignada con
-`PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Lista blanca propia
-(`EXTENSIONES_AUDIO_ORDENES`: mp3/wav/ogg) y tope propio (`S3_MAX_AUDIO_BYTES`, 15 MB) —
-ninguno comparte constante con los adjuntos de documentos (ADR-042).
+`PUT .../dias/{dia_id}/audio` (otro endpoint dedicado). Tope propio
+(`S3_MAX_AUDIO_BYTES`, 15 MB) — no comparte constante con los adjuntos de documentos
+(ADR-042).
+
+**ADR-266 (petición del usuario, con captura) — deja de ser lista BLANCA de audio:**
+antes solo mp3/wav/ogg (`EXTENSIONES_AUDIO_ORDENES`); ahora acepta CUALQUIER formato
+salvo ejecutables/scripts (lista NEGRA `EXTENSIONES_PELIGROSAS`, vía
+`leer_adjunto_libre` — mismo criterio que "Formato de Horarios Reales", ADR-123), tanto
+en la subida "real" (`agregar_audio`) como en el "staging" durante el alta
+(`/material-staging?tipo=audio`). `agregar_evidencia()` ("Evidencias de lo
+Transmitido"/Capturar Reales) NO cambió, sigue con la lista blanca de audio. Detalle
+completo en `docs/arquitectura.md` (ADR-266).
 
 **ADR-257 (bug, petición del usuario, con captura) — la firma de MP3 rechazaba
 archivos reales:** solo cubría 3 de las 18 combinaciones válidas del "frame sync" de
@@ -1148,6 +1160,11 @@ propuesta no le da captura sobre Órdenes.
   alta, la edición y `fecha_cierre`. Nueva dependencia `tzdata` (necesaria en Windows y
   algunas imágenes Linux "slim" sin la base IANA de fábrica). Detalle completo en
   `docs/arquitectura.md` (ADR-261).
+- **ADR-263 (bug real, petición del usuario, con captura) — el mismo vendedor se podía
+  elegir como principal Y secundario:** cada select de "Equipo comercial y comisiones"
+  ahora excluye al vendedor ya elegido en el otro campo; el backend además rechaza con
+  `DomainError` (alta y edición) si de todos modos llegan iguales por API directa.
+  Detalle completo en `docs/arquitectura.md` (ADR-263).
 - **ADR-181 (petición del usuario) — "Facturación a la Agencia" (antes "Afiliado factura
   directo al cliente"):** solo cambia la etiqueta/descripción visible del radio
   (ADR-141) — la columna `afiliado_factura_directo_al_cliente` NO se renombra. Al

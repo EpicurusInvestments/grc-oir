@@ -715,6 +715,39 @@ class FacturaAfiliadoService(
         self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
 
+    def _validar_cobradas_antes_de_autorizar(self, factura_afiliado_id: uuid.UUID) -> None:
+        """ADR-264 (petición del usuario, con captura): no se autoriza el pago al
+        afiliado hasta que el CLIENTE ya pagó la orden de servicio (OS) de la que
+        proviene cada OE asignada — protege el flujo de caja (OIR no desembolsa antes de
+        haber cobrado). Se revisa la `OrdenCliente` PADRE de cada OE (vía
+        `OrdenEstacion.orden_id`), no `OrdenEstacion.estatus`: esa OE ya está `cerrada`
+        desde que se asignó (precondición de `_validar_ordenes_estacion`) y no tiene un
+        sub-estado posterior — es la OC la que sigue avanzando a `facturada`/`cobrada`
+        (`FROZEN_STATES_OE` no incluye nada después de `cerrada`). Sin OE asignadas, no
+        hay nada que validar (pasa libre)."""
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+        from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+        db = self._repo.db
+        filas = db.execute(
+            select(OrdenCliente.folio_orden, OrdenCliente.estatus_orden)
+            .join(OrdenEstacion, OrdenEstacion.orden_id == OrdenCliente.orden_id)
+            .join(
+                FacturaAfiliadoOrden,
+                FacturaAfiliadoOrden.orden_estacion_id == OrdenEstacion.orden_estacion_id,
+            )
+            .where(FacturaAfiliadoOrden.factura_afiliado_id == factura_afiliado_id)
+        ).all()
+        pendientes = sorted(
+            {f.folio_orden for f in filas if f.estatus_orden != EstatusOrden.COBRADA.value}
+        )
+        if pendientes:
+            raise DomainError(
+                "No se puede autorizar el pago: la(s) orden(es) de servicio "
+                f"{', '.join(pendientes)} todavía no ha(n) sido cobrada(s) al cliente.",
+                detalles={"ordenes_pendientes_de_cobro": pendientes},
+            )
+
     def autorizar(
         self, factura_afiliado_id: uuid.UUID, usuario: CurrentUser
     ) -> FacturaAfiliadoRead:
@@ -731,6 +764,7 @@ class FacturaAfiliadoService(
                 f"El area '{usuario.area.value}' no puede autorizar facturas de afiliado "
                 "- solo Direccion."
             )
+        self._validar_cobradas_antes_de_autorizar(factura_afiliado_id)
         return self.transicionar(
             factura_afiliado_id,
             EstatusFacturaProveedor.AUTORIZADA.value,

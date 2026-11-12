@@ -246,10 +246,9 @@ async function capturarOEMinima(container: HTMLElement) {
   fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Duración"), { target: { value: "30s" } });
   fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
 
-  // Selector por `accept` (no por posición) — ".mp3" en `accept` solo lo trae este input.
-  const inputAudio = container.querySelector(
-    'input[type="file"][accept*=".mp3"]',
-  ) as HTMLInputElement;
+  // ADR-266: ya no hay `accept` (ya no es lista blanca de audio) — el único
+  // `input[type="file"]` del formulario de alta es el de "Material a Transmitir".
+  const inputAudio = container.querySelector('input[type="file"]') as HTMLInputElement;
   fireEvent.change(inputAudio, { target: { files: [new File(["contenido"], "uno.mp3", { type: "audio/mpeg" })] } });
   await waitFor(() => expect(screen.queryByText("Sin audios elegidos todavía.")).toBeNull());
 
@@ -263,7 +262,7 @@ async function capturarOEMinima(container: HTMLElement) {
 // solo para habilitar "+ Agregar día"/"Quitar día" (ADR-110, gated por `hayMaterial`).
 async function asegurarMaterialListPage(container: HTMLElement) {
   if (!screen.queryByText("Sin audios elegidos todavía.")) return;
-  const inputAudio = container.querySelector('input[type="file"][accept*=".mp3"]') as HTMLInputElement;
+  const inputAudio = container.querySelector('input[type="file"]') as HTMLInputElement;
   fireEvent.change(inputAudio, { target: { files: [new File(["contenido"], "uno.mp3", { type: "audio/mpeg" })] } });
   await waitFor(() => expect(screen.queryByText("Sin audios elegidos todavía.")).toBeNull());
 }

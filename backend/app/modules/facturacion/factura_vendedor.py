@@ -22,9 +22,18 @@ Vendedor como respaldo).
 capturarse a mano — se derivan de la suma de comisiones de las órdenes elegidas, con el
 IVA a la tasa central (a diferencia de `FacturaAfiliado`, donde el IVA SÍ es "Manual").
 
-El orden puede seguir apareciendo en varias facturas de vendedor distintas
-(parcialidades, no cambia), pero no repetida dentro de la MISMA factura
-(`UniqueConstraint` en la puente).
+ADR-264 (petición del usuario, con captura) ajusta dos reglas más, igual que hizo para
+`FacturaAgencia`:
+- El combo "Buscar y agregar" ya NO sugiere una orden que ya esté en OTRA factura de
+  vendedor (antes, parcialidades sin límite). La validación DURA (`_validar_ordenes`)
+  no cambia: sigue aceptando un alta que mande explícito el id de una orden ya
+  facturada.
+- Autorizar (`autorizar()`) se bloquea si alguna orden asignada todavía no está
+  `cobrada` — OIR no debe pagarle la comisión al vendedor antes de haber cobrado esa
+  orden al cliente.
+
+La misma orden puede repetirse en facturas distintas si se fuerza por API directa, pero
+no dentro de la MISMA factura (`UniqueConstraint` en la puente).
 """
 
 from __future__ import annotations
@@ -411,19 +420,32 @@ class FacturaVendedorService(
         return leidas
 
     def ordenes_facturables(
-        self, vendedor_id: uuid.UUID
+        self, vendedor_id: uuid.UUID, excluir_de_factura_id: uuid.UUID | None = None
     ) -> list[OrdenClienteFacturableVendedorRead]:
-        """OC `orden_cerrada` donde el vendedor elegido es el `vendedor_principal_id` —
-        combo "Buscar y agregar" del alta/edición (NO se factura la comisión del
-        vendedor secundario). No excluye OC que ya tengan otra factura de vendedor: la
-        relación sigue siendo N:M a propósito (parcialidades)."""
+        """OC donde el vendedor elegido es el `vendedor_principal_id`, ya `orden_cerrada`,
+        `facturada` o `cobrada` — combo "Buscar y agregar" del alta/edición (NO se
+        factura la comisión del vendedor secundario; ADR-264: antes solo `orden_cerrada`).
+
+        Excluye las que YA tienen una `FacturaVendedorOrden` registrada en OTRA factura
+        — mismo criterio que `FacturaAfiliadoService.ordenes_facturables`/
+        `FacturaAgenciaService.ordenes_facturables` (ADR-264). Al EDITAR,
+        `excluir_de_factura_id` es el id de esa misma factura: sus propias asignaciones
+        no cuentan como "ya facturadas"."""
         from app.modules.catalogos.anunciante import Anunciante
         from app.modules.catalogos.vendedor import Vendedor
-        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+        from app.modules.ordenes.orden_cliente import FROZEN_STATES_OC, OrdenCliente
 
         db = self._repo.db
         vendedor = db.get(Vendedor, vendedor_id)
         porcentaje_default = vendedor.porcentaje_comision_default if vendedor else None
+
+        ya_facturadas_stmt = select(FacturaVendedorOrden.orden_id)
+        if excluir_de_factura_id is not None:
+            ya_facturadas_stmt = ya_facturadas_stmt.where(
+                FacturaVendedorOrden.factura_vendedor_id != excluir_de_factura_id
+            )
+        ya_facturadas = set(db.scalars(ya_facturadas_stmt).all())
+
         filas = db.execute(
             select(
                 OrdenCliente.orden_id,
@@ -437,7 +459,7 @@ class FacturaVendedorService(
             .join(Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id)
             .where(
                 OrdenCliente.vendedor_principal_id == vendedor_id,
-                OrdenCliente.estatus_orden == EstatusOrden.ORDEN_CERRADA.value,
+                OrdenCliente.estatus_orden.in_(FROZEN_STATES_OC),
             )
             .order_by(OrdenCliente.folio_orden)
         ).all()
@@ -453,6 +475,7 @@ class FacturaVendedorService(
                 porcentaje_comision_vendedor_default=porcentaje_default,
             )
             for f in filas
+            if f.orden_id not in ya_facturadas
         ]
 
     def _validar_ordenes(
@@ -646,6 +669,29 @@ class FacturaVendedorService(
         self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
 
+    def _validar_cobradas_antes_de_autorizar(self, factura_vendedor_id: uuid.UUID) -> None:
+        """ADR-264 (petición del usuario, con captura): no se autoriza el pago al
+        vendedor hasta que el CLIENTE ya pagó esa orden — protege el flujo de caja (OIR
+        no desembolsa antes de haber cobrado). Sin órdenes asignadas, no hay nada que
+        validar (pasa libre, igual que `FacturaAfiliado`/`FacturaAgencia`)."""
+        from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+
+        db = self._repo.db
+        filas = db.execute(
+            select(OrdenCliente.folio_orden, OrdenCliente.estatus_orden)
+            .join(FacturaVendedorOrden, FacturaVendedorOrden.orden_id == OrdenCliente.orden_id)
+            .where(FacturaVendedorOrden.factura_vendedor_id == factura_vendedor_id)
+        ).all()
+        pendientes = sorted(
+            {f.folio_orden for f in filas if f.estatus_orden != EstatusOrden.COBRADA.value}
+        )
+        if pendientes:
+            raise DomainError(
+                "No se puede autorizar el pago: la(s) orden(es) de servicio "
+                f"{', '.join(pendientes)} todavía no ha(n) sido cobrada(s) al cliente.",
+                detalles={"ordenes_pendientes_de_cobro": pendientes},
+            )
+
     def autorizar(
         self, factura_vendedor_id: uuid.UUID, usuario: CurrentUser
     ) -> FacturaVendedorRead:
@@ -656,6 +702,7 @@ class FacturaVendedorService(
                 f"El area '{usuario.area.value}' no puede autorizar facturas de vendedor "
                 "- solo Direccion."
             )
+        self._validar_cobradas_antes_de_autorizar(factura_vendedor_id)
         return self.transicionar(
             factura_vendedor_id,
             EstatusFacturaProveedor.AUTORIZADA.value,
@@ -707,12 +754,16 @@ def listar_facturas_vendedor(
 )
 def listar_ordenes_facturables_vendedor(
     vendedor_id: uuid.UUID = Query(...),
+    excluir_de_factura_id: uuid.UUID | None = Query(
+        None, description="Al editar: no excluye las órdenes de esta misma factura."
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
     svc: FacturaVendedorService = Depends(get_factura_vendedor_service),
 ) -> list[OrdenClienteFacturableVendedorRead]:
-    """Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` donde ese vendedor
-    es el `vendedor_principal_id`. Declarado ANTES de `/{item_id}`."""
-    return svc.ordenes_facturables(vendedor_id)
+    """Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada donde ese
+    vendedor es el `vendedor_principal_id`, sin las que ya tienen factura registrada en
+    OTRA (ADR-264). Declarado ANTES de `/{item_id}`."""
+    return svc.ordenes_facturables(vendedor_id, excluir_de_factura_id)
 
 
 @router_vendedores.get("/{item_id}", response_model=FacturaVendedorRead)

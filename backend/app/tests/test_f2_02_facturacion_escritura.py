@@ -1335,6 +1335,107 @@ def test_direccion_y_admin_si_autorizan(
     assert r.json()["estatus_factura_afiliado"] == "autorizada"
 
 
+# ── ADR-264 (petición del usuario, con captura): no se autoriza el pago mientras la
+# orden de servicio no esté COBRADA al cliente — protege el flujo de caja ────────────
+def test_autorizar_factura_afiliado_bloquea_si_la_orden_no_esta_cobrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AUTORIZ-AFIL")
+    oe_id = _orden_estacion(db, cat, orden_id, "cerrada")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/afiliados",
+        json=_payload_factura_afiliado(
+            cat, factura_emisora="EMI-AUTORIZ", ordenes_estacion_ids=[str(oe_id)]
+        ),
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["factura_afiliado_id"]
+    client.post(
+        f"/api/v1/facturacion/afiliados/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["codigo"] == "error_dominio"
+    assert "OC-AUTORIZ-AFIL" in r.json()["error"]["mensaje"]
+
+    # Una vez que el cliente pagó la orden (`cobrada`), sí se autoriza.
+    db.get(OrdenCliente, orden_id).estatus_orden = "cobrada"
+    db.commit()
+    r2 = client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r2.status_code == 200, r2.text
+
+
+def test_autorizar_factura_agencia_bloquea_si_la_orden_no_esta_cobrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AUTORIZ-AG")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["factura_agencia_id"]
+    client.post(
+        f"/api/v1/facturacion/agencias/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["codigo"] == "error_dominio"
+    assert "OC-AUTORIZ-AG" in r.json()["error"]["mensaje"]
+
+    db.get(OrdenCliente, orden_id).estatus_orden = "cobrada"
+    db.commit()
+    r2 = client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r2.status_code == 200, r2.text
+
+
+def test_autorizar_factura_vendedor_bloquea_si_la_orden_no_esta_cobrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AUTORIZ-VEND")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["factura_vendedor_id"]
+    client.post(
+        f"/api/v1/facturacion/vendedores/{fid}/estatus",
+        json={"estatus": "en_revision"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["codigo"] == "error_dominio"
+    assert "OC-AUTORIZ-VEND" in r.json()["error"]["mensaje"]
+
+    db.get(OrdenCliente, orden_id).estatus_orden = "cobrada"
+    db.commit()
+    r2 = client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r2.status_code == 200, r2.text
+
+
 def test_ventas_no_captura_costos(client: TestClient, cat: dict[str, uuid.UUID]) -> None:
     r = client.post(
         "/api/v1/facturacion/afiliados",
@@ -1700,6 +1801,94 @@ def test_ordenes_facturables_agencia_solo_lista_las_cerradas_de_esa_agencia(
     assert vacio == []
 
 
+def test_ordenes_facturables_agencia_incluye_facturadas_y_cobradas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-264 (petición del usuario): el combo ya no se limita a `orden_cerrada` — una
+    orden que F2/F3 ya avanzaron a `facturada`/`cobrada` sigue siendo facturable a la
+    agencia (la comisión de agencia es independiente del ciclo de facturación al
+    cliente)."""
+    cerrada = _orden(db, cat, "orden_cerrada", "OC-AG-CERRADA")
+    facturada = _orden(db, cat, "facturada", "OC-AG-FACTURADA")
+    cobrada = _orden(db, cat, "cobrada", "OC-AG-COBRADA")
+    _orden(db, cat, "en_verificacion", "OC-AG-NOCERRADA")  # sigue sin aparecer
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(cat["agencia_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    ids = {item["orden_id"] for item in r.json()}
+    assert ids == {str(cerrada), str(facturada), str(cobrada)}
+
+
+def test_ordenes_facturables_agencia_excluye_las_ya_facturadas_en_otra_factura(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-264 (petición del usuario, con captura): mismo giro que ya tenía
+    FacturaAfiliado (ADR-217) — una orden que YA tiene una `FacturaAgenciaOrden` en OTRA
+    factura ya no se sugiere en el combo (la validación dura sigue permitiendo
+    forzarla, ver `test_la_misma_orden_puede_estar_en_facturas_de_agencia_distintas`)."""
+    libre = _orden(db, cat, "orden_cerrada", "OC-AG-LIBRE")
+    ya_facturada = _orden(db, cat, "orden_cerrada", "OC-AG-YAFACT")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(ya_facturada)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    r = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(cat["agencia_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    ids = {item["orden_id"] for item in r.json()}
+    assert str(libre) in ids
+    assert str(ya_facturada) not in ids
+
+
+def test_ordenes_facturables_agencia_excluir_de_factura_id_no_oculta_sus_propias(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-EDITCOMBO")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["factura_agencia_id"]
+
+    sin_excluir = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(cat["agencia_id"])},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(orden_id) not in {item["orden_id"] for item in sin_excluir}
+
+    con_excluir = client.get(
+        "/api/v1/facturacion/agencias/ordenes-facturables",
+        params={"agencia_id": str(cat["agencia_id"]), "excluir_de_factura_id": fid},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(orden_id) in {item["orden_id"] for item in con_excluir}
+
+
 def test_editar_factura_agencia_permite_reasignar_agencia_y_ordenes(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -1782,13 +1971,21 @@ def test_editar_factura_agencia_orden_inexistente_400(
 def test_editar_factura_agencia_autorizada_no_permite_reasignar(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
     fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-SIMPLE-3")
+    ordenes = client.get(f"/api/v1/facturacion/agencias/{fid}/ordenes", headers=_hdr("cxp")).json()
+    for o in ordenes:
+        db.get(OrdenCliente, uuid.UUID(o["orden_id"])).estatus_orden = "cobrada"
+    db.commit()
+
     client.post(
         f"/api/v1/facturacion/agencias/{fid}/estatus",
         json={"estatus": "en_revision"},
         headers=_hdr("cxp"),
     )
-    client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
+    r = client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r.status_code == 200, r.text
 
     r = client.put(
         f"/api/v1/facturacion/agencias/{fid}",
@@ -2090,6 +2287,92 @@ def test_ordenes_facturables_vendedor_solo_lista_las_del_vendedor_principal(
     assert vacio == []
 
 
+def test_ordenes_facturables_vendedor_incluye_facturadas_y_cobradas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-264 (petición del usuario): mismo giro que en FacturaAgencia — el combo ya no
+    se limita a `orden_cerrada`."""
+    cerrada = _orden(db, cat, "orden_cerrada", "OC-VEND-CERRADA")
+    facturada = _orden(db, cat, "facturada", "OC-VEND-FACTURADA")
+    cobrada = _orden(db, cat, "cobrada", "OC-VEND-COBRADA")
+    _orden(db, cat, "en_verificacion", "OC-VEND-NOCERRADA")  # sigue sin aparecer
+    db.commit()
+
+    r = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(cat["vendedor_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    ids = {item["orden_id"] for item in r.json()}
+    assert ids == {str(cerrada), str(facturada), str(cobrada)}
+
+
+def test_ordenes_facturables_vendedor_excluye_las_ya_facturadas_en_otra_factura(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-264 (petición del usuario, con captura): una orden que YA tiene una
+    `FacturaVendedorOrden` en OTRA factura ya no se sugiere en el combo (la validación
+    dura sigue permitiendo forzarla, ver
+    `test_la_misma_orden_puede_estar_en_facturas_de_vendedor_distintas`)."""
+    libre = _orden(db, cat, "orden_cerrada", "OC-VEND-LIBRE")
+    ya_facturada = _orden(db, cat, "orden_cerrada", "OC-VEND-YAFACT")
+    db.commit()
+
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(ya_facturada)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+
+    r = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(cat["vendedor_id"])},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    ids = {item["orden_id"] for item in r.json()}
+    assert str(libre) in ids
+    assert str(ya_facturada) not in ids
+
+
+def test_ordenes_facturables_vendedor_excluir_de_factura_id_no_oculta_sus_propias(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-EDITCOMBO")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["factura_vendedor_id"]
+
+    sin_excluir = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(cat["vendedor_id"])},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(orden_id) not in {item["orden_id"] for item in sin_excluir}
+
+    con_excluir = client.get(
+        "/api/v1/facturacion/vendedores/ordenes-facturables",
+        params={"vendedor_id": str(cat["vendedor_id"]), "excluir_de_factura_id": fid},
+        headers=_hdr("cxp"),
+    ).json()
+    assert str(orden_id) in {item["orden_id"] for item in con_excluir}
+
+
 def test_editar_factura_vendedor_permite_reasignar_vendedor_y_ordenes(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -2173,13 +2456,23 @@ def test_editar_factura_vendedor_orden_inexistente_400(
 def test_editar_factura_vendedor_autorizada_no_permite_reasignar(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    from app.modules.ordenes.orden_cliente import OrdenCliente
+
     fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-SIMPLE-3")
+    ordenes = client.get(
+        f"/api/v1/facturacion/vendedores/{fid}/ordenes", headers=_hdr("cxp")
+    ).json()
+    for o in ordenes:
+        db.get(OrdenCliente, uuid.UUID(o["orden_id"])).estatus_orden = "cobrada"
+    db.commit()
+
     client.post(
         f"/api/v1/facturacion/vendedores/{fid}/estatus",
         json={"estatus": "en_revision"},
         headers=_hdr("cxp"),
     )
-    client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
+    r = client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
+    assert r.status_code == 200, r.text
 
     r = client.put(
         f"/api/v1/facturacion/vendedores/{fid}",

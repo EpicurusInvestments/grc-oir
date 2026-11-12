@@ -303,8 +303,8 @@ export function FacturaAfiliadoForm({
               !afiliadoId
                 ? "Selecciona primero un afiliado."
                 : opcionesDisponibles.length === 0 && ordenesSeleccionadas.length > 0
-                  ? "Ya agregaste todas las órdenes internas cerradas de este afiliado."
-                  : "Este afiliado no tiene órdenes internas cerradas."
+                  ? "Ya agregaste todas las órdenes internas disponibles de este afiliado."
+                  : "Este afiliado no tiene órdenes internas disponibles para facturar."
             }
             options={opcionesDisponibles.map((oe) => ({
               value: oe.orden_estacion_id,
@@ -314,8 +314,10 @@ export function FacturaAfiliadoForm({
             }))}
           />
           <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 11, display: "block" }}>
-            Opcional: solo lista las órdenes internas <strong>cerradas</strong> de ese afiliado. Puedes
-            elegir varias — la factura queda asignada a cada una al guardar.
+            Opcional: solo lista las órdenes internas de este afiliado ya{" "}
+            <strong>cerradas, facturadas o cobradas</strong>, y que no estén asignadas a otra
+            factura de afiliado. Puedes elegir varias — la factura queda asignada a cada una al
+            guardar.
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>

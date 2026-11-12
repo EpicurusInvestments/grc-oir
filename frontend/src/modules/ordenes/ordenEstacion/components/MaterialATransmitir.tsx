@@ -1,7 +1,11 @@
 /** "Material a Transmitir" (ADR-103): audios de una OrdenEstacion ya creada — subida
- * real a S3/local (mp3/wav/ogg, ≤ 15 MB), lista con descarga/baja. ADR-187: cada SPOT
- * recibe su propio material por posición (orden de esta lista) — ver el multi-select de
+ * real a S3/local (≤ 15 MB), lista con descarga/baja. ADR-187: cada SPOT recibe su
+ * propio material por posición (orden de esta lista) — ver el multi-select de
  * "Material a Transmitir" por fecha en `PeriodoTransmisionGrid.tsx`.
+ *
+ * ADR-266 (petición del usuario, con captura): ya NO restringe a mp3/wav/ogg — acepta
+ * cualquier formato salvo ejecutables/scripts (mismo criterio que "Formato de Horarios
+ * Reales"), tanto en el selector de archivos (sin `accept`) como en la validación.
  *
  * Requiere un `orden_estacion_id` real (subir un audio no tiene sentido antes de
  * guardar la OE) — por eso se muestra en `OrdenEstacionDetailPanel.tsx` (el detalle, a
@@ -29,7 +33,7 @@ import {
   subirAudioOrdenEstacionApi,
 } from "../../adapters/escrituraApi";
 import { ordenEstacionAudioFromApi } from "../../adapters/fromApi";
-import { AUDIO_ORDEN_ACCEPT, AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_AUDIO_ORDENES } from "../../constants";
+import { AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_PELIGROSAS_FORMATO_REAL } from "../../constants";
 import type { OrdenEstacionAudio } from "../../types";
 
 interface MaterialATransmitirProps {
@@ -74,11 +78,14 @@ export function MaterialATransmitir({
     try {
       let audiosActuales = audios;
       for (const archivo of Array.from(archivos)) {
-        // Validación en el front (UX inmediata) — el backend SIEMPRE revalida extensión,
-        // magic bytes y tamaño; esto no la reemplaza, la anticipa.
+        // ADR-266 (petición del usuario, con captura): ya NO es lista blanca de audio —
+        // acepta cualquier formato salvo ejecutables/scripts (mismo criterio que
+        // "Formato de Horarios Reales"). Validación en el front (UX inmediata) — el
+        // backend SIEMPRE revalida (lista negra + magic bytes de ejecutable); esto no
+        // la reemplaza, la anticipa.
         const ext = archivo.name.split(".").pop()?.toLowerCase() ?? "";
-        if (!(EXTENSIONES_AUDIO_ORDENES as readonly string[]).includes(ext)) {
-          errores.push(`${archivo.name}: formato no permitido (usa ${EXTENSIONES_AUDIO_ORDENES.join(", ")}).`);
+        if ((EXTENSIONES_PELIGROSAS_FORMATO_REAL as readonly string[]).includes(ext)) {
+          errores.push(`${archivo.name}: formato ejecutable/script no permitido (.${ext}).`);
           continue;
         }
         if (archivo.size > AUDIO_ORDEN_MAX_BYTES) {
@@ -162,7 +169,6 @@ export function MaterialATransmitir({
             className="file-input"
             type="file"
             multiple
-            accept={AUDIO_ORDEN_ACCEPT}
             disabled={subiendo}
             onChange={(e) => void onElegir(e.target.files)}
           />

@@ -266,11 +266,14 @@ export const facturaAgenciaApi = {
     const { data } = await apiClient.get<FacturaAgenciaOrden[]>(`${BASE}/agencias/${id}/ordenes`);
     return data;
   },
-  /** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` de esa agencia. */
-  async ordenesFacturables(agenciaId: string) {
+  /** Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada de esa
+   *  agencia, sin las que ya tienen factura registrada en OTRA (ADR-264). Al editar,
+   *  `excluirDeFacturaId` es la propia factura: sus asignaciones no cuentan como "ya
+   *  facturadas". */
+  async ordenesFacturables(agenciaId: string, excluirDeFacturaId?: string | null) {
     const { data } = await apiClient.get<OrdenClienteFacturableAgencia[]>(
       `${BASE}/agencias/ordenes-facturables`,
-      { params: { agencia_id: agenciaId } },
+      { params: { agencia_id: agenciaId, excluir_de_factura_id: excluirDeFacturaId || undefined } },
     );
     return data;
   },
@@ -310,12 +313,13 @@ export const facturaVendedorApi = {
     const { data } = await apiClient.get<FacturaVendedorOrden[]>(`${BASE}/vendedores/${id}/ordenes`);
     return data;
   },
-  /** Combo "Buscar y agregar" del alta/edición: OC `orden_cerrada` cuyo vendedor
-   *  principal es el elegido. */
-  async ordenesFacturables(vendedorId: string) {
+  /** Combo "Buscar y agregar" del alta/edición: OC cerrada/facturada/cobrada cuyo
+   *  vendedor principal es el elegido, sin las que ya tienen factura registrada en
+   *  OTRA (ADR-264). Al editar, `excluirDeFacturaId` es la propia factura. */
+  async ordenesFacturables(vendedorId: string, excluirDeFacturaId?: string | null) {
     const { data } = await apiClient.get<OrdenClienteFacturableVendedor[]>(
       `${BASE}/vendedores/ordenes-facturables`,
-      { params: { vendedor_id: vendedorId } },
+      { params: { vendedor_id: vendedorId, excluir_de_factura_id: excluirDeFacturaId || undefined } },
     );
     return data;
   },

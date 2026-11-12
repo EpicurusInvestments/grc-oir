@@ -23,8 +23,8 @@ vi.mock("../hooks", () => ({
       { id: "vd-2", etiqueta: "Juan Pérez" },
     ],
   }),
-  useOrdenesFacturablesVendedor: (vendedorId: string | null) => ({
-    data: vendedorId ? ordenesFacturablesMock(vendedorId) : [],
+  useOrdenesFacturablesVendedor: (vendedorId: string | null, excluirDeFacturaId?: string) => ({
+    data: vendedorId ? ordenesFacturablesMock(vendedorId, excluirDeFacturaId) : [],
     isLoading: false,
   }),
 }));
@@ -214,6 +214,25 @@ describe("FacturaVendedorForm — Asignación a órdenes", () => {
     expect(await screen.findByDisplayValue("Carmen Aristegui")).toBeEnabled();
     expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
     expect(screen.getAllByText("$177,480.00").length).toBe(2);
+  });
+
+  it("ADR-264: en edición, manda el id de la propia factura para que el combo no excluya sus propias órdenes", async () => {
+    ordenesFacturablesMock.mockReturnValue([]);
+    render(
+      <FacturaVendedorForm
+        isEdit
+        defaultValues={{
+          vendedor_id: "vd-1",
+          folio_factura_vendedor: "VE-2025-0287",
+          fecha_factura_vendedor: "2025-06-08",
+        }}
+        facturaVendedorIdActual="fv-1"
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByDisplayValue("Carmen Aristegui");
+    expect(ordenesFacturablesMock).toHaveBeenCalledWith("vd-1", "fv-1");
   });
 
   it("en edición, cambiar de vendedor limpia las órdenes ya asignadas (eran del vendedor anterior)", async () => {

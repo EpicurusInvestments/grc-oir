@@ -10773,3 +10773,246 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   marcador no encontrado`) y confirma el fix (`226 líneas, marcador encontrado` tras
   normalizar a CRLF) — sin necesitar una máquina Linux para probarlo. Pendiente: el
   próximo run de CI (en GitHub Actions, Linux real) es la confirmación definitiva.
+
+### ADR-263 — El mismo vendedor se podía elegir como principal Y secundario en la OS
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura de
+  pantalla: eligió "Carmen Aristegui" tanto en "Vendedor principal" como en "Vendedor
+  secundario" sin que nada lo impidiera).
+- **Diagnóstico:** los dos `<select>` de `OrdenClienteForm.tsx` (sección "Equipo
+  comercial y comisiones") listaban el catálogo completo de vendedores activos sin
+  excluir al ya elegido en el otro campo — ni el frontend ni el backend validaban que
+  fueran distintos.
+- **Fix — frontend:** cada select ahora filtra, además de `esActivo`, al vendedor
+  seleccionado en el OTRO campo (`vendedores.filter((v) => v.id !== vsId)` en
+  "Vendedor principal" y `v.id !== vpId` en "Vendedor secundario") — ya no aparece en
+  la lista, así que no se puede repetir desde la UI.
+- **Fix — backend (cierra el hueco de API directa):** nuevo
+  `OrdenClienteService._validar_vendedores_distintos()`, llamado desde `_pre_create`
+  (con el payload completo) y desde `_pre_update` (mezclando payload con los valores ya
+  guardados en `obj`, mismo patrón que la validación de fechas de ADR-180/261) — si
+  `vendedor_secundario_id == vendedor_principal_id` (y el secundario no es `None`),
+  `DomainError`.
+- **Verificado:** `test_crear_oc_rechaza_mismo_vendedor_principal_y_secundario` y
+  `test_editar_oc_rechaza_mismo_vendedor_principal_y_secundario` (backend);
+  `describe("Fix: no se puede repetir el mismo vendedor como principal y secundario")`
+  (frontend, 2 pruebas) — suite completa de backend y frontend 100% verde, `ruff` y
+  `tsc --noEmit` limpios.
+
+### ADR-264 — Facturas recibidas (afiliado/agencia/vendedor): combo de órdenes y candado de "cobrada" antes de autorizar
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con 6 capturas:
+  pantallas de "Facturas recibidas" — De afiliados/De agencias/De vendedores — y del
+  flujo Recibida → En revisión → Autorizada).
+- **Pedido textual, 4 partes:**
+  1. En el combo de selección de órdenes, que aparezcan las que le corresponden al
+     afiliado/agencia/vendedor elegido y que estén "de cerradas en adelante" (cerrada,
+     facturada o cobrada), no solo `orden_cerrada`.
+  2. Que una orden ya relacionada a OTRA factura no se vuelva a sugerir ("si no se
+     repetirían los pagos") — el usuario creía que esta validación ya existía.
+  3. **Lo más importante:** que "Autorizar" (paso 2→3, Dirección/Admin) se BLOQUEE si la
+     orden de servicio todavía no está pagada por el cliente — "si no, les va a dejar
+     autorizar [el pago] y luego no sale". Explícito: "Pasar a revisión" SÍ debe seguir
+     libre (para que CxP capture sin bloquearse), el candado es solo en autorizar.
+     Aplica igual a los 3 tipos.
+  4. El texto de ayuda bajo el combo ("Opcional: solo lista las órdenes internas de
+     este Afiliado...") ya no describe bien el comportamiento — ajustarlo.
+- **Diagnóstico (investigado antes de tocar código, con un subagente de exploración):**
+  - **Punto 1:** `FacturaAfiliadoService.ordenes_facturables()` filtra por
+    `OrdenEstacion.estatus == 'cerrada'` — correcto y SIN cambios: `OrdenEstacion` no
+    tiene un sub-estado posterior a `cerrada` (`FROZEN_STATES_OE` no incluye nada más
+    allá); es la `OrdenCliente` PADRE la que sigue avanzando a `facturada`/`cobrada`
+    mientras la OE se queda `cerrada` para siempre (confirmado leyendo
+    `marcar_facturada()`/`marcar_cobrada()` en `orden_cliente.py`: ninguno de los dos
+    toca `OrdenEstacion.estatus`). `FacturaAgenciaService`/`FacturaVendedorService.
+    ordenes_facturables()` sí filtraban por `OrdenCliente.estatus_orden ==
+    'orden_cerrada'` exacto — ahí SÍ hacía falta ampliar a `FROZEN_STATES_OC`
+    (`{orden_cerrada, facturada, cobrada}`).
+  - **Punto 2:** el usuario tenía razón A MEDIAS. `FacturaAfiliadoService.
+    ordenes_facturables()` YA excluía del combo las OE con una `FacturaAfiliadoOrden`
+    en OTRA factura — decisión tomada antes, en **ADR-217 Parte 2** ("en el combo no
+    deberían aparecer las órdenes que ya tengan una factura registrada"), que
+    deliberadamente dejó INTACTA la validación dura (`_validar_ordenes_estacion`):
+    sigue aceptando un alta que mande explícito el id de una OE ya facturada —
+    "parcialidades" sigue siendo posible si se fuerza, solo dejó de sugerirse. Pero
+    `FacturaAgenciaService`/`FacturaVendedorService` NUNCA habían recibido ese mismo
+    giro: sus módulos documentaban explícitamente lo contrario ("el orden puede seguir
+    apareciendo en varias facturas... no cambia esa regla de ADR-079/ADR-239", "el
+    backend no las excluye del combo") — confirmado leyendo el código, no asumido.
+  - **Punto 3:** no existía ningún candado de este tipo en ningún lado — ni en
+    `autorizar()` ni en `transicionar()` de los 3 servicios, ni usando los campos
+    `OrdenCliente.estatus_pago_afiliado`/`estatus_pago_agencia` (que existen en el
+    modelo pero están vestigiales: se escriben una sola vez, en `pendiente`, al crear
+    la OC, y nunca se vuelven a leer ni escribir en todo el backend — confirmado con
+    grep de todo el repo). La señal correcta y ya confiable para "el cliente pagó esta
+    orden" es `OrdenCliente.estatus_orden == 'cobrada'` (la marca `marcar_cobrada()` de
+    F1/F3, terminal, sin reversa) — no esos campos vestigiales ni ningún campo nuevo.
+- **Fix:**
+  1. `ordenes_facturables()` de agencia/vendedor: `OrdenCliente.estatus_orden ==
+     EstatusOrden.ORDEN_CERRADA.value` → `.in_(FROZEN_STATES_OC)`. Afiliado sin cambios
+     (ya correcto, ver diagnóstico).
+  2. `ordenes_facturables()` de agencia/vendedor gana `excluir_de_factura_id` (mismo
+     parámetro y mismo patrón que afiliado, ADR-217) y excluye del combo las órdenes con
+     una `FacturaAgenciaOrden`/`FacturaVendedorOrden` en OTRA factura. La validación
+     DURA (`_validar_ordenes`) NO se tocó en ninguno de los 3: sigue aceptando un alta
+     que mande explícito el id de una orden ya facturada (igual que afiliado desde
+     ADR-217) — confirmado que esto no rompe
+     `test_la_misma_orden_puede_estar_en_facturas_de_agencia/vendedor_distintas`
+     (siguen en verde, sin tocarlos).
+  3. Nuevo `_validar_cobradas_antes_de_autorizar()`/`_validar_cobradas_antes_de_
+     autorizar()` en los 3 servicios (`factura_afiliado.py`, `factura_agencia.py`,
+     `factura_vendedor.py`), llamado al PRINCIPIO de `autorizar()` (después del check de
+     área Dirección/Admin, antes de `transicionar()`): junta, por la factura, el folio y
+     `estatus_orden` de cada `OrdenCliente` involucrada (en afiliado, vía el JOIN
+     `OrdenEstacion.orden_id`; en agencia/vendedor, directo por `orden_id` de la
+     puente) — si alguna no está `cobrada`, `DomainError` listando los folios
+     pendientes ("No se puede autorizar el pago: la(s) orden(es) de servicio ... todavía
+     no ha(n) sido cobrada(s) al cliente."). Una factura SIN órdenes asignadas pasa
+     libre (nada que validar) — necesario para no romper
+     `test_direccion_y_admin_si_autorizan`, que autoriza una factura de afiliado vacía.
+     "Pasar a revisión" (`transicionar()` normal) NO lleva este candado — sigue libre,
+     tal como pidió el usuario.
+  4. Los 3 textos de ayuda bajo el combo se reescriben para describir de verdad el
+     comportamiento (estados incluidos + exclusión de ya facturadas), en vez del texto
+     genérico/desactualizado. Texto final, tras el ajuste del mismo día (petición del
+     usuario, con captura: "ya no solo puede seleccionar órdenes cerradas", viendo que
+     el de afiliado se había quedado diciendo solo "cerradas" mientras agencia/vendedor
+     ya decían "cerradas, facturadas o cobradas") — **los 3 quedan con el mismo rango de
+     estados en el texto**, aunque el filtro real de afiliado siga siendo
+     `OrdenEstacion.estatus == 'cerrada'` (sin cambio de comportamiento: una OE nunca
+     tiene un sub-estado posterior — ver diagnóstico del Punto 1 — así que "cerrada,
+     facturada o cobrada" describe el mismo conjunto de órdenes, en términos del estado
+     de la OC padre, que el usuario sí reconoce). Afiliado: "Opcional: solo lista las
+     órdenes internas de este afiliado ya **cerradas, facturadas o cobradas**, y que no
+     estén asignadas a otra factura de afiliado. Puedes elegir varias — la factura
+     queda asignada a cada una al guardar." (agencia/vendedor, mismo texto adaptado).
+  5. Frontend: `FacturaAgenciaForm`/`FacturaVendedorForm` ganan la prop
+     `facturaAgenciaIdActual`/`facturaVendedorIdActual` (mismo patrón que
+     `facturaAfiliadoIdActual` desde ADR-217/228) para mandar `excluir_de_factura_id` al
+     editar — sin esto, al editar una factura ya guardada sus propias órdenes
+     desaparecerían del combo.
+- **Decisión de alcance (para no sobre-corregir):** NO se tocó la validación DURA de
+  ninguno de los 3 servicios (acepta explícito un id ya usado en otra factura) ni se
+  agregó un check de estado en `_validar_ordenes` de agencia/vendedor (que hoy no valida
+  NINGÚN estado de la OC en el alta directa, a diferencia de afiliado) — el pedido del
+  usuario fue específicamente sobre el combo de selección y sobre autorizar, no sobre
+  cerrar por completo la vía de API directa; se documenta aquí como hueco conocido, no
+  como algo resuelto.
+- **Verificado:** suite completa de backend (pytest + ruff) y frontend (vitest + tsc)
+  100% verde. Pruebas nuevas: `test_ordenes_facturables_agencia/vendedor_incluye_
+  facturadas_y_cobradas`, `test_ordenes_facturables_agencia/vendedor_excluye_las_ya_
+  facturadas_en_otra_factura`, `test_ordenes_facturables_agencia/vendedor_excluir_de_
+  factura_id_no_oculta_sus_propias`, `test_autorizar_factura_afiliado/agencia/vendedor_
+  bloquea_si_la_orden_no_esta_cobrada` (backend); `ADR-264: en edición, manda el id de
+  la propia factura...` (frontend, agencia y vendedor). Tests preexistentes adaptados
+  (no rotos sin razón): `test_editar_factura_agencia/vendedor_autorizada_no_permite_
+  reasignar` ahora marcan la orden `cobrada` antes de autorizar, para seguir probando lo
+  que probaban (que ya autorizada no se reedita) sin toparse con el candado nuevo.
+
+### ADR-265 — "Capturar reales": la tabla dejaba un hueco en blanco a la derecha en vez de ocupar todo el ancho
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con captura: la
+  tabla de días/horarios quedaba angosta, pegada a la izquierda, con mucho espacio en
+  blanco a la derecha dentro de su columna del layout).
+- **Diagnóstico:** `RealesForm.tsx` (ADR-252) le puso `tableLayout: "fixed"` a la tabla
+  para angostar columnas, pero la dejó con `width: "auto"` y anchos de columna en `px`
+  fijos (90+100+100+150+140 = 580px). Con `table-layout: fixed`, una tabla sin `width`
+  explícito no se estira a su contenedor: toma exactamente la suma de sus columnas y
+  listo — el resto de la celda `1fr` del grid (`gridTemplateColumns: "1fr 300px"`) se
+  queda vacío.
+- **Fix:** `width: "100%"` en la tabla, y los 5 anchos de columna pasan de `px` fijos a
+  `%` (15/17/17/26/25, mismas proporciones relativas que antes) — con `table-layout:
+  fixed`, las columnas ahora se reparten el 100% del ancho disponible en vez de un
+  tamaño absoluto fijo.
+- **Verificado:** `RealesForm.test.tsx` (23 pruebas, ninguna dependía de anchos
+  absolutos) sigue en verde; `tsc --noEmit` limpio.
+
+### ADR-266 — "Material a Transmitir": deja de ser lista blanca de audio, acepta cualquier formato salvo ejecutables/scripts
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario: "en Órdenes de
+  Transmisión, cuando carga el material de transmisión quita la restricción para que
+  permita subir cualquier tipo de archivo sin importar la extensión").
+- **Diagnóstico:** "Material a Transmitir" (ADR-103) validaba contra la lista BLANCA
+  `EXTENSIONES_AUDIO_ORDENES` (mp3/wav/ogg) en sus 2 rutas de subida — el endpoint
+  "real" sobre una OE ya creada (`OrdenEstacionService.agregar_audio()`,
+  `POST .../{id}/audios`) y el de "staging" durante el alta, antes de que exista la OE
+  (`material_staging.py`, `POST /material-staging?tipo=audio`) — más su contraparte en
+  el front (`MaterialATransmitir.tsx`/`OrdenEstacionForm.tsx`). El proyecto YA tenía el
+  patrón correcto para "cualquier formato" resuelto desde ADR-123 ("Formato de Horarios
+  Reales"): lista NEGRA (`leer_adjunto_libre`/`EXTENSIONES_PELIGROSAS`) — acepta
+  cualquier extensión salvo ejecutables/scripts, y además rechaza cualquier contenido
+  con firma de ejecutable de Windows ("MZ") sin importar la extensión declarada (un
+  "virus.exe" renombrado a "cosa.mp3" no se cuela). Se optó por reutilizar ESE patrón en
+  vez de quitar toda validación — mantiene la defensa real (OWASP: unrestricted file
+  upload) sin bloquear ningún formato de negocio legítimo.
+- **Fix:**
+  - `app/shared/adjuntos_router.py` (la factory compartida con los adjuntos de
+    documentos/facturación): nuevo parámetro opcional `extensiones_bloqueadas` —
+    default `None` mantiene el comportamiento de SIEMPRE (lista blanca vía
+    `leer_adjunto`) para esos otros consumidores; si se pasa, usa `leer_adjunto_libre`
+    (lista negra) en su lugar.
+  - `material_staging.py`: pasa `extensiones_bloqueadas=EXTENSIONES_PELIGROSAS` en vez
+    de `extensiones_permitidas=EXTENSIONES_AUDIO_ORDENES`.
+  - `OrdenEstacionService.agregar_audio()`: mismo cambio, directo con
+    `leer_adjunto_libre`.
+  - Frontend (`MaterialATransmitir.tsx`, `OrdenEstacionForm.tsx` — sección de staging):
+    la validación de extensión pasa de lista blanca (`EXTENSIONES_AUDIO_ORDENES`) a
+    lista negra (reutiliza `EXTENSIONES_PELIGROSAS_FORMATO_REAL`, ya existente para
+    "Formato de Horarios Reales"); el `<input type="file">` pierde su `accept`
+    restrictivo (el selector del sistema operativo ya no filtra por audio).
+- **Alcance deliberado, NO tocado:** `agregar_evidencia()` ("Evidencias de lo
+  Transmitido"/Capturar Reales, ADR-119) y su contraparte `EvidenciasTransmitido.tsx`
+  siguen con la lista blanca de audio — el pedido fue específicamente sobre "Material a
+  Transmitir", no sobre Evidencias. `EXTENSIONES_AUDIO_ORDENES` sigue viva para eso (y
+  para los tests directos de `leer_adjunto` contra esa lista, que no cambiaron).
+- **Verificado:** backend — 2 tests viejos que esperaban 400 con un PDF se reemplazan
+  por 2 que esperan 201 (`test_http_subir_cualquier_formato_no_peligroso_se_acepta`,
+  `test_http_material_staging_acepta_cualquier_formato_no_peligroso`), más 4 nuevos que
+  confirman el bloqueo real (`test_http_subir_extension_peligrosa_400`,
+  `test_http_subir_ejecutable_renombrado_400`,
+  `test_http_material_staging_rechaza_extension_peligrosa`, y la firma `MZ`
+  independiente de extensión) — suite completa y `ruff` 100% verde. Frontend — 2 tests
+  nuevos en `OrdenEstacionForm.test.tsx` (acepta PDF, rechaza `.exe` sin llamar al
+  backend); el helper `inputDeMaterial()` (y su gemelo en
+  `OrdenEstacionListPage.test.tsx`) dejó de seleccionar el input por
+  `accept*=".mp3"` (ya no existe ese atributo) y ahora usa `input[type="file"]` a secas
+  (el formulario nunca renderiza más de uno a la vez) — suite completa del módulo
+  `ordenes` (295 pruebas), `tsc --noEmit` y `eslint` 100% verdes.
+
+### ADR-267 — `SearchableSelect`: el combo "Buscar y agregar" se recortaba en vez de dejar ver/hacer scroll a más órdenes
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con captura: en el
+  combo de "Asignación a órdenes" de facturas de afiliado/agencia/vendedor, la lista
+  desplegada se veía cortada a los 2-3 primeros renglones, sin poder ver el resto).
+- **Diagnóstico:** `SearchableSelect.tsx` (componente COMPARTIDO, usado en 22 archivos —
+  no solo facturación) renderizaba su lista desplegada (`.ssel-list`) como
+  `position: absolute` DENTRO del propio formulario. `.ssel-list` ya traía su propio
+  scroll interno (`max-height: 260px; overflow-y: auto`), pero eso no importa si un
+  ANCESTRO la recorta primero: toda pantalla de alta/edición usa el mismo patrón de
+  layout (`.detail-pane` con `overflow: hidden` + `.db`, su body, con
+  `overflow-y: auto` y altura acotada por flex) — el combo vive dentro de `.db`, así que
+  la lista desplegada se recortaba en el borde de `.db` antes de poder desplegar sus
+  260px completos, sin importar cuántas opciones hubiera.
+- **Fix:** la lista ahora se renderiza en un **portal a `document.body`**
+  (`createPortal`), con `position: fixed` y coordenadas calculadas en vivo desde el
+  campo de búsqueda (`getBoundingClientRect()`), recalculadas si el usuario hace scroll
+  (en captura, para detectar scroll de CUALQUIER ancestro) o cambia el tamaño de
+  ventana mientras el combo está abierto. Al salir del flujo normal del formulario, ya
+  no la recorta ningún `overflow` acotado de ningún ancestro, en ninguna pantalla.
+  Efecto secundario a resolver: el detector de "clic afuera" comparaba contra el `ref`
+  del contenedor del campo — como la lista ya NO es descendiente de ese contenedor (vive
+  en el portal), un clic dentro de la lista (incluida su propia barra de scroll) se
+  hubiera tratado como "afuera" y cerrado el combo a medio uso (mismo bug de fondo que
+  ya documentó `CheckboxMultiSelect.tsx` para scrollbars de ANCESTROS, aquí aplicado al
+  propio scroll de la lista). Se agrega un segundo `ref` sobre la lista portada; el clic
+  cuenta como "adentro" si cae dentro de CUALQUIERA de los dos.
+- **Alcance:** solo `SearchableSelect.tsx` — es el componente que usan los combos de
+  "Asignación a órdenes" de afiliado/agencia/vendedor (lo pedido). `MultiSearchableSelect.tsx`/
+  `CheckboxMultiSelect.tsx` comparten la clase CSS `.ssel-list` y probablemente el mismo
+  bug de fondo, pero no se tocaron — no fueron parte de lo reportado.
+- **Verificado:** `SearchableSelect.test.tsx` (6 pruebas, usan `screen.getByText`/
+  `getByPlaceholderText` — consultas globales al documento, compatibles con el portal
+  sin cambiarlas) sigue en verde; suite COMPLETA de frontend (534 pruebas) sin
+  regresiones nuevas — los 12 fallos que siguen en rojo son los de
+  auth/sesión ya diferidos por el usuario antes de este cambio, no tienen relación con
+  `SearchableSelect`; `tsc --noEmit` y `eslint` limpios.

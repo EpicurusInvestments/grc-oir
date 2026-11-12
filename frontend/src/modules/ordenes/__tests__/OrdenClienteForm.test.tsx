@@ -869,6 +869,29 @@ describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edició
   });
 });
 
+// ADR-263 (petición del usuario, con captura): no se debe poder elegir el mismo
+// vendedor como principal y secundario a la vez — cada select excluye al que ya está
+// seleccionado en el otro.
+describe("Fix: no se puede repetir el mismo vendedor como principal y secundario", () => {
+  it("elegir un vendedor como principal lo quita de las opciones de secundario", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal"), {
+      target: { value: "ve1" },
+    });
+    const selectSecundario = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
+    expect(within(selectSecundario).queryByText("Renata Aguilar")).toBeNull();
+  });
+
+  it("elegir un vendedor como secundario lo quita de las opciones de principal", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario"), {
+      target: { value: "ve1" },
+    });
+    const selectPrincipal = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");
+    expect(within(selectPrincipal).queryByText("Renata Aguilar")).toBeNull();
+  });
+});
+
 describe("Producto/Duración desde el catálogo Producto Duración — ADR-167/168", () => {
   it("al elegir un producto con duraciones reales, el combo de Duración se llena (sin 'sin resultado')", async () => {
     const { container } = renderForm();

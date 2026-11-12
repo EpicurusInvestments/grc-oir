@@ -167,6 +167,7 @@ export function FacturasVendedorPage() {
           folio_factura_vendedor: selected.folio_factura_vendedor ?? undefined,
           fecha_factura_vendedor: selected.fecha_factura_vendedor,
         }}
+        facturaVendedorIdActual={selected.factura_vendedor_id}
         ordenesIniciales={ordenes.data ?? []}
         archivoPdfPathInicial={selected.archivo_pdf_path}
         archivoXmlPathInicial={selected.archivo_xml_path}

@@ -52,6 +52,10 @@ interface OrdenSeleccionada {
 interface Props {
   isEdit?: boolean;
   defaultValues?: Valores;
+  /** Id de la factura en edición — se manda como `excluir_de_factura_id` al combo de
+   *  órdenes para que sus propias asignaciones no desaparezcan (ADR-264, mismo criterio
+   *  que `facturaAfiliadoIdActual` en FacturaAfiliadoForm). */
+  facturaVendedorIdActual?: string;
   /** Órdenes ya guardadas, al editar — precargan la sección (mismo criterio que
    *  `ordenesIniciales` en `FacturaAgenciaForm`). */
   ordenesIniciales?: FacturaVendedorOrden[];
@@ -68,6 +72,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 export function FacturaVendedorForm({
   isEdit,
   defaultValues,
+  facturaVendedorIdActual,
   ordenesIniciales,
   archivoPdfPathInicial = null,
   archivoXmlPathInicial = null,
@@ -101,7 +106,7 @@ export function FacturaVendedorForm({
   const [archivoXmlPath, setArchivoXmlPath] = useState<string | null>(archivoXmlPathInicial);
 
   const vendedorId = watch("vendedor_id");
-  const ordenesFacturables = useOrdenesFacturablesVendedor(vendedorId || null);
+  const ordenesFacturables = useOrdenesFacturablesVendedor(vendedorId || null, facturaVendedorIdActual);
 
   // Fix (mismo criterio que el combo de agencia en FacturaAgenciaForm): cambiar de
   // vendedor limpia las órdenes ya elegidas — eran del vendedor ANTERIOR. Se compara
@@ -139,8 +144,8 @@ export function FacturaVendedorForm({
   };
 
   // Solo ofrece las que todavía no se eligieron en ESTA factura — una vez agregada,
-  // desaparece del buscador (el mismo orden SÍ puede estar en OTRAS facturas de
-  // vendedor, parcialidades: el backend no las excluye del combo).
+  // desaparece del buscador. El backend (ADR-264) ya excluye del combo las que estén en
+  // OTRA factura de vendedor, así que esto solo cubre la selección en curso.
   const opcionesDisponibles = (ordenesFacturables.data ?? []).filter(
     (oc) => !ordenesSeleccionadas.some((sel) => sel.orden_id === oc.orden_id),
   );
@@ -264,8 +269,8 @@ export function FacturaVendedorForm({
               !vendedorId
                 ? "Selecciona primero un vendedor."
                 : opcionesDisponibles.length === 0 && ordenesSeleccionadas.length > 0
-                  ? "Ya agregaste todas las órdenes cerradas de este vendedor."
-                  : "Este vendedor no tiene órdenes cerradas donde sea el principal."
+                  ? "Ya agregaste todas las órdenes disponibles de este vendedor."
+                  : "Este vendedor no tiene órdenes disponibles donde sea el principal."
             }
             options={opcionesDisponibles.map((oc) => ({
               value: oc.orden_id,
@@ -273,8 +278,10 @@ export function FacturaVendedorForm({
             }))}
           />
           <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 11, display: "block" }}>
-            Solo lista las órdenes <strong>cerradas</strong> donde este vendedor es el principal.
-            Puedes elegir varias — cada una aporta su propia comisión, con el % ya pactado en ella.
+            Solo lista las órdenes donde este vendedor es el principal, ya{" "}
+            <strong>cerradas, facturadas o cobradas</strong>, y que no estén asignadas a otra
+            factura de vendedor. Puedes elegir varias — cada una aporta su propia comisión, con
+            el % ya pactado en ella.
           </div>
 
           {ordenesSeleccionadas.length === 0 ? (

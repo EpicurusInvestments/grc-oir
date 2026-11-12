@@ -18,7 +18,11 @@ import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
 import { makeOC, makeOE } from "./fixtures";
-import { listarAudiosOrdenEstacionApi, listarHistorialTarifaOrdenEstacionApi } from "../adapters/escrituraApi";
+import {
+  listarAudiosOrdenEstacionApi,
+  listarHistorialTarifaOrdenEstacionApi,
+  subirMaterialStagingApi,
+} from "../adapters/escrituraApi";
 
 // ADR-246: "Motivo del cambio de tarifa" dejó de ser un `<select>` nativo — ahora es
 // `SearchableSelect` (escribir filtra, click en la opción confirma). Reemplaza el viejo
@@ -153,10 +157,13 @@ function renderForm(
 // ADR-110: "Material a Transmitir" es obligatorio para CREAR — antes de poder usar
 // "+ Agregar día" hace falta al menos un audio subido (staging). Sube uno de una vez si
 // hace falta (no-op si ya hay alguno, p.ej. una prueba que ya lo subió ella misma antes).
-// Selector por `accept` (no por posición): el orden de las secciones en el DOM puede
-// cambiar (petición del usuario) — ".mp3" en `accept` solo lo trae este input.
+// `OrdenEstacionForm.tsx` solo renderiza UN `input[type="file"]` a la vez (el de staging
+// al crear, o el de `MaterialATransmitir` al editar — son mutuamente excluyentes), así
+// que basta ese selector. ADR-266 (petición del usuario, con captura) le quitó el
+// `accept=".mp3,..."` (ya no es lista blanca de audio) — antes se seleccionaba por ese
+// atributo para no depender del orden de las secciones en el DOM; ya no existe.
 function inputDeMaterial(container: HTMLElement): HTMLInputElement {
-  return container.querySelector('input[type="file"][accept*=".mp3"]') as HTMLInputElement;
+  return container.querySelector('input[type="file"]') as HTMLInputElement;
 }
 
 async function asegurarMaterial(container: HTMLElement) {
@@ -1084,6 +1091,29 @@ describe("Material a Transmitir — subida durante la captura (ADR-109)", () => 
     expect(screen.getByText("Sin audios elegidos todavía.")).toBeInTheDocument();
   });
 
+  // ADR-266 (petición del usuario, con captura): ya NO es lista blanca de audio.
+  it("ADR-266: un archivo que no es audio (pero no es ejecutable/script) se sube igual", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    const input = inputDeMaterial(container);
+    const archivo = new File(["contenido"], "documento.pdf", { type: "application/pdf" });
+    fireEvent.change(input, { target: { files: [archivo] } });
+
+    await waitFor(() => expect(screen.getByText("documento.pdf")).toBeInTheDocument());
+    expect(vi.mocked(subirMaterialStagingApi)).toHaveBeenCalledWith(archivo);
+  });
+
+  it("ADR-266: una extensión ejecutable/script se rechaza en el front, sin llamar al backend", async () => {
+    const { container } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
+    const llamadasPrevias = vi.mocked(subirMaterialStagingApi).mock.calls.length;
+    const input = inputDeMaterial(container);
+    const archivo = new File(["contenido"], "virus.exe", { type: "application/octet-stream" });
+    fireEvent.change(input, { target: { files: [archivo] } });
+
+    await screen.findByText(/formato ejecutable\/script no permitido \(\.exe\)/);
+    expect(screen.getByText("Sin audios elegidos todavía.")).toBeInTheDocument();
+    expect(vi.mocked(subirMaterialStagingApi).mock.calls.length).toBe(llamadasPrevias);
+  });
+
   it("ADR-111/ADR-187: con 2+ audios subidos, un día de 1 solo renglón (sin rango) asigna por posición y permite reasignar a otro material", async () => {
     const { container, onGuardar } = renderForm({ oc: { total_spots: 120, precio_unitario: 1000 } });
 
@@ -1183,7 +1213,7 @@ describe("Edición de OE existente (corrección de errores de captura, antes de 
 
   it("ADR-211: a diferencia del detalle, aquí SÍ se permite subir material nuevo (selector de archivos visible)", async () => {
     const { container } = renderForm({ oc: { total_spots: 120 }, oe: { estacion_id: "es1" } });
-    expect(container.querySelector('input[type="file"][accept*=".mp3"]')).not.toBeNull();
+    expect(container.querySelector('input[type="file"]')).not.toBeNull();
   });
 
   it("ADR-213: a diferencia del detalle, aquí SÍ se permite quitar material (botón 'Quitar' visible)", async () => {
