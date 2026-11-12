@@ -10592,3 +10592,36 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   parametrizada con las 18 combinaciones válidas (todas se aceptan) y otra con 10
   combinaciones reservadas (todas se siguen rechazando) — suite completa de backend
   verde (exit 0), `ruff` limpio. Sin cambios de frontend ni de esquema.
+
+### ADR-258 — CI del backend seguía fallando tras ADR-255: `pypdf` nunca estuvo declarado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: el
+  PR #57 desplegó con el job "Pruebas y linters" en rojo y "Build, push y deploy a DEV"
+  SALTADO por completo — justo el comportamiento esperado de ADR-255, que acababa de
+  quitarle `continue-on-error` a Ruff y Pytest).
+- **Diagnóstico:** el venv local (`backend/.venv`) usado para verificar ADR-255 estaba
+  **desincronizado de `uv.lock`** — tenía paquetes instalados con `pip install` directo
+  en vez de `uv sync` (entre ellos `pypdf`, usado por `test_f1_06_ordenes_pdf.py` para
+  leer de vuelta el texto de los PDFs generados y verificar su contenido), además de
+  versiones más nuevas de `ruff`/`starlette`/`uvicorn`/`sqlalchemy` que las fijadas en el
+  lockfile. Esto hizo que la verificación de ADR-255 ("suite completa de backend 100%
+  verde") fuera un FALSO POSITIVO: pasaba en ese venv contaminado, pero `pypdf` JAMÁS
+  estuvo en `pyproject.toml` ni en `uv.lock` — un `uv sync` limpio (exactamente lo que
+  hace el job de CI) nunca lo instala, así que esas 18 pruebas siempre tronaron ahí con
+  `ModuleNotFoundError: No module named 'pypdf'`. Antes de ADR-255 esto quedaba oculto
+  por el `continue-on-error` de Pytest; al quitarlo, la falla —que ya existía— se volvió
+  bloqueante por primera vez.
+- **Fix:** se agrega `pypdf>=5.0` al grupo `dev` de `pyproject.toml` (es dependencia de
+  PRUEBA, nunca se usa en código de producción — `reportlab` sigue siendo el único que
+  genera PDFs) y se corre `uv sync` para refrescar `uv.lock` (de paso corrige un drift
+  aparte: `email-validator`/`dnspython`, dependencias YA declaradas en `pyproject.toml`
+  desde ADR-105, que tampoco estaban en el lockfile commiteado).
+- **Lección de proceso:** verificar "suite verde" contra un venv que no se sabe si está
+  sincronizado con el lockfile no prueba nada sobre lo que CI realmente va a correr. A
+  partir de ahora, antes de tocar los `continue-on-error` de `backend.yml`, correr
+  `uv sync` primero (reinstala exactamente lo que fija `uv.lock`, igual que el job de
+  CI) y verificar DESPUÉS de eso.
+- **Verificado:** `uv sync` limpio (venv reconstruido desde `uv.lock`), suite completa de
+  `pytest` 100% verde (incluidas las 18 de `test_f1_06_ordenes_pdf.py`), `ruff check .`
+  limpio, ambos con las versiones EXACTAS que fija el lockfile (no las que había en el
+  venv contaminado).
