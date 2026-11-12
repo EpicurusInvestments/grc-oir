@@ -10654,3 +10654,34 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   existentes nunca probaron este valor); programados con `duracion_spot=None` ya no
   muestra el texto "None". Suite completa de backend verde (exit 0), `ruff` limpio. Sin
   cambios de frontend ni de esquema — el campo ya era nullable desde ADR-168.
+
+### ADR-260 — Bug: un 422 de validación solo mostraba "Datos de entrada inválidos", sin decir qué campo
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura: al dar
+  "Guardar" en "Nueva Orden de Servicio" en la demo, con "% comisión agencia" capturado
+  pero "Motivo del cambio" vacío, solo apareció "Datos de entrada inválidos" — sin forma
+  de saber qué corregir).
+- **Diagnóstico:** `core/errors.py` ya manda el detalle REAL de un 422 de Pydantic en
+  `detalles` (lista de `{loc, msg, type}` por cada campo rechazado) — pero `mensaje`
+  siempre es el texto genérico fijo "Datos de entrada inválidos", y el frontend
+  (`ApiRequestError`, `apiClient.ts`) solo exponía `detalles` como dato crudo sin
+  formatear; todas las pantallas que muestran `error.message` (el patrón más común en el
+  código, p.ej. `OrdenClienteListPage.tsx`) se quedaban con el texto genérico, sin el
+  campo ni la razón. Nota: la captura concreta de este reporte (comisión + motivo vacío)
+  no es, en sí, la causa de un 422 — `motivo_cambio_comision` es opcional a nivel de
+  Pydantic (`str | None`); el verdadero campo rechazado era otro, no visible en la
+  captura — exactamente el problema que describe este ADR: sin el detalle, no hay forma
+  de saberlo sin instrumentar.
+- **Fix:** `ApiRequestError` arma su `message` final en el propio constructor —si
+  `codigo === "validacion"` y `detalles` es la lista de Pydantic, concatena
+  `"campo: razón"` por cada entrada (quitando el primer elemento de `loc`, que es
+  siempre `"body"`/`"query"`/`"path"`, no útil para el usuario) al `mensaje` genérico.
+  Centralizado en una sola clase ya compartida por TODO el frontend — ningún formulario
+  necesitó tocarse para beneficiarse. `detalles` crudo se sigue exponiendo igual, para
+  quien ya lo use con un criterio propio (p.ej. `AgenciaCatalogPage.tsx` con
+  `dependencias_activas`).
+- **Verificado:** 3 pruebas nuevas en `apiClient.test.ts` (el mensaje se enriquece con
+  campo+razón; un error sin `detalles` o de otro código conserva su mensaje tal cual;
+  `detalles` crudo se sigue exponiendo). Suite completa de frontend sin nuevas fallas
+  (516/528, los mismos 12 fallos preexistentes de auth/sesión quedan fuera de alcance —
+  ver nota pendiente), `tsc --noEmit`/`eslint` limpios.
