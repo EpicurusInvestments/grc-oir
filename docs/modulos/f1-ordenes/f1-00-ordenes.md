@@ -1140,6 +1140,14 @@ propuesta no le da captura sobre Órdenes.
   el catálogo no tiene opciones. `GET .../historial-comisiones` (que filtra por
   `entidad_id`, no por campo) ahora también devuelve estas entradas — el panel de
   detalle renombra su sección a "Historial de cambios" (ya no "... de comisión").
+- **ADR-261 (bug real, petición del usuario, con captura) — `fecha_inicio_campania` =
+  HOY se rechazaba como "pasada" entre las 18:00 y medianoche, hora de México:** la
+  validación usaba `date.today()` (zona horaria del SERVIDOR, UTC en el contenedor) en
+  vez de la del negocio — a esas horas, UTC ya marca el día siguiente. Nuevo
+  `_hoy_mexico()` (`datetime.now(ZoneInfo("America/Mexico_City")).date()`), usado en el
+  alta, la edición y `fecha_cierre`. Nueva dependencia `tzdata` (necesaria en Windows y
+  algunas imágenes Linux "slim" sin la base IANA de fábrica). Detalle completo en
+  `docs/arquitectura.md` (ADR-261).
 - **ADR-181 (petición del usuario) — "Facturación a la Agencia" (antes "Afiliado factura
   directo al cliente"):** solo cambia la etiqueta/descripción visible del radio
   (ADR-141) — la columna `afiliado_factura_directo_al_cliente` NO se renombra. Al

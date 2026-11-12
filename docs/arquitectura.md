@@ -10685,3 +10685,41 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   `detalles` crudo se sigue exponiendo). Suite completa de frontend sin nuevas fallas
   (516/528, los mismos 12 fallos preexistentes de auth/sesión quedan fuera de alcance —
   ver nota pendiente), `tsc --noEmit`/`eslint` limpios.
+
+### ADR-261 — Bug real: `fecha_inicio_campania` = HOY se rechazaba como "fecha pasada" entre las 18:00 y medianoche (hora de México)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con el cuerpo
+  completo de la respuesta 422 obtenido gracias a ADR-260: `mensaje: "Value error,
+  fecha_inicio_campania no puede ser una fecha pasada."`, con
+  `fecha_inicio_campania: "2026-11-11"` y el header `Date` de la respuesta en
+  `Thu, 12 Nov 2026 00:43:07 GMT`).
+- **Diagnóstico:** `OrdenClienteCreate._valida_fechas`/`OrdenClienteUpdate` comparaban
+  contra `date.today()` — que usa la zona horaria del PROCESO, no la del negocio. En el
+  contenedor (UTC), a las 18:43 hora de Ciudad de México (UTC-6) ya son las 00:43 UTC
+  del día SIGUIENTE: `date.today()` del servidor devolvía "12-nov" mientras el usuario,
+  en México, seguía legítimamente en "11-nov". Cualquier captura entre las 18:00 y las
+  23:59 hora de CDMX con `fecha_inicio_campania` = HOY quedaba rechazada como "pasada" —
+  una ventana de 6 horas todas las noches, exactamente el horario típico de oficina
+  tarde/noche en México.
+- **Fix:** nuevo helper `_hoy_mexico()` en `orden_cliente.py` —
+  `datetime.now(ZoneInfo("America/Mexico_City")).date()` — en vez de `date.today()`, en
+  los 3 lugares del archivo que lo usaban para decidir "hoy" sobre fechas de negocio:
+  la validación de alta, la de edición (`f_ini < date.today()`) y `fecha_cierre` al
+  cerrar una orden (mismo problema de fondo: quedaría fechada "mañana" si se cierra de
+  noche). Nueva dependencia **`tzdata`** (grupo principal, no solo dev): Windows y
+  algunas imágenes Linux "slim"/Alpine no traen la base de datos IANA de zonas horarias
+  de fábrica — sin este paquete, `ZoneInfo("America/Mexico_City")` truena con
+  `ZoneInfoNotFoundError` en esos entornos (confirmado: rompía la colección de pruebas
+  en este Windows de desarrollo hasta agregarlo).
+- **Alcance:** quedan otros `date.today()` en `orden_estacion.py`/`cobranza_factura.py`/
+  `facturacion/factura_cliente.py`/`requisicion.py` con el MISMO riesgo de fondo — no se
+  tocaron aquí (son defaults de valor o lógica de "vencida"/display, no gates que
+  RECHACEN la entrada del usuario con un error como este; menor severidad, pero el mismo
+  patrón). Pendiente evaluar si conviene centralizar `_hoy_mexico()` en `app/core/` y
+  aplicarlo también ahí.
+- **Verificado:** nueva prueba en `test_f1_05_ordenes_escritura.py`
+  (`test_crear_oc_fecha_inicio_hoy_no_se_rechaza_si_el_servidor_ya_marca_manana_en_utc`)
+  — mockea `datetime.now()` al instante EXACTO del reporte (00:43 UTC del 12-nov) y
+  confirma que `fecha_inicio_campania = 2026-11-11` ya NO se rechaza (antes sí, con
+  `date.today()`), más un control de que una fecha genuinamente pasada EN MÉXICO sigue
+  rechazándose. Suite completa de backend verde (exit 0), `ruff` limpio.

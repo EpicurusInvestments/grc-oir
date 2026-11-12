@@ -45,6 +45,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
@@ -76,6 +77,18 @@ from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
 IVA_RATE = Decimal(str(settings.iva_rate))
+# ADR-261 (corrige un bug real, petición del usuario con captura): `date.today()`
+# depende de la zona horaria del SERVIDOR (en el contenedor, UTC) — un usuario en México
+# (UTC-6) sigue en "hoy" entre las 18:00 y las 23:59 hora de CDMX mientras el servidor ya
+# marca el día siguiente en UTC. Eso rechazaba `fecha_inicio_campania` = "hoy" (hora de
+# México) como "fecha pasada" justo en esa ventana — reportado con una orden capturada a
+# las 18:43 hora de CDMX (00:43 UTC del día siguiente). Se usa la zona horaria real del
+# negocio, no la del proceso.
+_ZONA_MEXICO = ZoneInfo("America/Mexico_City")
+
+
+def _hoy_mexico() -> date:
+    return datetime.now(_ZONA_MEXICO).date()
 
 CAMPOS_COMISION: tuple[str, ...] = (
     "porcentaje_comision_vendedor_principal_snap",
@@ -457,7 +470,7 @@ class OrdenClienteCreate(BaseModel):
 
     @model_validator(mode="after")
     def _valida_fechas(self) -> OrdenClienteCreate:
-        if self.fecha_inicio_campania < date.today():
+        if self.fecha_inicio_campania < _hoy_mexico():
             raise ValueError("fecha_inicio_campania no puede ser una fecha pasada.")
         if self.fecha_fin_campania < self.fecha_inicio_campania:
             raise ValueError("fecha_fin_campania debe ser mayor o igual que fecha_inicio_campania.")
@@ -843,7 +856,7 @@ class OrdenClienteService(
             # curso legítimamente tiene su fecha de inicio en el pasado, y editar otro
             # campo (el front siempre reenvía el valor tal cual) no debe bloquearse por
             # eso — pero si alguien la MODIFICA, el nuevo valor sí debe ser hoy o futuro.
-            if f_ini != obj.fecha_inicio_campania and f_ini < date.today():
+            if f_ini != obj.fecha_inicio_campania and f_ini < _hoy_mexico():
                 raise DomainError(
                     "fecha_inicio_campania no puede ser una fecha pasada.",
                     detalles={"fecha_inicio_campania": str(f_ini)},
@@ -1049,7 +1062,7 @@ class OrdenClienteService(
         obj.carta_conciliacion_ref = input_.carta_conciliacion_ref
         obj.cierre_sin_odc_cerrada = input_.odc_cerrada_ref is None
         obj.cierre_sin_carta_conciliacion = input_.carta_conciliacion_ref is None
-        obj.fecha_cierre = date.today()
+        obj.fecha_cierre = _hoy_mexico()
         obj.estatus_orden = EstatusOrden.ORDEN_CERRADA.value
 
         db.commit()

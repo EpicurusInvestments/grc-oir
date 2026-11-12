@@ -27,6 +27,10 @@ dependencies = [
                        # WeasyPrint, que requiere Pango/GObject — probado y descartado por eso).
     "email-validator>=2.0",  # Valida el formato de `destinatario_email` (Pydantic
                              # EmailStr). Envío de PDFs por correo (ADR-105).
+    "tzdata>=2024.1",  # ADR-261: `zoneinfo.ZoneInfo("America/Mexico_City")` necesita la
+                       # base de datos IANA instalada — Windows (dev) y algunas imágenes
+                       # Linux "slim"/Alpine (prod) no la traen de fábrica; con este
+                       # paquete el proceso trae la suya propia, sin depender del SO.
 ]
 
 [dependency-groups]
