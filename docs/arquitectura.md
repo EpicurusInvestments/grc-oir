@@ -10723,3 +10723,53 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   confirma que `fecha_inicio_campania = 2026-11-11` ya NO se rechaza (antes sí, con
   `date.today()`), más un control de que una fecha genuinamente pasada EN MÉXICO sigue
   rechazándose. Suite completa de backend verde (exit 0), `ruff` limpio.
+
+### ADR-262 — El deploy llevaba 2 PRs sin aplicarse de verdad: Pytest tronaba en CI (no en local) por finales de línea + versión de Python sin fijar
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (el usuario fusionó el PR de ADR-258 a
+  ADR-261 a `main`, esperó, y la demo seguía mostrando los bugs YA corregidos — pidió el
+  log del job "Pruebas y linters" de GitHub Actions).
+- **Diagnóstico — 2 problemas distintos, ambos preexistentes, ambos expuestos por
+  ADR-255** (que le quitó el `continue-on-error` a Pytest; antes de eso, un Pytest en
+  rojo JAMÁS bloqueaba el deploy, así que esto llevaba quién sabe cuánto tiempo roto sin
+  que nadie lo notara):
+  1. **`test_crear_oc_rechaza_fecha_inicio_pasada`/`test_editar_oc_rechaza_cambiar_
+     fecha_inicio_a_pasada` (regresión mía, de ADR-261):** usaban `date.today() -
+     timedelta(days=1)` para construir "una fecha claramente pasada" — pero `date.today()`
+     ahí es la hora del RUNNER (UTC en CI), y la validación ahora compara contra
+     `_hoy_mexico()`. Con solo 1 día de margen, si el runner corre entre las 00:00 y las
+     05:59 UTC, "ayer en UTC" y "hoy en México" son LA MISMA fecha — la prueba fallaba con
+     "DID NOT RAISE ValidationError" (visto en el log real de CI). Fix: 2 días de margen
+     en ambas, inequívoco sin importar el huso del runner.
+  2. **`test_f2_03_timbrado_pac_v40.py` (bug preexistente, nada que ver con esta sesión)
+     — el archivo de referencia real del timbrador
+     (`docs/referencias/ejemplo_archivo_plano_FACTURA_33_NPG_D_28_11757_V40 (2).txt`)
+     está guardado en git con finales de línea LF puro, pero las pruebas lo parsean
+     dividiendo por `\r\n` (CRLF, el final de línea real del formato). En Windows, con
+     `core.autocrlf=true` (la configuración normal), git CONVIERTE el archivo a CRLF al
+     hacer checkout — por eso nunca falló en ninguna máquina de desarrollo. Un runner de
+     GitHub Actions (Linux) no hace esa conversión: el archivo se queda con LF puro, el
+     `.split("\r\n")` nunca encuentra un separador real, y
+     `lineas.index("================ Detalle")` truena con `ValueError: x not in
+     list` — confirmado reproduciendo el checkout de Linux a mano (decodificar el blob
+     commiteado tal cual, sin la conversión de Windows). Fix: nuevo `.gitattributes` en
+     la raíz — `docs/referencias/*.txt text eol=crlf` — fuerza CRLF al hacer checkout en
+     CUALQUIER máquina, sin depender del `core.autocrlf` de quien clona. No se tocó el
+     archivo de referencia ni el test: el blob guardado sigue en LF (normal para git),
+     solo cambia cómo se materializa al hacer checkout.
+  - **Además:** el job de CI corrió bajo **Python 3.14** (el log del error lo mostraba:
+    `.venv/lib/python3.14/site-packages/...`) — `pyproject.toml` solo fija
+    `requires-python = ">=3.12"` (sin tope) y no había ningún `.python-version`, así que
+    `uv` resolvía lo que encontrara disponible en el runner, una versión DISTINTA a la
+    que de verdad corre en producción (`Dockerfile`: `python:3.12-slim`). Ni se sabe si
+    los 2 fallos de timbrado son en parte por la diferencia de versión (además de los
+    finales de línea) — pero lo correcto, pase lo que pase con esos 2, es probar
+    SIEMPRE contra la misma versión que se despliega. Fix: nuevo
+    `backend/.python-version` = `3.12`.
+- **Verificado:** suite completa de backend 100% verde en local (con el venv
+  reconstruido desde `uv.lock`, Python 3.12 fijado), `ruff` limpio. La reproducción
+  manual del checkout Linux (decodificar el blob del repo tal cual, SIN la conversión de
+  Windows, y aplicar el `.split("\r\n")` de la prueba) confirma el bug (`1 línea,
+  marcador no encontrado`) y confirma el fix (`226 líneas, marcador encontrado` tras
+  normalizar a CRLF) — sin necesitar una máquina Linux para probarlo. Pendiente: el
+  próximo run de CI (en GitHub Actions, Linux real) es la confirmación definitiva.

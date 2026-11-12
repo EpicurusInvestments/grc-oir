@@ -1,0 +1,14 @@
+# ADR-262 (corrige un bug real, bloqueaba TODO deploy desde ADR-255): los archivos de
+# referencia de docs/referencias/ (ejemplos reales de sistemas externos — el layout V40
+# del timbrador, p.ej.) necesitan sus finales de línea EXACTOS (CRLF) para que las
+# pruebas que comparan byte a byte (test_f2_03_timbrado_pac_v40.py) tengan algo
+# determinista contra qué comparar, sin importar en qué máquina se clona el repo.
+#
+# Sin esto, el checkout dependía del `core.autocrlf` de cada quien: en Windows con
+# autocrlf=true (lo normal) el archivo SIEMPRE se veía con CRLF, aunque el blob
+# guardado en git tenga solo LF — por eso nunca falló en una máquina de desarrollo.
+# En un runner Linux (CI), sin esa conversión, el archivo se queda con LF puro y
+# `_lineas_referencia().split(CRLF)` no encuentra ningún separador real — la prueba
+# tronaba con `ValueError: x not in list`, bloqueando "Build, push y deploy a DEV"
+# porque ADR-255 ya no tolera un Pytest en rojo.
+docs/referencias/*.txt text eol=crlf
