@@ -1105,11 +1105,14 @@ export function OrdenClienteForm({
                   onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
                 >
                   <option value="">Selecciona…</option>
-                  {vendedores.filter(esActivo).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.nombre_vendedor}
-                    </option>
-                  ))}
+                  {vendedores
+                    .filter(esActivo)
+                    .filter((v) => v.id !== vsId)
+                    .map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.nombre_vendedor}
+                      </option>
+                    ))}
                 </select>
                 <div className="fe">{errors.vendedor_principal_id?.message}</div>
               </div>
@@ -1138,11 +1141,14 @@ export function OrdenClienteForm({
                   onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
                 >
                   <option value="">Sin vendedor secundario</option>
-                  {vendedores.filter(esActivo).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.nombre_vendedor}
-                    </option>
-                  ))}
+                  {vendedores
+                    .filter(esActivo)
+                    .filter((v) => v.id !== vpId)
+                    .map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.nombre_vendedor}
+                      </option>
+                    ))}
                 </select>
               </div>
               <div>

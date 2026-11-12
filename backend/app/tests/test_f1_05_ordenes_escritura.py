@@ -397,6 +397,41 @@ def test_crear_oc_contrato_de_otro_anunciante_400(
         oc_svc.create(_oc_payload(cat, anunciante_id=cat["otro_anunciante"]), VENTAS)
 
 
+# ADR-263 (petición del usuario, con captura): el mismo vendedor no puede quedar como
+# principal Y secundario a la vez — antes el frontend lo permitía sin filtrar el select.
+def test_crear_oc_rechaza_mismo_vendedor_principal_y_secundario(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    with pytest.raises(DomainError):
+        oc_svc.create(
+            _oc_payload(cat, vendedor_secundario_id=cat["vendedor"]), VENTAS
+        )
+
+
+def test_editar_oc_rechaza_mismo_vendedor_principal_y_secundario(
+    db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    otro_vendedor_id = uuid.uuid4()
+    db.add(
+        Vendedor(
+            vendedor_id=otro_vendedor_id,
+            nombre_vendedor="Vendedor Dos",
+            porcentaje_comision_default=Decimal("4.00"),
+        )
+    )
+    db.commit()
+
+    oc = oc_svc.create(
+        _oc_payload(cat, vendedor_secundario_id=otro_vendedor_id), VENTAS
+    )
+    with pytest.raises(DomainError):
+        oc_svc.update(
+            oc.orden_id,
+            OrdenClienteUpdate(vendedor_principal_id=otro_vendedor_id),
+            VENTAS,
+        )
+
+
 # ── Bug corregido (petición del usuario, con captura): no se puede facturar a la
 # agencia sin haber seleccionado una ─────────────────────────────────────────
 def test_crear_oc_factura_a_la_agencia_sin_agencia_400(

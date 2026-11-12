@@ -1148,6 +1148,11 @@ propuesta no le da captura sobre Órdenes.
   alta, la edición y `fecha_cierre`. Nueva dependencia `tzdata` (necesaria en Windows y
   algunas imágenes Linux "slim" sin la base IANA de fábrica). Detalle completo en
   `docs/arquitectura.md` (ADR-261).
+- **ADR-263 (bug real, petición del usuario, con captura) — el mismo vendedor se podía
+  elegir como principal Y secundario:** cada select de "Equipo comercial y comisiones"
+  ahora excluye al vendedor ya elegido en el otro campo; el backend además rechaza con
+  `DomainError` (alta y edición) si de todos modos llegan iguales por API directa.
+  Detalle completo en `docs/arquitectura.md` (ADR-263).
 - **ADR-181 (petición del usuario) — "Facturación a la Agencia" (antes "Afiliado factura
   directo al cliente"):** solo cambia la etiqueta/descripción visible del radio
   (ADR-141) — la columna `afiliado_factura_directo_al_cliente` NO se renombra. Al

@@ -10773,3 +10773,28 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   marcador no encontrado`) y confirma el fix (`226 líneas, marcador encontrado` tras
   normalizar a CRLF) — sin necesitar una máquina Linux para probarlo. Pendiente: el
   próximo run de CI (en GitHub Actions, Linux real) es la confirmación definitiva.
+
+### ADR-263 — El mismo vendedor se podía elegir como principal Y secundario en la OS
+
+- **Estado:** aceptada · **Fecha:** 2026-11-11 (petición del usuario, con captura de
+  pantalla: eligió "Carmen Aristegui" tanto en "Vendedor principal" como en "Vendedor
+  secundario" sin que nada lo impidiera).
+- **Diagnóstico:** los dos `<select>` de `OrdenClienteForm.tsx` (sección "Equipo
+  comercial y comisiones") listaban el catálogo completo de vendedores activos sin
+  excluir al ya elegido en el otro campo — ni el frontend ni el backend validaban que
+  fueran distintos.
+- **Fix — frontend:** cada select ahora filtra, además de `esActivo`, al vendedor
+  seleccionado en el OTRO campo (`vendedores.filter((v) => v.id !== vsId)` en
+  "Vendedor principal" y `v.id !== vpId` en "Vendedor secundario") — ya no aparece en
+  la lista, así que no se puede repetir desde la UI.
+- **Fix — backend (cierra el hueco de API directa):** nuevo
+  `OrdenClienteService._validar_vendedores_distintos()`, llamado desde `_pre_create`
+  (con el payload completo) y desde `_pre_update` (mezclando payload con los valores ya
+  guardados en `obj`, mismo patrón que la validación de fechas de ADR-180/261) — si
+  `vendedor_secundario_id == vendedor_principal_id` (y el secundario no es `None`),
+  `DomainError`.
+- **Verificado:** `test_crear_oc_rechaza_mismo_vendedor_principal_y_secundario` y
+  `test_editar_oc_rechaza_mismo_vendedor_principal_y_secundario` (backend);
+  `describe("Fix: no se puede repetir el mismo vendedor como principal y secundario")`
+  (frontend, 2 pruebas) — suite completa de backend y frontend 100% verde, `ruff` y
+  `tsc --noEmit` limpios.
