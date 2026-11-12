@@ -10978,3 +10978,41 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   `accept*=".mp3"` (ya no existe ese atributo) y ahora usa `input[type="file"]` a secas
   (el formulario nunca renderiza más de uno a la vez) — suite completa del módulo
   `ordenes` (295 pruebas), `tsc --noEmit` y `eslint` 100% verdes.
+
+### ADR-267 — `SearchableSelect`: el combo "Buscar y agregar" se recortaba en vez de dejar ver/hacer scroll a más órdenes
+
+- **Estado:** aceptada · **Fecha:** 2026-11-12 (petición del usuario, con captura: en el
+  combo de "Asignación a órdenes" de facturas de afiliado/agencia/vendedor, la lista
+  desplegada se veía cortada a los 2-3 primeros renglones, sin poder ver el resto).
+- **Diagnóstico:** `SearchableSelect.tsx` (componente COMPARTIDO, usado en 22 archivos —
+  no solo facturación) renderizaba su lista desplegada (`.ssel-list`) como
+  `position: absolute` DENTRO del propio formulario. `.ssel-list` ya traía su propio
+  scroll interno (`max-height: 260px; overflow-y: auto`), pero eso no importa si un
+  ANCESTRO la recorta primero: toda pantalla de alta/edición usa el mismo patrón de
+  layout (`.detail-pane` con `overflow: hidden` + `.db`, su body, con
+  `overflow-y: auto` y altura acotada por flex) — el combo vive dentro de `.db`, así que
+  la lista desplegada se recortaba en el borde de `.db` antes de poder desplegar sus
+  260px completos, sin importar cuántas opciones hubiera.
+- **Fix:** la lista ahora se renderiza en un **portal a `document.body`**
+  (`createPortal`), con `position: fixed` y coordenadas calculadas en vivo desde el
+  campo de búsqueda (`getBoundingClientRect()`), recalculadas si el usuario hace scroll
+  (en captura, para detectar scroll de CUALQUIER ancestro) o cambia el tamaño de
+  ventana mientras el combo está abierto. Al salir del flujo normal del formulario, ya
+  no la recorta ningún `overflow` acotado de ningún ancestro, en ninguna pantalla.
+  Efecto secundario a resolver: el detector de "clic afuera" comparaba contra el `ref`
+  del contenedor del campo — como la lista ya NO es descendiente de ese contenedor (vive
+  en el portal), un clic dentro de la lista (incluida su propia barra de scroll) se
+  hubiera tratado como "afuera" y cerrado el combo a medio uso (mismo bug de fondo que
+  ya documentó `CheckboxMultiSelect.tsx` para scrollbars de ANCESTROS, aquí aplicado al
+  propio scroll de la lista). Se agrega un segundo `ref` sobre la lista portada; el clic
+  cuenta como "adentro" si cae dentro de CUALQUIERA de los dos.
+- **Alcance:** solo `SearchableSelect.tsx` — es el componente que usan los combos de
+  "Asignación a órdenes" de afiliado/agencia/vendedor (lo pedido). `MultiSearchableSelect.tsx`/
+  `CheckboxMultiSelect.tsx` comparten la clase CSS `.ssel-list` y probablemente el mismo
+  bug de fondo, pero no se tocaron — no fueron parte de lo reportado.
+- **Verificado:** `SearchableSelect.test.tsx` (6 pruebas, usan `screen.getByText`/
+  `getByPlaceholderText` — consultas globales al documento, compatibles con el portal
+  sin cambiarlas) sigue en verde; suite COMPLETA de frontend (534 pruebas) sin
+  regresiones nuevas — los 12 fallos que siguen en rojo son los de
+  auth/sesión ya diferidos por el usuario antes de este cambio, no tienen relación con
+  `SearchableSelect`; `tsc --noEmit` y `eslint` limpios.

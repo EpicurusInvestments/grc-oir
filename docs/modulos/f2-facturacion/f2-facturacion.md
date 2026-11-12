@@ -234,6 +234,14 @@ afiliado antes de haber cobrado esa orden al cliente); mensaje de dominio claro 
 los folios pendientes. Misma regla, igual aplicada a `FacturaAgencia`/`FacturaVendedor`
 abajo.
 
+**ADR-267 (bug real, petición del usuario, con captura) — el combo se recortaba y no
+dejaba ver/hacer scroll a más órdenes:** no era un problema de estos 3 formularios en
+particular, sino del componente compartido `SearchableSelect.tsx` (usado también fuera
+de facturación) — su lista desplegada quedaba atrapada dentro del `overflow` acotado del
+panel de edición. Se resolvió ahí (portal a `document.body` + posición recalculada en
+vivo), sin tocar nada de este módulo. Detalle completo en `docs/arquitectura.md`
+(ADR-267).
+
 ### FacturaAfiliadoOrden (5 campos spec)
 Relación N:M `FacturaAfiliado` ↔ `OrdenEstacion` **cerrada** — permite repartir el costo
 de una factura del afiliado entre varias OE. `monto_asignado` + `notas_asignacion`.
