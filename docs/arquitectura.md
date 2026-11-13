@@ -11016,3 +11016,46 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   regresiones nuevas — los 12 fallos que siguen en rojo son los de
   auth/sesión ya diferidos por el usuario antes de este cambio, no tienen relación con
   `SearchableSelect`; `tsc --noEmit` y `eslint` limpios.
+
+### ADR-268 — OrdenCliente (OS): dejaba capturar y GUARDAR un % de comisión de agencia sin haber elegido agencia
+
+- **Estado:** aceptada · **Fecha:** 2026-11-13 (petición del usuario, con 2 capturas: el
+  campo "% comisión agencia" aceptaba texto — incluso no numérico ("d") — sin tener
+  Agencia seleccionada, y el registro SÍ se guardaba).
+- **Diagnóstico:** el campo `porcentaje_comision_agencia_snap` nunca estuvo condicionado
+  a `agencia_id` en ningún lado:
+  - **Frontend** (`OrdenClienteForm.tsx`): el `register(...)` del campo solo se
+    deshabilitaba con `!canEditComisiones` (orden congelada), sin mirar `agId` — a
+    diferencia del radio "Facturación a la Agencia" (`disabled={congelado || !agId}`,
+    ADR-242), que sí sigue ese patrón. El esquema Zod (`numeroOpcionalPct()`) solo valida
+    "vacío o número 0-100", sin ningún cruce contra `agencia_id`.
+  - **Backend** (`orden_cliente.py`): `Field(ge=0, le=100)` en los 3 schemas
+    (`OrdenClienteCreate`, `OrdenClienteComisionesUpdate`) y el `CHECK` de BD validan
+    solo el RANGO — nada rechaza `agencia_id IS NULL` junto con
+    `porcentaje_comision_agencia_snap` no nulo, ni en `_pre_create`, ni en `_pre_update`,
+    ni en el canal dedicado `actualizar_comisiones` (`PATCH /comisiones`).
+  - Un valor NO numérico como "d" sí queda bloqueado por Zod antes de llegar al backend
+    (el `refine` de `numeroOpcionalPct()` lo rechaza) — el hueco real es con un valor
+    NUMÉRICO válido (0-100) capturado sin agencia, que no topaba con ninguna validación
+    en ningún lado.
+- **Fix:**
+  - Frontend: el campo se deshabilita también con `!agId` (mismo patrón que el radio de
+    Facturación a la Agencia). Nuevo `.refine` a nivel de objeto en el esquema Zod:
+    rechaza `porcentaje_comision_agencia_snap` con valor si `agencia_id` está vacío —
+    respaldo para órdenes ya guardadas con ese estado inconsistente antes de este fix
+    (mismo criterio que el `.refine` ya existente de "Facturación a la Agencia").
+  - Backend: nuevo `OrdenClienteService._validar_comision_agencia_requiere_agencia()`,
+    llamado desde `_pre_create`, `_pre_update` (con el valor EFECTIVO: payload o,
+    si no cambió, el de `obj`) y `actualizar_comisiones` (ídem, contra `cambios`/`obj`) —
+    `DomainError` si `agencia_id is None and porcentaje_comision_agencia_snap is not
+    None`. Cubre API directa y órdenes ya guardadas con el estado inconsistente: editar
+    CUALQUIER campo de una de esas órdenes (o quitarle la agencia a una que ya traía
+    comisión capturada) queda bloqueado hasta corregirlo.
+- **Verificado:** backend — 3 pruebas nuevas
+  (`test_crear_oc_rechaza_comision_agencia_sin_agencia`,
+  `test_editar_oc_quitar_agencia_con_comision_ya_capturada_400`,
+  `test_comisiones_rechaza_porcentaje_agencia_si_la_orden_no_tiene_agencia`) — suite
+  completa (pytest + ruff) 100% verde. Frontend — 3 pruebas nuevas en
+  `OrdenClienteForm.test.tsx` (campo deshabilitado sin agencia, habilitado al elegirla,
+  bloqueo al reguardar una orden con el estado inconsistente heredado) — 61 pruebas del
+  archivo y `tsc --noEmit` en verde.

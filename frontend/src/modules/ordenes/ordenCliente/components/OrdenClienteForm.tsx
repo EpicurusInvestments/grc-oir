@@ -189,6 +189,15 @@ function buildSchema(fechaInicioOriginal: string, fechaVentaOriginal: string) {
     .refine((d) => !d.afiliado_factura_directo_al_cliente || !!d.agencia_id, {
       path: ["agencia_id"],
       message: "Selecciona una agencia para poder facturar a la agencia.",
+    })
+    // Bug corregido (petición del usuario, con captura): sin agencia elegida, el campo
+    // "% comisión agencia" no debía dejar capturar/guardar un valor — el JSX ya lo
+    // deshabilita (`!agId`), este refine es el respaldo, mismo criterio que el de
+    // arriba (una orden ya guardada con ese estado inconsistente no podrá
+    // reguardarse sin corregirlo).
+    .refine((d) => !!d.agencia_id || !d.porcentaje_comision_agencia_snap, {
+      path: ["porcentaje_comision_agencia_snap"],
+      message: "Selecciona una agencia para poder capturar su % de comisión.",
     });
 }
 
@@ -1170,7 +1179,7 @@ export function OrdenClienteForm({
               <div>
                 <SensitiveField
                   label="% comisión agencia"
-                  register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones })}
+                  register={register("porcentaje_comision_agencia_snap", { disabled: !canEditComisiones || !agId })}
                   error={errors.porcentaje_comision_agencia_snap?.message}
                   badge={
                     <>

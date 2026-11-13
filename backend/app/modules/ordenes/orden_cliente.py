@@ -703,6 +703,22 @@ class OrdenClienteService(
                 detalles={"agencia_id": None},
             )
 
+    def _validar_comision_agencia_requiere_agencia(
+        self, agencia_id: uuid.UUID | None, porcentaje_comision_agencia_snap: Decimal | None
+    ) -> None:
+        """Bug corregido (petición del usuario, con captura): sin agencia elegida no
+        debe quedar un % de comisión de agencia capturado — es un estado inconsistente
+        (comisión de una agencia que no existe en la orden). El front ya lo impide
+        (deshabilita el campo), pero el backend es quien manda: cubre llamadas directas
+        a la API, el canal dedicado de comisiones (`PATCH /comisiones`) y órdenes ya
+        guardadas con ese estado inconsistente antes de este fix."""
+        if agencia_id is None and porcentaje_comision_agencia_snap is not None:
+            raise DomainError(
+                "No se puede capturar un % de comisión de agencia sin haber "
+                "seleccionado una agencia.",
+                detalles={"agencia_id": None},
+            )
+
     # ── alta ──────────────────────────────────────────────────────────────────────
     def _calcular_montos(
         self, total_spots: int, cantidad_spots_bonificables: int, precio_unitario: Decimal
@@ -780,6 +796,9 @@ class OrdenClienteService(
         self._validar_contrato_marca(db, payload, payload["anunciante_id"])
         self._validar_facturacion_agencia(
             payload.get("agencia_id"), payload["afiliado_factura_directo_al_cliente"]
+        )
+        self._validar_comision_agencia_requiere_agencia(
+            payload.get("agencia_id"), payload.get("porcentaje_comision_agencia_snap")
         )
 
         fecha_venta = payload["fecha_venta"]
@@ -869,6 +888,10 @@ class OrdenClienteService(
         )
         self._validar_facturacion_agencia(
             payload.get("agencia_id", obj.agencia_id), afiliado_factura_efectivo
+        )
+        self._validar_comision_agencia_requiere_agencia(
+            payload.get("agencia_id", obj.agencia_id),
+            payload.get("porcentaje_comision_agencia_snap", obj.porcentaje_comision_agencia_snap),
         )
 
         if "fecha_inicio_campania" in payload or "fecha_fin_campania" in payload:
@@ -996,6 +1019,11 @@ class OrdenClienteService(
         cambios = {k: v for k, v in cambios_dict.items() if v != getattr(obj, k)}
         if not cambios:
             return self._to_read(obj)
+
+        self._validar_comision_agencia_requiere_agencia(
+            obj.agencia_id,
+            cambios.get("porcentaje_comision_agencia_snap", obj.porcentaje_comision_agencia_snap),
+        )
 
         motivo = (payload.motivo_cambio or "").strip()
         if not motivo:

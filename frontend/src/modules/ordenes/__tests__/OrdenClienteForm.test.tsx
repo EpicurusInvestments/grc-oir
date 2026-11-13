@@ -375,6 +375,32 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("");
   });
 
+  // Bug corregido (petición del usuario, con captura): sin agencia elegida, el sistema
+  // dejaba capturar y GUARDAR un % de comisión de agencia (un estado inconsistente:
+  // comisión de una agencia que no existe en la orden).
+  it("fix: sin agencia elegida, el campo '% comisión agencia' está deshabilitado", () => {
+    const { container } = renderForm();
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(true);
+  });
+
+  it("fix: al elegir una agencia, el campo '% comisión agencia' se habilita", () => {
+    const { container } = renderForm();
+    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
+    expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(false);
+  });
+
+  it("fix: una orden ya guardada con ese estado inconsistente (sin agencia pero con % de comisión) no se puede reguardar sin corregirlo", async () => {
+    const defaultValues = makeOCInput({ agencia_id: null, porcentaje_comision_agencia_snap: 15 });
+    const { onGuardar } = renderForm({ isEdit: true, estatusActual: "orden_interna", defaultValues });
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar/ }));
+
+    expect(
+      await screen.findByText("Selecciona una agencia para poder capturar su % de comisión."),
+    ).toBeInTheDocument();
+    expect(onGuardar).not.toHaveBeenCalled();
+  });
+
   it("si el % ya se capturó a mano, cambiar de vendedor no lo sobrescribe", () => {
     const { container } = renderForm();
     const vendedorSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");

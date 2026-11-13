@@ -464,6 +464,46 @@ def test_editar_oc_quitar_agencia_mientras_factura_a_la_agencia_400(
         oc_svc.update(oc.orden_id, OrdenClienteUpdate(agencia_id=None), VENTAS)
 
 
+# ── Bug corregido (petición del usuario, con captura): sin agencia elegida no debe
+# quedar un % de comisión de agencia capturado (estado inconsistente) ─────────────
+def test_crear_oc_rechaza_comision_agencia_sin_agencia(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    with pytest.raises(DomainError):
+        oc_svc.create(
+            _oc_payload(
+                cat, agencia_id=None, porcentaje_comision_agencia_snap=Decimal("10.00")
+            ),
+            VENTAS,
+        )
+
+
+def test_editar_oc_quitar_agencia_con_comision_ya_capturada_400(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    # 15.00 == el default del catálogo de `cat["agencia"]`: no diverge, no exige motivo.
+    oc = oc_svc.create(
+        _oc_payload(cat, porcentaje_comision_agencia_snap=Decimal("15.00")), VENTAS
+    )
+    with pytest.raises(DomainError):
+        oc_svc.update(oc.orden_id, OrdenClienteUpdate(agencia_id=None), VENTAS)
+
+
+def test_comisiones_rechaza_porcentaje_agencia_si_la_orden_no_tiene_agencia(
+    oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
+) -> None:
+    oc = oc_svc.create(_oc_payload(cat, agencia_id=None), VENTAS)
+    with pytest.raises(DomainError):
+        oc_svc.actualizar_comisiones(
+            oc.orden_id,
+            OrdenClienteComisionesUpdate(
+                porcentaje_comision_agencia_snap=Decimal("10.00"),
+                motivo_cambio="intento inválido",
+            ),
+            DIRECCION,
+        )
+
+
 def test_crear_oc_comision_auditada_sin_motivo_si_coincide_con_el_catalogo(
     db: Session, oc_svc: OrdenClienteService, cat: dict[str, uuid.UUID]
 ) -> None:
