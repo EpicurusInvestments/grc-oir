@@ -310,6 +310,23 @@ describe("FacturasClientePage", () => {
     expect(vi.mocked(facturaClienteApi.timbrar).mock.calls.length).toBe(llamadasPrevias);
   });
 
+  // Bug corregido (petición del usuario, con captura): antes el aviso de formato solo
+  // salía al dar clic en "Registrar timbrado" — si alguien tecleaba el folio mal y
+  // todavía no intentaba guardar, no había ninguna señal.
+  it("fix: avisa el formato inválido en cuanto se sale del campo, sin esperar a dar clic en 'Registrar timbrado'", async () => {
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    const folioInput = (await screen.findByPlaceholderText(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    )) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "ERERERERE-ERFDDDFDFDF-DFDFFVCXV5454" } });
+    fireEvent.blur(folioInput);
+
+    expect(await screen.findByText(/El folio fiscal debe ser un UUID válido/)).toBeInTheDocument();
+  });
+
   // ── ADR-206 (petición del usuario): PDF se puede VER y descargar; XML solo descargar ──
   it("timbrada CON pdf_path Y xml_path ofrece 'Ver factura', 'Descargar PDF' y 'Descargar XML'", async () => {
     renderCon({

@@ -11108,7 +11108,13 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
      en frontend (antes de enviar) y backend (`TimbrarIn.folio_fiscal_sat`,
      `field_validator`) — NO exige estrictamente UUID v4 (el nibble de versión): no
      todos los PAC lo respetan, y lo que importa es no capturar basura por error de
-     dedo, no imponer una variante exacta de UUID.
+     dedo, no imponer una variante exacta de UUID. **Ajuste del mismo día (petición
+     del usuario, con captura):** el aviso de formato inválido solo se veía al dar
+     clic en "Registrar timbrado" — si alguien tecleaba el folio mal y todavía no
+     intentaba guardar, no había ninguna señal. Nuevo `onBlur` en el campo
+     (`validarFolioAlSalir`): avisa en cuanto se sale del campo con un valor no vacío
+     que no tiene forma de UUID, sin nagguear mientras todavía está escribiendo
+     (`onChange` sigue limpiando el error en cada tecla, como ya hacía).
 - **Migración de pruebas existentes (consecuencia de endurecer 2 regex ya en uso):**
   decenas de pruebas en `test_f2_02_facturacion_escritura.py` y
   `test_f3_02_cobranza_escritura.py` creaban facturas con números de ejemplo en el

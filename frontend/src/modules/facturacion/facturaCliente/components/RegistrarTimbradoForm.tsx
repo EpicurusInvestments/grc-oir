@@ -58,6 +58,20 @@ export function RegistrarTimbradoForm({
   const [facturadoExterno, setFacturadoExterno] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Bug corregido (petición del usuario, con captura): el error de formato solo se
+  // veía hasta dar clic en "Registrar timbrado" — si alguien tecleaba un folio mal
+  // formado y no intentaba guardar todavía, no había ninguna señal. Ahora se avisa en
+  // cuanto se sale del campo (`onBlur`), sin nagguear mientras todavía está escribiendo
+  // (`onChange` sigue limpiando el error en cada tecla, como ya hacía).
+  const validarFolioAlSalir = () => {
+    const folioLimpio = folio.trim();
+    if (!folioLimpio || FOLIO_FISCAL_REGEX.test(folioLimpio)) return;
+    setError(
+      "El folio fiscal debe ser un UUID válido (8-4-4-4-12 caracteres hexadecimales, " +
+        "ej. A1B2C3D4-E5F6-7890-ABCD-EF1234567890).",
+    );
+  };
+
   const confirmar = () => {
     const folioLimpio = folio.trim();
     if (!folioLimpio) {
@@ -117,6 +131,7 @@ export function RegistrarTimbradoForm({
                 setFolio(e.target.value);
                 setError(null);
               }}
+              onBlur={validarFolioAlSalir}
             />
             <div className="r2">
               <div>
