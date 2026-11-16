@@ -11059,3 +11059,74 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   `OrdenClienteForm.test.tsx` (campo deshabilitado sin agencia, habilitado al elegirla,
   bloqueo al reguardar una orden con el estado inconsistente heredado) — 61 pruebas del
   archivo y `tsc --noEmit` en verde.
+
+### ADR-269 — Facturación: nuevo estándar de "Número de factura" (FMEX-/FSOIR-), fechas de solo lectura en mes/día/año, y formato del folio fiscal
+
+- **Estado:** aceptada · **Fecha:** 2026-11-16 (petición del usuario, con 4 capturas: el
+  campo "Número de factura" de "Identificación de la factura", 2 capturas de ejemplo
+  ("FMEX-9999999", "FSOIR-99999 ->PARA SAP"), y "Fecha de la factura" en el bloque
+  "Fechas"). Investigado con un subagente de exploración antes de tocar código (confirmó
+  en qué pantalla vive cada cosa y qué validación existía hoy, nada asumido).
+- **3 pedidos, 3 fixes independientes, mismo módulo (`facturacion/facturaCliente`):**
+  1. **"Número de factura" — nuevo estándar de prefijo:** antes aceptaba CUALQUIER
+     letra + guion + dígitos (`^[A-Z]-[0-9]+$`, ADR-060 bis). Ahora son exactamente 2
+     prefijos posibles — `FMEX-` (directa) o `FSOIR-` (para SAP) — seguidos solo de
+     dígitos, sin límite de longitud: `^(FMEX|FSOIR)-[0-9]+$`. Mismo regex duplicado
+     en frontend (`FacturaClienteForm.tsx`) y backend
+     (`factura_cliente.py::NUMERO_FACTURA_REGEX`/`_normaliza_numero_factura`), normalizado
+     a mayúsculas igual que antes. La UNICIDAD (ya existía, `_verificar_numero_factura_
+     unico`, case-insensitive, en TODO el sistema no solo por orden) no cambia — es
+     comparación de string, no le importa la forma del prefijo. `_serie_desde_numero()`
+     (ADR-060 bis, extrae el prefijo para `IdDoc.Serie` del PAC) tampoco cambia: ya
+     partía en el primer "-" sin asumir una sola letra, así que "FMEX-0001" → Serie
+     "FMEX" funciona igual que antes con "F-0001" → Serie "F". **Alcance:** solo
+     `FacturaCliente.numero_factura` (la factura que OIR emite al cliente) — los folios
+     que OIR RECIBE de afiliado/agencia/vendedor (`factura_emisora`,
+     `folio_factura_agencia`, `folio_factura_vendedor`) son números de un TERCERO, no
+     tenían formato regulado antes y siguen sin tenerlo: no es la misma factura ni el
+     mismo estándar, extenderles esta regla habría sido inventar alcance no pedido.
+  2. **Fechas de solo lectura en mes/día/año:** confirmado con el usuario (pregunta
+     directa antes de tocar nada) que el pedido era SOLO para las vistas de solo
+     lectura, no para los `<input type="date">` donde se captura (esos 5 campos sí
+     existen en el módulo — `fecha_factura`, `fecha_timbrado`,
+     `fecha_factura_afiliado/agencia/vendedor` — pero su formato visual lo decide el
+     navegador/SO, no el código; forzarlo de verdad habría exigido construir un
+     selector de fecha propio desde cero, que no es lo que se pidió). Fix de una línea:
+     `fmtFecha()` en `frontend/src/modules/facturacion/format.ts` pasa de
+     `${dia}/${mes}/${anio}` a `${mes}/${dia}/${anio}`. Por diseño del proyecto (cada
+     módulo de negocio tiene su PROPIA copia de `fmtFecha`, nunca comparte con otro —
+     ver el docstring del archivo), este cambio NO afecta a `modules/ordenes` ni
+     `modules/cobranza`, que siguen en día/mes/año — exactamente el alcance pedido
+     ("EN TODOS LOS FORMULARIOS... EN LA PANTALLA DE FACTURA").
+  3. **Folio fiscal (CFDI) — dónde se usa y su formato:** respuesta a la pregunta del
+     usuario — se captura a mano en `RegistrarTimbradoForm.tsx` ("Registrar respuesta
+     del timbrado", dentro de Facturas de clientes); el sistema nunca timbra (no hay
+     parser/receptor automático — confirmado leyendo `app/integrations/timbrado/
+     port.py`, que solo tiene un puerto de EXPORTACIÓN). Antes solo exigía "no vacío".
+     Fix: valida la FORMA de UUID (8-4-4-4-12 hexadecimal con guiones,
+     `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`),
+     en frontend (antes de enviar) y backend (`TimbrarIn.folio_fiscal_sat`,
+     `field_validator`) — NO exige estrictamente UUID v4 (el nibble de versión): no
+     todos los PAC lo respetan, y lo que importa es no capturar basura por error de
+     dedo, no imponer una variante exacta de UUID.
+- **Migración de pruebas existentes (consecuencia de endurecer 2 regex ya en uso):**
+  decenas de pruebas en `test_f2_02_facturacion_escritura.py` y
+  `test_f3_02_cobranza_escritura.py` creaban facturas con números de ejemplo en el
+  formato VIEJO (`"F-9001"`, `"A-1001"`, etc.) o folios fiscales no-UUID (`"X"`,
+  `"FOLIO-1"`, `"F"*36`) solo para ejercitar OTRA cosa (el flujo de timbrado, la
+  bandeja, etc.) — se migraron a `FMEX-####`/UUIDs válidos para que sigan probando lo
+  que probaban, sin tropezar con la regla nueva. El único archivo de lectura
+  (`test_f2_01_facturacion_lectura.py`) siembra sus facturas por ORM directo
+  (`db.add(FacturaCliente(...))`), sin pasar por los validadores — se dejó tal cual
+  a propósito, no hay nada que migrar ahí. `scripts/seed_dev.py` (los 4 `numero_factura`
+  de la demo) también se actualizó al estándar nuevo.
+- **Verificado:** backend — suite completa (pytest + ruff) 100% verde, incluidas
+  pruebas nuevas dedicadas (`test_numero_factura_acepta_el_prefijo_fsoir_para_sap`,
+  `test_numero_factura_rechaza_formato_invalido` reescrita con los casos nuevos,
+  `test_timbrar_rechaza_folio_fiscal_con_formato_invalido` parametrizada,
+  `test_timbrar_acepta_folio_fiscal_en_minusculas`). Frontend — suite completa (539
+  pruebas, los 12 fallos en rojo son los de auth/sesión ya diferidos, sin relación con
+  este cambio) con 3 pruebas nuevas (rechazo del prefijo viejo/aceptación de
+  FMEX-/FSOIR-, rechazo de folio fiscal sin forma de UUID) y assertions de fecha
+  existentes migradas a mes/día/año donde `fmtFecha` de facturación ya se probaba;
+  `tsc --noEmit` y `eslint` limpios.

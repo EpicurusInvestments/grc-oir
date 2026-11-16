@@ -720,6 +720,16 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
     (`"F-REL-A"`, `"F-BANDEJA"`, etc.) que ya no cumplen el formato — quedaron como
     `"F-9NNN"` sin significado mnemotécnico, el nombre de la función de prueba ya lo da.
 
+- **ADR-269 (petición del usuario, con captura) — el prefijo deja de ser "cualquier
+  letra":** el regex de arriba (`^[A-Z]-[0-9]+$`) CAMBIA a `^(FMEX|FSOIR)-[0-9]+$` —
+  solo esos 2 prefijos exactos (`FMEX-` para factura directa, `FSOIR-` para la que va a
+  SAP), el resto de la regla (normaliza a mayúsculas, unicidad global, sin exención
+  para canceladas) no cambia. Mismo ADR agrega: fechas de solo lectura de TODO este
+  módulo en mes/día/año (`fmtFecha()` de `facturacion/format.ts`, no toca `ordenes` ni
+  `cobranza`, cada uno con su propia copia) y validación de FORMA de UUID para el folio
+  fiscal del timbrado (`RegistrarTimbradoForm.tsx` + `TimbrarIn.folio_fiscal_sat`),
+  antes solo "no vacío". Detalle completo en `docs/arquitectura.md` (ADR-269).
+
 - **Corrección posterior: `regimen_fiscal_emisor`/`regimen_fiscal_receptor` y
   `AGREGADOS.UsoCFDI` ya NO salen de `ConstanteSistema` (ADR-065, bug real).** Al
   completar el catálogo de constantes SAT (ver `f0-05-constantes-sistema.md`), los

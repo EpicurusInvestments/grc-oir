@@ -119,18 +119,41 @@ def _producto_comun(ordenes: list[Any]) -> str | None:
     return productos.pop() if len(productos) == 1 else None
 
 
-# Una letra (la serie, ADR-060 bis) + guion + solo dígitos (sin límite de longitud). La
-# letra se normaliza a mayúscula automáticamente en vez de rechazar minúsculas: el
-# usuario no tiene que recordar la regla, solo teclearla como le salga.
-NUMERO_FACTURA_REGEX = re.compile(r"^[A-Z]-[0-9]+$")
+# ADR-269 (petición del usuario, con captura): estándar nuevo — el prefijo (la serie,
+# ADR-060 bis) ya NO es "cualquier letra", son exactamente estos 2 (según el sistema que
+# recibe la factura): "FMEX" (directa) o "FSOIR" (para SAP), guion y solo dígitos (sin
+# límite de longitud), p.ej. "FMEX-001246" o "FSOIR-99999". El prefijo se normaliza a
+# mayúscula automáticamente en vez de rechazar minúsculas: el usuario no tiene que
+# recordar la regla, solo teclearla como le salga.
+NUMERO_FACTURA_REGEX = re.compile(r"^(FMEX|FSOIR)-[0-9]+$")
 
 
 def _normaliza_numero_factura(valor: str) -> str:
     v = valor.strip().upper()
     if not NUMERO_FACTURA_REGEX.match(v):
         raise ValueError(
-            "El número de factura debe tener el formato LETRA-NÚMEROS (ej. A-001246): "
-            "una sola letra, un guion y solo dígitos."
+            "El número de factura debe tener el formato FMEX-NÚMEROS o FSOIR-NÚMEROS "
+            "(ej. FMEX-001246): el prefijo, un guion y solo dígitos."
+        )
+    return v
+
+
+# ADR-269 (petición del usuario, con captura): el folio fiscal del CFDI (UUID que
+# devuelve el PAC al timbrar) se capturaba como texto libre — solo "no vacío". El UUID
+# real tiene forma fija (8-4-4-4-12 en hexadecimal, con guiones en esas posiciones);
+# validar la FORMA evita capturar basura por error de dedo, sin exigir que sea
+# estrictamente UUID v4 (no todos los PAC respetan ese nibble de versión).
+FOLIO_FISCAL_REGEX = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _valida_folio_fiscal(valor: str) -> str:
+    v = valor.strip()
+    if not FOLIO_FISCAL_REGEX.match(v):
+        raise ValueError(
+            "El folio fiscal debe ser un UUID válido (8-4-4-4-12 caracteres "
+            "hexadecimales, ej. A1B2C3D4-E5F6-7890-ABCD-EF1234567890)."
         )
     return v
 
@@ -595,6 +618,11 @@ class TimbrarIn(BaseModel):
     # ADR-248 (petición del usuario): "Facturado en sistema externo" — solo identifica la
     # factura, no cambia ningún otro campo ni cálculo (ver el modelo, más abajo).
     facturado_en_sistema_externo: bool = False
+
+    @field_validator("folio_fiscal_sat")
+    @classmethod
+    def _valida_folio_fiscal_sat(cls, v: str) -> str:
+        return _valida_folio_fiscal(v)
 
 
 class EntregarIn(BaseModel):

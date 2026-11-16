@@ -1534,12 +1534,13 @@ CONSTANTES_F2 = [
 
 #: (clave, oc, numero, estado, folio_fiscal, fecha_factura, fecha_entrega)
 FACTURAS_CLIENTE_MOCK = [
-    ("fc1", "oc6", "A-1041", "preparada", None, date(2025, 4, 1), None),
-    ("fc2", "oc7", "A-1042", "timbrada", "9F2A1C7E-0001-4B3D-9E11-AA0102030405",
+    # ADR-269: numero_factura en el estándar nuevo (FMEX-/FSOIR-NÚMEROS).
+    ("fc1", "oc6", "FMEX-1041", "preparada", None, date(2025, 4, 1), None),
+    ("fc2", "oc7", "FMEX-1042", "timbrada", "9F2A1C7E-0001-4B3D-9E11-AA0102030405",
      date(2025, 4, 2), None),
-    ("fc3", "oc8", "A-1043", "entregada", "9F2A1C7E-0002-4B3D-9E11-AA0102030406",
+    ("fc3", "oc8", "FMEX-1043", "entregada", "9F2A1C7E-0002-4B3D-9E11-AA0102030406",
      date(2025, 4, 3), date(2025, 4, 8)),
-    ("fc4", "oc9", "A-1044", "cobrada", "9F2A1C7E-0003-4B3D-9E11-AA0102030407",
+    ("fc4", "oc9", "FMEX-1044", "cobrada", "9F2A1C7E-0003-4B3D-9E11-AA0102030407",
      date(2025, 4, 4), date(2025, 4, 9)),
 ]
 
