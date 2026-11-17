@@ -190,6 +190,29 @@ múltiple (`PagoMultipleForm.tsx`, viaja a CADA `PagoCliente` del lote incluido 
 huérfano por sobrante). Solo IDENTIFICA el pago — sin ningún efecto en el flujo ni en
 los cálculos. Migración `7b931c7fdb4e`.
 
+**ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con
+desarrolladores consultados) — el pago ya no puede quedar de más ni de menos:** nueva
+columna `ajuste` (DECIMAL, -$10 a +$10) en `PagoCliente`, SOLO del pago múltiple —
+se SUMA a `monto_aplicado` (que sigue siendo el pendiente de la factura, sin tocar) al
+validar `crear_multiple()`. Reglas:
+- `suma_asignada = Σ(monto_aplicado + ajuste)` nunca puede exceder `monto_total_pago`
+  (igual que antes, ahora incluyendo el ajuste).
+- Si `suma_asignada` queda por debajo de `monto_total_pago` por **$10 o menos**, se
+  RECHAZA (400) — esa diferencia cabe dentro de lo que el ajuste podría cubrir, así que
+  hay que usar la columna de Ajuste para cuadrar exacto, no queda como "pago de menos"
+  silencioso.
+- Si la diferencia es **mayor a $10**, sigue el huérfano de ADR-230 tal cual — ahí sí es
+  un pago parcial real que el ajuste no puede absorber.
+
+`ajuste` NO afecta `importe_cobrado`/`importe_pendiente_cobro` de la factura (siguen
+basados solo en `monto_aplicado`) — es una corrección contra lo CAPTURADO (comisión
+bancaria, redondeo), no contra la factura. `PagoMultipleItemCreate.ajuste` (Pydantic,
+`ge=-10, le=10`, default 0); columna con CHECK `ajuste BETWEEN -10 AND 10`, default 0 —
+0 en todo pago individual (no se captura ahí). Frontend: `PagoMultipleForm.tsx` agrega
+la columna "Ajuste" a la tabla de facturas disponibles, editable solo si la factura está
+marcada; "Monto asignado"/"Monto por asignar" ahora incluyen el ajuste; mismo guardarraíl
+de 3 casos en vivo (botón deshabilitado) que ADR-227. Migración `e6f7a8b9c0d1`.
+
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
 factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M

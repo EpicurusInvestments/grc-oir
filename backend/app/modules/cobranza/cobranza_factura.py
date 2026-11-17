@@ -73,6 +73,10 @@ from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
+#: ADR-270: tope del "Ajuste" por renglón del pago múltiple — también el umbral que
+#: separa una diferencia chica (se exige cuadrar exacto con el ajuste) de un "pago de
+#: menos" real (sigue generando el huérfano de ADR-230).
+_ADR270_TOLERANCIA = Decimal("10")
 
 
 class EstatusCobro(StrEnum):
@@ -156,7 +160,10 @@ class PagoCliente(Base):
     """
 
     __tablename__ = "pago_cliente"
-    __table_args__ = (CheckConstraint("monto_aplicado > 0", name="ck_pago_cliente_monto"),)
+    __table_args__ = (
+        CheckConstraint("monto_aplicado > 0", name="ck_pago_cliente_monto"),
+        CheckConstraint("ajuste BETWEEN -10 AND 10", name="ck_pago_cliente_ajuste"),
+    )
 
     pago_cliente_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     # ADR-229 (petición del usuario): nullable — un pago puede capturarse SIN saber
@@ -173,6 +180,12 @@ class PagoCliente(Base):
     )
     fecha_pago_cliente: Mapped[date] = mapped_column(fecha_sql())
     monto_aplicado: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    # ADR-270 (petición del usuario, "Correcciones en pagos múltiples"): corrección de
+    # +/- $10 sobre `monto_aplicado`, solo del pago múltiple — absorbe diferencias chicas
+    # (comisión bancaria, redondeo) para que el pago cuadre exacto contra lo capturado,
+    # sin tocar el pendiente real de la factura. Default 0 en el pago individual (no se
+    # captura ahí, ver `PagoClienteCreate`).
+    ajuste: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     # ADR-225: nullable desde que existe el pago múltiple — ese flujo no lo captura (el
     # usuario no lo pidió ahí); el pago individual lo sigue exigiendo vía
     # `PagoClienteCreate.metodo_pago_clave` (Pydantic), no por esta columna.
@@ -281,6 +294,8 @@ class PagoClienteRead(BaseModel):
     cobranza_id: uuid.UUID | None = None
     fecha_pago_cliente: date
     monto_aplicado: Decimal
+    # ADR-270: corrección de +/- $10 del pago múltiple; 0 en el pago individual.
+    ajuste: Decimal = Decimal("0")
     metodo_pago_clave: str | None = None
     referencia_pago: str | None = None
     archivo_nombre: str | None = None
@@ -341,6 +356,10 @@ class PagoMultipleItemCreate(BaseModel):
     cobranza_id: uuid.UUID
     monto_aplicado: Decimal = Field(gt=0)
     numero_pago: str | None = Field(default=None, max_length=20)
+    # ADR-270 (petición del usuario, "Correcciones en pagos múltiples"): corrección de
+    # +/- $10 que se SUMA a `monto_aplicado` al validar el cuadre exacto contra
+    # `monto_total_pago` — ver docstring de `PagoMultipleCreate` y `crear_multiple`.
+    ajuste: Decimal = Field(default=Decimal("0"), ge=-10, le=10)
 
 
 class PagoMultipleCreate(BaseModel):
@@ -352,7 +371,15 @@ class PagoMultipleCreate(BaseModel):
     ADR-230 (petición del usuario) — "pago de menos": si `monto_total_pago` no se cubre
     por completo con `pagos` (asignación parcial), el SOBRANTE se guarda como su propio
     `PagoCliente` SIN asignar (`cobranza_id=None`, mismo `pago_multiple_id`) — antes ese
-    dinero simplemente no se guardaba en ningún lado."""
+    dinero simplemente no se guardaba en ningún lado.
+
+    ADR-270 (petición del usuario, "Correcciones en pagos múltiples") — el pago ya NO
+    puede quedar de más ni de menos: cada renglón trae un `ajuste` (+/- $10) que se suma
+    a su `monto_aplicado`. Si la suma total (aplicado + ajuste) no cuadra exacto contra
+    `monto_total_pago` Y la diferencia cabe dentro de lo que el ajuste podría cubrir
+    (<= $10), se RECHAZA — hay que usar la columna de ajuste para cuadrar, no queda
+    "pago de menos" chico sin explicar. ADR-230 sigue vivo tal cual SOLO para diferencias
+    grandes (> $10): eso es un pago parcial real, no algo que el ajuste deba absorber."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -827,7 +854,14 @@ class PagoClienteService:
         perderse. Si `data.pago_origen_id` viene (se está REPARTIENDO un huérfano ya
         existente, no capturando dinero nuevo), ese huérfano se borra como parte de
         esta MISMA transacción — si vuelve a quedar sobrante, nace un huérfano nuevo y
-        más chico en su lugar."""
+        más chico en su lugar.
+
+        ADR-270 (petición del usuario) — `suma_asignada` ahora incluye el `ajuste` de
+        cada renglón. Si queda por debajo de `monto_total_pago` por $10 o menos, ya NO
+        se permite guardar como "pago de menos": esa diferencia cabe dentro de lo que el
+        ajuste puede cubrir, así que se exige cuadrar exacto (ver `_ADR270_TOLERANCIA`).
+        Solo diferencias mayores a $10 siguen generando el huérfano de ADR-230 — ahí sí
+        es un pago parcial real que el ajuste no puede absorber."""
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
@@ -842,13 +876,28 @@ class PagoClienteService:
                 )
             ids_vistos.add(item.cobranza_id)
 
-        suma_asignada = sum((item.monto_aplicado for item in data.pagos), Decimal("0"))
+        suma_asignada = sum(
+            (item.monto_aplicado + item.ajuste for item in data.pagos), Decimal("0")
+        )
         if suma_asignada > data.monto_total_pago:
             raise DomainError(
-                "La suma de los montos asignados no puede exceder el monto total del pago.",
+                "La suma de los montos asignados (incluyendo ajustes) no puede exceder "
+                "el monto total del pago.",
                 detalles={
                     "monto_total_pago": str(data.monto_total_pago),
                     "suma_asignada": str(suma_asignada),
+                },
+            )
+        diferencia = (data.monto_total_pago - suma_asignada).quantize(CENTAVOS)
+        if Decimal("0") < diferencia <= _ADR270_TOLERANCIA:
+            raise DomainError(
+                "El pago no cuadra exacto contra el monto capturado: falta "
+                f"{diferencia}, dentro de lo que cubre la columna de Ajuste "
+                f"(hasta ±{_ADR270_TOLERANCIA}). Ajusta los montos para cuadrar exacto.",
+                detalles={
+                    "monto_total_pago": str(data.monto_total_pago),
+                    "suma_asignada": str(suma_asignada),
+                    "diferencia": str(diferencia),
                 },
             )
 
@@ -885,6 +934,7 @@ class PagoClienteService:
                     pago_cliente_id=uuid4(),
                     cobranza_id=item.cobranza_id,
                     monto_aplicado=item.monto_aplicado,
+                    ajuste=item.ajuste,
                     numero_pago=item.numero_pago,
                     pago_multiple_id=pago_multiple_id,
                     created_by=creado_por,
@@ -895,7 +945,9 @@ class PagoClienteService:
                 servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
                 pagos_creados.append(pago)
 
-            sobrante = (data.monto_total_pago - suma_asignada).quantize(CENTAVOS)
+            # ADR-270: si se llegó hasta aquí con `diferencia > 0`, ya pasó la validación
+            # de arriba (no cabía en el ajuste) — es el "pago de menos" real de ADR-230.
+            sobrante = diferencia
             if sobrante > 0:
                 huerfano = PagoCliente(
                     pago_cliente_id=uuid4(),

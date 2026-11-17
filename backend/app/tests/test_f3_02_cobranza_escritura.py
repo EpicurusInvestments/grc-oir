@@ -1154,6 +1154,87 @@ def test_pago_exacto_no_genera_huerfano(
     assert len(r.json()) == 1
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con
+# desarrolladores consultados): ya no se permite guardar un pago múltiple de más ni de
+# menos — el "Ajuste" (+/- $10) por renglón absorbe diferencias chicas; solo
+# diferencias MAYORES a $10 siguen generando el huérfano de ADR-230.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_ajuste_cierra_una_diferencia_chica_sin_generar_huerfano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2120")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "-5.00"}]
+    )
+    payload["monto_total_pago"] = "4995.00"  # 5000 - 5 de ajuste = exacto
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 201, r.text
+    creados = r.json()
+    assert len(creados) == 1  # sin huérfano
+    assert creados[0]["monto_aplicado"] == "5000.00"
+    assert creados[0]["ajuste"] == "-5.00"
+
+    # El ajuste NO afecta lo que se le acredita a la factura: sigue siendo 5000.00.
+    cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    assert cobranza["importe_cobrado"] == "5000.00"
+
+
+def test_diferencia_chica_sin_usar_el_ajuste_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2121")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
+    payload["monto_total_pago"] = "5005.00"  # sobran 5.00: cabe en el ajuste, pero no se usó
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 400
+    cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    assert cobranza["estatus_cobro"] == "pendiente"
+
+
+def test_diferencia_mayor_a_diez_sigue_generando_huerfano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2122")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
+    payload["monto_total_pago"] = "5011.00"  # sobran 11.00: no cabe en el ajuste -> huérfano
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 201, r.text
+    creados = r.json()
+    assert len(creados) == 2
+    huerfano = next(p for p in creados if p["cobranza_id"] is None)
+    assert huerfano["monto_aplicado"] == "11.00"
+
+
+def test_ajuste_fuera_de_rango_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2123")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "15.00"}]
+    )
+    payload["monto_total_pago"] = "5015.00"
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 422
+
+
+def test_ajuste_que_hace_exceder_el_monto_total_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2124")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "5.00"}]
+    )
+    payload["monto_total_pago"] = "5000.00"  # aplicado + ajuste = 5005.00 > 5000.00
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 400
+
+
 def test_repartir_un_huerfano_lo_borra_y_crea_los_nuevos_pagos(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

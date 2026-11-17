@@ -143,8 +143,8 @@ describe("PagoMultipleForm", () => {
         forma_pago_clave: "01",
         cuenta_contable_id: "cc-1",
         // ADR-227: "numero_pago" viaja POR RENGLÓN (el calculado de ESA factura), no a
-        // nivel del pago múltiple completo.
-        pagos: [{ cobranza_id: "cb-1", monto_aplicado: "6960.00", numero_pago: "2" }],
+        // nivel del pago múltiple completo. ADR-270: sin ajuste capturado, viaja "0".
+        pagos: [{ cobranza_id: "cb-1", monto_aplicado: "6960.00", ajuste: "0", numero_pago: "2" }],
       }),
     );
     expect(crearMultipleMock.mock.calls[0][0]).not.toHaveProperty("numero_pago");
@@ -258,5 +258,95 @@ describe("PagoMultipleForm", () => {
     expect(screen.getByPlaceholderText("0.00")).toHaveValue("");
     expect(container.querySelector("select.fsel")).toHaveValue("");
     expect(screen.queryByText("A-0001")).not.toBeInTheDocument(); // clienteId también se limpió
+  });
+
+  // ADR-270 (petición del usuario, "Correcciones en pagos múltiples"): el ajuste
+  // (-$10/+$10) se SUMA a "monto aplicado" — absorbe diferencias chicas y permite
+  // cuadrar exacto sin generar el "pago de menos"/huérfano de ADR-230.
+  it("ADR-270: el ajuste cierra una diferencia chica y permite registrar el pago exacto", async () => {
+    const { container, onRegistrado } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6955" } });
+    await screen.findByText("01 · Efectivo");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, {
+      target: { value: "01" },
+    });
+    fireEvent.change(container.querySelectorAll("select.fsel")[1], { target: { value: "cc-1" } });
+
+    const fila = container.querySelectorAll("tbody tr")[0];
+    fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
+    // inputs "fi mono" de la fila: [0] = Monto aplicado (precargado con el pendiente), [1] = Ajuste.
+    const inputsFila = fila.querySelectorAll("input.fi.mono");
+    fireEvent.change(inputsFila[1], { target: { value: "-5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago múltiple" }));
+
+    await waitFor(() => expect(crearMultipleMock).toHaveBeenCalledTimes(1));
+    expect(crearMultipleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        monto_total_pago: "6955",
+        pagos: [{ cobranza_id: "cb-1", monto_aplicado: "6960.00", ajuste: "-5", numero_pago: "2" }],
+      }),
+    );
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledTimes(1));
+  });
+
+  it("ADR-270: una diferencia chica sin usar el ajuste no deja registrar (hay que cuadrar exacto)", async () => {
+    const { container } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6965" } }); // sobran $5
+    await screen.findByText("01 · Efectivo");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, {
+      target: { value: "01" },
+    });
+    fireEvent.change(container.querySelectorAll("select.fsel")[1], { target: { value: "cc-1" } });
+
+    const fila = container.querySelectorAll("tbody tr")[0];
+    fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago múltiple" }));
+
+    expect(await screen.findByText(/no cuadra exacto/)).toBeInTheDocument();
+    expect(crearMultipleMock).not.toHaveBeenCalled();
+  });
+
+  it("ADR-270: una diferencia mayor a $10 sigue permitiendo el pago de menos (huérfano)", async () => {
+    const { container, onRegistrado } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "7020" } }); // sobran $60
+    await screen.findByText("01 · Efectivo");
+    fireEvent.change(container.querySelector("select.fsel") as HTMLSelectElement, {
+      target: { value: "01" },
+    });
+    fireEvent.change(container.querySelectorAll("select.fsel")[1], { target: { value: "cc-1" } });
+
+    const fila = container.querySelectorAll("tbody tr")[0];
+    fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
+
+    fireEvent.click(screen.getByRole("button", { name: "Registrar pago múltiple" }));
+
+    await waitFor(() => expect(crearMultipleMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledTimes(1));
+  });
+
+  it("ADR-270: un ajuste fuera de -$10/+$10 deshabilita el botón", async () => {
+    const { container } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6975" } });
+    const fila = container.querySelectorAll("tbody tr")[0];
+    fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
+    const inputsFila = fila.querySelectorAll("input.fi.mono");
+    fireEvent.change(inputsFila[1], { target: { value: "15" } });
+
+    expect(await screen.findByText(/debe estar entre -\$10\.00 y \$10\.00/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar pago múltiple" })).toBeDisabled();
   });
 });
