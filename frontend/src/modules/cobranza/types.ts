@@ -69,6 +69,8 @@ export interface PagoCliente {
   cobranza_id: string | null;
   fecha_pago_cliente: string;
   monto_aplicado: string;
+  /** ADR-270: corrección de +/- $10 del pago múltiple; "0.00" en el pago individual. */
+  ajuste: string;
   /** ADR-225: nullable desde que existe el pago múltiple — ese flujo no lo captura. */
   metodo_pago_clave: string | null;
   referencia_pago: string | null;
@@ -111,12 +113,20 @@ export interface PagoClienteCreate {
 export interface PagoMultipleItem {
   cobranza_id: string;
   monto_aplicado: string;
+  /** ADR-270 (petición del usuario, "Correcciones en pagos múltiples"): corrección de
+   *  +/- $10 que se SUMA a `monto_aplicado` para que el pago cuadre exacto contra
+   *  `monto_total_pago` — ver docstring de `PagoMultipleCreate`. */
+  ajuste?: string;
   numero_pago?: string | null;
 }
 
 /** Pago múltiple (ADR-225, petición del usuario): un solo pago recibido que se reparte
  *  entre varias facturas del MISMO anunciante o agencia — cada factura seleccionada se
- *  registra como su propio `PagoCliente`. */
+ *  registra como su propio `PagoCliente`.
+ *
+ *  ADR-270: ya no se permite que la suma de `pagos` (aplicado + ajuste) quede de más ni
+ *  de menos contra `monto_total_pago`, salvo que la diferencia sea mayor a $10 (ahí
+ *  sigue el "pago de menos"/huérfano de ADR-230) — ver `PagoMultipleForm.tsx`. */
 export interface PagoMultipleCreate {
   fecha_pago_cliente: string;
   /** Lo que de verdad entró — puede ser mayor a la suma de `pagos` (asignación

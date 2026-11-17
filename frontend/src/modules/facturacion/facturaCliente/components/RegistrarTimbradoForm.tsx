@@ -21,6 +21,14 @@ import { useState } from "react";
 import { AdjuntoFacturaInput } from "./AdjuntoFacturaInput";
 import type { TimbrarInput } from "../../types";
 
+// ADR-269 (petición del usuario, con captura): valida la FORMA del folio fiscal
+// (8-4-4-4-12 hexadecimal con guiones) — antes solo se exigía "no vacío", así que
+// cualquier texto pasaba como folio fiscal. No exige estrictamente UUID v4 (el nibble
+// de versión): no todos los PAC lo respetan, y lo que importa aquí es no capturar
+// basura por error de dedo. Mismo patrón que el backend (`FOLIO_FISCAL_REGEX` en
+// `factura_cliente.py`).
+const FOLIO_FISCAL_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 interface Props {
   numeroFactura: string;
   submitting?: boolean;
@@ -50,13 +58,35 @@ export function RegistrarTimbradoForm({
   const [facturadoExterno, setFacturadoExterno] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Bug corregido (petición del usuario, con captura): el error de formato solo se
+  // veía hasta dar clic en "Registrar timbrado" — si alguien tecleaba un folio mal
+  // formado y no intentaba guardar todavía, no había ninguna señal. Ahora se avisa en
+  // cuanto se sale del campo (`onBlur`), sin nagguear mientras todavía está escribiendo
+  // (`onChange` sigue limpiando el error en cada tecla, como ya hacía).
+  const validarFolioAlSalir = () => {
+    const folioLimpio = folio.trim();
+    if (!folioLimpio || FOLIO_FISCAL_REGEX.test(folioLimpio)) return;
+    setError(
+      "El folio fiscal debe ser un UUID válido (8-4-4-4-12 caracteres hexadecimales, " +
+        "ej. A1B2C3D4-E5F6-7890-ABCD-EF1234567890).",
+    );
+  };
+
   const confirmar = () => {
-    if (!folio.trim()) {
+    const folioLimpio = folio.trim();
+    if (!folioLimpio) {
       setError("El folio fiscal (UUID del CFDI) es obligatorio.");
       return;
     }
+    if (!FOLIO_FISCAL_REGEX.test(folioLimpio)) {
+      setError(
+        "El folio fiscal debe ser un UUID válido (8-4-4-4-12 caracteres hexadecimales, " +
+          "ej. A1B2C3D4-E5F6-7890-ABCD-EF1234567890).",
+      );
+      return;
+    }
     onConfirm({
-      folio_fiscal_sat: folio.trim(),
+      folio_fiscal_sat: folioLimpio,
       fecha_timbrado: fecha,
       serie_timbrado: serie.trim() || null,
       xml_path: xmlPath,
@@ -101,6 +131,7 @@ export function RegistrarTimbradoForm({
                 setFolio(e.target.value);
                 setError(null);
               }}
+              onBlur={validarFolioAlSalir}
             />
             <div className="r2">
               <div>

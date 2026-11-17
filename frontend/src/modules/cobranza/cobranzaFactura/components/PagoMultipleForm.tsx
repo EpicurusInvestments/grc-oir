@@ -30,6 +30,16 @@
  * "Monto total del pago" — es dinero YA recibido y documentado, no se re-captura. El
  * payload manda `pago_origen_id` para que el backend lo borre en la MISMA transacción
  * (si vuelve a sobrar algo, nace un huérfano nuevo y más chico).
+ *
+ * ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con desarrolladores
+ * consultados): el pago ya no puede quedar de más ni de menos contra lo capturado.
+ * Columna nueva "Ajuste" por renglón (-$10 a +$10) que se SUMA a "Monto aplicado" (que
+ * sigue siendo el pendiente de la factura, sin tocar) — absorbe diferencias chicas
+ * (comisión bancaria, redondeo) para cuadrar exacto. Si la diferencia contra el monto
+ * total es MAYOR a $10 (no cabe en el ajuste), sigue el "pago de menos"/huérfano de
+ * ADR-230 tal cual — eso es un pago parcial real, no algo que el ajuste deba absorber.
+ * Misma validación en el backend (`crear_multiple`), este formulario solo evita el
+ * viaje redondo cuando ya se sabe que se va a rechazar.
  */
 
 import { useMemo, useState } from "react";
@@ -76,6 +86,8 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
   // Montos por renglón — SOLO existen para facturas marcadas (seleccionadas). Quitar la
   // marca descarta el monto capturado; volver a marcarla lo recarga con el pendiente.
   const [montos, setMontos] = useState<Record<string, string>>({});
+  // ADR-270: corrección -$10/+$10 por renglón, independiente de "monto aplicado".
+  const [ajustes, setAjustes] = useState<Record<string, string>>({});
 
   const anunciantes = useAnunciantesInfo();
   const agencias = useAgenciasInfo();
@@ -105,7 +117,11 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
     () => facturas.filter((f) => montos[f.cobranza_id] !== undefined),
     [facturas, montos],
   );
-  const montoAsignado = seleccionadas.reduce((s, f) => s + (Number(montos[f.cobranza_id]) || 0), 0);
+  // ADR-270: "Monto asignado" ahora incluye el ajuste (-$10/+$10) de cada renglón.
+  const montoAsignado = seleccionadas.reduce(
+    (s, f) => s + (Number(montos[f.cobranza_id]) || 0) + (Number(ajustes[f.cobranza_id]) || 0),
+    0,
+  );
   const montoTotalNum = Number(montoTotal) || 0;
   const montoPorAsignar = montoTotalNum - montoAsignado;
 
@@ -119,6 +135,16 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
     ? `El monto de la factura ${facturaExcedida.numero_factura ?? "—"} ` +
       `(${fmtMoneda(montos[facturaExcedida.cobranza_id])}) no puede exceder su pendiente ` +
       `(${fmtMoneda(facturaExcedida.importe_pendiente_cobro)}).`
+    : null;
+
+  // ADR-270: el ajuste de CADA factura está acotado a -$10/+$10 — igual que
+  // `facturaExcedida`, se deshabilita el botón EN VIVO, no solo al hacer clic.
+  const ajusteFueraDeRango = seleccionadas.find(
+    (f) => Math.abs(Number(ajustes[f.cobranza_id]) || 0) > 10,
+  );
+  const mensajeAjusteFueraDeRango = ajusteFueraDeRango
+    ? `El ajuste de la factura ${ajusteFueraDeRango.numero_factura ?? "—"} debe estar entre ` +
+      `-$10.00 y $10.00.`
     : null;
 
   // Petición del usuario: cambiar de cliente (o de modo Anunciante/Agencia) invalida
@@ -137,6 +163,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
       setPagadoExterno(false);
     }
     setMontos({});
+    setAjustes({});
     setError(null);
   };
 
@@ -156,10 +183,21 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
       }
       return copia;
     });
+    // ADR-270: quitar la marca también descarta su ajuste (igual criterio que el monto).
+    setAjustes((actual) => {
+      if (!(cobranzaId in actual)) return actual;
+      const copia = { ...actual };
+      delete copia[cobranzaId];
+      return copia;
+    });
   };
 
   const cambiarMonto = (cobranzaId: string, valor: string) => {
     setMontos((actual) => ({ ...actual, [cobranzaId]: valor }));
+  };
+
+  const cambiarAjuste = (cobranzaId: string, valor: string) => {
+    setAjustes((actual) => ({ ...actual, [cobranzaId]: valor }));
   };
 
   const confirmar = () => {
@@ -203,11 +241,30 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
         );
         return;
       }
+      // ADR-270: el ajuste de cada factura está acotado a -$10/+$10.
+      const ajuste = Number(ajustes[f.cobranza_id]) || 0;
+      if (Math.abs(ajuste) > 10) {
+        setError(`El ajuste de la factura ${f.numero_factura ?? "—"} debe estar entre -$10.00 y $10.00.`);
+        return;
+      }
     }
-    if (montoAsignado > montoTotalNum) {
+    // ADR-270 — el pago ya no puede quedar de más ni de menos contra lo capturado:
+    // "Monto asignado" (aplicado + ajuste) nunca puede exceder el total, y si queda por
+    // debajo, la diferencia solo se tolera cuando es MAYOR a lo que el ajuste podría
+    // cubrir (> $10, el "pago de menos"/huérfano real de ADR-230). Una diferencia chica
+    // (<= $10) significa que falta terminar de cuadrar con la columna de Ajuste.
+    const diferencia = Math.round((montoTotalNum - montoAsignado) * 100) / 100;
+    if (diferencia < 0) {
       setError(
         `La suma de los montos asignados (${fmtMoneda(String(montoAsignado))}) no puede ` +
           `exceder el monto total del pago (${fmtMoneda(montoTotal)}).`,
+      );
+      return;
+    }
+    if (diferencia > 0 && diferencia <= 10) {
+      setError(
+        `El pago no cuadra exacto: falta ${fmtMoneda(String(diferencia))}, dentro de lo que ` +
+          `cubre la columna de Ajuste (hasta ±$10.00). Ajusta los montos para cuadrar exacto.`,
       );
       return;
     }
@@ -223,6 +280,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
         pagos: seleccionadas.map((f) => ({
           cobranza_id: f.cobranza_id,
           monto_aplicado: montos[f.cobranza_id],
+          ajuste: ajustes[f.cobranza_id]?.trim() ? ajustes[f.cobranza_id] : "0",
           numero_pago: f.siguiente_numero_pago,
         })),
         pago_origen_id: origenHuerfano?.pagoId ?? null,
@@ -454,6 +512,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                       <th className="td-center">Estado</th>
                       <th className="td-center">Número de Parcialidad</th>
                       <th className="td-right">Monto aplicado</th>
+                      <th className="td-right">Ajuste</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -488,6 +547,16 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                               onChange={(e) => cambiarMonto(f.cobranza_id, e.target.value)}
                             />
                           </td>
+                          <td className="td-right">
+                            <input
+                              className="fi mono"
+                              style={{ textAlign: "right", maxWidth: 90 }}
+                              inputMode="decimal"
+                              disabled={!marcada}
+                              value={ajustes[f.cobranza_id] ?? ""}
+                              onChange={(e) => cambiarAjuste(f.cobranza_id, e.target.value)}
+                            />
+                          </td>
                         </tr>
                       );
                     })}
@@ -502,12 +571,17 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
               {mensajeExcedido}
             </div>
           )}
-          {error && !mensajeExcedido && (
+          {!mensajeExcedido && mensajeAjusteFueraDeRango && (
+            <div className="state-msg error" style={{ margin: "14px 0 0", textAlign: "left" }}>
+              {mensajeAjusteFueraDeRango}
+            </div>
+          )}
+          {error && !mensajeExcedido && !mensajeAjusteFueraDeRango && (
             <div className="state-msg error" style={{ margin: "14px 0 0", textAlign: "left" }}>
               {error}
             </div>
           )}
-          {crearMultiple.isError && !error && !mensajeExcedido && (
+          {crearMultiple.isError && !error && !mensajeExcedido && !mensajeAjusteFueraDeRango && (
             <div className="state-msg error" style={{ margin: "14px 0 0", textAlign: "left" }}>
               Ocurrió un error al registrar el pago múltiple.
             </div>
@@ -523,7 +597,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
           type="button"
           className="btn btn-sm btn-phase"
           onClick={confirmar}
-          disabled={crearMultiple.isPending || !!facturaExcedida}
+          disabled={crearMultiple.isPending || !!facturaExcedida || !!ajusteFueraDeRango}
         >
           {crearMultiple.isPending ? "Guardando…" : "Registrar pago múltiple"}
         </button>

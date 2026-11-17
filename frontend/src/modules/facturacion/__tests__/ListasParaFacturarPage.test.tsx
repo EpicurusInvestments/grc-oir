@@ -156,6 +156,29 @@ describe("ListasParaFacturarPage", () => {
     expect(screen.getByDisplayValue(/Servicios de transmisión publicitaria/)).toBeInTheDocument();
   });
 
+  // ADR-269 (petición del usuario, con captura): "Número de factura" ya no acepta
+  // cualquier letra — debe empezar con FMEX- o FSOIR-, seguido solo de números.
+  it("fix: rechaza el formato viejo (una sola letra) y acepta FMEX-/FSOIR-", async () => {
+    renderCon([orden]);
+    (await screen.findByText("Generar factura →")).click();
+    await waitFor(() => expect(screen.getByText(/Nueva factura/)).toBeInTheDocument());
+
+    const campo = screen.getByPlaceholderText("Ej. FMEX-001246");
+
+    fireEvent.change(campo, { target: { value: "A-001246" } });
+    expect(
+      await screen.findByText(
+        "Formato inválido: debe empezar con FMEX- o FSOIR-, seguido solo de números (ej. FMEX-001246).",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.change(campo, { target: { value: "FMEX-001246" } });
+    await waitFor(() => expect(screen.queryByText(/Formato inválido/)).not.toBeInTheDocument());
+
+    fireEvent.change(campo, { target: { value: "FSOIR-99999" } });
+    await waitFor(() => expect(screen.queryByText(/Formato inválido/)).not.toBeInTheDocument());
+  });
+
   it('"Factura relacionada" se filtra por el anunciante de la orden y admite varias (ADR-062)', async () => {
     facturaListMock.mockResolvedValue({
       items: [
@@ -282,7 +305,8 @@ describe("ListasParaFacturarPage", () => {
     // 504,000 + 300,000: el formulario previsualiza la suma que hará el servicio.
     expect(screen.getByText(/\$804,000\.00/)).toBeInTheDocument();
     // Y el periodo ABARCA de la fecha más temprana a la más tardía de las dos órdenes.
-    expect(screen.getByText(/01\/06\/2025 → 31\/07\/2025/)).toBeInTheDocument();
+    // ADR-269: fechas de solo lectura en Facturación ahora en mes/día/año.
+    expect(screen.getByText(/06\/01\/2025 → 07\/31\/2025/)).toBeInTheDocument();
   });
 
   it("desmarcar el check devuelve la bandeja completa a su modo normal", async () => {

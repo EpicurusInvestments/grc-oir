@@ -31,10 +31,13 @@ import {
 } from "../../hooks";
 import { ESTADO_FACTURACION_LABEL, type FacturaClienteCreate, type OrdenPorFacturar } from "../../types";
 
-// Una letra + guion + solo dígitos (sin límite de longitud), p.ej. "A-001246". La `i`
-// acepta minúsculas al teclear: se normalizan a mayúscula al enviar (mismo patrón que
-// el RFC en AnuncianteForm/AfiliadoForm/EmpresaFacturadoraForm).
-const NUMERO_FACTURA_REGEX = /^[A-Z]-[0-9]+$/i;
+// ADR-269 (petición del usuario, con captura): estándar nuevo — el prefijo ya NO es
+// "cualquier letra", son exactamente estos 2 (según cuál sistema recibe la factura):
+// "FMEX" (directa) o "FSOIR" (para SAP), guion y solo dígitos (sin límite de longitud),
+// p.ej. "FMEX-001246" o "FSOIR-99999". La `i` acepta minúsculas al teclear: se
+// normalizan a mayúscula al enviar (mismo patrón que el RFC en
+// AnuncianteForm/AfiliadoForm/EmpresaFacturadoraForm).
+const NUMERO_FACTURA_REGEX = /^(FMEX|FSOIR)-[0-9]+$/i;
 
 const schema = z.object({
   orden_id: z.string().min(1, "Selecciona la orden a facturar."),
@@ -45,7 +48,7 @@ const schema = z.object({
     .max(30)
     .regex(
       NUMERO_FACTURA_REGEX,
-      "Formato inválido: debe ser una letra, un guion y solo números (ej. A-001246).",
+      "Formato inválido: debe empezar con FMEX- o FSOIR-, seguido solo de números (ej. FMEX-001246).",
     ),
   numero_pedido: z.string().trim().max(50).optional(),
   referencia_adicional: z.string().trim().max(150).optional(),
@@ -290,7 +293,7 @@ export function FacturaClienteForm({
             <div className="fl fl-required">Número de factura</div>
             <input
               className="fi mono"
-              placeholder="Ej. A-001246"
+              placeholder="Ej. FMEX-001246"
               {...register("numero_factura", {
                 onChange: () => trigger("numero_factura"),
                 onBlur: onBlurNumeroFactura,

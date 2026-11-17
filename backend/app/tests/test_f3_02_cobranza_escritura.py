@@ -210,7 +210,7 @@ def _pago(monto: str, cat: dict[str, uuid.UUID], fecha: str = "2026-03-05") -> d
 
 
 def _crear_y_timbrar_factura(
-    client: TestClient, db: Session, cat: dict[str, uuid.UUID], numero: str = "A-1001",
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], numero: str = "FMEX-1001",
     *, directa: bool = False, con_agencia_referencia: bool = False,
 ) -> tuple[str, str, uuid.UUID]:
     """Crea una OC cerrada, la factura, la timbra. Devuelve (factura_id, orden_id como
@@ -247,7 +247,10 @@ def _crear_y_timbrar_factura(
     )
     r2 = client.post(
         f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
-        json={"folio_fiscal_sat": "F" * 36, "fecha_timbrado": "2026-03-02"},
+        json={
+            "folio_fiscal_sat": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+            "fecha_timbrado": "2026-03-02",
+        },
         headers=_hdr("facturacion"),
     )
     assert r2.status_code == 200, r2.text
@@ -277,7 +280,7 @@ def test_timbrar_crea_automaticamente_la_cobranza_factura(
     assert cobranza["estatus_cobro"] == "pendiente"
     assert cobranza["importe_cobrado"] == "0.00"
     assert Decimal(cobranza["importe_pendiente_cobro"]) == Decimal("11600.00")
-    assert cobranza["numero_factura"] == "A-1001"
+    assert cobranza["numero_factura"] == "FMEX-1001"
 
 
 def test_timbrar_es_idempotente_no_duplica_la_cobranza(
@@ -287,7 +290,10 @@ def test_timbrar_es_idempotente_no_duplica_la_cobranza(
     # Reintentar el timbrado (mismo estado, ya timbrada): no debe crear una segunda.
     client.post(
         f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
-        json={"folio_fiscal_sat": "F" * 36, "fecha_timbrado": "2026-03-02"},
+        json={
+            "folio_fiscal_sat": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+            "fecha_timbrado": "2026-03-02",
+        },
         headers=_hdr("facturacion"),
     )
     total = (
@@ -601,7 +607,7 @@ def test_agencia_id_se_deriva_de_la_factura_al_crear_la_cobranza(
 def test_filtro_por_agencia_id_en_el_listado(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    _crear_y_timbrar_factura(client, db, cat, "A-2001")
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2001")
     r = client.get(
         "/api/v1/cobranza/facturas",
         params={"agencia_id": str(cat["agencia_id"])},
@@ -622,8 +628,8 @@ def test_filtro_por_anunciante_id_excluye_facturas_de_su_agencia(
     Anunciante" (filtro `anunciante_id` solo) NO debe traer las facturas de ESE MISMO
     anunciante que en realidad se facturaron a su agencia — `anunciante_id` nunca es
     NULL (es "el anunciante de la orden", no "a quién se factura")."""
-    _crear_y_timbrar_factura(client, db, cat, "A-2050", directa=True)
-    _crear_y_timbrar_factura(client, db, cat, "A-2051")  # vía agencia (default del archivo)
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2050", directa=True)
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2051")  # vía agencia (default del archivo)
 
     r = client.get(
         "/api/v1/cobranza/facturas",
@@ -632,7 +638,7 @@ def test_filtro_por_anunciante_id_excluye_facturas_de_su_agencia(
     )
     items = r.json()["items"]
     assert r.json()["total"] == 1, "no debió incluir la facturada a la agencia"
-    assert items[0]["numero_factura"] == "A-2050"
+    assert items[0]["numero_factura"] == "FMEX-2050"
     assert items[0]["agencia_id"] is None
 
 
@@ -642,8 +648,8 @@ def test_filtro_por_agencia_id_no_se_ve_afectado_por_anunciante_id(
     """Caso simple (orden directa SIN ninguna agencia capturada) — el caso con agencia
     capturada COMO REFERENCIA (el bug real) está en
     `test_agencia_capturada_como_referencia_no_cuenta_como_facturada_a_la_agencia`."""
-    _crear_y_timbrar_factura(client, db, cat, "A-2060", directa=True)
-    _crear_y_timbrar_factura(client, db, cat, "A-2061")  # vía agencia
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2060", directa=True)
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2061")  # vía agencia
 
     r = client.get(
         "/api/v1/cobranza/facturas",
@@ -652,7 +658,7 @@ def test_filtro_por_agencia_id_no_se_ve_afectado_por_anunciante_id(
     )
     items = r.json()["items"]
     assert r.json()["total"] == 1, "no debió incluir la facturada directo al anunciante"
-    assert items[0]["numero_factura"] == "A-2061"
+    assert items[0]["numero_factura"] == "FMEX-2061"
 
 
 def test_agencia_capturada_como_referencia_no_cuenta_como_facturada_a_la_agencia(
@@ -665,9 +671,9 @@ def test_agencia_capturada_como_referencia_no_cuenta_como_facturada_a_la_agencia
     Anunciante". `facturado_directo` (copiado de `FacturaCliente`, calculado igual que
     `_receptor_de()`) sí lo distingue."""
     _crear_y_timbrar_factura(
-        client, db, cat, "A-2070", directa=True, con_agencia_referencia=True
+        client, db, cat, "FMEX-2070", directa=True, con_agencia_referencia=True
     )
-    _crear_y_timbrar_factura(client, db, cat, "A-2071")  # vía agencia, de verdad
+    _crear_y_timbrar_factura(client, db, cat, "FMEX-2071")  # vía agencia, de verdad
 
     r_agencia = client.get(
         "/api/v1/cobranza/facturas",
@@ -675,7 +681,7 @@ def test_agencia_capturada_como_referencia_no_cuenta_como_facturada_a_la_agencia
         headers=_hdr("cxc"),
     )
     assert r_agencia.json()["total"] == 1, "no debió incluir la directa con agencia de referencia"
-    assert r_agencia.json()["items"][0]["numero_factura"] == "A-2071"
+    assert r_agencia.json()["items"][0]["numero_factura"] == "FMEX-2071"
 
     r_anunciante = client.get(
         "/api/v1/cobranza/facturas",
@@ -683,13 +689,13 @@ def test_agencia_capturada_como_referencia_no_cuenta_como_facturada_a_la_agencia
         headers=_hdr("cxc"),
     )
     assert r_anunciante.json()["total"] == 1, "la directa con agencia de referencia debe salir aquí"
-    assert r_anunciante.json()["items"][0]["numero_factura"] == "A-2070"
+    assert r_anunciante.json()["items"][0]["numero_factura"] == "FMEX-2070"
 
 
 def test_pago_individual_guarda_las_claves_nuevas(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2002")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2002")
     cobranza_id = _cobranza_id(db, factura_id)
     payload = _pago("11600.00", cat)
     payload["fecha_deposito"] = "2026-03-06"
@@ -712,8 +718,8 @@ def test_pago_multiple_registra_un_pago_por_factura_con_el_mismo_lote(
     """2 facturas del MISMO anunciante/agencia (`cat`, siempre el mismo en este
     archivo) — un solo pago múltiple las cubre, cada una con su propio monto, todas
     con el mismo `pago_multiple_id`."""
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2010")
-    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2011")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2010")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2011")
     cobranza_1 = _cobranza_id(db, factura_1)
     cobranza_2 = _cobranza_id(db, factura_2)
 
@@ -767,7 +773,7 @@ def test_pago_individual_acepta_pagado_en_sistema_externo(
 def test_pago_multiple_acepta_pagado_en_sistema_externo(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2012")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2012")
     cobranza_1 = _cobranza_id(db, factura_1)
 
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "11600.00"}])
@@ -781,7 +787,7 @@ def test_pago_multiple_acepta_pagado_en_sistema_externo(
 def test_pago_multiple_rechaza_si_la_suma_excede_el_monto_total(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2020")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2020")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "11600.00"}])
     payload["monto_total_pago"] = "5000.00"  # menor a lo asignado
@@ -795,7 +801,7 @@ def test_pago_multiple_rechaza_si_la_suma_excede_el_monto_total(
 def test_pago_multiple_rechaza_factura_repetida_en_el_mismo_lote(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2030")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2030")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(
         cat,
@@ -813,7 +819,7 @@ def test_pago_multiple_no_guarda_nada_si_una_factura_del_lote_no_existe(
 ) -> None:
     """Atómico: si la 2a factura del lote no existe, la 1a tampoco debe quedar
     guardada (todo o nada, misma transacción)."""
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2040")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2040")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(
         cat,
@@ -832,7 +838,7 @@ def test_pago_multiple_no_guarda_nada_si_una_factura_del_lote_no_existe(
 def test_pago_multiple_exige_cuenta_contable_valida(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2050")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2050")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "1000.00"}])
     payload["cuenta_contable_id"] = str(uuid.uuid4())
@@ -843,7 +849,7 @@ def test_pago_multiple_exige_cuenta_contable_valida(
 def test_rbac_pago_multiple_exige_cobranza_crear(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2060")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2060")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "1000.00"}])
     r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("ventas"))
@@ -857,7 +863,7 @@ def test_rbac_pago_multiple_exige_cobranza_crear(
 def test_ultimo_numero_pago_es_null_sin_pagos(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2070")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2070")
     cobranza_id = _cobranza_id(db, factura_id)
     r = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc"))
     assert r.json()["ultimo_numero_pago"] is None
@@ -866,7 +872,7 @@ def test_ultimo_numero_pago_es_null_sin_pagos(
 def test_ultimo_numero_pago_toma_el_de_fecha_mas_reciente(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2071")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2071")
     cobranza_id = _cobranza_id(db, factura_id)
 
     pago1 = _pago("3000.00", cat, fecha="2026-03-05")
@@ -900,7 +906,7 @@ def test_ultimo_numero_pago_toma_el_de_fecha_mas_reciente(
 def test_ultimo_numero_pago_tambien_lo_alimenta_el_pago_multiple(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2072")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2072")
     cobranza_1 = _cobranza_id(db, factura_1)
     # ADR-227: `numero_pago` vive POR RENGLÓN, no a nivel del pago múltiple completo.
     payload = _pago_multiple(
@@ -921,7 +927,7 @@ def test_ultimo_numero_pago_tambien_lo_alimenta_el_pago_multiple(
 def test_siguiente_numero_pago_es_1_sin_pagos(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2080")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2080")
     cobranza_id = _cobranza_id(db, factura_id)
     r = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc"))
     assert r.json()["siguiente_numero_pago"] == "1"
@@ -930,7 +936,7 @@ def test_siguiente_numero_pago_es_1_sin_pagos(
 def test_siguiente_numero_pago_cuenta_los_pagos_ya_registrados(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2081")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2081")
     cobranza_id = _cobranza_id(db, factura_id)
 
     client.post(
@@ -954,8 +960,8 @@ def test_pago_multiple_guarda_numero_pago_distinto_por_renglon(
 ) -> None:
     """Dos facturas en el MISMO lote, cada una con su propia parcialidad — una no
     desplaza a la otra (ADR-227: `numero_pago` vive por renglón, no a nivel de lote)."""
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2082")
-    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2083")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2082")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2083")
     cobranza_1 = _cobranza_id(db, factura_1)
     cobranza_2 = _cobranza_id(db, factura_2)
     # factura_2 ya trae un pago previo: su "siguiente" debe ser "2", no "1".
@@ -985,7 +991,7 @@ def test_pago_multiple_rechaza_numero_pago_top_level_ya_no_existe(
 ) -> None:
     """ADR-227: `numero_pago` a nivel del pago múltiple completo ya no es un campo
     válido (se movió por renglón) — mandarlo ahí se rechaza (`extra="forbid"`)."""
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2084")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2084")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "1000.00"}])
     payload["numero_pago"] = "1 de 1"
@@ -1011,7 +1017,7 @@ def test_crear_pago_sin_asignar_no_pide_cobranza(
 def test_listar_no_asignados_solo_trae_los_sin_cobranza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2090")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2090")
     cobranza_id = _cobranza_id(db, factura_id)
     client.post(
         f"/api/v1/cobranza/facturas/{cobranza_id}/pagos", json=_pago("1000.00", cat),
@@ -1032,7 +1038,7 @@ def test_listar_no_asignados_solo_trae_los_sin_cobranza(
 def test_asignar_un_pago_no_asignado_recalcula_la_cobranza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2091")  # total 11600.00
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2091")  # total 11600.00
     cobranza_id = _cobranza_id(db, factura_id)
 
     pago = client.post(
@@ -1055,8 +1061,8 @@ def test_asignar_un_pago_no_asignado_recalcula_la_cobranza(
 def test_asignar_un_pago_ya_asignado_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2092")
-    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2093")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2092")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2093")
     cobranza_1 = _cobranza_id(db, factura_1)
     cobranza_2 = _cobranza_id(db, factura_2)
 
@@ -1116,7 +1122,7 @@ def test_rbac_pago_no_asignado_exige_cobranza_crear(
 def test_pago_de_menos_genera_un_huerfano_con_el_sobrante(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2100")  # total 11600.00
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2100")  # total 11600.00
     cobranza_1 = _cobranza_id(db, factura_1)
 
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
@@ -1139,7 +1145,7 @@ def test_pago_de_menos_genera_un_huerfano_con_el_sobrante(
 def test_pago_exacto_no_genera_huerfano(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2101")
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2101")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
     payload["monto_total_pago"] = "5000.00"
@@ -1148,13 +1154,94 @@ def test_pago_exacto_no_genera_huerfano(
     assert len(r.json()) == 1
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con
+# desarrolladores consultados): ya no se permite guardar un pago múltiple de más ni de
+# menos — el "Ajuste" (+/- $10) por renglón absorbe diferencias chicas; solo
+# diferencias MAYORES a $10 siguen generando el huérfano de ADR-230.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_ajuste_cierra_una_diferencia_chica_sin_generar_huerfano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2120")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "-5.00"}]
+    )
+    payload["monto_total_pago"] = "4995.00"  # 5000 - 5 de ajuste = exacto
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 201, r.text
+    creados = r.json()
+    assert len(creados) == 1  # sin huérfano
+    assert creados[0]["monto_aplicado"] == "5000.00"
+    assert creados[0]["ajuste"] == "-5.00"
+
+    # El ajuste NO afecta lo que se le acredita a la factura: sigue siendo 5000.00.
+    cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    assert cobranza["importe_cobrado"] == "5000.00"
+
+
+def test_diferencia_chica_sin_usar_el_ajuste_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2121")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
+    payload["monto_total_pago"] = "5005.00"  # sobran 5.00: cabe en el ajuste, pero no se usó
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 400
+    cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    assert cobranza["estatus_cobro"] == "pendiente"
+
+
+def test_diferencia_mayor_a_diez_sigue_generando_huerfano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2122")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
+    payload["monto_total_pago"] = "5011.00"  # sobran 11.00: no cabe en el ajuste -> huérfano
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 201, r.text
+    creados = r.json()
+    assert len(creados) == 2
+    huerfano = next(p for p in creados if p["cobranza_id"] is None)
+    assert huerfano["monto_aplicado"] == "11.00"
+
+
+def test_ajuste_fuera_de_rango_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2123")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "15.00"}]
+    )
+    payload["monto_total_pago"] = "5015.00"
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 422
+
+
+def test_ajuste_que_hace_exceder_el_monto_total_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2124")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    payload = _pago_multiple(
+        cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00", "ajuste": "5.00"}]
+    )
+    payload["monto_total_pago"] = "5000.00"  # aplicado + ajuste = 5005.00 > 5000.00
+    r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+    assert r.status_code == 400
+
+
 def test_repartir_un_huerfano_lo_borra_y_crea_los_nuevos_pagos(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """El huérfano se reparte entre 2 facturas distintas y desaparece (se borra), sin
     dejar sobrante esta vez (repartido por completo)."""
-    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2102")
-    factura_b, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2103")
+    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2102")
+    factura_b, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2103")
     cobranza_a = _cobranza_id(db, factura_a)
     cobranza_b = _cobranza_id(db, factura_b)
 
@@ -1188,7 +1275,7 @@ def test_repartir_un_huerfano_lo_borra_y_crea_los_nuevos_pagos(
 def test_repartir_un_huerfano_parcialmente_deja_un_huerfano_nuevo_mas_chico(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2104")
+    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2104")
     cobranza_a = _cobranza_id(db, factura_a)
     huerfano = client.post(
         "/api/v1/cobranza/pagos/no-asignados", json=_pago("3000.00", cat), headers=_hdr("cxc")
@@ -1210,8 +1297,8 @@ def test_repartir_un_huerfano_parcialmente_deja_un_huerfano_nuevo_mas_chico(
 def test_repartir_un_pago_ya_asignado_como_si_fuera_huerfano_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2105")
-    factura_b, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2106")
+    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2105")
+    factura_b, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2106")
     cobranza_a = _cobranza_id(db, factura_a)
     cobranza_b = _cobranza_id(db, factura_b)
 
@@ -1230,7 +1317,7 @@ def test_repartir_un_pago_ya_asignado_como_si_fuera_huerfano_se_rechaza(
 def test_repartir_un_pago_origen_inexistente_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2107")
+    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2107")
     cobranza_a = _cobranza_id(db, factura_a)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_a, "monto_aplicado": "1000.00"}])
     payload["monto_total_pago"] = "1000.00"
@@ -1247,7 +1334,7 @@ def test_repartir_un_pago_origen_inexistente_se_rechaza(
 def test_asignar_parcial_deja_el_mismo_huerfano_mas_chico(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2110")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2110")
     cobranza_id = _cobranza_id(db, factura_id)  # pendiente 11600.00
 
     huerfano = client.post(
@@ -1280,7 +1367,7 @@ def test_asignar_parcial_deja_el_mismo_huerfano_mas_chico(
 def test_asignar_el_monto_completo_no_hace_split_reusa_la_misma_fila(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2111")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2111")
     cobranza_id = _cobranza_id(db, factura_id)
     huerfano = client.post(
         "/api/v1/cobranza/pagos/no-asignados", json=_pago("1000.00", cat), headers=_hdr("cxc")
@@ -1301,7 +1388,7 @@ def test_asignar_el_monto_completo_no_hace_split_reusa_la_misma_fila(
 def test_asignar_mas_del_monto_del_huerfano_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "A-2112")
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2112")
     cobranza_id = _cobranza_id(db, factura_id)
     huerfano = client.post(
         "/api/v1/cobranza/pagos/no-asignados", json=_pago("1000.00", cat), headers=_hdr("cxc")

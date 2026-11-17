@@ -291,6 +291,42 @@ describe("FacturasClientePage", () => {
     expect(await screen.findByText(/El folio fiscal.*es obligatorio/)).toBeInTheDocument();
   });
 
+  // ADR-269 (petición del usuario): "validar el folio fiscal, que requiera el formato y
+  // no permita calcular cualquier cosa" — antes solo exigía "no vacío".
+  it("fix: un folio fiscal que no tiene forma de UUID no permite registrar el timbrado", async () => {
+    const { facturaClienteApi } = await import("../api");
+    const llamadasPrevias = vi.mocked(facturaClienteApi.timbrar).mock.calls.length;
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    const folioInput = (await screen.findByPlaceholderText(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    )) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "NO-ES-UN-UUID" } });
+    screen.getByText("Registrar timbrado").click();
+
+    expect(await screen.findByText(/El folio fiscal debe ser un UUID válido/)).toBeInTheDocument();
+    expect(vi.mocked(facturaClienteApi.timbrar).mock.calls.length).toBe(llamadasPrevias);
+  });
+
+  // Bug corregido (petición del usuario, con captura): antes el aviso de formato solo
+  // salía al dar clic en "Registrar timbrado" — si alguien tecleaba el folio mal y
+  // todavía no intentaba guardar, no había ninguna señal.
+  it("fix: avisa el formato inválido en cuanto se sale del campo, sin esperar a dar clic en 'Registrar timbrado'", async () => {
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    const folioInput = (await screen.findByPlaceholderText(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    )) as HTMLInputElement;
+    fireEvent.change(folioInput, { target: { value: "ERERERERE-ERFDDDFDFDF-DFDFFVCXV5454" } });
+    fireEvent.blur(folioInput);
+
+    expect(await screen.findByText(/El folio fiscal debe ser un UUID válido/)).toBeInTheDocument();
+  });
+
   // ── ADR-206 (petición del usuario): PDF se puede VER y descargar; XML solo descargar ──
   it("timbrada CON pdf_path Y xml_path ofrece 'Ver factura', 'Descargar PDF' y 'Descargar XML'", async () => {
     renderCon({
@@ -462,7 +498,7 @@ describe("FacturasClientePage", () => {
     expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
     expect(screen.getAllByText("OC-2025-0051").length).toBeGreaterThan(0);
     expect(screen.getByText("LALA-YOG-11")).toBeInTheDocument();
-    expect(screen.getByText(/01\/06\/2025 → 30\/06\/2025/)).toBeInTheDocument();
+    expect(screen.getByText(/06\/01\/2025 → 06\/30\/2025/)).toBeInTheDocument();
     // Con una sola orden NO se pinta el resumen de la suma: no hay nada que sumar.
     expect(screen.queryByText(/suma de subtotales/)).not.toBeInTheDocument();
   });

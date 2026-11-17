@@ -128,7 +128,7 @@ describe("FacturasVendedorPage — Órdenes asignadas (N:M)", () => {
       .find((el) => el.closest("tr")) as HTMLElement;
     const fila = within(celda.closest("tr") as HTMLElement);
     expect(fila.getByText("Juan Pérez")).toBeInTheDocument();
-    expect(fila.getByText("08/06/2025")).toBeInTheDocument();
+    expect(fila.getByText("06/08/2025")).toBeInTheDocument();
     expect(fila.getByText("$177,480.00")).toBeInTheDocument();
     expect(fila.getByText("$205,876.80")).toBeInTheDocument();
     expect(fila.getByText("1")).toBeInTheDocument();

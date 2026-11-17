@@ -65,6 +65,7 @@ function pago(
     cobranza_id: "cb-1",
     fecha_pago_cliente: "2026-03-10",
     monto_aplicado: "1000.00",
+    ajuste: "0.00",
     metodo_pago_clave: "03",
     referencia_pago: null,
     archivo_nombre: null,

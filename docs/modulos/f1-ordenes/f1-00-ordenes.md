@@ -75,6 +75,15 @@ elegir la agencia a mano, que sí lo hace vía `onAgenciaChange`). Fix: `onAnunc
 también autocarga el % desde `Agencia.porcentaje_comision_agencia_default` cuando el campo
 está vacío. Detalle completo en `docs/arquitectura.md` (ADR-242).
 
+**ADR-268 (bug reportado por el usuario, con captura) — dejaba capturar y GUARDAR un %
+de comisión de agencia sin agencia seleccionada:** ni el frontend ni el backend
+condicionaban `porcentaje_comision_agencia_snap` a `agencia_id` — solo se validaba el
+RANGO (0-100), nunca la relación entre ambos campos. Fix: el campo se deshabilita sin
+agencia (mismo patrón que el radio de ADR-243), más validación en el servicio
+(`_validar_comision_agencia_requiere_agencia`, alta/edición/canal de comisiones) que
+también bloquea reguardar una orden ya existente con ese estado inconsistente. Detalle
+completo en `docs/arquitectura.md` (ADR-268).
+
 **ADR-243 (bug reportado por el usuario, con captura) — "Facturación a la Agencia" sin
 agencia seleccionada:** el radio podía quedar activo con el combo "Agencia" en "Sin
 agencia (venta directa)" (p.ej. si se quitaba la agencia después de elegir la opción).
