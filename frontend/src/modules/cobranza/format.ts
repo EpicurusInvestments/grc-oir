@@ -17,12 +17,16 @@ export function fmtMoneda(valor: string | null | undefined): string {
   if (idxPunto !== -1) v = v.slice(0, idxPunto + 3);
   const n = Number(v);
   if (Number.isNaN(n)) return "—";
-  return n.toLocaleString("es-MX", {
+  // Bug corregido (petición del usuario, con captura, "Monto por asignar"): `Intl`
+  // antepone el signo de "menos" al símbolo de moneda ("-$0.70"). Aquí se arma el texto
+  // sobre el valor absoluto y se inserta el "-" DESPUÉS del "$" ("$-0.70").
+  const texto = Math.abs(n).toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return n < 0 ? texto.replace("$", "$-") : texto;
 }
 
 export function fmtPorcentaje(valor: string | null | undefined): string {
@@ -31,13 +35,19 @@ export function fmtPorcentaje(valor: string | null | undefined): string {
   return Number.isNaN(n) ? "—" : `${n.toLocaleString("es-MX", { minimumFractionDigits: 2 })} %`;
 }
 
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272 (petición del usuario, barrido global): fechas de solo lectura en
+// "DD-MMM-AA" (p.ej. "13-feb-26") — mismo criterio que F2 (`modules/facturacion/
+// format.ts`). Los campos de CAPTURA (`DateInput`, ADR-271c) se quedan en dd/mm/aa
+// numérico; ver su propio docstring.
 export function fmtFecha(iso: string | null | undefined): string {
   if (!iso) return "—";
   // Se parte el ISO en vez de usar `new Date(iso)`: una fecha pura se interpreta como
   // UTC y en México se mostraría el día anterior (mismo motivo que en F2).
   const [anio, mes, dia] = iso.slice(0, 10).split("-");
   if (!anio || !mes || !dia) return "—";
-  return `${dia}/${mes}/${anio}`;
+  return `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}`;
 }
 
 export function oGuion(valor: string | null | undefined): string {

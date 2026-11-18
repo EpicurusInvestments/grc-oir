@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
-import { fmtMonto } from "../../format";
+import { fmtFecha, fmtMonto } from "../../format";
 import { findEstacion } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { IncidenciaDetailPanel } from "../components/IncidenciaDetailPanel";
@@ -87,8 +87,8 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "12%" }}>Fecha</th>
-                <th style={{ width: "13%" }}>Folio OI</th>
+                <th className="td-center" style={{ width: "12%" }}>Fecha</th>
+                <th className="td-center" style={{ width: "13%" }}>Folio OI</th>
                 <th style={{ width: "24%" }}>Estación</th>
                 <th className="td-center" style={{ width: "11%" }}>
                   Tipo
@@ -96,7 +96,7 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
                 <th className="td-center" style={{ width: "16%" }}>
                   Spots (asig. → real)
                 </th>
-                <th className="td-right" style={{ width: "12%" }}>
+                <th className="td-center" style={{ width: "12%" }}>
                   Ajuste
                 </th>
               </tr>
@@ -107,8 +107,8 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
                 const estacion = oe ? findEstacion(oe.estacion_id) : undefined;
                 return (
                   <tr key={i.id} className={selectedId === i.id ? "sel" : ""} onClick={() => setSelectedId(i.id)}>
-                    <td className="td-mono">{i.fecha_transmision}</td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>
+                    <td className="td-mono td-center">{fmtFecha(i.fecha_transmision)}</td>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>
                       {oe?.folio_orden_interna ?? "—"}
                     </td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
@@ -121,7 +121,7 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
                       {i.spots_asignados} → {i.spots_reales}
                     </td>
                     <td
-                      className="td-right td-mono"
+                      className="td-center td-mono"
                       style={{ fontWeight: 500, color: i.monto_ajuste >= 0 ? "var(--green-text)" : "var(--red-text)" }}
                     >
                       {i.monto_ajuste >= 0 ? "+" : ""}

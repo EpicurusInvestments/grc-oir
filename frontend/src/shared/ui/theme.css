@@ -642,6 +642,19 @@ body {
 .td-right {
   text-align: right;
 }
+/* Bug corregido (reportado por el usuario, con captura): poner `className="td-right"`/
+ * `"td-center"` en un <th> nunca alineaba nada — `.cat-table thead th` ya fija
+ * `text-align: left` con MÁS especificidad CSS (0,1,2) que la clase sola (0,1,0), así que
+ * siempre ganaba el `left` del encabezado aunque el <td> de abajo sí se alineara bien
+ * (`.cat-table tbody td` no declara `text-align`, por eso ahí nunca hubo problema). Afecta
+ * a CUALQUIER tabla `.cat-table` del sistema que use estas clases en su encabezado, no solo
+ * a la de "Pagos recibidos" donde se reportó. */
+.cat-table thead th.td-right {
+  text-align: right;
+}
+.cat-table thead th.td-center {
+  text-align: center;
+}
 .td-center {
   text-align: center;
 }
@@ -953,6 +966,41 @@ body {
   padding-left: 22px;
   text-align: right;
   font-family: var(--mono);
+}
+/* DateInput (ADR-271c): texto mm/dd/aaaa + botón de calendario a la derecha; el panel
+ * reusa `.rdp-wrapper` (mismo DayPicker que CalendarioPeriodoTransmision) dentro de un
+ * portal, igual patrón que `.ssel-list` (ADR-267) para no recortarse en paneles con
+ * scroll acotado. */
+.date-wrap {
+  position: relative;
+}
+.date-wrap .date-fi {
+  padding-right: 30px;
+  font-family: var(--mono);
+}
+.date-icon-btn {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: var(--r);
+}
+.date-icon-btn:hover {
+  background: var(--surface3);
+}
+.date-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.date-panel {
+  z-index: 30;
+  box-shadow: 0 10px 24px rgba(24, 24, 22, 0.12);
 }
 .fsel {
   width: 100%;

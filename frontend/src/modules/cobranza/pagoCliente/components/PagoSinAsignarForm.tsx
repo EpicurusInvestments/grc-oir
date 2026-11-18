@@ -7,6 +7,8 @@
 
 import { useState } from "react";
 
+import { DateInput } from "@/shared/ui";
+
 import { useCuentasContables, useFormasDePago, useMetodosDePago } from "../../hooks";
 import type { PagoClienteCreate } from "../../types";
 
@@ -87,12 +89,7 @@ export function PagoSinAsignarForm({ submitting = false, submitError, onConfirm,
           <div className="r2">
             <div>
               <div className="fl fl-required">Fecha del pago</div>
-              <input
-                type="date"
-                className="fi"
-                value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
-              />
+              <DateInput value={fecha} onChange={setFecha} />
             </div>
             <div>
               <div className="fl fl-required">Monto aplicado</div>
@@ -167,13 +164,9 @@ export function PagoSinAsignarForm({ submitting = false, submitError, onConfirm,
             </div>
           </div>
           <div className="fl">Fecha de depósito</div>
-          <input
-            type="date"
-            className="fi"
-            style={{ maxWidth: 260 }}
-            value={fechaDeposito}
-            onChange={(e) => setFechaDeposito(e.target.value)}
-          />
+          <div style={{ maxWidth: 260 }}>
+            <DateInput value={fechaDeposito} onChange={setFechaDeposito} />
+          </div>
           {error && <div className="fe">{error}</div>}
         </div>
         {submitError && (

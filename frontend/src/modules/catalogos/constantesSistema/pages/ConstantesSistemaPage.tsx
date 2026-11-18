@@ -201,10 +201,10 @@ export function ConstantesSistemaPage() {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: 130 }}>Grupo</th>
-            <th style={{ width: 100 }}>Clave</th>
+            <th className="td-center" style={{ width: 130 }}>Grupo</th>
+            <th className="td-center" style={{ width: 100 }}>Clave</th>
             <th>Descripción</th>
-            <th style={{ width: 110 }}>Valor</th>
+            <th className="td-center" style={{ width: 110 }}>Valor</th>
             <th className="td-center" style={{ width: 90 }}>
               Estatus
             </th>
@@ -217,12 +217,12 @@ export function ConstantesSistemaPage() {
               className={selected?.constante_sistema_id === c.constante_sistema_id ? "sel" : ""}
               onClick={() => seleccionar(c)}
             >
-              <td>
+              <td className="td-center">
                 <span className="badge b-purple">{c.grupo}</span>
               </td>
-              <td className="td-mono">{c.clave}</td>
+              <td className="td-mono td-center">{c.clave}</td>
               <td className="td-2">{c.descripcion}</td>
-              <td className="td-mono">{oGuion(c.valor)}</td>
+              <td className="td-mono td-center">{oGuion(c.valor)}</td>
               <td className="td-center">
                 <StatusBadge activo={c.activo} />
               </td>

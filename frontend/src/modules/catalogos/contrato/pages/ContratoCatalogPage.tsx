@@ -16,7 +16,7 @@ import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shar
 import type { ContratoListParams } from "../api";
 import { ContratoDetailPanel } from "../components/ContratoDetailPanel";
 import { ContratoForm, type ContratoFormOutput } from "../components/ContratoForm";
-import { fmtMonto, fmtPct } from "../format";
+import { fmtFecha, fmtMonto, fmtPct } from "../format";
 import { useContratos } from "../hooks";
 import { type Contrato, type EstadoContrato, ESTADO_BADGE } from "../types";
 
@@ -197,10 +197,10 @@ export function ContratoCatalogPage() {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: 120 }}>Número</th>
+            <th className="td-center" style={{ width: 120 }}>Número</th>
             <th>Nombre</th>
             <th style={{ width: "20%" }}>Anunciante</th>
-            <th style={{ width: 150 }}>Vigencia</th>
+            <th className="td-center" style={{ width: 150 }}>Vigencia</th>
             <th className="td-center" style={{ width: 100 }}>
               Monto
             </th>
@@ -219,13 +219,13 @@ export function ContratoCatalogPage() {
               className={selected?.contrato_id === c.contrato_id ? "sel" : ""}
               onClick={() => seleccionar(c)}
             >
-              <td className="td-mono">{c.numero_contrato}</td>
+              <td className="td-mono td-center">{c.numero_contrato}</td>
               <td className="td-main">{c.nombre_contrato}</td>
               <td className="td-2">{c.anunciante_nombre ?? "—"}</td>
-              <td className="td-mono" style={{ fontSize: 11 }}>
-                {c.fecha_inicio_contrato} → {c.fecha_fin_contrato}
+              <td className="td-mono td-center" style={{ fontSize: 11 }}>
+                {fmtFecha(c.fecha_inicio_contrato)} → {fmtFecha(c.fecha_fin_contrato)}
               </td>
-              <td className="td-mono" style={{ textAlign: "right" }}>
+              <td className="td-mono td-center">
                 {fmtMonto(c.monto_contrato)}
               </td>
               <td className="td-center td-mono">{fmtPct(c.porcentaje_comision_contrato)}</td>

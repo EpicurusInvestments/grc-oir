@@ -75,12 +75,12 @@ describe("diaDeSemana", () => {
 
 describe("fmtRangoFechas", () => {
   it("misma fecha de inicio y fin cuenta como 1 día (inclusivo), no 0", () => {
-    expect(fmtRangoFechas("2025-06-15", "2025-06-15")).toBe("2025-06-15 → 2025-06-15 (1 días)");
+    expect(fmtRangoFechas("2025-06-15", "2025-06-15")).toBe("15-jun-25 → 15-jun-25 (1 días)");
   });
 
   it("un rango de un mes cuenta los días inclusive en ambos extremos", () => {
     // Junio tiene 30 días; del 1 al 30 son 30 días, no 29.
-    expect(fmtRangoFechas("2025-06-01", "2025-06-30")).toBe("2025-06-01 → 2025-06-30 (30 días)");
+    expect(fmtRangoFechas("2025-06-01", "2025-06-30")).toBe("01-jun-25 → 30-jun-25 (30 días)");
   });
 
   it("regresa — si falta cualquiera de las dos fechas", () => {

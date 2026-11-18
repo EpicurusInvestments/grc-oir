@@ -13,7 +13,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CobranzaExplorerPage } from "../pages/CobranzaExplorerPage";
@@ -23,8 +23,12 @@ const listMock = vi.fn();
 
 vi.mock("../api", () => ({
   cobranzaFacturaApi: { list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }) },
-  pagoClienteApi: { list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }), crear: vi.fn(), eliminar: vi.fn() },
-  historialPagosCliente: vi.fn().mockResolvedValue([]),
+  pagoClienteApi: {
+    list: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }),
+    crear: vi.fn(),
+    eliminar: vi.fn(),
+    listarAgrupado: vi.fn().mockResolvedValue([]),
+  },
   requisicionApi: {
     list: (params: { estatus_requisicion?: string }) => listMock(params),
     create: vi.fn(),
@@ -143,5 +147,54 @@ describe("Fix (reportado por el usuario): navegar a una 'vista operativa' SÍ ap
     );
     await waitFor(() => expect(screen.queryByText("REQ-PENDIENTE")).not.toBeInTheDocument());
     expect(screen.getByText("REQ-AUTORIZADA")).toBeInTheDocument();
+  });
+});
+
+// Bug corregido (reportado por el usuario, con captura): la liga "Ver en Cobranza de
+// facturas →" desde "Pagos recibidos" solo cambiaba la URL (`?cobranza_id=...`), la
+// pantalla se quedaba igual. Causa real: las secciones de esta fase no son rutas de
+// verdad, son un `activeKey` interno — navegar DENTRO de la misma ruta "/cobranza" no
+// remonta `CobranzaExplorerPage` ni mueve ese estado por sí solo.
+describe("Fix (reportado por el usuario, con captura): el deep-link ?cobranza_id=/?factura_id= SÍ mueve a 'Cobranza de facturas'", () => {
+  beforeEach(() => {
+    listMock.mockReset();
+    listMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 20, pages: 0 });
+  });
+
+  const clickSidebar = (label: string) => {
+    const sidebar = document.querySelector(".sidebar") as HTMLElement;
+    within(sidebar).getByText(label).click();
+  };
+
+  function BotonSimularLiga() {
+    const navigate = useNavigate();
+    return (
+      <button type="button" onClick={() => navigate("/cobranza?cobranza_id=cb-1")}>
+        Simular liga
+      </button>
+    );
+  }
+
+  it("estando en 'Pagos recibidos', simular la liga cambia la sección a 'Cobranza de facturas'", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <CobranzaExplorerPage />
+          <BotonSimularLiga />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    const main = () => document.querySelector(".main") as HTMLElement;
+
+    clickSidebar("Pagos recibidos");
+    await screen.findByText("No asignados");
+    expect(within(main()).queryByText("Cobranza de facturas")).not.toBeInTheDocument();
+
+    screen.getByText("Simular liga").click();
+
+    expect(await within(main()).findByText("Cobranza de facturas")).toBeInTheDocument();
+    expect(within(main()).queryByText("No asignados")).not.toBeInTheDocument();
   });
 });

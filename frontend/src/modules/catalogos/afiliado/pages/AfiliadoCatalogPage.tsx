@@ -147,7 +147,7 @@ export function AfiliadoCatalogPage() {
         <thead>
           <tr>
             <th>Afiliado</th>
-            <th style={{ width: 130 }}>RFC</th>
+            <th className="td-center" style={{ width: 130 }}>RFC</th>
             <th className="td-center" style={{ width: 90 }}>
               Estaciones
             </th>
@@ -179,7 +179,7 @@ export function AfiliadoCatalogPage() {
                   {a.razon_social_afiliado}
                 </div>
               </td>
-              <td className="td-mono">{a.rfc_afiliado}</td>
+              <td className="td-mono td-center">{a.rfc_afiliado}</td>
               <td className="td-center td-2">{a.estaciones_count}</td>
               <td className="td-center">
                 <StatusBadge activo={a.activo} />

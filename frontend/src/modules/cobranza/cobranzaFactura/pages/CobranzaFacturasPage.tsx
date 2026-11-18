@@ -17,7 +17,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { useContactosAnunciante } from "@/modules/catalogos/anunciante/hooks";
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
+import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import type { FiltrosCobranzaFactura } from "../../api";
 import { BADGE_VENCIDA, badgeEstatusCobro, diasHasta, fmtFecha, fmtMoneda, oGuion } from "../../format";
@@ -31,7 +31,7 @@ import {
   useMetodosDePago,
   usePagosCliente,
 } from "../../hooks";
-import { ESTATUS_COBRO_LABEL, type CobranzaFactura, type PagoCliente, type PagoClienteCreate } from "../../types";
+import { ESTATUS_COBRO_LABEL, type CobranzaFactura, type PagoClienteCreate } from "../../types";
 import { PagoMultipleForm } from "../components/PagoMultipleForm";
 import { RegistrarPagoForm } from "../components/RegistrarPagoForm";
 
@@ -63,7 +63,6 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
   const [modo, setModo] = useState<"ver" | "pagar" | "editar">("ver");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
-  const [pagoAEliminar, setPagoAEliminar] = useState<PagoCliente | null>(null);
   // ADR-225 (petición del usuario): "Pago de Múltiples Facturas" toma pantalla completa
   // DENTRO de esta misma pantalla — el flujo de pago individual (abajo) no cambia.
   const [pagoMultipleActivo, setPagoMultipleActivo] = useState(false);
@@ -143,6 +142,13 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
   // Deep-link desde F2 ("Pasa a CxC" en FacturasClientePage): ?factura_id=... preselecciona
   // la cobranza correspondiente sin importar en qué página/filtro esté.
   const facturaIdParam = searchParams.get("factura_id");
+  // Bug corregido (reportado por el usuario, con captura): "Ver en Cobranza de facturas →"
+  // desde el detalle de un pago (`PagosClientePage`) mandaba el `cobranza_id` metido en
+  // el parámetro `factura_id` — como esta pantalla busca esa cobranza POR `factura_id` (vía
+  // `useCobranzaFacturaPorFacturaId`), nunca encontraba nada y no seleccionaba ninguna
+  // fila. Ahí ya se conoce directamente el `cobranza_id`, así que llega por su propio
+  // parámetro y se usa tal cual — sin pasar por esa búsqueda.
+  const cobranzaIdParam = searchParams.get("cobranza_id");
 
   const detail = useCobranzaFactura(selectedId);
   const selected: CobranzaFactura | null = selectedId ? (detail.data ?? null) : null;
@@ -170,6 +176,12 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
       if (encontrada) setSelectedId(encontrada.cobranza_id);
     }
   }, [facturaIdParam, deepLink.data, selectedId]);
+
+  // Deep-link desde "Pagos recibidos" (`PagosClientePage`): ya trae el `cobranza_id`
+  // directo, nada que resolver.
+  useEffect(() => {
+    if (cobranzaIdParam && !selectedId) setSelectedId(cobranzaIdParam);
+  }, [cobranzaIdParam, selectedId]);
 
   const seleccionar = (cobranzaId: string) => {
     setSelectedId(cobranzaId);
@@ -226,18 +238,6 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
       setModo("ver");
     } catch (e) {
       setSubmitError(mensajeDeError(e));
-    }
-  };
-
-  const confirmarEliminarPago = async () => {
-    if (!pagoAEliminar) return;
-    setErrorAccion(null);
-    try {
-      await pagos.eliminar.mutateAsync(pagoAEliminar.pago_cliente_id);
-      setPagoAEliminar(null);
-    } catch (e) {
-      setErrorAccion(mensajeDeError(e));
-      setPagoAEliminar(null);
     }
   };
 
@@ -434,23 +434,33 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
               {listaPagos.map((p) => (
                 <div
                   key={p.pago_cliente_id}
-                  style={{ border: "1px solid var(--border)", borderRadius: "var(--r)", padding: "9px 12px", marginBottom: 6 }}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--r)",
+                    padding: "9px 12px",
+                    marginBottom: 6,
+                    opacity: p.estatus_pago === "cancelado" ? 0.6 : 1,
+                  }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600, color: "var(--green-text)" }}>
+                    <span
+                      style={{
+                        fontFamily: "var(--mono)",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: p.estatus_pago === "cancelado" ? "var(--text3)" : "var(--green-text)",
+                        textDecoration: p.estatus_pago === "cancelado" ? "line-through" : undefined,
+                      }}
+                    >
                       +{fmtMoneda(p.monto_aplicado)}
                     </span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {/* ADR-271: ya no se elimina desde aquí — "Pagos recibidos" tiene
+                          el botón "Cancelación de Pago"; aquí solo se marca si ya pasó. */}
+                      {p.estatus_pago === "cancelado" && <span className="badge b-red">Cancelado</span>}
                       <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text3)" }}>
                         {fmtFecha(p.fecha_pago_cliente)}
                       </span>
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-danger"
-                        onClick={() => setPagoAEliminar(p)}
-                      >
-                        Eliminar
-                      </button>
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text2)", display: "flex", justifyContent: "space-between" }}>
@@ -524,12 +534,12 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
             <th>Anunciante</th>
             <th>Agencia</th>
             <th className="td-center">Días cr.</th>
-            <th>Fecha estimada</th>
-            <th className="td-right">Total</th>
-            <th className="td-right">Cobrado</th>
-            <th className="td-right">Pendiente</th>
+            <th className="td-center">Fecha estimada</th>
+            <th className="td-center">Total</th>
+            <th className="td-center">Cobrado</th>
+            <th className="td-center">Pendiente</th>
             <th className="td-center">Estado</th>
-            <th className="td-center">Núm. parcialidad</th>
+            <th className="td-center">Parcialidad</th>
           </tr>
         </thead>
         <tbody>
@@ -547,7 +557,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                 <td className="td-2">{oGuion(an?.nombre_comercial)}</td>
                 <td className="td-2">{oGuion(ag?.nombre_agencia)}</td>
                 <td className="td-center mono">{c.dias_credito}</td>
-                <td className="mono" style={{ fontSize: 11 }}>
+                <td className="mono td-center" style={{ fontSize: 11 }}>
                   {fmtFecha(c.fecha_estimada_cobro)}
                   {c.vencida && (
                     <div style={{ color: "var(--red-text)", fontSize: 10, fontWeight: 600 }}>
@@ -557,11 +567,11 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                     </div>
                   )}
                 </td>
-                <td className="td-right mono">{fmtMoneda(String(total))}</td>
-                <td className="td-right mono" style={{ color: Number(c.importe_cobrado) > 0 ? "var(--green-text)" : undefined }}>
+                <td className="td-center mono">{fmtMoneda(String(total))}</td>
+                <td className="td-center mono" style={{ color: Number(c.importe_cobrado) > 0 ? "var(--green-text)" : undefined }}>
                   {Number(c.importe_cobrado) > 0 ? fmtMoneda(c.importe_cobrado) : "—"}
                 </td>
-                <td className="td-right mono">{Number(c.importe_pendiente_cobro) > 0 ? fmtMoneda(c.importe_pendiente_cobro) : "—"}</td>
+                <td className="td-center mono">{Number(c.importe_pendiente_cobro) > 0 ? fmtMoneda(c.importe_pendiente_cobro) : "—"}</td>
                 <td className="td-center">
                   <span className={`badge ${badgeEstatusCobro(c.estatus_cobro)}`}>
                     {ESTATUS_COBRO_LABEL[c.estatus_cobro]}
@@ -657,21 +667,6 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
       />
 
       <ListDetailLayout list={listNode} detail={detailNode} />
-
-      <ConfirmDialog
-        visible={!!pagoAEliminar}
-        title="Eliminar pago"
-        message={
-          pagoAEliminar
-            ? `¿Eliminar el pago de ${fmtMoneda(pagoAEliminar.monto_aplicado)} del ${fmtFecha(pagoAEliminar.fecha_pago_cliente)}? Si la factura ya estaba cobrada y este pago era necesario para completarla, el backend rechazará la eliminación.`
-            : ""
-        }
-        confirmLabel="Eliminar"
-        danger
-        loading={pagos.eliminar.isPending}
-        onConfirm={() => void confirmarEliminarPago()}
-        onCancel={() => setPagoAEliminar(null)}
-      />
     </>
   );
 }

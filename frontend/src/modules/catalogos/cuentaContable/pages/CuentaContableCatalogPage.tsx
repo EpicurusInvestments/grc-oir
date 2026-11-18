@@ -187,9 +187,9 @@ export function CuentaContableCatalogPage() {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: 140 }}>Código</th>
+            <th className="td-center" style={{ width: 140 }}>Código</th>
             <th>Nombre</th>
-            <th style={{ width: 100 }}>Tipo</th>
+            <th className="td-center" style={{ width: 100 }}>Tipo</th>
             <th className="td-center" style={{ width: 90 }}>
               Estatus
             </th>
@@ -202,9 +202,9 @@ export function CuentaContableCatalogPage() {
               className={selected?.cuenta_contable_id === c.cuenta_contable_id ? "sel" : ""}
               onClick={() => seleccionar(c)}
             >
-              <td className="td-mono">{c.codigo_cuenta}</td>
+              <td className="td-mono td-center">{c.codigo_cuenta}</td>
               <td className="td-main">{c.nombre_cuenta}</td>
-              <td>
+              <td className="td-center">
                 <span className="badge b-purple">{TIPO_CUENTA_LABEL[c.tipo_cuenta]}</span>
               </td>
               <td className="td-center">

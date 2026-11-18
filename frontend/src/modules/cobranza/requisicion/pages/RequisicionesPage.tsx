@@ -20,7 +20,7 @@
 import { useMemo, useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
+import { CatalogToolbar, ConfirmDialog, DateInput, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import type { FiltrosRequisicion } from "../../api";
 import { badgeEstatusRequisicion, badgeTipoRequisicion, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
@@ -300,7 +300,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             <div className="mc">
               <div className="mc-lbl">Fecha pago</div>
               <div className="fv mono" style={{ marginBottom: 0, fontWeight: 600, color: selected.fecha_pago_requisicion ? "var(--green-text)" : undefined }}>
-                {oGuion(selected.fecha_pago_requisicion)}
+                {fmtFecha(selected.fecha_pago_requisicion)}
               </div>
             </div>
           </div>
@@ -358,12 +358,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             <>
               <div className="sec">Registrar pago</div>
               <div className="fl fl-required">Fecha de pago</div>
-              <input
-                type="date"
-                className="fi"
-                value={fechaPago}
-                onChange={(e) => setFechaPago(e.target.value)}
-              />
+              <DateInput value={fechaPago} onChange={setFechaPago} />
             </>
           )}
 
@@ -463,12 +458,12 @@ export function RequisicionesPage({ filtroInicial }: Props) {
         <thead>
           <tr>
             <th>No. req</th>
-            <th>OC SAP</th>
-            <th>Tipo</th>
+            <th className="td-center">OC SAP</th>
+            <th className="td-center">Tipo</th>
             <th>Beneficiario</th>
-            <th>Origen</th>
-            <th className="td-right">Monto</th>
-            <th>Pago</th>
+            <th className="td-center">Origen</th>
+            <th className="td-center">Monto</th>
+            <th className="td-center">Pago</th>
             <th className="td-center">Estado</th>
           </tr>
         </thead>
@@ -480,17 +475,17 @@ export function RequisicionesPage({ filtroInicial }: Props) {
               onClick={() => seleccionar(r)}
             >
               <td className="td-main mono">{r.numero_requisicion}</td>
-              <td className="mono" style={{ fontSize: 11 }}>{oGuion(r.numero_oc_sap)}</td>
-              <td>
+              <td className="mono td-center" style={{ fontSize: 11 }}>{oGuion(r.numero_oc_sap)}</td>
+              <td className="td-center">
                 <span className={`badge ${badgeTipoRequisicion(r.tipo_requisicion)}`}>
                   {TIPO_REQUISICION_LABEL[r.tipo_requisicion]}
                 </span>
               </td>
               <td className="td-main">{beneficiario(r)}</td>
-              <td className="mono" style={{ fontSize: 11 }}>{origen(r)}</td>
-              <td className="td-right mono">{fmtMoneda(r.monto_requisicion)}</td>
-              <td className="mono" style={{ fontSize: 11, color: r.fecha_pago_requisicion ? "var(--green-text)" : "var(--text3)" }}>
-                {oGuion(r.fecha_pago_requisicion)}
+              <td className="mono td-center" style={{ fontSize: 11 }}>{origen(r)}</td>
+              <td className="td-center mono">{fmtMoneda(r.monto_requisicion)}</td>
+              <td className="mono td-center" style={{ fontSize: 11, color: r.fecha_pago_requisicion ? "var(--green-text)" : "var(--text3)" }}>
+                {fmtFecha(r.fecha_pago_requisicion)}
               </td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusRequisicion(r.estatus_requisicion)}`}>

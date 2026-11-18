@@ -3,7 +3,7 @@
  * ("vista derivada de la orden interna OE-xxx") — ver `VerificacionDerivada` en types.ts.
  */
 
-import { diaDeSemana } from "../../format";
+import { diaDeSemana, fmtFecha } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import type { Incidencia, OrdenEstacion, VerificacionDerivada } from "../../types";
 
@@ -67,8 +67,8 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
         <table className="cat-table" style={{ fontSize: 12 }}>
           <thead>
             <tr>
-              <th>Día</th>
-              <th>Fecha</th>
+              <th className="td-center">Día</th>
+              <th className="td-center">Fecha</th>
               <th className="td-center">Programado</th>
               <th className="td-center">Real</th>
               <th className="td-center">Diferencia</th>
@@ -77,10 +77,10 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
           <tbody>
             {verificacion.dias.map((d) => (
               <tr key={d.fecha} style={d.diferenciaSpots !== 0 ? { background: "var(--amber-bg)" } : undefined}>
-                <td className="td-2" style={{ fontSize: 11 }}>
+                <td className="td-2 td-center" style={{ fontSize: 11 }}>
                   {diaDeSemana(d.fecha)}
                 </td>
-                <td className="td-mono">{d.fecha}</td>
+                <td className="td-mono td-center">{fmtFecha(d.fecha)}</td>
                 <td className="td-center td-mono">{d.programado.spots_diarios}</td>
                 <td className="td-center td-mono">{d.real.spots_diarios}</td>
                 <td className="td-center">
@@ -118,7 +118,7 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
               <div key={i.id} className="fv" style={{ fontSize: 12, marginBottom: 8 }}>
                 <span className={`badge ${i.tipo === "bonificacion" ? "b-teal" : "b-red"}`}>{i.tipo}</span>{" "}
                 <span style={{ color: "var(--text2)" }}>
-                  {i.fecha_transmision} · {i.spots_asignados} → {i.spots_reales} spots
+                  {fmtFecha(i.fecha_transmision)} · {i.spots_asignados} → {i.spots_reales} spots
                 </span>
               </div>
             ))}

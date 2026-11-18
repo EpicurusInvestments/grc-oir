@@ -5,6 +5,7 @@ export { AppNavDrawer } from "./AppNavDrawer";
 export { CatalogToolbar, type FilterPill } from "./CatalogToolbar";
 export { CheckboxMultiSelect } from "./CheckboxMultiSelect";
 export { ConfirmDialog } from "./ConfirmDialog";
+export { DateInput } from "./DateInput";
 export { DomicilioPostalInput, type DomicilioPostalValues } from "./DomicilioPostalInput";
 export { ExplorerLayout } from "./ExplorerLayout";
 export { FieldTag, type FieldOrigin } from "./FieldTag";

@@ -62,7 +62,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { SavingOverlay } from "@/shared/ui";
+import { DateInput, SavingOverlay } from "@/shared/ui";
 
 import {
   eliminarLayoutRealOrdenEstacionApi,
@@ -77,7 +77,7 @@ import {
   ordenEstacionFormatoRealFromApi,
   ordenEstacionLayoutRealFromApi,
 } from "../../adapters/fromApi";
-import { diaDeSemana, fmtMonto } from "../../format";
+import { diaDeSemana, fmtFecha, fmtMonto } from "../../format";
 import { programadoEfectivo } from "../../state/selectors";
 import type {
   LayoutRealAplicado,
@@ -159,7 +159,7 @@ function diaNuevoInvalidoMotivo(
   diasNuevos: readonly LayoutRealNuevo[],
 ): string | null {
   if (oc && (d.fecha < oc.fecha_inicio_campania || d.fecha > oc.fecha_fin_campania)) {
-    return `Fuera del rango de campaña (${oc.fecha_inicio_campania} a ${oc.fecha_fin_campania}).`;
+    return `Fuera del rango de campaña (${fmtFecha(oc.fecha_inicio_campania)} a ${fmtFecha(oc.fecha_fin_campania)}).`;
   }
   const yaExiste =
     oe.periodo_transmision.some((r) => r.fecha === d.fecha && r.hora_inicio === d.hora) ||
@@ -469,11 +469,11 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
           <table className="cat-table" style={{ fontSize: 12, width: "100%", tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ width: "15%" }}>Día</th>
-                <th style={{ width: "17%" }}>Fecha</th>
+                <th className="td-center" style={{ width: "15%" }}>Día</th>
+                <th className="td-center" style={{ width: "17%" }}>Fecha</th>
                 {/* ADR-247 (petición del usuario): angostada — solo necesita un valor
                     (HH:MM:SS), no un rango. */}
-                <th style={{ width: "17%" }}>Horario de transmisión</th>
+                <th className="td-center" style={{ width: "17%" }}>Horario de transmisión</th>
                 <th className="td-center" style={{ width: "26%" }}>Resultado</th>
                 <th style={{ width: "25%" }} />
               </tr>
@@ -495,10 +495,10 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
 
                   return (
                     <tr key={diaId} style={modificado ? { background: "var(--amber-bg)" } : undefined}>
-                      <td className="td-2" style={{ fontSize: 11 }}>
+                      <td className="td-2 td-center" style={{ fontSize: 11 }}>
                         {diaDeSemana(row.fecha)}
                       </td>
-                      <td className="td-mono">{row.fecha}</td>
+                      <td className="td-mono td-center">{fmtFecha(row.fecha)}</td>
                       {ov?.editing ? (
                         <>
                           <td>
@@ -524,7 +524,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                         </>
                       ) : (
                         <>
-                          <td className="td-mono">{fila.hora_inicio}</td>
+                          <td className="td-mono td-center">{fila.hora_inicio}</td>
                           <td className="td-center">
                             {!modificado ? (
                               <span style={{ fontSize: 11, color: "var(--green-text)" }}>sin cambio</span>
@@ -574,10 +574,10 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
 
                   return (
                     <tr key={diaId} style={{ background: "var(--amber-bg)" }}>
-                      <td className="td-2" style={{ fontSize: 11 }}>
+                      <td className="td-2 td-center" style={{ fontSize: 11 }}>
                         {diaDeSemana(ov.fecha)}
                       </td>
-                      <td className="td-mono">{ov.fecha}</td>
+                      <td className="td-mono td-center">{fmtFecha(ov.fecha)}</td>
                       {ov.editing ? (
                         <>
                           <td>
@@ -603,7 +603,7 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                         </>
                       ) : (
                         <>
-                          <td className="td-mono">{ov.hora_inicio}</td>
+                          <td className="td-mono td-center">{ov.hora_inicio}</td>
                           <td className="td-center">
                             {!modificado ? (
                               <span style={{ fontSize: 11, color: "var(--green-text)" }}>sin cambio</span>
@@ -640,24 +640,22 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                   const motivoInvalido = diaNuevoInvalidoMotivo(d, i, oc, oe, diasNuevos);
                   // La key NO debe incluir `fecha`/`hora`: son justo los campos que se
                   // editan en esta fila (ADR-153), y una key que cambia a medio tecleo
-                  // remonta el <input type="date">, perdiendo el foco antes de confirmar.
+                  // remonta el `DateInput`, perdiendo el foco antes de confirmar.
                   return (
                     <tr
                       key={`nuevo-${i}`}
                       style={{ background: motivoInvalido ? "var(--red-bg)" : "var(--amber-bg)" }}
                     >
-                      <td className="td-2" style={{ fontSize: 11 }}>
+                      <td className="td-2 td-center" style={{ fontSize: 11 }}>
                         {diaDeSemana(d.fecha)}
                       </td>
                       {d.editing ? (
                         <>
                           <td>
-                            <input
-                              type="date"
-                              className="fi"
+                            <DateInput
                               style={{ marginBottom: 0 }}
                               value={d.fecha}
-                              onChange={(e) => actualizarDraftNuevo(i, { fecha: e.target.value })}
+                              onChange={(v) => actualizarDraftNuevo(i, { fecha: v })}
                             />
                           </td>
                           <td>
@@ -678,8 +676,8 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
                         </>
                       ) : (
                         <>
-                          <td className="td-mono">{d.fecha}</td>
-                          <td className="td-mono">{d.hora}</td>
+                          <td className="td-mono td-center">{fmtFecha(d.fecha)}</td>
+                          <td className="td-mono td-center">{d.hora}</td>
                           <td className="td-center">
                             <span className="badge b-purple">Nuevo</span>
                             {motivoInvalido && (

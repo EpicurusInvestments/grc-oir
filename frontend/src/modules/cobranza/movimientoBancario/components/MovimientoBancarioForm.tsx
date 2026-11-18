@@ -10,6 +10,8 @@
 
 import { useState } from "react";
 
+import { DateInput } from "@/shared/ui";
+
 import { AdjuntoCobranzaInput } from "../../cobranzaFactura/components/AdjuntoCobranzaInput";
 import type { MovimientoBancarioCreate, TipoMovimiento } from "../../types";
 
@@ -61,7 +63,7 @@ export function MovimientoBancarioForm({ submitting, submitError, onSubmit, onCa
           <div className="r2">
             <div>
               <div className="fl fl-required">Fecha del movimiento</div>
-              <input type="date" className="fi" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+              <DateInput value={fecha} onChange={setFecha} />
             </div>
             <div>
               <div className="fl fl-required">Tipo</div>

@@ -20,10 +20,10 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
+import { DateInput, FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { AdjuntoFacturaInput } from "../../facturaCliente/components/AdjuntoFacturaInput";
 import { fmtMoneda } from "../../format";
@@ -98,6 +98,7 @@ export function FacturaAfiliadoForm({
   const afiliados = useAfiliados();
   const {
     register,
+    control,
     handleSubmit,
     watch,
     formState: { errors },
@@ -232,7 +233,11 @@ export function FacturaAfiliadoForm({
             </div>
             <div>
               <div className="fl fl-required">Fecha de la factura</div>
-              <input type="date" className="fi" {...register("fecha_factura_afiliado")} />
+              <Controller
+                control={control}
+                name="fecha_factura_afiliado"
+                render={({ field }) => <DateInput value={field.value} onChange={field.onChange} />}
+              />
               {errors.fecha_factura_afiliado && (
                 <div className="fe">{errors.fecha_factura_afiliado.message}</div>
               )}

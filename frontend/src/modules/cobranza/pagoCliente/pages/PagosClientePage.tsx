@@ -1,44 +1,70 @@
-/** Pagos recibidos (F3) — historial de `PagoCliente` a través de todas las cobranzas.
+/** Pagos recibidos (F3) — un pago GLOBAL por fila (no una factura aplicada por fila).
  *
- * Solo lectura: el alta/baja de un pago vive en el detalle de "Cobranza de facturas"
- * (`CobranzaFacturasPage`), asociada siempre a UNA `CobranzaFactura` — esta pantalla es
- * el espejo cronológico que pide el mockup, no un segundo punto de captura.
+ * ADR-271 (petición del usuario, "Cancelación de Pago", con desarrolladores
+ * consultados): antes esta pantalla listaba una fila por cada `PagoCliente` aplicado a
+ * una `CobranzaFactura` (si un pago múltiple cubría 3 facturas, aparecían 3 filas). Ahora
+ * agrupa por pago (todas las filas que comparten `pago_multiple_id`, o la única fila si
+ * es un pago individual) vía `useGruposPagoCliente` — columnas Fecha/Referencia/
+ * Monto/Factura (cantidad)/Estatus. Al seleccionar un pago, el panel de detalle
+ * (`usePagoGrupoDetalle`) muestra sus facturas aplicadas (factura/parcialidad/monto) y
+ * el total real del pago.
  *
- * El backend no tiene un `GET` de "todos los pagos" (ver `historialPagosCliente` en
- * `api.ts`): esta vista se arma agregando por cobranza, con el límite de 100 ya conocido
- * en el resto del módulo.
+ * Botón nuevo "Cancelación de Pago": cancela TODO el pago de una sola vez (baja lógica,
+ * `estatus_pago`, NUNCA borra) y regresa el saldo pendiente a sus facturas — rechazado
+ * si cualquiera de ellas ya está `cobrada` (ver `cobranza_factura.py`, `cancelar()`).
+ *
+ * Solo lectura para el ALTA: capturar/asignar un pago sigue viviendo en el detalle de
+ * "Cobranza de facturas" (`CobranzaFacturasPage`) o en el flujo de "Pagos no asignados"
+ * de aquí mismo (ADR-229/230, sin cambios) — esta pantalla no es un segundo punto de
+ * captura.
  */
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { DetailEmpty, ListDetailLayout, SearchableSelect } from "@/shared/ui";
+import { ConfirmDialog, DetailEmpty, ListDetailLayout, SearchableSelect } from "@/shared/ui";
 
 import { PagoMultipleForm } from "../../cobranzaFactura/components/PagoMultipleForm";
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
 import {
   useAnunciantesInfo,
   useAsignarPago,
+  useCancelarPago,
   useCobranzaFacturas,
   useCrearPagoNoAsignado,
-  useHistorialPagosCliente,
+  useGruposPagoCliente,
   useNoAsignados,
+  usePagoGrupoDetalle,
 } from "../../hooks";
-import type { PagoClienteConCobranza, PagoClienteCreate } from "../../types";
+import {
+  ESTATUS_PAGO_LABEL,
+  type PagoClienteConCobranza,
+  type PagoClienteCreate,
+  type PagoGrupo,
+} from "../../types";
 import { PagoSinAsignarForm } from "../components/PagoSinAsignarForm";
 
-type Orden = "fecha_referencia" | "fecha_factura";
+type Orden = "fecha_referencia" | "fecha_cantidad";
+
+/** Discrimina las 2 formas de seleccionar un renglón: un pago GLOBAL (tabla principal,
+ *  `PagoGrupo`) o un pago SIN ASIGNAR (pestaña "No asignados", sigue siendo un
+ *  `PagoCliente` suelto — ADR-229/230, sin cambios). */
+type Seleccion =
+  | { tipo: "grupo"; data: PagoGrupo }
+  | { tipo: "sin_asignar"; data: PagoClienteConCobranza };
 
 const mensajeDeError = (e: unknown): string =>
   e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
 
+const pluralFactura = (n: number) => (n === 1 ? "1 factura" : `${n} facturas`);
+
 export function PagosClientePage() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<PagoClienteConCobranza | null>(null);
+  const [selected, setSelected] = useState<Seleccion | null>(null);
   // Petición del usuario: por default Fecha (desc) + Referencia (asc); el usuario puede
-  // cambiar a Fecha (desc) + Factura (asc) desde el combo de la toolbar.
+  // cambiar a Fecha (desc) + Cantidad de facturas (asc) desde el combo de la toolbar.
   const [orden, setOrden] = useState<Orden>("fecha_referencia");
   // ADR-229 (petición del usuario): filtro "Pagos no asignados" + captura sin factura.
   const [soloNoAsignados, setSoloNoAsignados] = useState(false);
@@ -54,11 +80,18 @@ export function PagosClientePage() {
   const [repartiendoHuerfano, setRepartiendoHuerfano] = useState<PagoClienteConCobranza | null>(
     null,
   );
+  // ADR-271: confirmación antes de cancelar un pago global.
+  const [cancelando, setCancelando] = useState(false);
+  const [cancelarError, setCancelarError] = useState<string | null>(null);
 
-  const historial = useHistorialPagosCliente();
+  const grupos = useGruposPagoCliente();
   const noAsignados = useNoAsignados();
   const crearNoAsignado = useCrearPagoNoAsignado();
   const asignarPago = useAsignarPago();
+  const cancelarPago = useCancelarPago();
+  const detalleGrupo = usePagoGrupoDetalle(
+    selected?.tipo === "grupo" ? selected.data.pago_cliente_id : null,
+  );
   const anunciantes = useAnunciantesInfo();
   const anuncianteMap = useMemo(
     () => new Map((anunciantes.data ?? []).map((a) => [a.anunciante_id, a])),
@@ -80,120 +113,208 @@ export function PagosClientePage() {
   const facturaSeleccionada = cobranzasDisponibles.list.data?.items.find(
     (c) => c.cobranza_id === facturaDestino,
   );
+  const sinAsignarSeleccionado = selected?.tipo === "sin_asignar" ? selected.data : null;
   const montoAsignarNum = Number(montoAsignar) || 0;
   const errorMontoAsignar =
-    facturaSeleccionada && selected && montoAsignar
+    facturaSeleccionada && sinAsignarSeleccionado && montoAsignar
       ? montoAsignarNum <= 0
         ? "Captura un monto válido."
-        : montoAsignarNum > Number(selected.monto_aplicado)
+        : montoAsignarNum > Number(sinAsignarSeleccionado.monto_aplicado)
           ? "No puede exceder el monto sin asignar."
           : montoAsignarNum > Number(facturaSeleccionada.importe_pendiente_cobro)
             ? "No puede exceder el pendiente de la factura."
             : null
       : null;
 
-  const cargando = soloNoAsignados ? noAsignados.isLoading : historial.isLoading;
-  const conError = soloNoAsignados ? noAsignados.isError : historial.isError;
-  const itemsBase = useMemo<PagoClienteConCobranza[]>(
-    () =>
-      soloNoAsignados
-        ? (noAsignados.data?.items ?? []).map((p) => ({ ...p, cobranza: null }))
-        : (historial.data ?? []),
-    [soloNoAsignados, noAsignados.data, historial.data],
-  );
+  const cargando = soloNoAsignados ? noAsignados.isLoading : grupos.isLoading;
+  const conError = soloNoAsignados ? noAsignados.isError : grupos.isError;
 
-  const items = useMemo(() => {
+  const gruposFiltrados = useMemo(() => {
+    const base = grupos.data ?? [];
     const qq = q.trim().toLowerCase();
-    // Petición del usuario: la búsqueda cubre número de pago (parcialidad), referencia,
-    // factura, fecha y monto — no solo referencia. Se compara contra el texto formateado
-    // (como se ve en la tabla) y también contra el valor crudo del monto, para que "800"
-    // encuentre "$800.00".
+    // Petición del usuario: la búsqueda cubre referencia, fecha y monto — ya no "número
+    // de pago" ni "factura" (un pago global puede cubrir varias, no una sola clave de
+    // texto que buscar).
     const filtrados = qq
-      ? itemsBase.filter((p) =>
-          [
-            p.numero_pago ?? "",
-            p.referencia_pago ?? "",
-            p.cobranza?.numero_factura ?? "",
-            fmtFecha(p.fecha_pago_cliente),
-            p.monto_aplicado,
-            fmtMoneda(p.monto_aplicado),
-          ].some((campo) => campo.toLowerCase().includes(qq)),
+      ? base.filter((g) =>
+          [g.referencia_pago ?? "", fmtFecha(g.fecha_pago_cliente), g.monto_pago, fmtMoneda(g.monto_pago)].some(
+            (campo) => campo.toLowerCase().includes(qq),
+          ),
         )
-      : itemsBase;
+      : base;
 
     const ordenados = [...filtrados];
     ordenados.sort((a, b) => {
       if (a.fecha_pago_cliente !== b.fecha_pago_cliente) {
         return a.fecha_pago_cliente < b.fecha_pago_cliente ? 1 : -1; // Fecha desc
       }
-      const [campoA, campoB] =
-        orden === "fecha_referencia"
-          ? [a.referencia_pago ?? "", b.referencia_pago ?? ""]
-          : [a.cobranza?.numero_factura ?? "", b.cobranza?.numero_factura ?? ""];
+      if (orden === "fecha_cantidad") {
+        return a.cantidad_facturas - b.cantidad_facturas; // asc
+      }
+      const campoA = a.referencia_pago ?? "";
+      const campoB = b.referencia_pago ?? "";
       return campoA < campoB ? -1 : campoA > campoB ? 1 : 0; // asc
     });
     return ordenados;
-  }, [itemsBase, q, orden]);
+  }, [grupos.data, q, orden]);
+
+  const sinAsignarFiltrados = useMemo(() => {
+    const base: PagoClienteConCobranza[] = (noAsignados.data?.items ?? []).map((p) => ({
+      ...p,
+      cobranza: null,
+    }));
+    const qq = q.trim().toLowerCase();
+    if (!qq) return base;
+    return base.filter((p) =>
+      [p.numero_pago ?? "", p.referencia_pago ?? "", fmtFecha(p.fecha_pago_cliente), p.monto_aplicado, fmtMoneda(p.monto_aplicado)].some(
+        (campo) => campo.toLowerCase().includes(qq),
+      ),
+    );
+  }, [noAsignados.data, q]);
+
+  const itemsCount = soloNoAsignados ? sinAsignarFiltrados.length : gruposFiltrados.length;
 
   const hoyMes = new Date().toISOString().slice(0, 7);
-  const delMes = (historial.data ?? []).filter((p) => p.fecha_pago_cliente.slice(0, 7) === hoyMes);
-  const totalMes = delMes.reduce((s, p) => s + Number(p.monto_aplicado), 0);
-  const totalHistorico = (historial.data ?? []).reduce((s, p) => s + Number(p.monto_aplicado), 0);
+  // ADR-271: un pago `cancelado` ya no cuenta como cobrado — se excluye de ambos KPIs.
+  const gruposPagados = (grupos.data ?? []).filter((g) => g.estatus_pago === "pagado");
+  const delMes = gruposPagados.filter((g) => g.fecha_pago_cliente.slice(0, 7) === hoyMes);
+  const totalMes = delMes.reduce((s, g) => s + Number(g.monto_pago), 0);
+  const totalHistorico = gruposPagados.reduce((s, g) => s + Number(g.monto_pago), 0);
 
-  const listNode = (
+  const seleccionarGrupo = (g: PagoGrupo) => {
+    setSelected({ tipo: "grupo", data: g });
+    setCancelarError(null);
+  };
+  const seleccionarSinAsignar = (p: PagoClienteConCobranza) => {
+    setSelected({ tipo: "sin_asignar", data: p });
+    setFacturaDestino("");
+    setMontoAsignar("");
+    setAsignarError(null);
+  };
+
+  const confirmarCancelar = () => {
+    if (selected?.tipo !== "grupo") return;
+    setCancelarError(null);
+    cancelarPago.mutate(selected.data.pago_cliente_id, {
+      onSuccess: () => {
+        setCancelando(false);
+        setSelected(null);
+      },
+      onError: (e) => {
+        setCancelando(false);
+        setCancelarError(mensajeDeError(e));
+      },
+    });
+  };
+
+  const listNode = soloNoAsignados ? (
     <>
       <table className="cat-table">
         <thead>
           <tr>
-            <th>Fecha</th>
-            <th>Referencia</th>
-            <th>Factura</th>
-            <th className="td-right">Monto</th>
-            <th className="td-center">Número de parcialidad</th>
-            <th>Método</th>
+            <th className="td-center" style={{ width: 90 }}>Fecha</th>
+            <th className="td-center" style={{ width: 260 }}>Referencia</th>
+            <th className="td-center">Factura</th>
+            <th className="td-center" style={{ width: 120 }}>Monto</th>
+            <th className="td-center">Parcialidad</th>
+            <th className="td-center">Método</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((p) => (
+          {sinAsignarFiltrados.map((p) => (
             <tr
               key={p.pago_cliente_id}
-              className={selected?.pago_cliente_id === p.pago_cliente_id ? "sel" : ""}
-              onClick={() => {
-                setSelected(p);
-                setFacturaDestino("");
-                setMontoAsignar("");
-                setAsignarError(null);
-              }}
+              className={
+                selected?.tipo === "sin_asignar" && selected.data.pago_cliente_id === p.pago_cliente_id
+                  ? "sel"
+                  : ""
+              }
+              onClick={() => seleccionarSinAsignar(p)}
             >
-              <td className="mono" style={{ fontSize: 11 }}>{fmtFecha(p.fecha_pago_cliente)}</td>
-              <td className="mono" style={{ fontSize: 11 }}>{oGuion(p.referencia_pago)}</td>
-              <td className="td-main mono">
-                {p.cobranza ? (
-                  p.cobranza.numero_factura ?? "—"
-                ) : (
-                  <span className="badge b-amber">Sin asignar</span>
-                )}
+              <td className="mono td-center" style={{ fontSize: 11, whiteSpace: "nowrap" }}>{fmtFecha(p.fecha_pago_cliente)}</td>
+              <td
+                className="mono td-center"
+                style={{ fontSize: 11, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {oGuion(p.referencia_pago)}
               </td>
-              <td className="td-right mono" style={{ color: "var(--green-text)", fontWeight: 600 }}>
+              <td className="td-main mono td-center">
+                <span className="badge b-amber">Sin asignar</span>
+              </td>
+              <td className="td-center mono" style={{ color: "var(--green-text)", fontWeight: 600 }}>
                 +{fmtMoneda(p.monto_aplicado)}
               </td>
               <td className="td-center mono">{oGuion(p.numero_pago)}</td>
-              <td className="td-2">{oGuion(p.metodo_pago_clave)}</td>
+              <td className="td-2 td-center">{oGuion(p.metodo_pago_clave)}</td>
             </tr>
           ))}
         </tbody>
       </table>
       {cargando && <div className="state-msg">Cargando pagos…</div>}
       {conError && <div className="state-msg error">No se pudo cargar el historial.</div>}
-      {!cargando && !conError && items.length === 0 && (
-        <div className="state-msg">
-          {soloNoAsignados ? "No hay pagos sin asignar." : "Sin pagos registrados."}
-        </div>
+      {!cargando && !conError && sinAsignarFiltrados.length === 0 && (
+        <div className="state-msg">No hay pagos sin asignar.</div>
+      )}
+    </>
+  ) : (
+    <>
+      <table className="cat-table">
+        <thead>
+          <tr>
+            <th className="td-center" style={{ width: 90 }}>Fecha</th>
+            <th className="td-center" style={{ width: 260 }}>Referencia</th>
+            <th className="td-center" style={{ width: 120 }}>Monto</th>
+            <th className="td-center">Factura</th>
+            <th className="td-center">Estatus</th>
+          </tr>
+        </thead>
+        <tbody>
+          {gruposFiltrados.map((g) => (
+            <tr
+              key={g.pago_cliente_id}
+              className={
+                selected?.tipo === "grupo" && selected.data.pago_cliente_id === g.pago_cliente_id
+                  ? "sel"
+                  : ""
+              }
+              onClick={() => seleccionarGrupo(g)}
+            >
+              <td className="mono td-center" style={{ fontSize: 11, whiteSpace: "nowrap" }}>{fmtFecha(g.fecha_pago_cliente)}</td>
+              <td
+                className="mono td-center"
+                style={{ fontSize: 11, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {oGuion(g.referencia_pago)}
+              </td>
+              <td
+                className="td-center mono"
+                style={{
+                  fontWeight: 600,
+                  color: g.estatus_pago === "cancelado" ? "var(--text3)" : "var(--green-text)",
+                  textDecoration: g.estatus_pago === "cancelado" ? "line-through" : undefined,
+                }}
+              >
+                +{fmtMoneda(g.monto_pago)}
+              </td>
+              <td className="td-center mono">{pluralFactura(g.cantidad_facturas)}</td>
+              <td className="td-center">
+                <span className={`badge ${g.estatus_pago === "cancelado" ? "b-red" : "b-green"}`}>
+                  {ESTATUS_PAGO_LABEL[g.estatus_pago]}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {cargando && <div className="state-msg">Cargando pagos…</div>}
+      {conError && <div className="state-msg error">No se pudo cargar el historial.</div>}
+      {!cargando && !conError && gruposFiltrados.length === 0 && (
+        <div className="state-msg">Sin pagos registrados.</div>
       )}
     </>
   );
 
-  const detail = selected ? (
+  const detalleSinAsignar = sinAsignarSeleccionado ? (
     <>
       <div className="dh">
         {/* Petición del usuario: la referencia sube arriba a la derecha, al mismo nivel
@@ -201,16 +322,12 @@ export function PagosClientePage() {
         <div className="dh-row">
           <div>
             <div className="dh-name mono" style={{ color: "var(--green-text)" }}>
-              +{fmtMoneda(selected.monto_aplicado)}
+              +{fmtMoneda(sinAsignarSeleccionado.monto_aplicado)}
             </div>
             <div className="dh-sub">
-              {selected.cobranza ? (
-                <span className="badge b-green">Aplicado</span>
-              ) : (
-                <span className="badge b-amber">Sin asignar</span>
-              )}
+              <span className="badge b-amber">Sin asignar</span>
               <span className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>
-                {fmtFecha(selected.fecha_pago_cliente)}
+                {fmtFecha(sinAsignarSeleccionado.fecha_pago_cliente)}
               </span>
             </div>
           </div>
@@ -219,135 +336,111 @@ export function PagosClientePage() {
               Referencia
             </div>
             <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>
-              {oGuion(selected.referencia_pago)}
+              {oGuion(sinAsignarSeleccionado.referencia_pago)}
             </div>
           </div>
         </div>
       </div>
       <div className="db">
-        {selected.cobranza ? (
-          <>
-            <div className="sec">Factura aplicada</div>
-            <div
-              style={{ border: "1px solid var(--border)", borderRadius: "var(--r)", padding: "11px 13px", cursor: "pointer" }}
-              onClick={() => navigate(`/cobranza?factura_id=${selected.cobranza?.factura_id}`)}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginBottom: 3 }}>
-                <span className="mono">{selected.cobranza.numero_factura ?? "—"}</span>
-                <span className="mono">
-                  {fmtMoneda(
-                    String(
-                      Number(selected.cobranza.importe_cobrado) + Number(selected.cobranza.importe_pendiente_cobro),
-                    ),
-                  )}
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text3)" }}>Ver en Cobranza de facturas →</div>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* ADR-229/231 (petición del usuario): asignar después un pago capturado
-                sin factura — mismas facturas disponibles que Pago Múltiple (sin
-                `cobrada`). El monto es editable: no debe asignarse de más a la
-                factura, el resto se queda en el propio huérfano (más chico). */}
-            <div className="sec">Asignar a una factura</div>
-            <div style={{ maxWidth: 420, marginBottom: 10 }}>
-              <SearchableSelect
-                value={facturaDestino}
-                onChange={(v) => {
-                  setFacturaDestino(v);
-                  setAsignarError(null);
-                  const factura = cobranzasDisponibles.list.data?.items.find(
-                    (c) => c.cobranza_id === v,
-                  );
-                  if (factura) {
-                    const sugerido = Math.min(
-                      Number(selected.monto_aplicado),
-                      Number(factura.importe_pendiente_cobro),
-                    );
-                    setMontoAsignar(sugerido.toFixed(2));
-                  } else {
+        {/* ADR-229/231 (petición del usuario): asignar después un pago capturado
+            sin factura — mismas facturas disponibles que Pago Múltiple (sin
+            `cobrada`). El monto es editable: no debe asignarse de más a la
+            factura, el resto se queda en el propio huérfano (más chico). */}
+        <div className="sec">Asignar a una factura</div>
+        <div style={{ maxWidth: 420, marginBottom: 10 }}>
+          <SearchableSelect
+            value={facturaDestino}
+            onChange={(v) => {
+              setFacturaDestino(v);
+              setAsignarError(null);
+              const factura = cobranzasDisponibles.list.data?.items.find(
+                (c) => c.cobranza_id === v,
+              );
+              if (factura) {
+                const sugerido = Math.min(
+                  Number(sinAsignarSeleccionado.monto_aplicado),
+                  Number(factura.importe_pendiente_cobro),
+                );
+                setMontoAsignar(sugerido.toFixed(2));
+              } else {
+                setMontoAsignar("");
+              }
+            }}
+            options={opcionesAsignar}
+            placeholder="Buscar factura…"
+          />
+        </div>
+        {facturaDestino && (
+          <div style={{ maxWidth: 200, marginBottom: 10 }}>
+            <div className="fl fl-required">Monto a asignar</div>
+            <input
+              className="fi mono"
+              inputMode="decimal"
+              value={montoAsignar}
+              onChange={(e) => {
+                setMontoAsignar(e.target.value);
+                setAsignarError(null);
+              }}
+            />
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-amber btn-sm"
+            disabled={
+              !facturaDestino ||
+              !montoAsignar ||
+              !!errorMontoAsignar ||
+              asignarPago.isPending
+            }
+            onClick={() => {
+              setAsignarError(null);
+              asignarPago.mutate(
+                {
+                  pagoId: sinAsignarSeleccionado.pago_cliente_id,
+                  cobranzaId: facturaDestino,
+                  montoAplicado: montoAsignar,
+                },
+                {
+                  onSuccess: () => {
+                    setFacturaDestino("");
                     setMontoAsignar("");
-                  }
-                }}
-                options={opcionesAsignar}
-                placeholder="Buscar factura…"
-              />
-            </div>
-            {facturaDestino && (
-              <div style={{ maxWidth: 200, marginBottom: 10 }}>
-                <div className="fl fl-required">Monto a asignar</div>
-                <input
-                  className="fi mono"
-                  inputMode="decimal"
-                  value={montoAsignar}
-                  onChange={(e) => {
-                    setMontoAsignar(e.target.value);
-                    setAsignarError(null);
-                  }}
-                />
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                className="btn btn-amber btn-sm"
-                disabled={
-                  !facturaDestino ||
-                  !montoAsignar ||
-                  !!errorMontoAsignar ||
-                  asignarPago.isPending
-                }
-                onClick={() => {
-                  setAsignarError(null);
-                  asignarPago.mutate(
-                    {
-                      pagoId: selected.pago_cliente_id,
-                      cobranzaId: facturaDestino,
-                      montoAplicado: montoAsignar,
-                    },
-                    {
-                      onSuccess: () => {
-                        setFacturaDestino("");
-                        setMontoAsignar("");
-                        setSelected(null);
-                      },
-                      onError: (e) => setAsignarError(mensajeDeError(e)),
-                    },
-                  );
-                }}
-              >
-                {asignarPago.isPending ? "Asignando…" : "Asignar"}
-              </button>
-              {/* ADR-230 (petición del usuario): repartirlo entre varias facturas con
-                  la misma funcionalidad de Pago Múltiple, precargado con sus datos. */}
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => setRepartiendoHuerfano(selected)}
-              >
-                Repartir con Pago Múltiple
-              </button>
-            </div>
-            {(errorMontoAsignar || asignarError) && (
-              <div className="state-msg error" style={{ textAlign: "left", marginTop: 8 }}>
-                {errorMontoAsignar ?? asignarError}
-              </div>
-            )}
-          </>
+                    setSelected(null);
+                  },
+                  onError: (e) => setAsignarError(mensajeDeError(e)),
+                },
+              );
+            }}
+          >
+            {asignarPago.isPending ? "Asignando…" : "Asignar"}
+          </button>
+          {/* ADR-230 (petición del usuario): repartirlo entre varias facturas con
+              la misma funcionalidad de Pago Múltiple, precargado con sus datos. */}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setRepartiendoHuerfano(sinAsignarSeleccionado)}
+          >
+            Repartir con Pago Múltiple
+          </button>
+        </div>
+        {(errorMontoAsignar || asignarError) && (
+          <div className="state-msg error" style={{ textAlign: "left", marginTop: 8 }}>
+            {errorMontoAsignar ?? asignarError}
+          </div>
         )}
 
         <div className="sec">Datos del pago</div>
         <div className="fl">Fecha</div>
-        <div className="fv mono">{fmtFecha(selected.fecha_pago_cliente)}</div>
+        <div className="fv mono">{fmtFecha(sinAsignarSeleccionado.fecha_pago_cliente)}</div>
         <div className="fl">Monto aplicado</div>
         <div className="fv mono big" style={{ color: "var(--green-text)" }}>
-          {fmtMoneda(selected.monto_aplicado)}
+          {fmtMoneda(sinAsignarSeleccionado.monto_aplicado)}
         </div>
         <div className="fl">Método</div>
-        <div className="fv">{selected.metodo_pago_clave}</div>
-        {selected.archivo_nombre && (
+        <div className="fv">{sinAsignarSeleccionado.metodo_pago_clave}</div>
+        {sinAsignarSeleccionado.archivo_nombre && (
           <>
             <div className="fl">Comprobante</div>
             <div
@@ -361,13 +454,121 @@ export function PagosClientePage() {
                 fontSize: 12,
               }}
             >
-              {selected.archivo_nombre}
+              {sinAsignarSeleccionado.archivo_nombre}
             </div>
           </>
         )}
       </div>
     </>
-  ) : (
+  ) : null;
+
+  const detalleGrupoNode =
+    selected?.tipo === "grupo" ? (
+      <>
+        <div className="dh">
+          <div className="dh-row">
+            <div>
+              <div
+                className="dh-name mono"
+                style={{
+                  color: selected.data.estatus_pago === "cancelado" ? "var(--text3)" : "var(--green-text)",
+                  textDecoration: selected.data.estatus_pago === "cancelado" ? "line-through" : undefined,
+                }}
+              >
+                +{fmtMoneda(selected.data.monto_pago)}
+              </div>
+              <div className="dh-sub">
+                <span className={`badge ${selected.data.estatus_pago === "cancelado" ? "b-red" : "b-green"}`}>
+                  {ESTATUS_PAGO_LABEL[selected.data.estatus_pago]}
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--text3)" }}>
+                  {fmtFecha(selected.data.fecha_pago_cliente)}
+                </span>
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div className="fl" style={{ justifyContent: "flex-end" }}>
+                Referencia
+              </div>
+              <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>
+                {oGuion(selected.data.referencia_pago)}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="db">
+          <div className="sec">Facturas aplicadas</div>
+          {detalleGrupo.isLoading && <div className="fv muted">Cargando…</div>}
+          {detalleGrupo.isError && (
+            <div className="state-msg error">No se pudo cargar el detalle.</div>
+          )}
+          {detalleGrupo.data && detalleGrupo.data.aplicaciones.length === 0 && (
+            <div className="fv muted">Este pago no tiene facturas aplicadas.</div>
+          )}
+          {detalleGrupo.data?.aplicaciones.map((a) => (
+            <div
+              key={a.pago_cliente_id}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r)",
+                padding: "9px 12px",
+                marginBottom: 6,
+                cursor: "pointer",
+              }}
+              onClick={() => navigate(`/cobranza?cobranza_id=${a.cobranza_id}`)}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span className="mono" style={{ fontWeight: 600 }}>{a.numero_factura ?? "—"}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>{fmtMoneda(a.monto_aplicado)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text3)", display: "flex", justifyContent: "space-between" }}>
+                <span>Parcialidad {oGuion(a.numero_pago)}</span>
+                <span>Ver en Cobranza de facturas →</span>
+              </div>
+            </div>
+          ))}
+          {detalleGrupo.data && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontWeight: 700,
+                padding: "9px 12px",
+                marginTop: 4,
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              <span>Total del pago</span>
+              <span className="mono">{fmtMoneda(detalleGrupo.data.total_pago)}</span>
+            </div>
+          )}
+
+          <div className="sec">Datos del pago</div>
+          <div className="fl">Fecha</div>
+          <div className="fv mono">{fmtFecha(selected.data.fecha_pago_cliente)}</div>
+          <div className="fl">Facturas cubiertas</div>
+          <div className="fv mono">{selected.data.cantidad_facturas}</div>
+
+          <div style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              disabled={selected.data.estatus_pago === "cancelado" || detalleGrupo.isLoading}
+              onClick={() => setCancelando(true)}
+            >
+              Cancelación de Pago
+            </button>
+          </div>
+          {cancelarError && (
+            <div className="state-msg error" style={{ textAlign: "left", marginTop: 8 }}>
+              {cancelarError}
+            </div>
+          )}
+        </div>
+      </>
+    ) : null;
+
+  const detail = detalleSinAsignar ?? detalleGrupoNode ?? (
     <DetailEmpty message="Selecciona un pago para ver el detalle." />
   );
 
@@ -411,8 +612,8 @@ export function PagosClientePage() {
         <div>
           <div className="cat-title">Pagos recibidos</div>
           <div className="cat-sub">
-            Historial de pagos del cliente. Cada pago se aplica a una cobranza específica;
-            se captura desde el detalle de "Cobranza de facturas".
+            Historial de pagos del cliente. Cada pago se aplica a una o varias facturas; se
+            captura desde el detalle de "Cobranza de facturas".
           </div>
         </div>
         <button type="button" className="btn btn-amber btn-sm" onClick={() => setCapturando(true)}>
@@ -429,14 +630,14 @@ export function PagosClientePage() {
         <div className="kpi-box">
           <div className="kpi-lbl">Total histórico</div>
           <div className="kpi-val">{fmtMoneda(String(totalHistorico))}</div>
-          <div className="kpi-sub">{(historial.data ?? []).length} pagos registrados</div>
+          <div className="kpi-sub">{gruposPagados.length} pagos registrados</div>
         </div>
       </div>
 
       <div className="toolbar">
         <input
           className="search"
-          placeholder="Buscar pago, referencia, factura, fecha o monto…"
+          placeholder="Buscar pago, referencia, fecha o monto…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -453,7 +654,7 @@ export function PagosClientePage() {
         </button>
         <div className="tb-spacer" />
         {/* Petición del usuario: orden por default Fecha(desc)+Referencia(asc); permite
-            cambiar a Fecha(desc)+Factura(asc). */}
+            cambiar a Fecha(desc)+Cantidad de facturas(asc). */}
         <select
           className="fsel"
           style={{ maxWidth: 260 }}
@@ -461,12 +662,29 @@ export function PagosClientePage() {
           onChange={(e) => setOrden(e.target.value as Orden)}
         >
           <option value="fecha_referencia">Ordenar: Fecha y Referencia</option>
-          <option value="fecha_factura">Ordenar: Fecha y Factura</option>
+          <option value="fecha_cantidad">Ordenar: Fecha y Cantidad de facturas</option>
         </select>
-        <span className="tb-count">{items.length} pagos</span>
+        <span className="tb-count">{itemsCount} pagos</span>
       </div>
 
       <ListDetailLayout list={listNode} detail={detailNode} />
+
+      <ConfirmDialog
+        visible={cancelando}
+        title="Cancelación de Pago"
+        message={
+          selected?.tipo === "grupo"
+            ? `¿Cancelar este pago de ${fmtMoneda(selected.data.monto_pago)} del ${fmtFecha(selected.data.fecha_pago_cliente)}? ` +
+              "Se regresará el saldo pendiente a las facturas que cubría. Si alguna ya está " +
+              "COBRADA en su totalidad, el backend rechazará la cancelación."
+            : ""
+        }
+        confirmLabel="Cancelar pago"
+        danger
+        loading={cancelarPago.isPending}
+        onConfirm={confirmarCancelar}
+        onCancel={() => setCancelando(false)}
+      />
     </>
   );
 }

@@ -194,24 +194,84 @@ los cálculos. Migración `7b931c7fdb4e`.
 desarrolladores consultados) — el pago ya no puede quedar de más ni de menos:** nueva
 columna `ajuste` (DECIMAL, -$10 a +$10) en `PagoCliente`, SOLO del pago múltiple —
 se SUMA a `monto_aplicado` (que sigue siendo el pendiente de la factura, sin tocar) al
-validar `crear_multiple()`. Reglas:
-- `suma_asignada = Σ(monto_aplicado + ajuste)` nunca puede exceder `monto_total_pago`
-  (igual que antes, ahora incluyendo el ajuste).
-- Si `suma_asignada` queda por debajo de `monto_total_pago` por **$10 o menos**, se
-  RECHAZA (400) — esa diferencia cabe dentro de lo que el ajuste podría cubrir, así que
-  hay que usar la columna de Ajuste para cuadrar exacto, no queda como "pago de menos"
-  silencioso.
-- Si la diferencia es **mayor a $10**, sigue el huérfano de ADR-230 tal cual — ahí sí es
-  un pago parcial real que el ajuste no puede absorber.
+validar `crear_multiple()`. `suma_asignada = Σ(monto_aplicado + ajuste)` nunca puede
+exceder `monto_total_pago`. Si queda por debajo, originalmente (hasta ADR-273, ver
+abajo) solo se rechazaba cuando la diferencia cabía dentro del ajuste (≤$10); una
+diferencia mayor seguía el huérfano de ADR-230.
 
 `ajuste` NO afecta `importe_cobrado`/`importe_pendiente_cobro` de la factura (siguen
 basados solo en `monto_aplicado`) — es una corrección contra lo CAPTURADO (comisión
 bancaria, redondeo), no contra la factura. `PagoMultipleItemCreate.ajuste` (Pydantic,
 `ge=-10, le=10`, default 0); columna con CHECK `ajuste BETWEEN -10 AND 10`, default 0 —
 0 en todo pago individual (no se captura ahí). Frontend: `PagoMultipleForm.tsx` agrega
-la columna "Ajuste" a la tabla de facturas disponibles, editable solo si la factura está
-marcada; "Monto asignado"/"Monto por asignar" ahora incluyen el ajuste; mismo guardarraíl
-de 3 casos en vivo (botón deshabilitado) que ADR-227. Migración `e6f7a8b9c0d1`.
+la columna "Ajuste" a la tabla de facturas disponibles (ancho máximo de 6 caracteres,
+ej. "-10.00", sin redondear sus 2 decimales), editable solo si la factura está marcada;
+"Monto asignado"/"Monto por asignar" ahora incluyen el ajuste; mismo guardarraíl de 3
+casos en vivo (botón deshabilitado) que ADR-227. Migración `e6f7a8b9c0d1`.
+
+**ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2") — el
+pago múltiple ya NUNCA puede quedar por debajo del monto total, sin importar la
+diferencia:** se quita de `crear_multiple()` la parte de ADR-230/270 que toleraba una
+diferencia MAYOR a $10 generando un huérfano con el sobrante — ahora CUALQUIER
+`suma_asignada < monto_total_pago` se rechaza (400), haya que seleccionar más facturas,
+subir los montos aplicados, o cuadrar con la columna de Ajuste. Repartir un huérfano
+existente (`pago_origen_id`) también debe cubrir su monto COMPLETO, sin dejar un
+sobrante más chico (antes `asignar()`/ADR-231 sí lo permitía vía split; ESE endpoint no
+cambió, solo `crear_multiple`). El mecanismo de huérfano (`PagoCliente.cobranza_id =
+NULL`) sigue existiendo para otros flujos (`/pagos/no-asignados`, `/asignar`,
+ADR-229/231) — solo se quitó la creación automática desde Pago Múltiple. Además:
+- Columna "Número de Parcialidad"/"Núm. parcialidad" renombrada a **"Parcialidad"** en
+  las 3 tablas donde aparecía (`PagoMultipleForm.tsx`, `PagosClientePage.tsx`,
+  `CobranzaFacturasPage.tsx`).
+- Nuevo contador "Ajuste" en el tablero de montos de `PagoMultipleForm.tsx` (4a
+  tarjeta, ancho angosto ~6 caracteres): suma en vivo de todos los ajustes capturados.
+- Bug corregido: `fmtMoneda` (`modules/cobranza/format.ts`) anteponía el signo de
+  "menos" al símbolo de moneda ("-$0.70"); ahora va DESPUÉS ("$-0.70") — afecta
+  cualquier monto negativo mostrado con esta función (p.ej. "Monto por asignar",
+  `diferencia_afiliada` en Requisiciones).
+No hay migración nueva (no cambia el esquema, solo la validación y la UI).
+
+**ADR-271 (petición del usuario, "Cancelación de Pago", con desarrolladores
+consultados) — "Pagos recibidos" se reestructura y se agrega cancelación:**
+
+- **La tabla principal deja de listar por factura y pasa a listar por PAGO GLOBAL.**
+  Antes: una fila por cada `PagoCliente` aplicado a una `CobranzaFactura` (si un pago
+  múltiple cubría 3 facturas, 3 filas). Ahora: una fila por pago (todas las filas que
+  comparten `pago_multiple_id`, o la única fila si es individual) — columnas Fecha,
+  Referencia, Monto (el total del pago, no de la factura), Factura (cantidad cubierta),
+  Estatus (Pagado/Cancelado). Se deja fuera, a propósito, "Estatus Timbrado" (pedido
+  explícito del usuario: no es prioridad todavía).
+  - Se decidió NO crear una entidad nueva ("pago global" como tabla propia): `PagoCliente`
+    sigue exactamente igual (evaluado y descartado — ver conversación — reestructurar a
+    tabla padre + aplicaciones hubiera significado migrar TODOS los pagos históricos, alto
+    riesgo sobre algo ya probado). El "pago global" es una vista/consulta agrupada nueva
+    (`PagoClienteService.listar_agrupado`/`detalle_agrupado`, `GET /pagos` y
+    `GET /pagos/{id}/detalle`), agrupando por `coalesce(pago_multiple_id, pago_cliente_id)`.
+  - `monto_pago`/`total_pago` se RECONSTRUYEN sumando `monto_aplicado + ajuste` de TODO el
+    grupo (incluido el "huérfano" sin asignar de ADR-230 si existe) — nunca se persiste:
+    por el invariante que ya garantiza `crear_multiple` (ADR-230/270), esa suma siempre da
+    exacto el monto que de verdad se capturó.
+  - Detalle de un pago: sus facturas aplicadas (número, parcialidad, monto aplicado SIN
+    el ajuste — el ajuste no toca la factura) + el total real al final.
+- **Nuevo botón "Cancelación de Pago"** (reemplaza "Eliminar" en el detalle de "Cobranza
+  de facturas", que se QUITA — los pagos ya aplicados solo se cancelan desde "Pagos
+  recibidos"): cancela TODO el pago global de una sola vez. Columna nueva `estatus_pago`
+  (`pagado`/`cancelado`) en `PagoCliente` — **baja LÓGICA, ya no física** para un pago
+  ASIGNADO (cambia ADR-035: ese criterio sigue aplicando SOLO a un pago sin asignar,
+  `eliminar()` ahora rechaza con 400 si el pago ya tiene `cobranza_id`). `importe_cobrado()`
+  excluye los pagos `cancelado` de la suma — con solo ese filtro, cancelar reutiliza TAL
+  CUAL la máquina de `recalcular_tras_pago` que ya existía (crear/asignar/crear_multiple):
+  la factura baja de `cobrada`/`cobro_parcial` a `pendiente`/`cobro_parcial` sola.
+- **Regla de negocio simplificada (decisión del usuario, más segura que el guardarraíl
+  preexistente de `eliminar()`):** si CUALQUIERA de las facturas que toca el pago YA está
+  `cobrada`, la cancelación se RECHAZA con 409 — sin excepción, sin importar si ese pago
+  en particular era "extra"/prescindible o no. Con esta regla, **nunca** hace falta
+  construir una reversa hacia `FacturaCliente`/`OrdenCliente` (que no existía — ver ADR-047
+  y el docstring de `cobranza_factura.py`): la cascada de 3 pasos sigue siendo de un solo
+  sentido, intacta. Cancelar un pago múltiple cancela TODAS sus filas a la vez (incluido el
+  huérfano sin asignar de ese mismo lote, si existe).
+- Migración `f1a2b3c4d5e6` (columna + CHECK). Endpoints nuevos: `GET /pagos` (agrupado),
+  `GET /pagos/{id}/detalle`, `POST /pagos/{id}/cancelar` (permiso `cobranza:editar`, 204).
 
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada

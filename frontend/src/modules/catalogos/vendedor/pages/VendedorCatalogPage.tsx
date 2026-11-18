@@ -40,8 +40,18 @@ const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
 const CAMPO_LABEL: Record<string, string> = { porcentaje_comision_default: "% comisión" };
 const labelCampo = (c: string) => CAMPO_LABEL[c] ?? c;
 
-const fmtFechaHora = (iso: string): string =>
-  new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: DD-MMM-AA (p.ej. "13-feb-26"), no mes/día/año ni el día/mes que da
+// `dateStyle:"short"` en es-MX.
+const fmtFechaHora = (iso: string): string => {
+  const d = new Date(iso);
+  const dia = String(d.getDate()).padStart(2, "0");
+  const anio = String(d.getFullYear()).slice(-2);
+  const fecha = `${dia}-${MESES_ABREV[d.getMonth()]}-${anio}`;
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  return `${fecha}, ${hora}`;
+};
 
 export function VendedorCatalogPage() {
   const canWrite = currentUser.area === "admin";

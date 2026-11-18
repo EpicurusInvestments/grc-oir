@@ -22,7 +22,7 @@ import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { agruparPorFecha } from "../../components/PeriodoTransmisionGrid";
 import { IVA_RATE } from "../../constants";
-import { diaDeSemana, fmtMonto, fmtPct, oGuion } from "../../format";
+import { diaDeSemana, fmtFecha, fmtMonto, fmtPct, oGuion } from "../../format";
 import { findAfiliado, findAnunciante, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
 import { oiImporte, oiTotalSpots } from "../../state/selectors";
 import type { Incidencia, LogEnvioCorreo, OrdenCliente, OrdenEstacion, OrdenEstacionAudio } from "../../types";
@@ -226,9 +226,9 @@ export function OrdenEstacionDetailPanel({
         <table className="cat-table" style={{ fontSize: 12 }}>
           <thead>
             <tr>
-              <th>Día</th>
-              <th>Fecha</th>
-              <th>Horario</th>
+              <th className="td-center">Día</th>
+              <th className="td-center">Fecha</th>
+              <th className="td-center">Horario</th>
               <th className="td-center">Spots</th>
               <th />
             </tr>
@@ -241,15 +241,15 @@ export function OrdenEstacionDetailPanel({
                 se vea igual que la pantalla de captura. */}
             {agruparPorFecha(oe.periodo_transmision).map((grupo) => (
               <tr key={grupo.fecha} style={grupo.cancelada ? { opacity: 0.55 } : undefined}>
-                <td className="td-2" style={{ fontSize: 11 }}>
+                <td className="td-2 td-center" style={{ fontSize: 11 }}>
                   {diaDeSemana(grupo.fecha)}
                 </td>
-                <td className="td-mono">{grupo.fecha}</td>
-                <td className="td-mono">
+                <td className="td-mono td-center">{fmtFecha(grupo.fecha)}</td>
+                <td className="td-mono td-center">
                   {grupo.horaInicio}–{grupo.horaFin}
                 </td>
                 <td className="td-center td-mono">{grupo.spots}</td>
-                <td style={{ fontSize: 11, color: "var(--red-text)", fontWeight: 600 }}>
+                <td className="td-center" style={{ fontSize: 11, color: "var(--red-text)", fontWeight: 600 }}>
                   {grupo.cancelada ? "Cancelado" : ""}
                 </td>
               </tr>
@@ -354,7 +354,7 @@ export function OrdenEstacionDetailPanel({
               <div key={i.id} className="fv" style={{ fontSize: 12, marginBottom: 8 }}>
                 <span className={`badge ${i.tipo === "bonificacion" ? "b-teal" : "b-red"}`}>{i.tipo}</span>{" "}
                 <span style={{ color: "var(--text2)" }}>
-                  {i.fecha_transmision} · {i.spots_asignados} → {i.spots_reales} spots · {fmtMonto(i.monto_ajuste)}
+                  {fmtFecha(i.fecha_transmision)} · {i.spots_asignados} → {i.spots_reales} spots · {fmtMonto(i.monto_ajuste)}
                 </span>
                 <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
                   {i.nota_excepcion}
@@ -551,9 +551,15 @@ function FilaPdf({
   );
 }
 
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: DD-MMM (p.ej. "13-feb"), no mes/día ni el día/mes que da `toLocaleString` en es-MX.
 function fmtFechaHora(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleString("es-MX", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const dia = String(d.getDate()).padStart(2, "0");
+  const fecha = `${dia}-${MESES_ABREV[d.getMonth()]}`;
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  return `${fecha}, ${hora}`;
 }
 
 function Linea({ label, valor, fuerte }: { label: string; valor: number; fuerte?: boolean }) {

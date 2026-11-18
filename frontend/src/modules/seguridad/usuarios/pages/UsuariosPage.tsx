@@ -41,9 +41,15 @@ const activoDeFiltro = (f: Filtro): boolean | undefined =>
 
 const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
 
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: DD-MMM-AA (p.ej. "13-feb-26"), no el día/mes que da `toLocaleDateString("es-MX")`.
 const fecha = (iso: string): string => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("es-MX");
+  if (Number.isNaN(d.getTime())) return "—";
+  const dia = String(d.getDate()).padStart(2, "0");
+  const anio = String(d.getFullYear()).slice(-2);
+  return `${dia}-${MESES_ABREV[d.getMonth()]}-${anio}`;
 };
 
 export function UsuariosPage() {
@@ -284,7 +290,7 @@ export function UsuariosPage() {
           <tr>
             <th style={{ width: "28%" }}>Usuario</th>
             <th>Correo</th>
-            <th style={{ width: "20%" }}>Área</th>
+            <th className="td-center" style={{ width: "20%" }}>Área</th>
             <th className="td-center" style={{ width: 130 }}>
               Estatus
             </th>
@@ -299,7 +305,7 @@ export function UsuariosPage() {
             >
               <td className="td-main">{u.nombre_usuario}</td>
               <td className="td-2">{u.email}</td>
-              <td className="td-2">{etiquetaArea(u.area)}</td>
+              <td className="td-2 td-center">{etiquetaArea(u.area)}</td>
               <td className="td-center">
                 <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
                   <StatusBadge activo={u.activo} />

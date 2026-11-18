@@ -30,8 +30,9 @@ import type {
   OpcionCatalogo,
   OrdenInfo,
   PagoCliente,
-  PagoClienteConCobranza,
   PagoClienteCreate,
+  PagoGrupo,
+  PagoGrupoDetalle,
   PagoMultipleCreate,
   Requisicion,
   RequisicionCreate,
@@ -81,8 +82,27 @@ export const pagoClienteApi = {
     );
     return data;
   },
+  /** ADR-271: solo borra pagos SIN ASIGNAR (el backend rechaza con 400 si ya está
+   *  asignado a una factura — para esos, usar `cancelar`). */
   async eliminar(pagoId: string): Promise<void> {
     await apiClient.delete(`${BASE}/pagos/${pagoId}`);
+  },
+  /** ADR-271 (petición del usuario, "Cancelación de Pago") — "Pagos recibidos"
+   *  agrupado por pago global (una fila por pago, no por factura aplicada). */
+  async listarAgrupado() {
+    const { data } = await apiClient.get<PagoGrupo[]>(`${BASE}/pagos`);
+    return data;
+  },
+  /** Detalle de un pago global: sus facturas aplicadas + el total real del pago. */
+  async detalleAgrupado(pagoId: string) {
+    const { data } = await apiClient.get<PagoGrupoDetalle>(`${BASE}/pagos/${pagoId}/detalle`);
+    return data;
+  },
+  /** Cancela TODO el pago global (todas las filas que comparten `pago_multiple_id`, o
+   *  la única fila si es individual) — RECHAZA con 409 si alguna factura que toca ya
+   *  está `cobrada`. Baja lógica: las filas se quedan, con `estatus_pago='cancelado'`. */
+  async cancelar(pagoId: string): Promise<void> {
+    await apiClient.post(`${BASE}/pagos/${pagoId}/cancelar`);
   },
   /** ADR-225: un `PagoCliente` por cada factura seleccionada, mismo `pago_multiple_id`. */
   async crearMultiple(payload: PagoMultipleCreate) {
@@ -110,28 +130,6 @@ export const pagoClienteApi = {
     return data;
   },
 };
-
-/** Historial global de pagos (vista "Pagos recibidos" del mockup). El backend NO tiene un
- *  `GET` de pagos sin acotar a una `CobranzaFactura` (el endpoint real es
- *  `/facturas/{cobranza_id}/pagos`), así que esto arma la vista trayendo las cobranzas con
- *  algo cobrado y pidiendo sus pagos en paralelo. Limitación conocida de esta primera
- *  tanda: no escala a un catálogo de cobranzas enorme (hoy topa en 100, como los combos de
- *  este módulo) — un endpoint agregado quedaría para cuando el volumen lo justifique. */
-export async function historialPagosCliente(): Promise<PagoClienteConCobranza[]> {
-  const cobranzas = await cobranzaFacturaApi.list({ page: 1, size: 100 });
-  const conPagos = cobranzas.items.filter((c) => Number(c.importe_cobrado) > 0);
-  const porCobranza = await Promise.all(
-    conPagos.map((c) => pagoClienteApi.list(c.cobranza_id, { size: 100 })),
-  );
-  const combinado: PagoClienteConCobranza[] = [];
-  conPagos.forEach((cobranza, i) => {
-    for (const pago of porCobranza[i]?.items ?? []) {
-      combinado.push({ ...pago, cobranza });
-    }
-  });
-  combinado.sort((a, b) => (a.fecha_pago_cliente < b.fecha_pago_cliente ? 1 : -1));
-  return combinado;
-}
 
 // ── Adjuntos de Cobranza (comprobante de pago, estado de cuenta) ──────────────
 export type TipoAdjuntoCobranza = "comprobante_pago" | "estado_cuenta";

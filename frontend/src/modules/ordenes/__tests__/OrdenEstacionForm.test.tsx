@@ -414,7 +414,7 @@ describe("ADR-210: 'Clonar' precarga una OE nueva con los datos de otra, sin act
     });
 
     // La fila se ve de inmediato (no hace falta volver a capturarla).
-    expect(screen.getByDisplayValue("2025-06-15")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("15/06/25")).toBeInTheDocument();
 
     // ADR-210: espera a que se resuelva la consulta de material clonado (vacía en este
     // caso, mock por default) antes de subir uno a mano.
@@ -539,7 +539,7 @@ describe("Validaciones 'antes de guardar' — 1.3", () => {
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot"), { target: { value: "800" } });
     await agregarDia(container, 50);
 
-    const fechaInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    const fechaInput = container.querySelector(".date-fi") as HTMLInputElement;
     fireEvent.change(fechaInput, { target: { value: "2025-07-15" } }); // fuera del rango
 
     expect(screen.getByText(/Día 1: La fecha cae fuera del rango de la campaña\./)).toBeInTheDocument();

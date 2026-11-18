@@ -3,7 +3,7 @@
  * edición ni alta manual (nace siempre de `avanzarAReales`).
  */
 
-import { fmtMonto } from "../../format";
+import { fmtFecha, fmtMonto } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import type { Incidencia, OrdenEstacion } from "../../types";
 
@@ -24,7 +24,7 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
       <div className="dh">
         <div className="dh-row">
           <div>
-            <div className="dh-name">{incidencia.fecha_transmision}</div>
+            <div className="dh-name">{fmtFecha(incidencia.fecha_transmision)}</div>
             <div className="dh-sub">
               <span className={`badge ${incidencia.tipo === "bonificacion" ? "b-teal" : "b-red"}`}>{incidencia.tipo}</span>
               {oe && <span className="badge b-blue">{oe.folio_orden_interna}</span>}
@@ -94,7 +94,7 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
         <div className="fv muted">{incidencia.nota_excepcion}</div>
 
         <div className="sec">Registrada</div>
-        <div className="fv mono">{incidencia.created_at}</div>
+        <div className="fv mono">{fmtFecha(incidencia.created_at)}</div>
       </div>
 
       <div className="df">

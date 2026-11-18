@@ -35,11 +35,26 @@ export function diaDeSemana(fechaIso: string): string {
   return DIA_SEMANA[dt.getUTCDay()];
 }
 
-/** "2025-05-01 → 2025-05-31 (31 días)" o "—" si falta alguna fecha. */
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272 (petición del usuario, barrido global): fechas de solo lectura en
+// "DD-MMM-AA" (p.ej. "13-feb-26"), no mes/día/año ni ISO crudo — mismo criterio que
+// F2/F3 (`modules/facturacion/format.ts`). Los campos de CAPTURA (`DateInput`) se
+// quedan en dd/mm/aa numérico.
+export function fmtFecha(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  // Se parte el ISO en vez de usar `new Date(iso)`: una fecha pura se interpreta como
+  // UTC y en México se mostraría el día anterior.
+  const [anio, mes, dia] = iso.slice(0, 10).split("-");
+  if (!anio || !mes || !dia) return "—";
+  return `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}`;
+}
+
+/** "13-feb-26 → 14-feb-26 (2 días)" o "—" si falta alguna fecha. */
 export function fmtRangoFechas(inicio: string, fin: string): string {
   if (!inicio || !fin) return "—";
   const dias = Math.floor((new Date(fin).getTime() - new Date(inicio).getTime()) / 86_400_000) + 1;
-  return `${inicio} → ${fin} (${dias} días)`;
+  return `${fmtFecha(inicio)} → ${fmtFecha(fin)} (${dias} días)`;
 }
 
 export function oGuion(v: string | null | undefined): string {

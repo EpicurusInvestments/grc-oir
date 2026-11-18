@@ -196,7 +196,7 @@ describe("Material a Transmitir — 1 material por spot, multi-select (ADR-187, 
     );
     expect(screen.getByText("Material a Transmitir")).toBeInTheDocument();
     expect(screen.getByText("spot-verano.mp3")).toBeInTheDocument(); // único spot → 1er material, por posición
-    expect(screen.queryByRole("textbox", { name: "" })).toBeNull(); // no hay multi-select editable
+    expect(screen.queryByText("Elige material…")).toBeNull(); // no hay multi-select editable (CheckboxMultiSelect)
   });
 
   it("2 spots, solo 1 con material propio: el multi-select ofrece el otro y, al elegirlo, llama a onAsignarAudio SOLO de la fila que cambió", () => {

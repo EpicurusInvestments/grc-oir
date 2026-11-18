@@ -279,14 +279,14 @@ describe("Periodo de transmisión de una OI — 1.3", () => {
 
   it("oiPeriodoTexto muestra '(1 día)' en singular cuando inicio y fin coinciden", () => {
     const oe = makeOE({ periodo_transmision: [makeRow({ fecha: "2025-06-15" })] });
-    expect(oiPeriodoTexto(oe)).toBe("2025-06-15 (1 día)");
+    expect(oiPeriodoTexto(oe)).toBe("15-jun-25 (1 día)");
   });
 
   it("oiPeriodoTexto muestra el rango con el número de días capturados cuando difieren", () => {
     const oe = makeOE({
       periodo_transmision: [makeRow({ fecha: "2025-06-01" }), makeRow({ fecha: "2025-06-02" }), makeRow({ fecha: "2025-06-10" })],
     });
-    expect(oiPeriodoTexto(oe)).toBe("2025-06-01 → 2025-06-10 (3 días)");
+    expect(oiPeriodoTexto(oe)).toBe("01-jun-25 → 10-jun-25 (3 días)");
   });
 
   it("oiPeriodoTexto regresa — con periodo vacío", () => {

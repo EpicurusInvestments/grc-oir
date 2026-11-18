@@ -222,7 +222,7 @@ export function AnuncianteCatalogPage() {
           <tr>
             <th>Nombre comercial</th>
             <th>Razón social</th>
-            <th style={{ width: 120 }}>RFC</th>
+            <th className="td-center" style={{ width: 120 }}>RFC</th>
             <th style={{ width: "18%" }}>Agencia</th>
             <th className="td-center" style={{ width: 80 }}>
               Crédito
@@ -241,7 +241,7 @@ export function AnuncianteCatalogPage() {
             >
               <td className="td-main">{a.nombre_comercial}</td>
               <td className="td-2">{a.nombre_fiscal}</td>
-              <td className="td-mono">{a.rfc_anunciante}</td>
+              <td className="td-mono td-center">{a.rfc_anunciante}</td>
               <td className="td-2">
                 {a.agencia_id ? (
                   a.agencia_nombre

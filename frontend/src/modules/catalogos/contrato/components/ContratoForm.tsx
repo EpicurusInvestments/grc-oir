@@ -11,7 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
+import { DateInput, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
 
 import type { ContratoCreate } from "../types";
 
@@ -170,12 +170,20 @@ export function ContratoForm({
         <div className="r2">
           <div>
             <div className="fl fl-required">Inicio</div>
-            <input className="fi" type="date" {...register("fecha_inicio_contrato")} />
+            <Controller
+              control={control}
+              name="fecha_inicio_contrato"
+              render={({ field }) => <DateInput value={field.value} onChange={field.onChange} />}
+            />
             <div className="fe">{errors.fecha_inicio_contrato?.message}</div>
           </div>
           <div>
             <div className="fl fl-required">Fin</div>
-            <input className="fi" type="date" {...register("fecha_fin_contrato")} />
+            <Controller
+              control={control}
+              name="fecha_fin_contrato"
+              render={({ field }) => <DateInput value={field.value} onChange={field.onChange} />}
+            />
             <div className="fe">{errors.fecha_fin_contrato?.message}</div>
           </div>
         </div>

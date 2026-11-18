@@ -14,37 +14,42 @@
  * AQUÍ sí se bloquea el guardado si algún renglón excede su propio pendiente — el
  * backend no lo exige, así que es una validación SOLO de este formulario. También:
  * "Número de pago" deja de capturarse a mano (igual que en `RegistrarPagoForm.tsx`,
- * ADR-226) y se mueve a la tabla como "Número de Parcialidad" calculada POR FACTURA
- * (cada una tiene su propio historial, así que la parcialidad "último + 1" no es la
- * misma para todas las seleccionadas en un mismo lote) — viaja en el payload por
- * renglón (`PagoMultipleItem.numero_pago`), no a nivel del pago múltiple completo.
+ * ADR-226) y se mueve a la tabla como "Parcialidad" calculada POR FACTURA (cada una
+ * tiene su propio historial, así que la parcialidad "último + 1" no es la misma para
+ * todas las seleccionadas en un mismo lote) — viaja en el payload por renglón
+ * (`PagoMultipleItem.numero_pago`), no a nivel del pago múltiple completo.
  *
  * Ajuste posterior (petición del usuario): las facturas ya `cobrada` se EXCLUYEN de la
  * tabla (antes aparecían con el checkbox deshabilitado) — no tienen nada que pagar.
  *
- * ADR-230 (petición del usuario) — "pago de menos": si el monto total no se cubre por
- * completo, el sobrante se guarda como un pago "huérfano" (sin asignar, visible en
- * "Pagos recibidos"). Ese huérfano se puede abrir de nuevo AQUÍ MISMO (prop
- * `origenHuerfano`) para repartirlo entre una o varias facturas: precarga sus datos
- * (fecha, forma de pago, cuenta contable, referencia, fecha de depósito) y bloquea
- * "Monto total del pago" — es dinero YA recibido y documentado, no se re-captura. El
- * payload manda `pago_origen_id` para que el backend lo borre en la MISMA transacción
- * (si vuelve a sobrar algo, nace un huérfano nuevo y más chico).
- *
  * ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con desarrolladores
  * consultados): el pago ya no puede quedar de más ni de menos contra lo capturado.
- * Columna nueva "Ajuste" por renglón (-$10 a +$10) que se SUMA a "Monto aplicado" (que
- * sigue siendo el pendiente de la factura, sin tocar) — absorbe diferencias chicas
- * (comisión bancaria, redondeo) para cuadrar exacto. Si la diferencia contra el monto
- * total es MAYOR a $10 (no cabe en el ajuste), sigue el "pago de menos"/huérfano de
- * ADR-230 tal cual — eso es un pago parcial real, no algo que el ajuste deba absorber.
+ * Columna "Ajuste" por renglón (-$10 a +$10, máximo 6 caracteres visibles, ej.
+ * "-10.00") que se SUMA a "Monto aplicado" (que sigue siendo el pendiente de la
+ * factura, sin tocar) — absorbe diferencias chicas (comisión bancaria, redondeo) para
+ * cuadrar exacto, sin redondear sus 2 decimales. El contador "Ajuste" del tablero de
+ * montos es la suma en vivo de todos los ajustes capturados.
+ *
+ * ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2"): a
+ * diferencia de ADR-230/270 (donde una diferencia MAYOR a $10 todavía se toleraba como
+ * un pago "huérfano", sin asignar, con el sobrante), AHORA el pago NUNCA puede quedar
+ * por debajo del monto total capturado, sin importar la diferencia — hay que
+ * seleccionar más facturas, subir los montos aplicados, o cuadrar con la columna de
+ * Ajuste. El mecanismo de "huérfano" en sí sigue existiendo para OTROS flujos (captura
+ * de un pago sin asignar, "Pagos recibidos" → "No asignados", `/asignar`) — aquí solo
+ * se quitó la creación automática por sobrante. Si este formulario se abre para
+ * REPARTIR un huérfano ya existente (prop `origenHuerfano`): precarga sus datos (fecha,
+ * forma de pago, cuenta contable, referencia, fecha de depósito) y bloquea "Monto total
+ * del pago" — es dinero YA recibido y documentado, no se re-captura — pero ahora debe
+ * repartirse su monto COMPLETO entre las facturas elegidas, sin dejar un sobrante. El
+ * payload manda `pago_origen_id` para que el backend lo borre en la MISMA transacción.
  * Misma validación en el backend (`crear_multiple`), este formulario solo evita el
  * viaje redondo cuando ya se sabe que se va a rechazar.
  */
 
 import { useMemo, useState } from "react";
 
-import { SearchableSelect } from "@/shared/ui";
+import { DateInput, SearchableSelect } from "@/shared/ui";
 
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
 import {
@@ -122,6 +127,9 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
     (s, f) => s + (Number(montos[f.cobranza_id]) || 0) + (Number(ajustes[f.cobranza_id]) || 0),
     0,
   );
+  // Petición del usuario: contador "Ajuste" en el tablero — la suma en vivo de todos
+  // los ajustes capturados (no solo lo que ya está metido dentro de "Monto asignado").
+  const ajusteTotal = seleccionadas.reduce((s, f) => s + (Number(ajustes[f.cobranza_id]) || 0), 0);
   const montoTotalNum = Number(montoTotal) || 0;
   const montoPorAsignar = montoTotalNum - montoAsignado;
 
@@ -196,7 +204,22 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
     setMontos((actual) => ({ ...actual, [cobranzaId]: valor }));
   };
 
+  // Bug corregido (reportado por el usuario, con captura): el campo de Ajuste no tenía
+  // ninguna máscara — dejaba teclear cualquier cantidad de dígitos (el recuadro angosto
+  // solo lo recortaba VISUALMENTE, pero el valor guardado seguía creciendo sin límite,
+  // por eso el contador "Ajuste" del tablero llegaba a mostrar notación científica). Se
+  // rechaza la tecla completa en cuanto el texto resultante ya no cabe en "-10.00" a
+  // "10.00" con máximo 2 decimales — nunca se "corrige" después, así que tampoco hay
+  // redondeo: lo que se ve es exactamente lo que se guarda.
+  const esAjusteParcialValido = (texto: string): boolean => {
+    if (texto === "" || texto === "-") return true;
+    if (!/^-?\d{0,2}(\.\d{0,2})?$/.test(texto)) return false;
+    const n = Number(texto);
+    return !Number.isNaN(n) && n >= -10 && n <= 10;
+  };
+
   const cambiarAjuste = (cobranzaId: string, valor: string) => {
+    if (!esAjusteParcialValido(valor)) return;
     setAjustes((actual) => ({ ...actual, [cobranzaId]: valor }));
   };
 
@@ -248,11 +271,11 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
         return;
       }
     }
-    // ADR-270 — el pago ya no puede quedar de más ni de menos contra lo capturado:
-    // "Monto asignado" (aplicado + ajuste) nunca puede exceder el total, y si queda por
-    // debajo, la diferencia solo se tolera cuando es MAYOR a lo que el ajuste podría
-    // cubrir (> $10, el "pago de menos"/huérfano real de ADR-230). Una diferencia chica
-    // (<= $10) significa que falta terminar de cuadrar con la columna de Ajuste.
+    // ADR-270/272 — el pago ya no puede quedar de más ni de menos contra lo capturado:
+    // "Monto asignado" (aplicado + ajuste) nunca puede exceder el total, y tampoco puede
+    // quedar por debajo, sin importar la diferencia (antes, ADR-230, una diferencia
+    // MAYOR a $10 se toleraba como "pago de menos"/huérfano — ya no: hay que
+    // seleccionar más facturas, subir los montos, o cuadrar con la columna de Ajuste).
     const diferencia = Math.round((montoTotalNum - montoAsignado) * 100) / 100;
     if (diferencia < 0) {
       setError(
@@ -261,10 +284,11 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
       );
       return;
     }
-    if (diferencia > 0 && diferencia <= 10) {
+    if (diferencia > 0) {
       setError(
-        `El pago no cuadra exacto: falta ${fmtMoneda(String(diferencia))}, dentro de lo que ` +
-          `cubre la columna de Ajuste (hasta ±$10.00). Ajusta los montos para cuadrar exacto.`,
+        `El pago no cuadra exacto: falta ${fmtMoneda(String(diferencia))}. Selecciona más ` +
+          `facturas, sube los montos aplicados, o usa la columna de Ajuste (hasta ±$10.00 ` +
+          `por factura) para cuadrar exacto.`,
       );
       return;
     }
@@ -372,25 +396,15 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
             <div className="form-card-title">Datos del pago recibido</div>
             {/* Petición del usuario: orden Fecha pago/Fecha aplicación, Forma de pago/
                 Cuenta contable, Referencia bancaria/Monto total — "Número de pago" se
-                quitó de aquí (ver tabla de abajo, columna "Número de Parcialidad"). */}
+                quitó de aquí (ver tabla de abajo, columna "Parcialidad"). */}
             <div className="r2">
               <div>
                 <div className="fl">Fecha pago</div>
-                <input
-                  type="date"
-                  className="fi"
-                  value={fechaDeposito}
-                  onChange={(e) => setFechaDeposito(e.target.value)}
-                />
+                <DateInput value={fechaDeposito} onChange={setFechaDeposito} />
               </div>
               <div>
                 <div className="fl fl-required">Fecha de aplicación</div>
-                <input
-                  type="date"
-                  className="fi"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                />
+                <DateInput value={fecha} onChange={setFecha} />
               </div>
             </div>
             <div className="r2">
@@ -462,7 +476,12 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
 
           {clienteId && (
             <>
-              <div className="mc-row">
+              {/* Petición del usuario: 4a tarjeta "Ajuste" (ancho angosto, de ~6
+                  caracteres como "-10.00") con la suma en vivo de todos los ajustes
+                  capturados — `gridTemplateColumns` se ajusta SOLO aquí (estilo en
+                  línea), sin tocar `.mc-row` global, que reusan otras pantallas con 3
+                  tarjetas. */}
+              <div className="mc-row" style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
                 <div className="mc">
                   <div className="mc-lbl">Monto total</div>
                   <div className="mc-val">{fmtMoneda(montoTotal || "0")}</div>
@@ -490,6 +509,12 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                     {fmtMoneda(String(montoPorAsignar))}
                   </div>
                 </div>
+                <div className="mc" style={{ minWidth: 100 }}>
+                  <div className="mc-lbl">Ajuste</div>
+                  <div className="mc-val mono" style={{ width: "6ch" }}>
+                    {ajusteTotal.toFixed(2)}
+                  </div>
+                </div>
               </div>
 
               <div className="sec">Facturas disponibles ({facturas.length})</div>
@@ -505,14 +530,14 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                     <tr>
                       <th className="td-center">Sel.</th>
                       <th>Factura</th>
-                      <th>Fecha estimada</th>
-                      <th className="td-right">Total</th>
-                      <th className="td-right">Cobrado</th>
-                      <th className="td-right">Pendiente</th>
+                      <th className="td-center">Fecha estimada</th>
+                      <th className="td-center">Total</th>
+                      <th className="td-center">Cobrado</th>
+                      <th className="td-center">Pendiente</th>
                       <th className="td-center">Estado</th>
-                      <th className="td-center">Número de Parcialidad</th>
-                      <th className="td-right">Monto aplicado</th>
-                      <th className="td-right">Ajuste</th>
+                      <th className="td-center">Parcialidad</th>
+                      <th className="td-center">Monto aplicado</th>
+                      <th className="td-center">Ajuste</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -529,15 +554,15 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                             />
                           </td>
                           <td className="td-main mono">{f.numero_factura ?? "—"}</td>
-                          <td className="mono" style={{ fontSize: 11 }}>{fmtFecha(f.fecha_estimada_cobro)}</td>
-                          <td className="td-right mono">{fmtMoneda(String(totalFactura))}</td>
-                          <td className="td-right mono">{oGuion(Number(f.importe_cobrado) > 0 ? fmtMoneda(f.importe_cobrado) : null)}</td>
-                          <td className="td-right mono">{oGuion(Number(f.importe_pendiente_cobro) > 0 ? fmtMoneda(f.importe_pendiente_cobro) : null)}</td>
+                          <td className="mono td-center" style={{ fontSize: 11 }}>{fmtFecha(f.fecha_estimada_cobro)}</td>
+                          <td className="td-center mono">{fmtMoneda(String(totalFactura))}</td>
+                          <td className="td-center mono">{oGuion(Number(f.importe_cobrado) > 0 ? fmtMoneda(f.importe_cobrado) : null)}</td>
+                          <td className="td-center mono">{oGuion(Number(f.importe_pendiente_cobro) > 0 ? fmtMoneda(f.importe_pendiente_cobro) : null)}</td>
                           <td className="td-center">
                             <span className="badge">{ESTATUS_COBRO_LABEL[f.estatus_cobro]}</span>
                           </td>
                           <td className="td-center mono">{f.siguiente_numero_pago}</td>
-                          <td className="td-right">
+                          <td className="td-center">
                             <input
                               className="fi mono"
                               style={{ textAlign: "right", maxWidth: 130 }}
@@ -547,10 +572,16 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
                               onChange={(e) => cambiarMonto(f.cobranza_id, e.target.value)}
                             />
                           </td>
-                          <td className="td-right">
+                          <td className="td-center">
+                            {/* Petición del usuario: el campo de Ajuste se ve con un
+                                ancho máximo de 6 caracteres (ej. "-10.00") — el límite de
+                                -$10.00/+$10.00 en sí lo valida `ajusteFueraDeRango`. */}
                             <input
                               className="fi mono"
-                              style={{ textAlign: "right", maxWidth: 90 }}
+                              // `.fi` trae `padding: 0 11px` (22px) y `box-sizing: border-box`
+                              // global — sin sumarlo, "6ch" de ancho total dejaría casi sin
+                              // espacio real para los 6 caracteres (ej. "-10.00").
+                              style={{ textAlign: "right", width: "calc(6ch + 22px)" }}
                               inputMode="decimal"
                               disabled={!marcada}
                               value={ajustes[f.cobranza_id] ?? ""}

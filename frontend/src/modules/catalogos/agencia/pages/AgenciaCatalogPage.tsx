@@ -62,8 +62,18 @@ const CAMPO_LABEL: Record<string, string> = {
 };
 const labelCampo = (c: string) => CAMPO_LABEL[c] ?? c;
 
-const fmtFechaHora = (iso: string): string =>
-  new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: DD-MMM-AA (p.ej. "13-feb-26"), no mes/día/año ni el día/mes que da
+// `dateStyle:"short"` en es-MX.
+const fmtFechaHora = (iso: string): string => {
+  const d = new Date(iso);
+  const dia = String(d.getDate()).padStart(2, "0");
+  const anio = String(d.getFullYear()).slice(-2);
+  const fecha = `${dia}-${MESES_ABREV[d.getMonth()]}-${anio}`;
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  return `${fecha}, ${hora}`;
+};
 
 export function AgenciaCatalogPage() {
   const canWrite = currentUser.area === "admin";
@@ -321,7 +331,7 @@ export function AgenciaCatalogPage() {
         <thead>
           <tr>
             <th>Agencia</th>
-            <th style={{ width: 120 }}>RFC</th>
+            <th className="td-center" style={{ width: 120 }}>RFC</th>
             <th className="td-center" style={{ width: 90 }}>
               % comisión
             </th>
@@ -341,7 +351,7 @@ export function AgenciaCatalogPage() {
               onClick={() => seleccionar(a)}
             >
               <td className="td-main">{a.nombre_agencia}</td>
-              <td className="td-mono">{a.rfc_agencia}</td>
+              <td className="td-mono td-center">{a.rfc_agencia}</td>
               <td className="td-center td-2">{a.porcentaje_comision_agencia_default}%</td>
               <td className="td-center td-2">{a.anunciantes_count}</td>
               <td className="td-center">

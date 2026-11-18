@@ -173,7 +173,9 @@ describe("RequisicionesPage", () => {
   it("la diferencia contra la factura del afiliado se muestra aunque sea negativa", async () => {
     renderCon({ ...base, diferencia_afiliada: "-500.00" });
     (await screen.findByText("REQ-2026-0001")).click();
-    await waitFor(() => expect(screen.getByText(/-\$500\.00/)).toBeInTheDocument());
+    // Petición del usuario (con captura, "Monto por asignar"): el signo de "menos" va
+    // DESPUÉS del símbolo de moneda ("$-500.00"), no antes — ver `fmtMoneda`.
+    await waitFor(() => expect(screen.getByText(/\$-500\.00/)).toBeInTheDocument());
   });
 
   describe("bug reportado por el usuario: los pills de 'Estado' no filtraban la tabla", () => {

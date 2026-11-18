@@ -205,7 +205,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText("+5 bonif.")).toBeInTheDocument());
     // ADR-157 (petición del usuario, corrige ADR-151): dia-b no vino en el archivo —
     // sigue mostrándose (ya NO desaparece), marcado como descuento completo (-5).
-    expect(screen.getByText("2025-06-02")).toBeInTheDocument();
+    expect(screen.getByText("02-jun-25")).toBeInTheDocument();
     expect(screen.getByText("-5 desc.")).toBeInTheDocument();
     expect(screen.queryByText("sin cambio")).toBeNull();
 
@@ -426,8 +426,8 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     render(<RealesForm oe={oe} onAvanzar={vi.fn()} onCancelar={vi.fn()} />);
 
     // Ambos días se ven, sin cambios (nadie cargó un layout ni editó nada a mano).
-    expect(screen.getByText("2025-06-01")).toBeInTheDocument();
-    expect(screen.getByText("2025-06-02")).toBeInTheDocument();
+    expect(screen.getByText("01-jun-25")).toBeInTheDocument();
+    expect(screen.getByText("02-jun-25")).toBeInTheDocument();
     expect(screen.getAllByText("sin cambio")).toHaveLength(2);
   });
 
@@ -464,8 +464,8 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText("Nuevo")).toBeInTheDocument());
     // Una sola tabla en toda la pantalla, con ambas filas dentro.
     expect(container.querySelectorAll("table.cat-table")).toHaveLength(1);
-    expect(screen.getByText("2025-06-01")).toBeInTheDocument();
-    expect(screen.getByText("2025-07-01")).toBeInTheDocument();
+    expect(screen.getByText("01-jun-25")).toBeInTheDocument();
+    expect(screen.getByText("01-jul-25")).toBeInTheDocument();
   });
 
   it("ADR-149: una fecha+hora del layout que no existe se propone como día nuevo, y se puede quitar antes de avanzar", async () => {
@@ -497,7 +497,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
 
     // ADR-151: el día nuevo aparece dentro de la tabla PRINCIPAL (no en una tabla
     // aparte), marcado con la etiqueta "Nuevo".
-    await waitFor(() => expect(screen.getByText("2025-07-01")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("01-jul-25")).toBeInTheDocument());
     expect(screen.getByText("09:00")).toBeInTheDocument();
     expect(screen.getByText("Nuevo")).toBeInTheDocument();
     expect(
@@ -677,7 +677,7 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     await waitFor(() => expect(screen.getByText(/Fuera del rango de campaña/)).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Editar" }));
-    const inputFecha = document.querySelector('input[type="date"]') as HTMLInputElement;
+    const inputFecha = document.querySelector(".date-fi") as HTMLInputElement;
     expect(inputFecha).not.toBeNull();
     fireEvent.change(inputFecha, { target: { value: "2025-06-15" } });
     fireEvent.click(screen.getByRole("button", { name: "✓ OK" }));
@@ -716,10 +716,10 @@ describe("ADR-146: Carga de Órdenes Reales Desde Layout y Formato Enviado al Cl
     fireEvent.change(inputs.filter((el) => el.type === "file")[2], {
       target: { files: [new File(["a,b,c"], "layout.csv", { type: "text/csv" })] },
     });
-    await waitFor(() => expect(screen.getByText("2025-07-01")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("01-jul-25")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "✕" }));
-    expect(screen.queryByText("2025-07-01")).toBeNull();
+    expect(screen.queryByText("01-jul-25")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Avanzar a 2.3 →" }));
     const [, extra] = onAvanzar.mock.calls[0];

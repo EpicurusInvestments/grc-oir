@@ -63,6 +63,17 @@ export interface CobranzaFacturaUpdate {
 }
 
 // ── PagoCliente ───────────────────────────────────────────────────────────────
+/** ADR-271 (petición del usuario, "Cancelación de Pago"): estatus del PAGO en sí
+ *  (distinto de `EstatusCobro`, que es el de la `CobranzaFactura`). `cancelado` es
+ *  terminal: no hay "descancelar". */
+export const ESTATUS_PAGO = ["pagado", "cancelado"] as const;
+export type EstatusPago = (typeof ESTATUS_PAGO)[number];
+
+export const ESTATUS_PAGO_LABEL: Record<EstatusPago, string> = {
+  pagado: "Pagado",
+  cancelado: "Cancelado",
+};
+
 export interface PagoCliente {
   pago_cliente_id: string;
   /** ADR-229: `null` = "pago no asignado" todavía a ninguna factura. */
@@ -71,6 +82,8 @@ export interface PagoCliente {
   monto_aplicado: string;
   /** ADR-270: corrección de +/- $10 del pago múltiple; "0.00" en el pago individual. */
   ajuste: string;
+  /** ADR-271: 'cancelado' excluye este pago del cobro de su factura, sin borrarlo. */
+  estatus_pago: EstatusPago;
   /** ADR-225: nullable desde que existe el pago múltiple — ese flujo no lo captura. */
   metodo_pago_clave: string | null;
   referencia_pago: string | null;
@@ -156,12 +169,10 @@ export interface PagoHuerfanoOrigen {
   cuenta_contable_id: string | null;
 }
 
-/** `PagoCliente` con su `CobranzaFactura` padre embebida — la usa el historial global de
- *  "Pagos recibidos": el backend no expone un `GET` de pagos sin acotar a una cobranza
- *  (`/cobranza/facturas/{cobranza_id}/pagos`), así que el front arma la vista agregando
- *  por cobranza (ver `historialPagosCliente` en `api.ts`). Limitación conocida: no
- *  escala a un volumen muy grande de cobranzas — suficiente para esta primera tanda.
- *  ADR-229: `cobranza` es `null` para un "pago no asignado". */
+/** `PagoCliente` con su `CobranzaFactura` padre embebida — la usa la pestaña "No
+ *  asignados" de "Pagos recibidos" (ADR-229: `cobranza` es `null` para un "pago no
+ *  asignado"). La tabla PRINCIPAL de esa pantalla ya no usa este tipo: desde ADR-271
+ *  agrupa por pago global (ver `PagoGrupo`), no por factura aplicada. */
 export interface PagoClienteConCobranza extends PagoCliente {
   cobranza: CobranzaFactura | null;
 }
@@ -169,6 +180,43 @@ export interface PagoClienteConCobranza extends PagoCliente {
 /** ADR-229 (petición del usuario): asigna una factura a un pago capturado sin ella. */
 export interface PagoAsignarFacturaRequest {
   cobranza_id: string;
+}
+
+/** ADR-271 (petición del usuario, "Cancelación de Pago") — un pago "global" para
+ *  "Pagos recibidos": agrupa TODAS las filas de `PagoCliente` que comparten
+ *  `pago_multiple_id` (o la única fila, si es un pago individual). Antes esa pantalla
+ *  listaba una fila por factura aplicada; ahora una fila por pago.
+ *
+ *  `pago_cliente_id` es un REPRESENTANTE del grupo — basta para pedir el detalle o
+ *  cancelar (el backend resuelve el grupo completo a partir de cualquiera de sus filas). */
+export interface PagoGrupo {
+  pago_cliente_id: string;
+  pago_multiple_id: string | null;
+  fecha_pago_cliente: string;
+  referencia_pago: string | null;
+  /** Lo que de verdad se capturó (SUM de aplicado+ajuste de TODO el grupo, incluido
+   *  el "huérfano" sin asignar si existe) — siempre el monto total real del pago. */
+  monto_pago: string;
+  /** Facturas DISTINTAS cubiertas (no cuenta el "huérfano" sin asignar). */
+  cantidad_facturas: number;
+  estatus_pago: EstatusPago;
+}
+
+/** Una factura cubierta por el pago — fila del detalle de `PagoGrupoDetalle`. */
+export interface PagoGrupoAplicacion {
+  pago_cliente_id: string;
+  cobranza_id: string;
+  numero_factura: string | null;
+  numero_pago: string | null;
+  monto_aplicado: string;
+}
+
+/** Detalle de un pago global: sus facturas aplicadas + el total — puede no ser igual a
+ *  la suma de `aplicaciones` si hubo `ajuste` o un "huérfano" (ADR-230/270). */
+export interface PagoGrupoDetalle {
+  aplicaciones: PagoGrupoAplicacion[];
+  total_pago: string;
+  estatus_pago: EstatusPago;
 }
 
 // ── Requisicion ───────────────────────────────────────────────────────────────

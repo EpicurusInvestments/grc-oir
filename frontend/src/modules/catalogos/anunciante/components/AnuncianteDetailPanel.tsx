@@ -21,8 +21,25 @@ import { MarcaInlineForm, type MarcaFormData } from "./MarcaInlineForm";
 
 const oGuion = (v?: string | null): string => (v && v.trim() ? v : "—");
 
-const fmtFechaHora = (iso: string): string =>
-  new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: fechas de solo lectura en "DD-MMM-AA" (p.ej. "13-feb-26"), no ISO crudo.
+const fmtFecha = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  const [anio, mes, dia] = iso.slice(0, 10).split("-");
+  return anio && mes && dia ? `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}` : "—";
+};
+
+// ADR-272: DD-MMM-AA (p.ej. "13-feb-26"), no mes/día/año ni el día/mes que da
+// `dateStyle:"short"` en es-MX.
+const fmtFechaHora = (iso: string): string => {
+  const d = new Date(iso);
+  const dia = String(d.getDate()).padStart(2, "0");
+  const anio = String(d.getFullYear()).slice(-2);
+  const fecha = `${dia}-${MESES_ABREV[d.getMonth()]}-${anio}`;
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  return `${fecha}, ${hora}`;
+};
 
 // Siempre a 2 decimales SIN redondear (mismo criterio que el resto del sistema,
 // `modules/facturacion/format.ts`): se corta el STRING antes de convertir a número.
@@ -230,7 +247,7 @@ export function AnuncianteDetailPanel({
             <div>
               <div className="rel-name">{c.nombre_contrato}</div>
               <div className="rel-sub">
-                {c.numero_contrato} · {c.fecha_inicio_contrato} a {c.fecha_fin_contrato} ·{" "}
+                {c.numero_contrato} · {fmtFecha(c.fecha_inicio_contrato)} a {fmtFecha(c.fecha_fin_contrato)} ·{" "}
                 {fmtMonto(c.monto_contrato)}
               </div>
             </div>
