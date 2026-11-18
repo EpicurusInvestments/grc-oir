@@ -207,9 +207,9 @@ export function EstacionCatalogPage() {
         <thead>
           <tr>
             <th>Estación</th>
-            <th style={{ width: 90 }}>Siglas</th>
-            <th style={{ width: 90 }}>Tipo</th>
-            <th style={{ width: 90 }}>Frecuencia</th>
+            <th className="td-center" style={{ width: 90 }}>Siglas</th>
+            <th className="td-center" style={{ width: 90 }}>Tipo</th>
+            <th className="td-center" style={{ width: 90 }}>Frecuencia</th>
             <th style={{ width: "16%" }}>Plaza</th>
             <th style={{ width: "18%" }}>Afiliado</th>
             <th className="td-center" style={{ width: 90 }}>
@@ -225,13 +225,13 @@ export function EstacionCatalogPage() {
               onClick={() => seleccionar(e)}
             >
               <td className="td-main">{e.nombre_estacion}</td>
-              <td className="td-2 mono">{oGuion(e.siglas)}</td>
-              <td className="td-2">
+              <td className="td-2 mono td-center">{oGuion(e.siglas)}</td>
+              <td className="td-2 td-center">
                 <span className={`badge ${TIPO_BADGE[e.tipo_senal]}`}>
                   {e.tipo_senal.toUpperCase()}
                 </span>
               </td>
-              <td className="td-2 mono">{oGuion(e.frecuencia)}</td>
+              <td className="td-2 mono td-center">{oGuion(e.frecuencia)}</td>
               <td className="td-2">{oGuion(e.plaza_nombre)}</td>
               <td className="td-2">{oGuion(e.afiliado_nombre)}</td>
               <td className="td-center">

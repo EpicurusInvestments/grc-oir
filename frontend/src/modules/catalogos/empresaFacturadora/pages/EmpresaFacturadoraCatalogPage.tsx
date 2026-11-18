@@ -202,7 +202,7 @@ export function EmpresaFacturadoraCatalogPage() {
         <thead>
           <tr>
             <th>Empresa</th>
-            <th style={{ width: 140 }}>RFC</th>
+            <th className="td-center" style={{ width: 140 }}>RFC</th>
             <th className="td-center" style={{ width: 90 }}>
               Estatus
             </th>
@@ -216,7 +216,7 @@ export function EmpresaFacturadoraCatalogPage() {
               onClick={() => seleccionar(e)}
             >
               <td className="td-main">{e.nombre_empresa}</td>
-              <td className="td-mono">{e.rfc_empresa}</td>
+              <td className="td-mono td-center">{e.rfc_empresa}</td>
               <td className="td-center">
                 <StatusBadge activo={e.activo} />
               </td>

@@ -22,3 +22,17 @@ export function fmtMonto(v: string | null | undefined): string {
 export function fmtPct(v: string | null | undefined): string {
   return v == null || v === "" ? "—" : `${v}%`;
 }
+
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272 (petición del usuario, barrido global): fechas de solo lectura en
+// "DD-MMM-AA" (p.ej. "13-feb-26"), no mes/día/año ni ISO crudo — mismo criterio que
+// F2/F3. Los campos de CAPTURA (`DateInput`) se quedan en dd/mm/aa numérico.
+export function fmtFecha(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  // Se parte el ISO en vez de usar `new Date(iso)`: una fecha pura se interpreta como
+  // UTC y en México se mostraría el día anterior.
+  const [anio, mes, dia] = iso.slice(0, 10).split("-");
+  if (!anio || !mes || !dia) return "—";
+  return `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}`;
+}

@@ -171,20 +171,20 @@ export function ImportCsvDialog({ visible, onClose }: ImportCsvDialogProps) {
                 <table className="cat-table">
                   <thead>
                     <tr>
-                      <th style={{ width: 48 }}>#</th>
-                      <th style={{ width: 120 }}>Grupo</th>
-                      <th style={{ width: 90 }}>Clave</th>
-                      <th style={{ width: 100 }}>Estado</th>
+                      <th className="td-center" style={{ width: 48 }}>#</th>
+                      <th className="td-center" style={{ width: 120 }}>Grupo</th>
+                      <th className="td-center" style={{ width: 90 }}>Clave</th>
+                      <th className="td-center" style={{ width: 100 }}>Estado</th>
                       <th>Motivo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rep.filas.map((f) => (
                       <tr key={f.numero}>
-                        <td className="td-mono">{f.numero}</td>
-                        <td>{f.grupo ?? "—"}</td>
-                        <td className="td-mono">{f.clave ?? "—"}</td>
-                        <td>
+                        <td className="td-mono td-center">{f.numero}</td>
+                        <td className="td-center">{f.grupo ?? "—"}</td>
+                        <td className="td-mono td-center">{f.clave ?? "—"}</td>
+                        <td className="td-center">
                           <span className={`badge ${ESTADO_BADGE[f.estado]}`}>
                             {ESTADO_LABEL[f.estado]}
                           </span>
