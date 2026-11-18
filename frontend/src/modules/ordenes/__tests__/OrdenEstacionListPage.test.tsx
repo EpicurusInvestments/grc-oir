@@ -203,7 +203,7 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
     expect(within(filas[0]).getByText("OE-2026-0050A")).toBeInTheDocument();
-    expect(within(filas[0]).getByText("2026-06-15")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("15-jun-26")).toBeInTheDocument();
     expect(within(filas[1]).getByText("OE-2026-0041A")).toBeInTheDocument();
   });
 

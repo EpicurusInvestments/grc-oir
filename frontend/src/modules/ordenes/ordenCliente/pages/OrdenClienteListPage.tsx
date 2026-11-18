@@ -10,7 +10,7 @@ import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
 import { RootBadge } from "../../components/EstadoBadge";
 import { CierreOCForm } from "../../cierre/components/CierreOCForm";
-import { fmtMonto, fmtRangoFechas } from "../../format";
+import { fmtFecha, fmtMonto, fmtRangoFechas } from "../../format";
 import { findAgencia, findAnunciante, findVendedor, marcas } from "../../state/catalogosCache";
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { useOrdenes } from "../../state/OrdenesContext";
@@ -217,13 +217,13 @@ export function OrdenClienteListPage({
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "10%" }}>Folio</th>
-                <th style={{ width: "9%" }}>Fecha</th>
+                <th className="td-center" style={{ width: "10%" }}>Folio</th>
+                <th className="td-center" style={{ width: "9%" }}>Fecha</th>
                 <th style={{ width: "15%" }}>Anunciante</th>
                 <th style={{ width: "13%" }}>Agencia / Vendedor</th>
                 <th style={{ width: "13%" }}>Producto / Marca</th>
-                <th style={{ width: "11%" }}>Campaña</th>
-                <th className="td-right" style={{ width: "9%" }}>
+                <th className="td-center" style={{ width: "11%" }}>Campaña</th>
+                <th className="td-center" style={{ width: "9%" }}>
                   Total
                 </th>
                 <th className="td-center" style={{ width: "6%" }}>
@@ -244,11 +244,11 @@ export function OrdenClienteListPage({
                 const { total } = totalesOC(oc);
                 return (
                   <tr key={oc.id} className={selectedId === oc.id ? "sel" : ""} onClick={() => setSelectedId(oc.id)}>
-                    <td>
+                    <td className="td-center">
                       <div className="td-mono">{oc.folio_orden}</div>
                       <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{oc.numero_orden_cliente}</div>
                     </td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>{oc.created_at}</td>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>{fmtFecha(oc.created_at)}</td>
                     <td className="td-main">{anunciante ? anunciante.nombre_comercial : "—"}</td>
                     <td className="td-2">
                       <div style={{ fontSize: 12 }}>{agencia ? agencia.nombre_agencia : <span style={{ color: "var(--text3)" }}>Sin agencia</span>}</div>
@@ -258,10 +258,10 @@ export function OrdenClienteListPage({
                       <div style={{ fontSize: 12 }}>{marca ? marca.nombre_marca : "—"}</div>
                       <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{oc.producto}</div>
                     </td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>
                       {fmtRangoFechas(oc.fecha_inicio_campania, oc.fecha_fin_campania)}
                     </td>
-                    <td className="td-right td-mono" style={{ fontWeight: 500 }}>
+                    <td className="td-center td-mono" style={{ fontWeight: 500 }}>
                       {fmtMonto(total)}
                     </td>
                     <td className="td-center td-2">{oeCount}</td>

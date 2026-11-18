@@ -49,7 +49,7 @@ import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { formatDomicilio } from "@/shared/lib/formatDomicilio";
 import type { HistorialCambio } from "@/shared/types";
-import { FieldTag, MoneyInput, SavingOverlay, SearchableSelect, SensitiveField } from "@/shared/ui";
+import { DateInput, FieldTag, MoneyInput, SavingOverlay, SearchableSelect, SensitiveField } from "@/shared/ui";
 
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import { FROZEN_STATES, IVA_RATE, OBS_PREDEFINIDAS } from "../../constants";
@@ -650,12 +650,12 @@ export function OrdenClienteForm({
               </div>
               <div>
                 <div className="fl fl-required">Fecha de venta</div>
-                <input
-                  className="fi"
-                  type="date"
-                  disabled={congelado}
-                  min={hoyLocal()}
-                  {...register("fecha_venta")}
+                <Controller
+                  control={control}
+                  name="fecha_venta"
+                  render={({ field }) => (
+                    <DateInput value={field.value} onChange={field.onChange} disabled={congelado} min={hoyLocal()} />
+                  )}
                 />
                 <div className="fe">{errors.fecha_venta?.message}</div>
               </div>
@@ -778,23 +778,28 @@ export function OrdenClienteForm({
             <div className="r3">
               <div>
                 <div className="fl fl-required">Inicio de campaña</div>
-                <input
-                  className="fi"
-                  type="date"
-                  disabled={congelado}
-                  min={hoyLocal()}
-                  {...register("fecha_inicio_campania")}
+                <Controller
+                  control={control}
+                  name="fecha_inicio_campania"
+                  render={({ field }) => (
+                    <DateInput value={field.value} onChange={field.onChange} disabled={congelado} min={hoyLocal()} />
+                  )}
                 />
                 <div className="fe">{errors.fecha_inicio_campania?.message}</div>
               </div>
               <div>
                 <div className="fl fl-required">Fin de campaña</div>
-                <input
-                  className="fi"
-                  type="date"
-                  disabled={congelado}
-                  min={fechaInicio || hoyLocal()}
-                  {...register("fecha_fin_campania")}
+                <Controller
+                  control={control}
+                  name="fecha_fin_campania"
+                  render={({ field }) => (
+                    <DateInput
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={congelado}
+                      min={fechaInicio || hoyLocal()}
+                    />
+                  )}
                 />
                 <div className="fe">{errors.fecha_fin_campania?.message}</div>
               </div>

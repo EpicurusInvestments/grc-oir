@@ -5,6 +5,7 @@
  */
 
 import { IVA_RATE } from "../constants";
+import { fmtFecha } from "../format";
 import { findAnunciante } from "./catalogosCache";
 import type { Incidencia, OrdenCliente, OrdenEstacion, PeriodoTransmisionRow, VerificacionDerivada, VerificacionDiaRow } from "../types";
 
@@ -81,7 +82,7 @@ export function oiPeriodoTexto(oe: OrdenEstacion): string {
   const f0 = oiPrimeraFecha(oe);
   const fN = oiUltimaFecha(oe);
   const n = oe.periodo_transmision.length;
-  return f0 === fN ? `${f0} (1 día)` : `${f0} → ${fN} (${n} días)`;
+  return f0 === fN ? `${fmtFecha(f0)} (1 día)` : `${fmtFecha(f0)} → ${fmtFecha(fN)} (${n} días)`;
 }
 
 export interface BalanceSpotsOC {

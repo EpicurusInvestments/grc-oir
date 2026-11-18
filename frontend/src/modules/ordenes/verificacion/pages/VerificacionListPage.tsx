@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
-import { oGuion } from "../../format";
+import { fmtFecha } from "../../format";
 import { findAfiliado, findEstacion } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { verificacionesDerivadas } from "../../state/selectors";
@@ -89,8 +89,8 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "12%" }}>Folio OI</th>
-                <th style={{ width: "10%" }}>Fecha</th>
+                <th className="td-center" style={{ width: "12%" }}>Folio OI</th>
+                <th className="td-center" style={{ width: "10%" }}>Fecha</th>
                 <th style={{ width: "20%" }}>Estación</th>
                 <th style={{ width: "19%" }}>Afiliado</th>
                 <th className="td-center" style={{ width: "12%" }}>
@@ -115,8 +115,8 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
                 const incDeV = state.incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
                 return (
                   <tr key={v.ordenEstacionId} className={selectedId === v.ordenEstacionId ? "sel" : ""} onClick={() => setSelectedId(v.ordenEstacionId)}>
-                    <td className="td-mono">{v.folioOrdenInterna}</td>
-                    <td className="td-mono">{oGuion(v.fechaInicio)}</td>
+                    <td className="td-mono td-center">{v.folioOrdenInterna}</td>
+                    <td className="td-mono td-center">{fmtFecha(v.fechaInicio)}</td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-2">{afiliado?.nombre_afiliado ?? "—"}</td>
                     <td className="td-center td-mono">{v.totalProgramado}</td>

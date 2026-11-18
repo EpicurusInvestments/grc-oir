@@ -302,9 +302,9 @@ describe("Periodo de transmisión — agrupado por fecha (ADR-196, corrige un bu
     const filas = screen.getAllByRole("row");
     // encabezado + 2 fechas agrupadas (13 y 14) + pie de total — no 5 renglones sueltos.
     expect(filas).toHaveLength(4);
-    expect(screen.getByText("2026-10-13")).toBeInTheDocument();
+    expect(screen.getByText("13-oct-26")).toBeInTheDocument();
     expect(screen.getByText("08:05–22:00")).toBeInTheDocument(); // rango completo del grupo del 13
-    expect(screen.getByText("2026-10-14")).toBeInTheDocument();
+    expect(screen.getByText("14-oct-26")).toBeInTheDocument();
     expect(screen.getByText("09:00–21:00")).toBeInTheDocument();
   });
 

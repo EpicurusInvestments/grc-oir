@@ -81,7 +81,7 @@
 
 import { useState, type CSSProperties } from "react";
 
-import { CheckboxMultiSelect, type OpcionBuscable } from "@/shared/ui";
+import { CheckboxMultiSelect, DateInput, type OpcionBuscable } from "@/shared/ui";
 
 import { diaDeSemana } from "../format";
 import type { OrdenEstacionAudio, PeriodoTransmisionRow } from "../types";
@@ -409,10 +409,10 @@ export function PeriodoTransmisionGrid({
       <table className="cat-table" style={{ fontSize: 12 }}>
         <thead>
           <tr>
-            <th>Día</th>
-            <th>Fecha</th>
-            <th>Hora Inicio</th>
-            <th>Hora Fin</th>
+            <th className="td-center">Día</th>
+            <th className="td-center">Fecha</th>
+            <th className="td-center">Hora Inicio</th>
+            <th className="td-center">Hora Fin</th>
             <th className="td-center" style={{ width: 70, minWidth: 70 }}>
               Spots
             </th>
@@ -438,17 +438,15 @@ export function PeriodoTransmisionGrid({
             const cancelandoEsteGrupo = cancelandoFecha === grupo.fecha;
             return (
               <tr key={grupo.fecha} style={grupo.cancelada ? { opacity: 0.55 } : undefined}>
-                <td className="td-2" style={{ fontSize: 11 }}>
+                <td className="td-2 td-center" style={{ fontSize: 11 }}>
                   {diaDeSemana(grupo.fecha)}
                 </td>
                 <td>
-                  <input
-                    type="date"
-                    className="fi"
+                  <DateInput
                     style={{ marginBottom: 0, borderColor: problemas.length ? "var(--red-text)" : undefined }}
                     value={grupo.fecha}
                     disabled={disabled || grupo.cancelada}
-                    onChange={(e) => actualizarFecha(grupo, e.target.value)}
+                    onChange={(v) => actualizarFecha(grupo, v)}
                   />
                 </td>
                 <td>

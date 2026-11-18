@@ -25,8 +25,8 @@ describe("Fix: Incidencias ordena por alta (created_at), más reciente primero",
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
 
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
-    expect(within(filas[0]).getByText("2025-06-01")).toBeInTheDocument(); // fecha_transmision de la nueva
-    expect(within(filas[1]).getByText("2025-06-10")).toBeInTheDocument(); // fecha_transmision de la vieja
+    expect(within(filas[0]).getByText("01-jun-25")).toBeInTheDocument(); // fecha_transmision de la nueva
+    expect(within(filas[1]).getByText("10-jun-25")).toBeInTheDocument(); // fecha_transmision de la vieja
     expect(screen.getByText(/2 de 2/)).toBeInTheDocument();
   });
 });

@@ -21,7 +21,7 @@ import { CommissionSnapshotBlock } from "../../components/CommissionSnapshotBloc
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { Timeline } from "../../components/Timeline";
 import { FROZEN_STATES, STATUS_LABELS, rootState } from "../../constants";
-import { fmtMonto, fmtRangoFechas, oGuion } from "../../format";
+import { fmtFecha, fmtMonto, fmtRangoFechas, oGuion } from "../../format";
 import {
   findAfiliado,
   findAgencia,
@@ -50,7 +50,18 @@ const CAMPO_LABEL: Record<string, string> = {
 };
 const labelCampo = (c: string) => CAMPO_LABEL[c] ?? c;
 
-const fmtFechaHora = (iso: string): string => new Date(iso).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272: DD-MMM-AA (p.ej. "13-feb-26"), no mes/día/año ni el día/mes que da
+// `dateStyle:"short"` en es-MX.
+const fmtFechaHora = (iso: string): string => {
+  const d = new Date(iso);
+  const dia = String(d.getDate()).padStart(2, "0");
+  const anio = String(d.getFullYear()).slice(-2);
+  const fecha = `${dia}-${MESES_ABREV[d.getMonth()]}-${anio}`;
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  return `${fecha}, ${hora}`;
+};
 
 interface OrdenClienteDetailPanelProps {
   oc: OrdenCliente;
@@ -183,7 +194,7 @@ export function OrdenClienteDetailPanel({
           </div>
           <div>
             <div className="fl">Fecha venta</div>
-            <div className="fv mono">{oc.fecha_venta}</div>
+            <div className="fv mono">{fmtFecha(oc.fecha_venta)}</div>
           </div>
         </div>
         <div className="fl">Vendedor principal{vendedorSecundario ? " / secundario" : ""}</div>
@@ -309,7 +320,7 @@ export function OrdenClienteDetailPanel({
               <div key={i.id} className="fv" style={{ fontSize: 12, marginBottom: 8 }}>
                 <span className={`badge ${i.tipo === "bonificacion" ? "b-teal" : "b-red"}`}>{i.tipo}</span>{" "}
                 <span style={{ color: "var(--text2)" }}>
-                  {i.fecha_transmision} · {i.spots_asignados} → {i.spots_reales} spots
+                  {fmtFecha(i.fecha_transmision)} · {i.spots_asignados} → {i.spots_reales} spots
                 </span>
                 <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
                   {i.nota_excepcion}

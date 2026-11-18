@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
 import { EstadoOIBadge } from "../../components/EstadoBadge";
-import { fmtMonto } from "../../format";
+import { fmtFecha, fmtMonto } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oiImporte, oiPeriodoTexto, oiTotalSpots } from "../../state/selectors";
@@ -275,17 +275,17 @@ export function OrdenEstacionListPage({
           <table className="cat-table">
             <thead>
               <tr>
-                <th style={{ width: "11%" }}>Folio</th>
-                <th style={{ width: "8%" }}>Fecha</th>
-                <th style={{ width: "10%" }}>OC de origen</th>
+                <th className="td-center" style={{ width: "11%" }}>Folio</th>
+                <th className="td-center" style={{ width: "8%" }}>Fecha</th>
+                <th className="td-center" style={{ width: "10%" }}>OC de origen</th>
                 <th style={{ width: "14%" }}>Estación</th>
                 <th style={{ width: "8%" }}>Plaza</th>
                 <th style={{ width: "13%" }}>Afiliado</th>
-                <th style={{ width: "12%" }}>Periodo</th>
+                <th className="td-center" style={{ width: "12%" }}>Periodo</th>
                 <th className="td-center" style={{ width: "7%" }}>
                   Spots
                 </th>
-                <th className="td-right" style={{ width: "10%" }}>
+                <th className="td-center" style={{ width: "10%" }}>
                   Importe
                 </th>
                 <th className="td-center" style={{ width: "15%" }}>
@@ -308,21 +308,21 @@ export function OrdenEstacionListPage({
                 const oc = state.ordenesCliente.find((o) => o.id === oe.orden_id);
                 return (
                   <tr key={oe.id} className={selectedId === oe.id ? "sel" : ""} onClick={() => setSelectedId(oe.id)}>
-                    <td className="td-mono">{oe.folio_orden_interna}</td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>
-                      {oe.created_at}
+                    <td className="td-mono td-center">{oe.folio_orden_interna}</td>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>
+                      {fmtFecha(oe.created_at)}
                     </td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>
                       {oc?.folio_orden ?? "—"}
                     </td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-2">{plaza?.nombre_plaza ?? "—"}</td>
                     <td className="td-2">{afiliado?.nombre_afiliado ?? "—"}</td>
-                    <td className="td-mono" style={{ fontSize: 11 }}>
+                    <td className="td-mono td-center" style={{ fontSize: 11 }}>
                       {oiPeriodoTexto(oe)}
                     </td>
                     <td className="td-center td-mono">{oiTotalSpots(oe)}</td>
-                    <td className="td-right td-mono" style={{ fontWeight: 500 }}>
+                    <td className="td-center td-mono" style={{ fontWeight: 500 }}>
                       {fmtMonto(oiImporte(oe))}
                     </td>
                     <td className="td-center">
