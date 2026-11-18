@@ -171,7 +171,7 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
       .find((el) => el.closest("tr")) as HTMLElement;
     const fila = celda.closest("tr") as HTMLElement;
     const dentro = within(fila);
-    expect(dentro.getByText("04/10/2025")).toBeInTheDocument();
+    expect(dentro.getByText("10-abr-25")).toBeInTheDocument();
     expect(dentro.getByText("$334,904.00")).toBeInTheDocument();
     expect(dentro.getByText("$388,488.64")).toBeInTheDocument();
     expect(dentro.getByText("2")).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     const panel = within(panelDeDetalle());
     expect(screen.getByText("Razón social emisora")).toBeInTheDocument();
     expect(screen.getAllByText("Radiorama Jalisco SA de CV").length).toBeGreaterThan(0);
-    expect(panel.getByText("04/10/2025")).toBeInTheDocument();
+    expect(panel.getByText("10-abr-25")).toBeInTheDocument();
   });
 
   it("muestra el archivo adjunto cuando existe", async () => {

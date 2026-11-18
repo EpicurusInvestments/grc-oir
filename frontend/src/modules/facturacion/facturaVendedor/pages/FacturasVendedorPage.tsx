@@ -352,11 +352,11 @@ export function FacturasVendedorPage() {
           <tr>
             <th style={{ width: "14%" }}>Folio</th>
             <th style={{ width: "18%" }}>Vendedor</th>
-            <th style={{ width: "10%" }}>Fecha</th>
-            <th className="td-right" style={{ width: "13%" }}>
+            <th className="td-center" style={{ width: "10%" }}>Fecha</th>
+            <th className="td-center" style={{ width: "13%" }}>
               Subtotal
             </th>
-            <th className="td-right" style={{ width: "13%" }}>
+            <th className="td-center" style={{ width: "13%" }}>
               Total
             </th>
             <th className="td-center" style={{ width: 90 }}>
@@ -381,9 +381,9 @@ export function FacturasVendedorPage() {
             >
               <td className="td-main mono">{oGuion(f.folio_factura_vendedor)}</td>
               <td className="td-2">{oGuion(f.vendedor)}</td>
-              <td className="td-2 mono">{fmtFecha(f.fecha_factura_vendedor)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.monto_factura_vendedor)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura_vendedor)}</td>
+              <td className="td-2 mono td-center">{fmtFecha(f.fecha_factura_vendedor)}</td>
+              <td className="td-2 td-center">{fmtMoneda(f.monto_factura_vendedor)}</td>
+              <td className="td-2 td-center">{fmtMoneda(f.total_factura_vendedor)}</td>
               <td className="td-center">{f.ordenes_asignadas}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_vendedor)}`}>

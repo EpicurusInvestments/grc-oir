@@ -306,7 +306,7 @@ describe("ListasParaFacturarPage", () => {
     expect(screen.getByText(/\$804,000\.00/)).toBeInTheDocument();
     // Y el periodo ABARCA de la fecha más temprana a la más tardía de las dos órdenes.
     // ADR-269: fechas de solo lectura en Facturación ahora en mes/día/año.
-    expect(screen.getByText(/06\/01\/2025 → 07\/31\/2025/)).toBeInTheDocument();
+    expect(screen.getByText(/01-jun-25 → 31-jul-25/)).toBeInTheDocument();
   });
 
   it("desmarcar el check devuelve la bandeja completa a su modo normal", async () => {

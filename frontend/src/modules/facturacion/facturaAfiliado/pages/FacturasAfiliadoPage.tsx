@@ -412,11 +412,11 @@ export function FacturasAfiliadoPage() {
           <tr>
             <th style={{ width: "16%" }}>Folio emisora</th>
             <th>Afiliado</th>
-            <th style={{ width: "10%" }}>Fecha</th>
-            <th className="td-right" style={{ width: "13%" }}>
+            <th className="td-center" style={{ width: "10%" }}>Fecha</th>
+            <th className="td-center" style={{ width: "13%" }}>
               Subtotal
             </th>
-            <th className="td-right" style={{ width: "13%" }}>
+            <th className="td-center" style={{ width: "13%" }}>
               Total
             </th>
             <th className="td-center" style={{ width: 90 }}>
@@ -441,9 +441,9 @@ export function FacturasAfiliadoPage() {
             >
               <td className="td-main mono">{f.factura_emisora}</td>
               <td className="td-2">{oGuion(f.razon_social_afiliada)}</td>
-              <td className="td-2 mono">{fmtFecha(f.fecha_factura_afiliado)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.monto_factura_afiliado)}</td>
-              <td className="td-2 td-right">{fmtMoneda(f.total_factura_afiliado)}</td>
+              <td className="td-2 mono td-center">{fmtFecha(f.fecha_factura_afiliado)}</td>
+              <td className="td-2 td-center">{fmtMoneda(f.monto_factura_afiliado)}</td>
+              <td className="td-2 td-center">{fmtMoneda(f.total_factura_afiliado)}</td>
               <td className="td-center">{f.ordenes_asignadas}</td>
               <td className="td-center">
                 <span className={`badge ${badgeEstatusProveedor(f.estatus_factura_afiliado)}`}>

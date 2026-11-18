@@ -111,8 +111,8 @@ export function CostosPage() {
         <thead>
           <tr>
             <th>Descripción</th>
-            <th style={{ width: "14%" }}>Periodo</th>
-            <th className="td-right" style={{ width: "20%" }}>
+            <th className="td-center" style={{ width: "14%" }}>Periodo</th>
+            <th className="td-center" style={{ width: "20%" }}>
               Monto
             </th>
             <th className="td-center" style={{ width: 110 }}>
@@ -131,8 +131,8 @@ export function CostosPage() {
               }}
             >
               <td className="td-main">{c.descripcion_costo}</td>
-              <td className="td-2 mono">{c.periodo_contable}</td>
-              <td className="td-2 td-right">{fmtMoneda(c.monto_costo)}</td>
+              <td className="td-2 mono td-center">{c.periodo_contable}</td>
+              <td className="td-2 td-center">{fmtMoneda(c.monto_costo)}</td>
               <td className="td-center">
                 <span className="badge b-gray">{TIPO_COSTO_LABEL[c.tipo_costo]}</span>
               </td>

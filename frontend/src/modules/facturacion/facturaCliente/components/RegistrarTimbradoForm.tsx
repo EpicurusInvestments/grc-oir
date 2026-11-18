@@ -18,6 +18,8 @@
 
 import { useState } from "react";
 
+import { DateInput } from "@/shared/ui";
+
 import { AdjuntoFacturaInput } from "./AdjuntoFacturaInput";
 import type { TimbrarInput } from "../../types";
 
@@ -28,6 +30,17 @@ import type { TimbrarInput } from "../../types";
 // basura por error de dedo. Mismo patrón que el backend (`FOLIO_FISCAL_REGEX` en
 // `factura_cliente.py`).
 const FOLIO_FISCAL_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** Petición del usuario: ayuda a teclear el folio insertando los guiones solo, y a la
+ * vez deja pegar un folio completo (con o sin guiones, copiado de la factura externa)
+ * sin que le "estorben" los guiones — se descarta todo lo que no sea hexadecimal y se
+ * reinsertan los guiones en las posiciones 8-4-4-4-12, así que tanto teclear carácter
+ * por carácter como pegar de golpe terminan en el mismo resultado canónico. */
+function aplicarMascaraFolio(crudo: string): string {
+  const hex = crudo.replace(/[^0-9a-fA-F]/g, "").slice(0, 32);
+  const partes = [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)];
+  return partes.filter((p) => p !== "").join("-");
+}
 
 interface Props {
   numeroFactura: string;
@@ -128,7 +141,7 @@ export function RegistrarTimbradoForm({
               placeholder="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
               value={folio}
               onChange={(e) => {
-                setFolio(e.target.value);
+                setFolio(aplicarMascaraFolio(e.target.value));
                 setError(null);
               }}
               onBlur={validarFolioAlSalir}
@@ -136,12 +149,7 @@ export function RegistrarTimbradoForm({
             <div className="r2">
               <div>
                 <div className="fl fl-required">Fecha de timbrado</div>
-                <input
-                  type="date"
-                  className="fi"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                />
+                <DateInput value={fecha} onChange={setFecha} />
               </div>
               <div>
                 <div className="fl">Serie / certificado (opcional)</div>

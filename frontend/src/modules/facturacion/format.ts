@@ -31,20 +31,20 @@ export function fmtPorcentaje(valor: string | null | undefined): string {
   return Number.isNaN(n) ? "—" : `${n.toLocaleString("es-MX", { minimumFractionDigits: 2 })} %`;
 }
 
-// ADR-269 (petición del usuario, con captura): en TODA la pantalla de Facturación
+const MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+// ADR-272 (petición del usuario, barrido global): en TODA la pantalla de Facturación
 // (y solo aquí — módulos como `ordenes`/`cobranza` tienen su propio `fmtFecha`,
 // deliberadamente independiente, ver docstring de arriba) las fechas de solo lectura
-// se muestran mes/día/año, no día/mes/año. Los campos donde SE CAPTURA la fecha
-// (`<input type="date">`) no cambian aquí: su formato visual lo decide el
-// navegador/SO, no esta función — fuera de alcance de este fix (confirmado con el
-// usuario).
+// se muestran "DD-MMM-AA" (p.ej. "13-feb-26"). Los campos donde SE CAPTURA la fecha
+// (`DateInput`, ADR-271c) se quedan en dd/mm/aa numérico — ver su propio docstring.
 export function fmtFecha(iso: string | null | undefined): string {
   if (!iso) return "—";
   // Se parte el ISO en vez de usar `new Date(iso)`: una fecha pura ("2026-02-01") se
   // interpreta como UTC y en México se mostraría el día anterior.
   const [anio, mes, dia] = iso.slice(0, 10).split("-");
   if (!anio || !mes || !dia) return "—";
-  return `${mes}/${dia}/${anio}`;
+  return `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}`;
 }
 
 export function oGuion(valor: string | null | undefined): string {

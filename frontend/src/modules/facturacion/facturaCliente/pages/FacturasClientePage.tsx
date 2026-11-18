@@ -623,14 +623,14 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
         <thead>
           <tr>
             <th style={{ width: "11%" }}>No. factura</th>
-            <th style={{ width: "11%" }}>Pedido</th>
+            <th style={{ width: "11%" }} className="td-center">Pedido</th>
             <th style={{ width: "18%" }}>Razón social receptor</th>
             <th style={{ width: "12%" }}>Empresa emisora</th>
-            <th style={{ width: "11%" }}>Fecha</th>
-            <th style={{ width: "11%" }} className="td-right">
+            <th style={{ width: "11%" }} className="td-center">Fecha</th>
+            <th style={{ width: "11%" }} className="td-center">
               Total
             </th>
-            <th style={{ width: "14%" }}>Folio fiscal</th>
+            <th style={{ width: "14%" }} className="td-center">Folio fiscal</th>
             <th style={{ width: "12%" }} className="td-center">
               Estado
             </th>
@@ -644,18 +644,18 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               onClick={() => seleccionar(f)}
             >
               <td className="td-main mono">{f.numero_factura}</td>
-              <td className="td-2 mono" style={{ fontSize: 11 }}>
+              <td className="td-2 mono td-center" style={{ fontSize: 11 }}>
                 {oGuion(f.numero_pedido)}
               </td>
               <td className="td-2">{f.razon_social_facturacion}</td>
               <td className="td-2" style={{ fontSize: 12 }}>
                 {oGuion(f.empresa_facturadora)}
               </td>
-              <td className="td-2 mono" style={{ fontSize: 11 }}>
+              <td className="td-2 mono td-center" style={{ fontSize: 11 }}>
                 {fmtFecha(f.fecha_factura)}
               </td>
-              <td className="td-2 td-right mono">{fmtMoneda(f.total_factura)}</td>
-              <td className="td-2 mono" style={{ fontSize: 10 }}>
+              <td className="td-2 td-center mono">{fmtMoneda(f.total_factura)}</td>
+              <td className="td-2 mono td-center" style={{ fontSize: 10 }}>
                 {f.folio_fiscal_sat ? (
                   `${f.folio_fiscal_sat.slice(0, 13)}…`
                 ) : (

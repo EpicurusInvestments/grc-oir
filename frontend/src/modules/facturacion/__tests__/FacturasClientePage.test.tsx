@@ -291,6 +291,41 @@ describe("FacturasClientePage", () => {
     expect(await screen.findByText(/El folio fiscal.*es obligatorio/)).toBeInTheDocument();
   });
 
+  // Petición del usuario: ayudar a teclear el folio insertando los guiones solo, y
+  // dejar pegar uno completo (con o sin guiones, copiado de la factura externa) sin que
+  // los guiones den problema — en ambos casos debe llegar en el formato canónico.
+  it("folio: al teclear sin guiones, los inserta solo; al pegar con guiones, los respeta", async () => {
+    const { facturaClienteApi } = await import("../api");
+    vi.mocked(facturaClienteApi.timbrar).mockResolvedValue({
+      ...base,
+      estado_facturacion: "timbrada",
+      folio_fiscal_sat: "7C3A1D9E-52F4-4B87-9A6C-1E0D8F3B4C72",
+    });
+    renderCon({ ...base, estado_facturacion: "enviada_a_timbrado" });
+    (await screen.findByText("A-1041")).click();
+    (await screen.findByText("Registrar respuesta del timbrado →")).click();
+
+    const folioInput = (await screen.findByPlaceholderText(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    )) as HTMLInputElement;
+
+    // Tecleado sin guiones (como lo escribiría un usuario carácter por carácter).
+    fireEvent.change(folioInput, { target: { value: "7C3A1D9E52F44B879A6C1E0D8F3B4C72" } });
+    expect(folioInput.value).toBe("7C3A1D9E-52F4-4B87-9A6C-1E0D8F3B4C72");
+
+    // Pegado ya con guiones (copiado de la factura externa) — se respeta tal cual.
+    fireEvent.change(folioInput, { target: { value: "7C3A1D9E-52F4-4B87-9A6C-1E0D8F3B4C72" } });
+    expect(folioInput.value).toBe("7C3A1D9E-52F4-4B87-9A6C-1E0D8F3B4C72");
+
+    screen.getByText("Registrar timbrado").click();
+    await waitFor(() =>
+      expect(facturaClienteApi.timbrar).toHaveBeenCalledWith(
+        "f-1",
+        expect.objectContaining({ folio_fiscal_sat: "7C3A1D9E-52F4-4B87-9A6C-1E0D8F3B4C72" }),
+      ),
+    );
+  });
+
   // ADR-269 (petición del usuario): "validar el folio fiscal, que requiera el formato y
   // no permita calcular cualquier cosa" — antes solo exigía "no vacío".
   it("fix: un folio fiscal que no tiene forma de UUID no permite registrar el timbrado", async () => {
@@ -498,7 +533,7 @@ describe("FacturasClientePage", () => {
     expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
     expect(screen.getAllByText("OC-2025-0051").length).toBeGreaterThan(0);
     expect(screen.getByText("LALA-YOG-11")).toBeInTheDocument();
-    expect(screen.getByText(/06\/01\/2025 → 06\/30\/2025/)).toBeInTheDocument();
+    expect(screen.getByText(/01-jun-25 → 30-jun-25/)).toBeInTheDocument();
     // Con una sola orden NO se pinta el resumen de la suma: no hay nada que sumar.
     expect(screen.queryByText(/suma de subtotales/)).not.toBeInTheDocument();
   });

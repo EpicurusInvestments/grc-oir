@@ -14,11 +14,11 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { type FocusEvent, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
-import { FieldTag, MultiSearchableSelect, SavingOverlay, SearchableSelect } from "@/shared/ui";
+import { DateInput, FieldTag, MultiSearchableSelect, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { facturaClienteApi } from "../../api";
 import { fmtFecha, fmtMoneda, oGuion } from "../../format";
@@ -107,7 +107,7 @@ function descripcionSugerida(ordenes: OrdenPorFacturar[]): string {
           : "";
       return (
         `Servicios de transmisión publicitaria — ${o.producto ?? "Campaña"} del ` +
-        `${o.fecha_inicio_campania} al ${o.fecha_fin_campania}.${spots} ` +
+        `${fmtFecha(o.fecha_inicio_campania)} al ${fmtFecha(o.fecha_fin_campania)}.${spots} ` +
         `Monto: ${fmtMoneda(o.subtotal)}. Según orden ${o.numero_orden_cliente}. ` +
         `Folio: ${o.folio_orden}.`
       );
@@ -141,6 +141,7 @@ export function FacturaClienteForm({
 
   const {
     register,
+    control,
     handleSubmit,
     setValue,
     setError,
@@ -541,7 +542,11 @@ export function FacturaClienteForm({
         <div className="r2">
           <div>
             <div className="fl fl-required">Fecha de la factura</div>
-            <input type="date" className="fi" {...register("fecha_factura")} />
+            <Controller
+              control={control}
+              name="fecha_factura"
+              render={({ field }) => <DateInput value={field.value} onChange={field.onChange} />}
+            />
             {errors.fecha_factura && <div className="fe">{errors.fecha_factura.message}</div>}
           </div>
           <div>
