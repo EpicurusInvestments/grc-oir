@@ -425,7 +425,30 @@ def test_pago_completo_completa_la_cascada_hasta_ordencliente(
     assert orden.estatus_orden == EstatusOrden.COBRADA.value
 
 
-def test_borrar_un_pago_que_no_completo_el_cobro_recalcula_sin_problema(
+def test_eliminar_un_pago_ya_asignado_se_rechaza_siempre(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-271 (petición del usuario): `DELETE /pagos/{id}` ya NO borra un pago ASIGNADO
+    a una factura, sin importar su estatus de cobro — solo `cancelar()` puede quitarle
+    efecto. Un pago sin asignar (otra prueba de este archivo) sigue siendo físico."""
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+
+    pago = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("3000.00", cat),
+        headers=_hdr("cxc"),
+    ).json()
+
+    r = client.delete(f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}", headers=_hdr("cxc"))
+    assert r.status_code == 400, r.text
+
+    db.expire_all()
+    pago_id = uuid.UUID(pago["pago_cliente_id"])
+    assert db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).count() == 1
+
+
+def test_cancelar_un_pago_que_no_completo_el_cobro_recalcula_sin_problema(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
@@ -437,19 +460,28 @@ def test_borrar_un_pago_que_no_completo_el_cobro_recalcula_sin_problema(
         headers=_hdr("cxc"),
     ).json()
 
-    r = client.delete(f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}", headers=_hdr("cxc"))
-    assert r.status_code == 204
+    r = client.post(
+        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar", headers=_hdr("cxc")
+    )
+    assert r.status_code == 204, r.text
 
     cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc")).json()
     assert cobranza["estatus_cobro"] == "pendiente"
     assert Decimal(cobranza["importe_cobrado"]) == Decimal("0.00")
 
+    # ADR-271: baja LÓGICA — la fila sigue existiendo, solo cambia su estatus.
+    db.expire_all()
+    pago_id = uuid.UUID(pago["pago_cliente_id"])
+    fila = db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).one()
+    assert fila.estatus_pago == "cancelado"
 
-def test_borrar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
+
+def test_cancelar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     """El guardarraíl de la cascada sin reversa: una vez `cobrada`, no se puede
-    "des-cobrar" borrando el pago que la completó."""
+    "des-cobrar" cancelando el pago que la completó — regla SIMPLE del usuario (ADR-271):
+    si la factura ya está `cobrada`, el pago ya no se puede cancelar, sin excepción."""
     factura_id, _, orden_id = _crear_y_timbrar_factura(client, db, cat)
     cobranza_id = _cobranza_id(db, factura_id)
 
@@ -459,10 +491,12 @@ def test_borrar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
         headers=_hdr("cxc"),
     ).json()
 
-    r = client.delete(f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}", headers=_hdr("cxc"))
+    r = client.post(
+        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar", headers=_hdr("cxc")
+    )
     assert r.status_code == 409, r.text
 
-    # Nada retrocedió: la cascada sigue firme en los 3 niveles.
+    # Nada retrocedió: la cascada sigue firme en los 3 niveles, y el pago sigue 'pagado'.
     db.expire_all()
     cobranza = db.get(CobranzaFactura, uuid.UUID(pago["cobranza_id"]))
     assert cobranza.estatus_cobro == EstatusCobro.COBRADA.value
@@ -471,14 +505,17 @@ def test_borrar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
     orden = db.get(OrdenCliente, orden_id)
     assert orden.estatus_orden == EstatusOrden.COBRADA.value
     pago_id = uuid.UUID(pago["pago_cliente_id"])
-    assert db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).count() == 1
+    fila = db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).one()
+    assert fila.estatus_pago == "pagado"
 
 
-def test_borrar_un_pago_extra_sobre_una_ya_cobrada_si_se_permite(
+def test_cancelar_un_pago_extra_sobre_una_ya_cobrada_tambien_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """El guardarraíl es preciso, no un candado ciego: si hay un pago DE MÁS y sigue
-    cubierto tras borrar uno, sí se permite (la factura sigue cobrada de todas formas)."""
+    """ADR-271 (petición del usuario, más simple y segura que el criterio anterior de
+    `eliminar()`): el guardarraíl ahora es un candado CIEGO — si la factura ya está
+    `cobrada`, el pago no se puede cancelar aunque fuera "de más" y la factura seguiría
+    cobrada de todas formas sin él."""
     factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)  # total 11600.00
     cobranza_id = _cobranza_id(db, factura_id)
 
@@ -494,11 +531,163 @@ def test_borrar_un_pago_extra_sobre_una_ya_cobrada_si_se_permite(
     ).json()
 
     pago_extra_id = pago_extra["pago_cliente_id"]
-    r = client.delete(f"/api/v1/cobranza/pagos/{pago_extra_id}", headers=_hdr("cxc"))
-    assert r.status_code == 204, r.text
+    r = client.post(f"/api/v1/cobranza/pagos/{pago_extra_id}/cancelar", headers=_hdr("cxc"))
+    assert r.status_code == 409, r.text
 
     cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc")).json()
     assert cobranza["estatus_cobro"] == "cobrada"
+
+
+def test_cancelar_un_pago_ya_cancelado_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    pago = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("3000.00", cat),
+        headers=_hdr("cxc"),
+    ).json()
+    pago_id = pago["pago_cliente_id"]
+
+    r1 = client.post(f"/api/v1/cobranza/pagos/{pago_id}/cancelar", headers=_hdr("cxc"))
+    assert r1.status_code == 204, r1.text
+    r2 = client.post(f"/api/v1/cobranza/pagos/{pago_id}/cancelar", headers=_hdr("cxc"))
+    assert r2.status_code == 409, r2.text
+
+
+def test_cancelar_un_pago_multiple_cancela_todo_el_grupo_junto(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-271: cancelar cualquier fila de un pago múltiple cancela TODAS las que
+    comparten `pago_multiple_id` (incluido el "huérfano" sin asignar), de una sola vez,
+    y recalcula CADA factura afectada."""
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2200")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2201")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    cobranza_2 = _cobranza_id(db, factura_2)
+
+    payload = _pago_multiple(
+        cat,
+        [
+            {"cobranza_id": cobranza_1, "monto_aplicado": "3000.00"},
+            {"cobranza_id": cobranza_2, "monto_aplicado": "2000.00"},
+        ],
+    )
+    payload["monto_total_pago"] = "5000.00"  # exacto — ADR-273 ya no permite sobrante
+    creados = client.post(
+        "/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc")
+    ).json()
+    pago_multiple_id = uuid.UUID(creados[0]["pago_multiple_id"])
+    cualquier_id = creados[0]["pago_cliente_id"]
+
+    # Un "huérfano" que comparta `pago_multiple_id` con este grupo (p.ej. repartido ahí
+    # por algún otro flujo) debe seguir cancelándose junto con el resto — se crea aparte
+    # y se vincula a mano, ya que `crear_multiple` ya no produce esta mezcla por sí solo
+    # (ADR-273).
+    huerfano_resp = client.post(
+        "/api/v1/cobranza/pagos/no-asignados", json=_pago("20.00", cat), headers=_hdr("cxc")
+    ).json()
+    huerfano_obj = db.get(PagoCliente, uuid.UUID(huerfano_resp["pago_cliente_id"]))
+    huerfano_obj.pago_multiple_id = pago_multiple_id
+    db.commit()
+
+    r = client.post(f"/api/v1/cobranza/pagos/{cualquier_id}/cancelar", headers=_hdr("cxc"))
+    assert r.status_code == 204, r.text
+
+    db.expire_all()
+    filas = db.query(PagoCliente).filter(PagoCliente.pago_multiple_id == pago_multiple_id).all()
+    assert len(filas) == 3  # las 2 asignadas + el huérfano
+    assert all(f.estatus_pago == "cancelado" for f in filas)
+
+    c1 = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    c2 = client.get(f"/api/v1/cobranza/facturas/{cobranza_2}", headers=_hdr("cxc")).json()
+    assert c1["estatus_cobro"] == "pendiente"
+    assert c2["estatus_cobro"] == "pendiente"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-271 — "Pagos recibidos" agrupado por pago global (GET /pagos) + su detalle.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_listado_agrupado_muestra_un_pago_multiple_como_una_sola_fila(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2210")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2211")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    cobranza_2 = _cobranza_id(db, factura_2)
+
+    payload = _pago_multiple(
+        cat,
+        [
+            {"cobranza_id": cobranza_1, "monto_aplicado": "3000.00", "ajuste": "-2.00"},
+            {"cobranza_id": cobranza_2, "monto_aplicado": "2000.00"},
+        ],
+    )
+    payload["monto_total_pago"] = "4998.00"  # 3000 - 2 (ajuste) + 2000 = exacto
+    client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
+
+    r = client.get("/api/v1/cobranza/pagos", headers=_hdr("cxc"))
+    assert r.status_code == 200, r.text
+    grupos = [g for g in r.json() if g["cantidad_facturas"] == 2]
+    assert len(grupos) == 1
+    grupo = grupos[0]
+    assert grupo["monto_pago"] == "4998.00"
+    assert grupo["estatus_pago"] == "pagado"
+
+
+def test_detalle_agrupado_lista_cada_factura_y_el_total_corresponde_al_pago(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2212")
+    factura_2, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2213")
+    cobranza_1 = _cobranza_id(db, factura_1)
+    cobranza_2 = _cobranza_id(db, factura_2)
+
+    payload = _pago_multiple(
+        cat,
+        [
+            {"cobranza_id": cobranza_1, "monto_aplicado": "3000.00"},
+            {"cobranza_id": cobranza_2, "monto_aplicado": "2000.00"},
+        ],
+    )
+    payload["monto_total_pago"] = "5000.00"  # exacto — ADR-273 ya no permite sobrante
+    creados = client.post(
+        "/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc")
+    ).json()
+    pago_multiple_id = uuid.UUID(creados[0]["pago_multiple_id"])
+    cualquier_id = creados[0]["pago_cliente_id"]
+
+    # Huérfano que comparte el mismo `pago_multiple_id` (ver el test de cancelación
+    # arriba para la explicación de por qué se vincula a mano desde ADR-273).
+    huerfano_resp = client.post(
+        "/api/v1/cobranza/pagos/no-asignados", json=_pago("20.00", cat), headers=_hdr("cxc")
+    ).json()
+    huerfano_obj = db.get(PagoCliente, uuid.UUID(huerfano_resp["pago_cliente_id"]))
+    huerfano_obj.pago_multiple_id = pago_multiple_id
+    db.commit()
+
+    r = client.get(f"/api/v1/cobranza/pagos/{cualquier_id}/detalle", headers=_hdr("cxc"))
+    assert r.status_code == 200, r.text
+    detalle = r.json()
+    # El huérfano sin asignar NO es una "factura aplicada".
+    assert len(detalle["aplicaciones"]) == 2
+    assert {a["monto_aplicado"] for a in detalle["aplicaciones"]} == {"3000.00", "2000.00"}
+    # El total SÍ corresponde al pago completo (incluye el huérfano), no a la suma de
+    # las aplicaciones mostradas.
+    assert detalle["total_pago"] == "5020.00"
+    assert detalle["estatus_pago"] == "pagado"
+
+
+def test_listado_agrupado_excluye_pagos_sin_asignar(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    client.post(
+        "/api/v1/cobranza/pagos/no-asignados", json=_pago("1000.00", cat), headers=_hdr("cxc")
+    )
+    r = client.get("/api/v1/cobranza/pagos", headers=_hdr("cxc"))
+    assert r.status_code == 200, r.text
+    assert r.json() == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -583,9 +772,18 @@ def test_rbac_nominas_sin_acceso_a_pagos_pero_si_a_cobranza(
 
 
 def _pago_multiple(cat: dict[str, uuid.UUID], pagos: list[dict[str, str]]) -> dict[str, object]:
+    # ADR-273: por default el total cuadra EXACTO contra la suma de `pagos` (monto
+    # aplicado + ajuste de cada renglón) — antes era un "20000.00" fijo que sobraba de
+    # más, tolerado porque `crear_multiple` permitía un pago de menos grande (huérfano).
+    # Los tests que sí quieren probar una diferencia sobrescriben
+    # `payload["monto_total_pago"]` después de llamar a este helper, como ya hacían.
+    suma = sum(
+        (Decimal(p["monto_aplicado"]) + Decimal(p.get("ajuste", "0")) for p in pagos),
+        Decimal("0"),
+    )
     return {
         "fecha_pago_cliente": "2026-03-10",
-        "monto_total_pago": "20000.00",
+        "monto_total_pago": str(suma),
         "forma_pago_clave": "03",
         "cuenta_contable_id": str(cat["cuenta_id"]),
         "pagos": pagos,
@@ -1115,11 +1313,14 @@ def test_rbac_pago_no_asignado_exige_cobranza_crear(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ADR-230 (petición del usuario): "pago de menos" en Pago Múltiple genera un huérfano
-# con el sobrante, y ese huérfano se puede repartir después con la misma
-# funcionalidad (pago_origen_id).
+# ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2"): Pago
+# Múltiple ya NO permite guardar un pago que quede por debajo del monto total
+# capturado, sin importar la diferencia. Antes (ADR-230/270) una diferencia MAYOR a
+# $10 generaba un "pago sin asignar" (huérfano) con el sobrante — ese mecanismo de
+# huérfano en sí sigue vivo para otros flujos (ADR-229/231, /pagos/no-asignados,
+# /asignar), solo se quitó la creación automática desde este endpoint.
 # ══════════════════════════════════════════════════════════════════════════════
-def test_pago_de_menos_genera_un_huerfano_con_el_sobrante(
+def test_pago_de_menos_ya_no_se_permite_ni_genera_huerfano(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2100")  # total 11600.00
@@ -1128,18 +1329,12 @@ def test_pago_de_menos_genera_un_huerfano_con_el_sobrante(
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
     payload["monto_total_pago"] = "8000.00"  # sobran 3000.00
     r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
-    assert r.status_code == 201, r.text
-    creados = r.json()
-    assert len(creados) == 2
-    huerfano = next(p for p in creados if p["cobranza_id"] is None)
-    asignado = next(p for p in creados if p["cobranza_id"] is not None)
-    assert huerfano["monto_aplicado"] == "3000.00"
-    assert asignado["monto_aplicado"] == "5000.00"
-    assert huerfano["pago_multiple_id"] == asignado["pago_multiple_id"]
+    assert r.status_code == 400, r.text
 
+    cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_1}", headers=_hdr("cxc")).json()
+    assert cobranza["estatus_cobro"] == "pendiente"
     r2 = client.get("/api/v1/cobranza/pagos/no-asignados", headers=_hdr("cxc"))
-    assert r2.json()["total"] == 1
-    assert r2.json()["items"][0]["pago_cliente_id"] == huerfano["pago_cliente_id"]
+    assert r2.json()["total"] == 0  # tampoco quedó ningún huérfano a medias
 
 
 def test_pago_exacto_no_genera_huerfano(
@@ -1157,8 +1352,9 @@ def test_pago_exacto_no_genera_huerfano(
 # ══════════════════════════════════════════════════════════════════════════════
 # ADR-270 (petición del usuario, "Correcciones en pagos múltiples", con
 # desarrolladores consultados): ya no se permite guardar un pago múltiple de más ni de
-# menos — el "Ajuste" (+/- $10) por renglón absorbe diferencias chicas; solo
-# diferencias MAYORES a $10 siguen generando el huérfano de ADR-230.
+# menos — el "Ajuste" (+/- $10) por renglón absorbe diferencias chicas. ADR-273 quitó
+# el umbral de $10 que antes toleraba diferencias MAYORES como huérfano: ahora
+# cualquier diferencia, grande o chica, se rechaza por igual.
 # ══════════════════════════════════════════════════════════════════════════════
 def test_ajuste_cierra_una_diferencia_chica_sin_generar_huerfano(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
@@ -1194,19 +1390,19 @@ def test_diferencia_chica_sin_usar_el_ajuste_se_rechaza(
     assert cobranza["estatus_cobro"] == "pendiente"
 
 
-def test_diferencia_mayor_a_diez_sigue_generando_huerfano(
+def test_diferencia_mayor_a_diez_tambien_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    """ADR-273: ya no hay un umbral de $10 a partir del cual se tolere un pago de
+    menos — CUALQUIER diferencia por debajo del monto total se rechaza igual."""
     factura_1, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2122")
     cobranza_1 = _cobranza_id(db, factura_1)
     payload = _pago_multiple(cat, [{"cobranza_id": cobranza_1, "monto_aplicado": "5000.00"}])
-    payload["monto_total_pago"] = "5011.00"  # sobran 11.00: no cabe en el ajuste -> huérfano
+    payload["monto_total_pago"] = "5011.00"  # sobran 11.00: no cabe en el ajuste
     r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
-    assert r.status_code == 201, r.text
-    creados = r.json()
-    assert len(creados) == 2
-    huerfano = next(p for p in creados if p["cobranza_id"] is None)
-    assert huerfano["monto_aplicado"] == "11.00"
+    assert r.status_code == 400, r.text
+    r2 = client.get("/api/v1/cobranza/pagos/no-asignados", headers=_hdr("cxc"))
+    assert r2.json()["total"] == 0
 
 
 def test_ajuste_fuera_de_rango_se_rechaza(
@@ -1272,9 +1468,12 @@ def test_repartir_un_huerfano_lo_borra_y_crea_los_nuevos_pagos(
     assert cb["importe_cobrado"] == "2000.00"
 
 
-def test_repartir_un_huerfano_parcialmente_deja_un_huerfano_nuevo_mas_chico(
+def test_repartir_un_huerfano_parcialmente_sin_cuadrar_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    """ADR-273: repartir un huérfano ya NO puede dejar un sobrante — hay que asignar su
+    monto COMPLETO entre las facturas elegidas (con Ajuste si hace falta cuadrar), igual
+    que cualquier otro pago múltiple."""
     factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2104")
     cobranza_a = _cobranza_id(db, factura_a)
     huerfano = client.post(
@@ -1285,13 +1484,14 @@ def test_repartir_un_huerfano_parcialmente_deja_un_huerfano_nuevo_mas_chico(
     payload["monto_total_pago"] = "3000.00"
     payload["pago_origen_id"] = huerfano["pago_cliente_id"]
     r = client.post("/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc"))
-    assert r.status_code == 201, r.text
+    assert r.status_code == 400, r.text
 
+    # El huérfano original sigue existiendo tal cual — la transacción no tocó nada.
     r_no_asignados = client.get("/api/v1/cobranza/pagos/no-asignados", headers=_hdr("cxc"))
     items = r_no_asignados.json()["items"]
     assert len(items) == 1
-    assert items[0]["pago_cliente_id"] != huerfano["pago_cliente_id"]  # es uno NUEVO
-    assert items[0]["monto_aplicado"] == "2000.00"
+    assert items[0]["pago_cliente_id"] == huerfano["pago_cliente_id"]
+    assert items[0]["monto_aplicado"] == "3000.00"
 
 
 def test_repartir_un_pago_ya_asignado_como_si_fuera_huerfano_se_rechaza(

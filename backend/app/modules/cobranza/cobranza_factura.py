@@ -43,12 +43,20 @@ Cuando `estatus_cobro` llega a `cobrada`, este servicio invoca
 transacción, disparada desde `recalcular_tras_pago()`. Es la cascada que F2 dejó anticipada desde
 que `EstadoFacturacion.COBRADA` entró al enum con el comentario "F3 hará avanzar".
 
-**La cascada NO tiene reversa.** Si se borra un `PagoCliente` y eso haría que
-`estatus_cobro` retrocediera desde `cobrada`, `PagoClienteService.eliminar` lo RECHAZA con
-409 (conflicto con el estado actual, no un error de captura) — mismo principio que
-ADR-047 (deshacer un cobro real exige una nota de crédito que el sistema no maneja).
-Borrar un pago que NUNCA llegó a completar el cobro (la `CobranzaFactura` seguía
-`pendiente`/`cobro_parcial`) sí se permite y recalcula con normalidad.
+**La cascada NO tiene reversa.** `PagoClienteService.cancelar` (ADR-271, "Cancelación de
+Pago") RECHAZA con 409 si CUALQUIERA de las facturas que toca el pago ya está `cobrada`
+— sin excepción, sin importar si ese pago en particular era "extra" o no (regla del
+usuario, más simple que intentar calcular si el pago era o no necesario para completar
+el cobro). Así, `recalcular_tras_pago` NUNCA necesita sacar una `CobranzaFactura` de
+`cobrada` hacia atrás desde aquí, y esta cascada nunca necesita reversa hacia
+`FacturaCliente`/`OrdenCliente` — mismo principio que ADR-047 (deshacer un cobro real
+exige una nota de crédito que el sistema no maneja). Cancelar un pago que NUNCA llegó a
+completar el cobro (la `CobranzaFactura` seguía `pendiente`/`cobro_parcial`) sí se
+permite y recalcula con normalidad — puede bajar de `cobro_parcial` a `pendiente`.
+
+ADR-271 también cancela TODO el pago "global" de una sola vez: todas las filas de
+`PagoCliente` que comparten `pago_multiple_id` (o la única fila si es un pago
+individual), no una factura aplicada a la vez — ver `PagoClienteService._resolver_grupo`.
 """
 
 from __future__ import annotations
@@ -73,9 +81,10 @@ from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
 
 CENTAVOS = Decimal("0.01")
-#: ADR-270: tope del "Ajuste" por renglón del pago múltiple — también el umbral que
-#: separa una diferencia chica (se exige cuadrar exacto con el ajuste) de un "pago de
-#: menos" real (sigue generando el huérfano de ADR-230).
+#: ADR-270: tope del "Ajuste" por renglón del pago múltiple (+/- $10). ADR-273 quitó el
+#: umbral que antes separaba una diferencia chica (exige ajuste) de un "pago de menos"
+#: grande tolerado como huérfano (ADR-230) — ahora CUALQUIER diferencia se rechaza; esta
+#: constante solo acota lo que el Ajuste puede cubrir por renglón.
 _ADR270_TOLERANCIA = Decimal("10")
 
 
@@ -86,6 +95,17 @@ class EstatusCobro(StrEnum):
 
 
 _ESTADOS_SQL = ", ".join(f"'{e.value}'" for e in EstatusCobro)
+
+
+class EstatusPago(StrEnum):
+    """ADR-271 — estatus del `PagoCliente` en sí (distinto de `EstatusCobro`, que es el
+    de la `CobranzaFactura`). `CANCELADO` es terminal: no hay "descancelar"."""
+
+    PAGADO = "pagado"
+    CANCELADO = "cancelado"
+
+
+_ESTADOS_PAGO_SQL = ", ".join(f"'{e.value}'" for e in EstatusPago)
 
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
@@ -153,16 +173,21 @@ class CobranzaFactura(Base):
 class PagoCliente(Base):
     """Pago recibido del cliente, aplicado a UNA `CobranzaFactura`.
 
-    Sin baja lógica (ADR-035, mismo criterio que F1/F2): `DELETE` físico, a propósito —
-    ver el docstring del módulo sobre por qué SÍ se permite borrar, a diferencia del resto
-    del proyecto, y bajo qué guardarraíl (no se puede si eso revertiría un cobro ya
-    completado).
+    ADR-271 (petición del usuario, "Cancelación de Pago") cambia el criterio de baja:
+    un pago SIN asignar (nunca tocó ninguna factura) sigue con `DELETE` físico, a
+    propósito (ADR-035). Un pago YA ASIGNADO ya NO se borra — se CANCELA
+    (`estatus_pago`, baja lógica): la fila se queda, visible en "Pagos recibidos" con
+    su estatus, y `CobranzaFacturaService.importe_cobrado` la excluye de la suma. Ver
+    `PagoClienteService.cancelar`/`eliminar` y el docstring del módulo.
     """
 
     __tablename__ = "pago_cliente"
     __table_args__ = (
         CheckConstraint("monto_aplicado > 0", name="ck_pago_cliente_monto"),
         CheckConstraint("ajuste BETWEEN -10 AND 10", name="ck_pago_cliente_ajuste"),
+        CheckConstraint(
+            f"estatus_pago IN ({_ESTADOS_PAGO_SQL})", name="ck_pago_cliente_estatus_pago"
+        ),
     )
 
     pago_cliente_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -186,6 +211,8 @@ class PagoCliente(Base):
     # sin tocar el pendiente real de la factura. Default 0 en el pago individual (no se
     # captura ahí, ver `PagoClienteCreate`).
     ajuste: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    # ADR-271: ver docstring de la clase — default 'pagado', nunca lo manda el cliente.
+    estatus_pago: Mapped[str] = mapped_column(Unicode(20), default=EstatusPago.PAGADO.value)
     # ADR-225: nullable desde que existe el pago múltiple — ese flujo no lo captura (el
     # usuario no lo pidió ahí); el pago individual lo sigue exigiendo vía
     # `PagoClienteCreate.metodo_pago_clave` (Pydantic), no por esta columna.
@@ -296,6 +323,8 @@ class PagoClienteRead(BaseModel):
     monto_aplicado: Decimal
     # ADR-270: corrección de +/- $10 del pago múltiple; 0 en el pago individual.
     ajuste: Decimal = Decimal("0")
+    # ADR-271: 'cancelado' excluye este pago de `importe_cobrado`, sin borrarlo.
+    estatus_pago: EstatusPago = EstatusPago.PAGADO
     metodo_pago_clave: str | None = None
     referencia_pago: str | None = None
     archivo_nombre: str | None = None
@@ -368,24 +397,24 @@ class PagoMultipleCreate(BaseModel):
     seleccionada se registra como su propio `PagoCliente` (mismos datos del pago,
     monto propio), todas con el mismo `pago_multiple_id` para trazabilidad.
 
-    ADR-230 (petición del usuario) — "pago de menos": si `monto_total_pago` no se cubre
-    por completo con `pagos` (asignación parcial), el SOBRANTE se guarda como su propio
-    `PagoCliente` SIN asignar (`cobranza_id=None`, mismo `pago_multiple_id`) — antes ese
-    dinero simplemente no se guardaba en ningún lado.
-
     ADR-270 (petición del usuario, "Correcciones en pagos múltiples") — el pago ya NO
     puede quedar de más ni de menos: cada renglón trae un `ajuste` (+/- $10) que se suma
     a su `monto_aplicado`. Si la suma total (aplicado + ajuste) no cuadra exacto contra
-    `monto_total_pago` Y la diferencia cabe dentro de lo que el ajuste podría cubrir
-    (<= $10), se RECHAZA — hay que usar la columna de ajuste para cuadrar, no queda
-    "pago de menos" chico sin explicar. ADR-230 sigue vivo tal cual SOLO para diferencias
-    grandes (> $10): eso es un pago parcial real, no algo que el ajuste deba absorber."""
+    `monto_total_pago`, se RECHAZA — hay que seleccionar más facturas, subir los montos
+    aplicados, o usar la columna de Ajuste para cuadrar exacto.
+
+    ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2"): a
+    diferencia de ADR-230 (ya retirado de AQUÍ), una diferencia por debajo del total —
+    sin importar qué tan grande— YA NO genera un `PagoCliente` "huérfano" con el
+    sobrante: se rechaza siempre. El mecanismo de huérfano en sí (`cobranza_id=None`)
+    sigue existiendo para otros flujos (`/pagos/no-asignados`, `/asignar`, ADR-229/231)
+    — solo se quitó la creación automática desde ESTE endpoint."""
 
     model_config = ConfigDict(extra="forbid")
 
     fecha_pago_cliente: date
-    #: Lo que de verdad entró (puede ser mayor a la suma de `pagos` — asignación
-    #: parcial permitida); el tablero del front llama a esto "Monto por asignar".
+    #: Lo que de verdad entró — debe cuadrar EXACTO contra `pagos` (ver docstring de la
+    #: clase); el tablero del front llama a esto "Monto por asignar".
     monto_total_pago: Decimal = Field(gt=0)
     forma_pago_clave: str = Field(min_length=1, max_length=20)
     fecha_deposito: date | None = None
@@ -394,13 +423,62 @@ class PagoMultipleCreate(BaseModel):
     pagos: list[PagoMultipleItemCreate] = Field(min_length=1)
     #: ADR-230: si este lote en realidad está REPARTIENDO un pago "huérfano" (sin
     #: asignar) ya existente —en vez de capturar dinero nuevo—, aquí va su id: se borra
-    #: como parte de ESTA MISMA transacción (si queda sobrante, se crea un huérfano
-    #: nuevo y más chico, en vez del original). `None` = captura nueva normal.
+    #: como parte de ESTA MISMA transacción. ADR-273: el reparto debe cubrir el monto
+    #: COMPLETO del huérfano (ya no puede dejar un sobrante más chico). `None` = captura
+    #: nueva normal.
     pago_origen_id: uuid.UUID | None = None
     # ADR-256 (petición del usuario, "NEW FEATURE"): mismo flag que el pago individual —
     # se incluye en `comunes` (ver `crear_multiple`), así que viaja a CADA `PagoCliente`
-    # del lote (incluido el "huérfano" por sobrante).
+    # del lote.
     pagado_en_sistema_externo: bool = False
+
+
+class PagoGrupoRead(BaseModel):
+    """ADR-271 — un pago "global" para la pantalla "Pagos recibidos": agrupa TODAS las
+    filas de `PagoCliente` que comparten `pago_multiple_id` (o la única fila, si es un
+    pago individual sin `pago_multiple_id`). Antes esa pantalla listaba una fila por
+    factura aplicada; ahora una fila por pago, como pidió el usuario.
+
+    `pago_cliente_id` es un REPRESENTANTE del grupo (la fila con el id más chico) — basta
+    para pedir el detalle (`detalle_agrupado`) o cancelar (`cancelar`, que resuelve el
+    grupo completo a partir de cualquiera de sus filas)."""
+
+    pago_cliente_id: uuid.UUID
+    pago_multiple_id: uuid.UUID | None = None
+    fecha_pago_cliente: date
+    referencia_pago: str | None = None
+    #: Lo que de verdad se capturó — SUM(monto_aplicado + ajuste) de TODO el grupo
+    #: (incluye un "huérfano" sin asignar si comparte `pago_multiple_id`, aunque desde
+    #: ADR-273 `crear_multiple` ya no lo genere por sí solo). Por el invariante de
+    #: `crear_multiple` (ADR-270/272), siempre da exacto el `monto_total_pago` original;
+    #: en un pago individual, es simplemente su `monto_aplicado`.
+    monto_pago: Decimal
+    #: Facturas DISTINTAS cubiertas (no cuenta el "huérfano" sin asignar).
+    cantidad_facturas: int
+    estatus_pago: EstatusPago
+
+
+class PagoGrupoAplicacionRead(BaseModel):
+    """Una factura cubierta por el pago — fila del detalle de `PagoGrupoDetalleRead`."""
+
+    pago_cliente_id: uuid.UUID
+    cobranza_id: uuid.UUID
+    numero_factura: str | None = None
+    numero_pago: str | None = None
+    #: El pendiente real que se le acreditó a ESTA factura (sin el `ajuste`, que no
+    #: toca la factura — ver `CobranzaFacturaService.importe_cobrado`).
+    monto_aplicado: Decimal
+
+
+class PagoGrupoDetalleRead(BaseModel):
+    """Detalle de un pago global al seleccionarlo en "Pagos recibidos": sus facturas
+    aplicadas + el total, que debe corresponder EXACTO al pago (ver `PagoGrupoRead.
+    monto_pago`) — puede no ser igual a la suma de `aplicaciones` si hubo `ajuste` o un
+    "huérfano" que comparta `pago_multiple_id` (ADR-230/270/272)."""
+
+    aplicaciones: list[PagoGrupoAplicacionRead]
+    total_pago: Decimal
+    estatus_pago: EstatusPago
 
 
 # ── Repositorios ──────────────────────────────────────────────────────────────
@@ -463,9 +541,13 @@ class CobranzaFacturaService(
 
     # ── lectura enriquecida (importes derivados + badge `vencida` + denormalizado) ──
     def importe_cobrado(self, cobranza_id: uuid.UUID) -> Decimal:
+        # ADR-271: un pago CANCELADO ya no cuenta — este filtro es lo único que hace
+        # falta para que "cancelar" recalcule la factura de vuelta a pendiente/parcial
+        # con la MISMA maquinaria que ya usan crear()/asignar() (`recalcular_tras_pago`).
         total = self._repo.db.scalar(
             select(func.coalesce(func.sum(PagoCliente.monto_aplicado), 0)).where(
-                PagoCliente.cobranza_id == cobranza_id
+                PagoCliente.cobranza_id == cobranza_id,
+                PagoCliente.estatus_pago == EstatusPago.PAGADO.value,
             )
         )
         return Decimal(total or 0).quantize(CENTAVOS)
@@ -631,7 +713,8 @@ class CobranzaFacturaService(
     def recalcular_tras_pago(self, cobranza: CobranzaFactura, usuario: CurrentUser) -> None:
         """Recalcula `estatus_cobro`/`fecha_cobro` a partir de la suma real de pagos, y
         dispara la cascada hacia F2 cuando el resultado es `cobrada`. Invocado por
-        `PagoClienteService.crear`/`eliminar`, misma sesión, sin `commit` propio.
+        `PagoClienteService.crear`/`asignar`/`crear_multiple`/`cancelar` (ADR-271),
+        misma sesión, sin `commit` propio.
         """
         total_factura, _ = self.datos_factura(cobranza.factura_id)
         cobrado = self.importe_cobrado(cobranza.cobranza_id)
@@ -848,20 +931,18 @@ class PagoClienteService:
         FRONTEND de pago múltiple (petición del usuario: bloquear el guardado si algún
         renglón excede su pendiente), no aquí.
 
-        ADR-230 (petición del usuario) — "pago de menos": si `monto_total_pago` no se
-        cubre por completo (`suma_asignada < monto_total_pago`), el SOBRANTE se guarda
-        como su propio `PagoCliente` sin asignar (mismo `pago_multiple_id`), en vez de
-        perderse. Si `data.pago_origen_id` viene (se está REPARTIENDO un huérfano ya
-        existente, no capturando dinero nuevo), ese huérfano se borra como parte de
-        esta MISMA transacción — si vuelve a quedar sobrante, nace un huérfano nuevo y
-        más chico en su lugar.
+        ADR-270 (petición del usuario) — `suma_asignada` incluye el `ajuste` de cada
+        renglón; debe cuadrar EXACTO contra `monto_total_pago` (usando la columna de
+        Ajuste para cerrar diferencias chicas, hasta ±$10 por renglón).
 
-        ADR-270 (petición del usuario) — `suma_asignada` ahora incluye el `ajuste` de
-        cada renglón. Si queda por debajo de `monto_total_pago` por $10 o menos, ya NO
-        se permite guardar como "pago de menos": esa diferencia cabe dentro de lo que el
-        ajuste puede cubrir, así que se exige cuadrar exacto (ver `_ADR270_TOLERANCIA`).
-        Solo diferencias mayores a $10 siguen generando el huérfano de ADR-230 — ahí sí
-        es un pago parcial real que el ajuste no puede absorber."""
+        ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2"): a
+        diferencia de ADR-230 (retirado de este método), una `suma_asignada` por debajo
+        de `monto_total_pago` YA NO genera un `PagoCliente` huérfano con el sobrante —
+        se rechaza siempre, sin importar qué tan grande sea la diferencia. Si
+        `data.pago_origen_id` viene (se está REPARTIENDO un huérfano ya existente), debe
+        cubrirse su monto COMPLETO: ya no puede dejar un sobrante más chico. El
+        mecanismo de huérfano (`cobranza_id=None`) sigue vivo para otros flujos
+        (`/pagos/no-asignados`, `/asignar`, ADR-229/231) — solo se quitó de AQUÍ."""
         from app.modules.usuarios.lookup import resolver_usuario_id
 
         db = self._repo.db
@@ -888,12 +969,16 @@ class PagoClienteService:
                     "suma_asignada": str(suma_asignada),
                 },
             )
+        # ADR-273 (petición del usuario): CUALQUIER diferencia por debajo del total se
+        # rechaza — ya no hay un umbral de $10 a partir del cual se tolere como "pago de
+        # menos" (ese huérfano de ADR-230 se quitó de este método, ver docstring).
         diferencia = (data.monto_total_pago - suma_asignada).quantize(CENTAVOS)
-        if Decimal("0") < diferencia <= _ADR270_TOLERANCIA:
+        if diferencia > Decimal("0"):
             raise DomainError(
                 "El pago no cuadra exacto contra el monto capturado: falta "
-                f"{diferencia}, dentro de lo que cubre la columna de Ajuste "
-                f"(hasta ±{_ADR270_TOLERANCIA}). Ajusta los montos para cuadrar exacto.",
+                f"{diferencia}. Selecciona más facturas, sube los montos aplicados, o "
+                f"usa la columna de Ajuste (hasta ±{_ADR270_TOLERANCIA} por factura) "
+                "para cuadrar exacto.",
                 detalles={
                     "monto_total_pago": str(data.monto_total_pago),
                     "suma_asignada": str(suma_asignada),
@@ -944,21 +1029,6 @@ class PagoClienteService:
                 db.flush()  # el recálculo del SIGUIENTE renglón debe ver este ya insertado
                 servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
                 pagos_creados.append(pago)
-
-            # ADR-270: si se llegó hasta aquí con `diferencia > 0`, ya pasó la validación
-            # de arriba (no cabía en el ajuste) — es el "pago de menos" real de ADR-230.
-            sobrante = diferencia
-            if sobrante > 0:
-                huerfano = PagoCliente(
-                    pago_cliente_id=uuid4(),
-                    cobranza_id=None,
-                    monto_aplicado=sobrante,
-                    pago_multiple_id=pago_multiple_id,
-                    created_by=creado_por,
-                    **comunes,
-                )
-                db.add(huerfano)
-                pagos_creados.append(huerfano)
         except Exception:
             # Todo o nada: si CUALQUIER renglón falla (factura inexistente, etc.), se
             # deshacen los que ya se habían insertado en este mismo lote — no depender
@@ -972,10 +1042,14 @@ class PagoClienteService:
         return [PagoClienteRead.model_validate(p) for p in pagos_creados]
 
     def eliminar(self, pago_id: uuid.UUID, usuario: CurrentUser) -> None:
-        """Borra un pago y recalcula la `CobranzaFactura` padre. RECHAZA con 409 si el
-        pago pertenece a una `CobranzaFactura` ya `cobrada` Y borrarlo la haría retroceder
-        (ver docstring del módulo) — deshacer un cobro completado exige una nota de
-        crédito que el sistema no maneja, mismo principio que ADR-047.
+        """Borra FÍSICAMENTE un pago SIN ASIGNAR (ADR-229) — nunca tocó ninguna
+        factura, así que no hay nada que recalcular ni ningún guardarraíl que aplicar.
+
+        ADR-271 (petición del usuario, "Cancelación de Pago"): un pago YA ASIGNADO ya
+        NO se puede borrar por aquí — se RECHAZA con 400. La única forma de quitarle
+        efecto a un pago aplicado es `cancelar()` (baja lógica, ver docstring del
+        módulo), para que quede visible en el historial con su estatus en vez de
+        desaparecer sin rastro.
         """
         db = self._repo.db
         pago = db.get(PagoCliente, pago_id)
@@ -984,34 +1058,142 @@ class PagoClienteService:
                 "PagoCliente no encontrado.", detalles={"pago_cliente_id": str(pago_id)}
             )
 
-        # ADR-229: un pago SIN asignar no tiene cobranza que recalcular — se borra
-        # directo, sin ninguno de los guardarraíles de abajo (no afectan a nadie).
-        if pago.cobranza_id is None:
-            db.delete(pago)
-            db.commit()
-            return
+        if pago.cobranza_id is not None:
+            raise DomainError(
+                "Este pago ya está asignado a una factura: no se puede eliminar, solo "
+                "cancelar (botón 'Cancelación de Pago' en Pagos recibidos).",
+                detalles={
+                    "pago_cliente_id": str(pago_id),
+                    "cobranza_id": str(pago.cobranza_id),
+                },
+            )
 
-        cobranza = self._get_cobranza_or_404(pago.cobranza_id)
+        db.delete(pago)
+        db.commit()
+
+    def _resolver_grupo(self, pago_id: uuid.UUID) -> list[PagoCliente]:
+        """ADR-271: dado el id de CUALQUIER fila que pertenezca a un pago (individual o
+        múltiple), regresa TODAS las filas que forman ese mismo pago "global" — si tiene
+        `pago_multiple_id`, todas las que lo comparten (incluido el "huérfano" sin
+        asignar, si existe); si no, solo ella misma."""
+        pago = self._repo.db.get(PagoCliente, pago_id)
+        if pago is None:
+            raise NotFoundError(
+                "PagoCliente no encontrado.", detalles={"pago_cliente_id": str(pago_id)}
+            )
+        if pago.pago_multiple_id is None:
+            return [pago]
+        return list(
+            self._repo.db.scalars(
+                select(PagoCliente).where(PagoCliente.pago_multiple_id == pago.pago_multiple_id)
+            ).all()
+        )
+
+    def listar_agrupado(self) -> list[PagoGrupoRead]:
+        """ADR-271 — "Pagos recibidos" agrupado: una fila por pago GLOBAL, no una por
+        factura aplicada (ver `PagoGrupoRead`). Sin paginar, como el historial que
+        reemplaza (límite informal de 100 que ya comparte el resto del módulo) — se
+        revisita si el volumen lo exige."""
+        grupo_id = func.coalesce(PagoCliente.pago_multiple_id, PagoCliente.pago_cliente_id)
+        filas = self._repo.db.execute(
+            select(
+                grupo_id.label("grupo_id"),
+                func.min(PagoCliente.pago_cliente_id).label("pago_cliente_id"),
+                func.max(PagoCliente.pago_multiple_id).label("pago_multiple_id"),
+                func.min(PagoCliente.fecha_pago_cliente).label("fecha_pago_cliente"),
+                func.max(PagoCliente.referencia_pago).label("referencia_pago"),
+                func.sum(PagoCliente.monto_aplicado + PagoCliente.ajuste).label("monto_pago"),
+                func.count(func.distinct(PagoCliente.cobranza_id)).label("cantidad_facturas"),
+                func.max(PagoCliente.estatus_pago).label("estatus_pago"),
+            )
+            .group_by(grupo_id)
+            .having(func.count(func.distinct(PagoCliente.cobranza_id)) > 0)
+            .order_by(func.min(PagoCliente.fecha_pago_cliente).desc())
+        ).all()
+        return [
+            PagoGrupoRead(
+                pago_cliente_id=f.pago_cliente_id,
+                pago_multiple_id=f.pago_multiple_id,
+                fecha_pago_cliente=f.fecha_pago_cliente,
+                referencia_pago=f.referencia_pago,
+                monto_pago=Decimal(f.monto_pago).quantize(CENTAVOS),
+                cantidad_facturas=f.cantidad_facturas,
+                estatus_pago=f.estatus_pago,
+            )
+            for f in filas
+        ]
+
+    def detalle_agrupado(self, pago_id: uuid.UUID) -> PagoGrupoDetalleRead:
+        """Detalle de un pago global: sus facturas aplicadas + el total real del pago
+        (ver docstring de `PagoGrupoDetalleRead`)."""
+        grupo = self._resolver_grupo(pago_id)
+        servicio_cobranza = CobranzaFacturaService(
+            CobranzaFacturaRepository(self._repo.db, CobranzaFactura)
+        )
+        aplicaciones: list[PagoGrupoAplicacionRead] = []
+        for p in grupo:
+            if p.cobranza_id is None:
+                continue  # el "huérfano" sin asignar no es una factura aplicada
+            cobranza = self._get_cobranza_or_404(p.cobranza_id)
+            _, numero_factura = servicio_cobranza.datos_factura(cobranza.factura_id)
+            aplicaciones.append(
+                PagoGrupoAplicacionRead(
+                    pago_cliente_id=p.pago_cliente_id,
+                    cobranza_id=p.cobranza_id,
+                    numero_factura=numero_factura,
+                    numero_pago=p.numero_pago,
+                    monto_aplicado=p.monto_aplicado,
+                )
+            )
+        total_pago = sum(
+            (p.monto_aplicado + p.ajuste for p in grupo), Decimal("0")
+        ).quantize(CENTAVOS)
+        return PagoGrupoDetalleRead(
+            aplicaciones=aplicaciones,
+            total_pago=total_pago,
+            estatus_pago=grupo[0].estatus_pago,
+        )
+
+    def cancelar(self, pago_id: uuid.UUID, usuario: CurrentUser) -> None:
+        """ADR-271 (petición del usuario, "Cancelación de Pago"): cancela TODO el pago
+        global de una sola vez (ver `_resolver_grupo`) — NO borra las filas, las marca
+        `estatus_pago = CANCELADO` (`importe_cobrado` ya las excluye de la suma).
+
+        Regla del usuario (más simple y más segura que intentar calcular si el pago era
+        "necesario" para completar el cobro, como sí hace `eliminar()` con el pago sin
+        asignar): si CUALQUIERA de las facturas que toca este pago YA está `cobrada`, se
+        RECHAZA con 409 — sin excepción. Así nunca hace falta construir una reversa hacia
+        `FacturaCliente`/`OrdenCliente` (ver docstring del módulo)."""
+        db = self._repo.db
+        grupo = self._resolver_grupo(pago_id)
+
+        if any(p.estatus_pago == EstatusPago.CANCELADO.value for p in grupo):
+            raise ConflictError(
+                "Este pago ya está cancelado.", detalles={"pago_cliente_id": str(pago_id)}
+            )
+
         servicio_cobranza = CobranzaFacturaService(CobranzaFacturaRepository(db, CobranzaFactura))
-
-        if cobranza.estatus_cobro == EstatusCobro.COBRADA.value:
-            total_factura, _ = servicio_cobranza.datos_factura(cobranza.factura_id)
-            cobrado_actual = servicio_cobranza.importe_cobrado(cobranza.cobranza_id)
-            cobrado_sin_este = (cobrado_actual - Decimal(pago.monto_aplicado)).quantize(CENTAVOS)
-            if cobrado_sin_este < total_factura:
+        cobranzas: dict[uuid.UUID, CobranzaFactura] = {}
+        for p in grupo:
+            if p.cobranza_id is None:
+                continue
+            cobranza = cobranzas.setdefault(p.cobranza_id, self._get_cobranza_or_404(p.cobranza_id))
+            if cobranza.estatus_cobro == EstatusCobro.COBRADA.value:
                 raise ConflictError(
-                    "No se puede borrar: esta factura ya está COBRADA en su totalidad. "
-                    "Borrar este pago la dejaría incompleta, y deshacer un cobro "
-                    "completado requiere una nota de crédito que el sistema no maneja.",
+                    "No se puede cancelar: una de las facturas de este pago ya está "
+                    "COBRADA en su totalidad. Deshacer un cobro completado requiere una "
+                    "nota de crédito que el sistema no maneja.",
                     detalles={
                         "pago_cliente_id": str(pago_id),
-                        "cobranza_id": str(cobranza.cobranza_id),
+                        "cobranza_id": str(p.cobranza_id),
                     },
                 )
 
-        db.delete(pago)
+        for p in grupo:
+            p.estatus_pago = EstatusPago.CANCELADO.value
         db.flush()
-        servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
+        for cobranza in cobranzas.values():
+            servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
         db.commit()
 
 
@@ -1108,6 +1290,35 @@ def crear_pago_multiple(
     """Pago múltiple (ADR-225): registra un `PagoCliente` por cada factura seleccionada
     (del mismo anunciante o agencia), en una sola transacción."""
     return svc.crear_multiple(payload, usuario)
+
+
+@router_pagos_cliente_por_id.get("", response_model=list[PagoGrupoRead])
+def listar_pagos_agrupado(
+    usuario: CurrentUser = Depends(requiere_permiso("cobranza:leer")),
+    svc: PagoClienteService = Depends(get_pago_cliente_service),
+) -> list[PagoGrupoRead]:
+    """ADR-271: "Pagos recibidos" agrupado por pago global, no por factura aplicada."""
+    return svc.listar_agrupado()
+
+
+@router_pagos_cliente_por_id.get("/{pago_id}/detalle", response_model=PagoGrupoDetalleRead)
+def detalle_pago_agrupado(
+    pago_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("cobranza:leer")),
+    svc: PagoClienteService = Depends(get_pago_cliente_service),
+) -> PagoGrupoDetalleRead:
+    """ADR-271: detalle de un pago global — sus facturas aplicadas + el total real."""
+    return svc.detalle_agrupado(pago_id)
+
+
+@router_pagos_cliente_por_id.post("/{pago_id}/cancelar", status_code=204)
+def cancelar_pago_cliente(
+    pago_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("cobranza:editar")),
+    svc: PagoClienteService = Depends(get_pago_cliente_service),
+) -> None:
+    """ADR-271: cancela TODO el pago global (ver `PagoClienteService.cancelar`)."""
+    svc.cancelar(pago_id, usuario)
 
 
 @router_pagos_cliente_por_id.get("/no-asignados", response_model=Page[PagoClienteRead])
