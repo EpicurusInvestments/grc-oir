@@ -25,6 +25,8 @@
 
 import { useState } from "react";
 
+import { DateInput } from "@/shared/ui";
+
 import { fmtMoneda } from "../../format";
 import { useCuentasContables, useFormasDePago, useMetodosDePago } from "../../hooks";
 import type { CobranzaFactura, PagoClienteCreate } from "../../types";
@@ -180,12 +182,7 @@ export function RegistrarPagoForm({
             <div className="r2">
               <div>
                 <div className="fl fl-required">Fecha del pago</div>
-                <input
-                  type="date"
-                  className="fi"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                />
+                <DateInput value={fecha} onChange={setFecha} />
               </div>
               <div>
                 <div className="fl fl-required">Monto aplicado</div>
@@ -268,12 +265,7 @@ export function RegistrarPagoForm({
             <div className="r2">
               <div>
                 <div className="fl">Fecha de depósito</div>
-                <input
-                  type="date"
-                  className="fi"
-                  value={fechaDeposito}
-                  onChange={(e) => setFechaDeposito(e.target.value)}
-                />
+                <DateInput value={fechaDeposito} onChange={setFechaDeposito} />
               </div>
               <div>
                 <div className="fl">

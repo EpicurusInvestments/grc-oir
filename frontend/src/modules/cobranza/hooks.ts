@@ -24,7 +24,6 @@ import {
   facturasAgenciaPagables,
   facturasVendedorInfo,
   facturasVendedorPagables,
-  historialPagosCliente,
   metodosDePago,
   movimientoBancarioApi,
   ordenesInfo,
@@ -113,6 +112,8 @@ export function usePagosCliente(cobranzaId: string | null) {
     onSuccess: invalidarTodo,
   });
 
+  /** ADR-271: solo aplica a pagos SIN asignar (el backend rechaza borrar uno ya
+   *  asignado — ver `cancelar()`). */
   const eliminar = useMutation({
     mutationFn: (pagoId: string) => pagoClienteApi.eliminar(pagoId),
     onSuccess: invalidarTodo,
@@ -137,14 +138,40 @@ export function useCrearPagoMultiple() {
   });
 }
 
-/** Historial completo de pagos (vista "Pagos recibidos" del mockup), agregado por el
- *  front ante la ausencia de un endpoint "todos los pagos" (ver `historialPagosCliente`
- *  en `api.ts`). Sin paginar en el backend: el filtrado/orden se hace en el cliente sobre
- *  el arreglo ya combinado. */
-export function useHistorialPagosCliente() {
+/** ADR-271 (petición del usuario, "Cancelación de Pago") — "Pagos recibidos" agrupado
+ *  por pago global (una fila por pago, no por factura aplicada): reemplaza el historial
+ *  que antes armaba el front agregando cobranza por cobranza. Sin paginar en el backend
+ *  (mismo límite informal de 100 del resto del módulo): el filtrado/orden del front
+ *  sigue haciéndose en el cliente sobre el arreglo ya agrupado. */
+export function useGruposPagoCliente() {
   return useQuery({
-    queryKey: [K_PAGOS, "historial"],
-    queryFn: historialPagosCliente,
+    queryKey: [K_PAGOS, "agrupado"],
+    queryFn: () => pagoClienteApi.listarAgrupado(),
+  });
+}
+
+/** Detalle de un pago global (sus facturas aplicadas + el total) — cargado solo cuando
+ *  se selecciona un pago en "Pagos recibidos". */
+export function usePagoGrupoDetalle(pagoId: string | null) {
+  return useQuery({
+    queryKey: [K_PAGOS, "detalle", pagoId],
+    queryFn: () => pagoClienteApi.detalleAgrupado(pagoId as string),
+    enabled: pagoId != null,
+  });
+}
+
+/** ADR-271: cancela TODO el pago global de una sola vez (ver `pagoClienteApi.cancelar`).
+ *  A diferencia de `crear`/`asignar`/`crearMultiple`, esto NUNCA llega a tocar F2/F1 (se
+ *  rechaza de entrada si alguna factura ya está `cobrada`), así que solo invalida las
+ *  claves de este módulo. */
+export function useCancelarPago() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pagoId: string) => pagoClienteApi.cancelar(pagoId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [K_PAGOS] });
+      qc.invalidateQueries({ queryKey: [K_COBRANZA] });
+    },
   });
 }
 
@@ -381,13 +408,11 @@ export function useConteosCobranza(): Record<string, number> {
     queryFn: () => movimientoBancarioApi.list({ page: 1, size: 1, conciliado: false }),
     retry: false,
   });
-  // Sin un `size:1` posible aquí: no hay un `GET` de "todos los pagos" que devuelva un
-  // `total` (mismo hueco que `historialPagosCliente` resuelve para la propia pantalla) —
-  // comparte la MISMA query key que `useHistorialPagosCliente`, así que entrar a "Pagos
+  // Comparte la MISMA query key que `useGruposPagoCliente`, así que entrar a "Pagos
   // recibidos" no dispara una segunda consulta, solo reusa esta.
   const pagos = useQuery({
-    queryKey: [K_PAGOS, "historial"],
-    queryFn: historialPagosCliente,
+    queryKey: [K_PAGOS, "agrupado"],
+    queryFn: () => pagoClienteApi.listarAgrupado(),
     retry: false,
   });
 

@@ -4,7 +4,8 @@
  * morado · F1 teal · F2 azul · F3 ámbar · F4 gris · F5 rojo).
  */
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { currentUser } from "@/shared/lib/currentUser";
 import { ExplorerLayout } from "@/shared/ui";
@@ -17,6 +18,26 @@ const URGENTES = new Set(["cobranzas_vencidas", "por_autorizar", "por_pagar", "s
 
 export function CobranzaExplorerPage() {
   const [activeKey, setActiveKey] = useState<string | null>(cobranzaRegistry[0]?.key ?? null);
+
+  // Bug corregido (reportado por el usuario, con captura): la liga "Ver en Cobranza de
+  // facturas →" desde "Pagos recibidos" solo cambiaba la URL (`?cobranza_id=...`) sin
+  // mover la pantalla — las secciones de esta fase NO son rutas reales, son un
+  // `activeKey` interno que la barra lateral controla, así que navegar DENTRO de la
+  // misma ruta "/cobranza" no remonta este componente ni cambia ese estado. Cuando el
+  // deep-link trae `factura_id`/`cobranza_id`, se fuerza la sección "Cobranza de
+  // facturas" (la única que sabe leer esos parámetros, ver `CobranzaFacturasPage`).
+  const [searchParams] = useSearchParams();
+  const facturaIdParam = searchParams.get("factura_id");
+  const cobranzaIdParam = searchParams.get("cobranza_id");
+  useEffect(() => {
+    if ((facturaIdParam || cobranzaIdParam) && activeKey !== "cobranza_factura") {
+      setActiveKey("cobranza_factura");
+    }
+    // Solo reacciona cuando cambia el deep-link en sí, no en cada clic del menú —
+    // si no, pisaría cualquier sección que el usuario elija después mientras el
+    // parámetro siga en la URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facturaIdParam, cobranzaIdParam]);
 
   const entry: CobranzaEntry | undefined = cobranzaRegistry.find((e) => e.key === activeKey);
 

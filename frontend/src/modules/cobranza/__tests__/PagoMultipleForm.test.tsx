@@ -314,7 +314,10 @@ describe("PagoMultipleForm", () => {
     expect(crearMultipleMock).not.toHaveBeenCalled();
   });
 
-  it("ADR-270: una diferencia mayor a $10 sigue permitiendo el pago de menos (huérfano)", async () => {
+  // ADR-273 (petición del usuario, "Correcciones en pagos múltiples — parte 2"): a
+  // diferencia de ADR-230/270 (donde esto generaba un "pago de menos"/huérfano), ahora
+  // CUALQUIER diferencia por debajo del total se rechaza, sin importar qué tan grande.
+  it("ADR-273: una diferencia mayor a $10 también se rechaza (ya no genera huérfano)", async () => {
     const { container, onRegistrado } = renderForm();
     await elegirAnunciante(container);
     await screen.findByText("A-0001");
@@ -331,11 +334,35 @@ describe("PagoMultipleForm", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Registrar pago múltiple" }));
 
-    await waitFor(() => expect(crearMultipleMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(onRegistrado).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/no cuadra exacto/)).toBeInTheDocument();
+    expect(crearMultipleMock).not.toHaveBeenCalled();
+    expect(onRegistrado).not.toHaveBeenCalled();
   });
 
-  it("ADR-270: un ajuste fuera de -$10/+$10 deshabilita el botón", async () => {
+  // Petición del usuario: el contador "Ajuste" del tablero suma en vivo todos los
+  // ajustes capturados (no solo lo que ya está metido dentro de "Monto asignado").
+  it("el contador 'Ajuste' del tablero suma los ajustes capturados", async () => {
+    const { container } = renderForm();
+    await elegirAnunciante(container);
+    await screen.findByText("A-0001");
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6955" } });
+    const fila = container.querySelectorAll("tbody tr")[0];
+    fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
+    const inputsFila = fila.querySelectorAll("input.fi.mono");
+    fireEvent.change(inputsFila[1], { target: { value: "-5" } });
+
+    // "Ajuste" aparece dos veces (la tarjeta del tablero y el encabezado de la columna);
+    // el valor "-5.00" sí es único.
+    expect(screen.getAllByText("Ajuste").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("-5.00")).toBeInTheDocument();
+  });
+
+  // Bug corregido (reportado por el usuario, con captura): el campo de Ajuste no tenía
+  // máscara — dejaba teclear cualquier cantidad de dígitos (el recuadro angosto solo lo
+  // recortaba VISUALMENTE; el valor guardado seguía creciendo sin límite). Ahora se
+  // rechaza la tecla completa en cuanto el texto ya no cabe en el rango -10.00/10.00.
+  it("el campo de Ajuste rechaza un valor fuera de -10.00/10.00 en vez de guardarlo", async () => {
     const { container } = renderForm();
     await elegirAnunciante(container);
     await screen.findByText("A-0001");
@@ -343,10 +370,22 @@ describe("PagoMultipleForm", () => {
     fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "6975" } });
     const fila = container.querySelectorAll("tbody tr")[0];
     fireEvent.click(fila.querySelector('input[type="checkbox"]') as HTMLInputElement);
-    const inputsFila = fila.querySelectorAll("input.fi.mono");
-    fireEvent.change(inputsFila[1], { target: { value: "15" } });
+    const inputAjuste = fila.querySelectorAll("input.fi.mono")[1] as HTMLInputElement;
 
-    expect(await screen.findByText(/debe estar entre -\$10\.00 y \$10\.00/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Registrar pago múltiple" })).toBeDisabled();
+    fireEvent.change(inputAjuste, { target: { value: "15" } }); // > 10
+    expect(inputAjuste).toHaveValue("");
+
+    fireEvent.change(inputAjuste, { target: { value: "878787" } }); // el bug reportado
+    expect(inputAjuste).toHaveValue("");
+
+    fireEvent.change(inputAjuste, { target: { value: "10.001" } }); // 3er decimal
+    expect(inputAjuste).toHaveValue("");
+
+    // El límite SÍ se puede capturar exacto, con 2 decimales.
+    fireEvent.change(inputAjuste, { target: { value: "10.00" } });
+    expect(inputAjuste).toHaveValue("10.00");
+
+    expect(screen.queryByText(/debe estar entre -\$10\.00 y \$10\.00/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar pago múltiple" })).toBeEnabled();
   });
 });

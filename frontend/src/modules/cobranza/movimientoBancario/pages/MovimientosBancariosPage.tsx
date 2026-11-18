@@ -204,10 +204,10 @@ export function MovimientosBancariosPage({ filtroInicial }: Props) {
       <table className="cat-table">
         <thead>
           <tr>
-            <th>Fecha</th>
-            <th>Tipo</th>
-            <th className="td-right">Monto</th>
-            <th>Referencia</th>
+            <th className="td-center">Fecha</th>
+            <th className="td-center">Tipo</th>
+            <th className="td-center">Monto</th>
+            <th className="td-center">Referencia</th>
             <th>Descripción</th>
             <th className="td-center">Concilia</th>
           </tr>
@@ -219,20 +219,20 @@ export function MovimientosBancariosPage({ filtroInicial }: Props) {
               className={selected?.movimiento_id === m.movimiento_id ? "sel" : ""}
               onClick={() => seleccionar(m)}
             >
-              <td className="mono" style={{ fontSize: 11 }}>{fmtFecha(m.fecha_movimiento)}</td>
-              <td>
+              <td className="mono td-center" style={{ fontSize: 11 }}>{fmtFecha(m.fecha_movimiento)}</td>
+              <td className="td-center">
                 <span className={`badge ${badgeTipoMovimiento(m.tipo_movimiento)}`}>
                   {TIPO_MOVIMIENTO_LABEL[m.tipo_movimiento]}
                 </span>
               </td>
               <td
-                className="td-right mono"
+                className="td-center mono"
                 style={{ fontWeight: 600, color: m.tipo_movimiento === "abono" ? "var(--green-text)" : "var(--amber-text)" }}
               >
                 {m.tipo_movimiento === "abono" ? "+" : "−"}
                 {fmtMoneda(m.monto_movimiento)}
               </td>
-              <td className="mono" style={{ fontSize: 11 }}>{oGuion(m.referencia_bancaria)}</td>
+              <td className="mono td-center" style={{ fontSize: 11 }}>{oGuion(m.referencia_bancaria)}</td>
               <td className="td-main" style={{ fontSize: 12 }}>{oGuion(m.descripcion_movimiento)}</td>
               <td className="td-center">
                 <span className={`badge ${badgeConciliado(m.conciliado)}`}>
