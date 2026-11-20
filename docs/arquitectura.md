@@ -11136,3 +11136,117 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   FMEX-/FSOIR-, rechazo de folio fiscal sin forma de UUID) y assertions de fecha
   existentes migradas a mes/día/año donde `fmtFecha` de facturación ya se probaba;
   `tsc --noEmit` y `eslint` limpios.
+
+### ADR-275 — Folios de OC/OE sin ceros a la izquierda (formato de generación, no de datos existentes)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-20 (petición del usuario, con captura: lista
+  de bugs de "Órdenes" — "Quitar los ceros a la izquierda de los folios de OS's y OT's",
+  "Cuando se genere un nuevo folio el formato OS-2026-11-61").
+- **Decisión:** `OrdenClienteService._siguiente_folio()` deja de formatear el
+  consecutivo con `:06d` — pasa de `f"OS-{anio}-{mes:02d}-{maximo+1:06d}"` a
+  `f"OS-{anio}-{mes:02d}-{maximo+1}"`. `OrdenEstacion.folio_orden_estacion` no requirió
+  ningún cambio de código: ya se deriva textualmente del folio real de su `OrdenCliente`
+  padre (reemplazo de prefijo + letra de estación, ver ADR-237), así que hereda el
+  formato nuevo automáticamente. Los folios YA EXISTENTES en la base de datos **no se
+  tocan** — se guardan como texto completo (no hay un consecutivo numérico separado que
+  reformatear), y reescribirlos habría exigido una migración de datos sin beneficio real
+  (el usuario solo pidió que los NUEVOS nazcan así, y que los viejos se VEAN sin ceros).
+- **Formato de despliegue, no de datos:** nueva función `fmtFolio()`
+  (`frontend/src/modules/ordenes/format.ts`) que, dado cualquier folio (con o sin
+  padding), quita los ceros a la izquierda del ÚLTIMO segmento numérico (separa por
+  guiones, aplica `Number()` solo a ese segmento, conserva un posible sufijo de letra) —
+  se usa en cada punto donde el folio se le muestra al usuario (tablas, encabezados y
+  paneles de detalle de Órdenes de Servicio, Órdenes de Transmisión, Verificaciones e
+  Incidencias), nunca al construir el `search` ni al guardar.
+- **Efecto colateral real, corregido en el mismo cambio — el orden por folio como texto
+  deja de ser confiable:** con folios viejos (`...-000061`) y nuevos (`...-61`)
+  conviviendo, comparar como STRING dejó de equivaler a "más reciente primero" (p.ej.
+  `"OS-2026-11-9"` queda, por texto, DESPUÉS de `"OS-2026-11-61"`). Se cambió el
+  criterio de orden de "por folio" a "por `created_at`" (monótono con el consecutivo,
+  sin depender de su formato) en 6 puntos: `default_order_by` de `OrdenCliente` y
+  `OrdenEstacion` (`orden_cliente.py`/`orden_estacion.py`), las 4 consultas de "órdenes
+  elegibles para facturar" en `facturacion/{factura_vendedor,factura_cliente,
+  factura_agencia,factura_afiliado}.py`, y el `.sort()` de `OrdenClienteListPage.tsx`
+  (el de `OrdenEstacionListPage.tsx` ya ordenaba por `created_at`, no se tocó).
+- **Verificado:** backend — suite completa (pytest) 100% verde, incluidas las 2 pruebas
+  existentes de `_siguiente_folio()` actualizadas al formato nuevo; `ruff` limpio.
+  Frontend — suite completa (372 pruebas de `ordenes`/`cobranza`, resto sin tocar) con
+  los fixtures/assertions de folio migrados al formato sin padding donde correspondía;
+  `tsc --noEmit` y `eslint` limpios.
+
+### ADR-276 — "Capturar reales": nota de transmisión real en el PDF, descripción de estación en el encabezado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-20 (petición del usuario, con captura:
+  "En Capturar Reales, poner el comentario de la pantalla", "en el PDF 3 debería incluir
+  comentario al final las notas de transmisión... recuerdo que habíamos quitado un
+  comentario duro", "también valdría la pena desplegar toda la descripción completa de
+  la emisora en la parte superior").
+- **Hallazgo antes de tocar código:** el cuadro de "Notas de transmisión" de
+  `RealesForm.tsx` YA era un `<textarea>` editable (`oe.notas_transmision`, campo que ya
+  existe de punta a punta: BD → modelo → schema → frontend) — no había ningún bug de
+  código ahí; lo más probable es que el usuario viera una build vieja del frontend (se
+  reinició el servidor de desarrollo para descartarlo).
+- **PDF 3 ("Horarios reales de transmisión", `generar_pdf_reales` en
+  `orden_estacion_pdf.py`):** antes NO mostraba ningún comentario — un cambio anterior
+  había quitado a propósito un texto fijo que no aportaba nada ("sin reemplazo", ver el
+  comentario ya existente en el código). Ahora, justo en ese mismo punto, se imprime
+  `oe.notas_transmision` (la nota REAL que captura el usuario en pantalla) SOLO si no
+  está vacía — el texto fijo removido antes sigue sin aparecer.
+- **Encabezado de "Capturar reales" (`RealesForm.tsx`):** mostraba solo el folio de la
+  OE; ahora agrega también la descripción completa de la estación ("Siglas Frecuencia
+  TIPO_SEÑAL Nombre" — mismo formato que ya usaba el combo de Estación en
+  `OrdenEstacionForm.tsx`, ADR-136/ADR-191). Se extrajo la lógica (antes duplicada
+  inline) a un helper compartido `descripcionEstacion()` en `modules/ordenes/format.ts`,
+  reusado por ambos componentes. `OrdenEstacionListPage.tsx` resuelve la `Estacion` (ya
+  tenía `findEstacion` importado para otro uso) y la pasa como prop nueva (`estacion?`)
+  a `RealesForm`.
+- **Verificado:** backend — 2 pruebas nuevas (`test_pdf_reales_muestra_notas_de_
+  transmision_capturadas`, `test_pdf_reales_sin_notas_de_transmision_no_muestra_la_
+  etiqueta`) + suite completa 100% verde, `ruff` limpio. Frontend — `tsc --noEmit` y
+  `eslint` limpios, suite de `ordenes` (372 pruebas) sin regresiones.
+
+### ADR-277 — Bloqueo/alerta por adeudo vencido del anunciante al capturar una OrdenCliente
+
+- **Estado:** aceptada · **Fecha:** 2026-11-20 (petición del usuario, para analizar):
+  "Al generar una nueva orden y seleccione el cliente, generar una alerta: 'El cliente
+  tiene adeudos vencidos'... Que no permita capturar si la suma de las facturas
+  vencidas supera el monto del crédito, si el monto no es > 0 o es nulo NO validar".
+- **"Vencida" reusa el criterio ya existente de F3** (badge derivado de
+  `CobranzaFactura`: `estatus_cobro != 'cobrada'` y `fecha_estimada_cobro < hoy`, ver
+  `f3-cobranza-pagos.md`) — no se inventó una definición nueva. Nuevo método
+  `CobranzaFacturaService.adeudo_vencido(anunciante_id)`: suma
+  `importe_pendiente_cobro` de todas las `CobranzaFactura` vencidas de ese anunciante
+  (fila por fila, reusando `datos_factura`/`importe_cobrado` — el volumen por
+  anunciante es chico, no se optimizó con una consulta agregada).
+- **Endpoint nuevo** `GET /api/v1/cobranza/anunciantes/{anunciante_id}/adeudo-vencido`
+  (`router_adeudo_anunciante` en `cobranza_factura.py`, permiso `cobranza:leer` — Ventas
+  ya tiene lectura de Cobranza en la matriz RBAC) → `{anunciante_id,
+  tiene_adeudo_vencido, suma_adeudo_vencido}`. Vive en Cobranza (F3), no en Catálogos/
+  Órdenes, porque "vencida" es una noción propia de F3 — evita acoplar F0/F1 → F3 en
+  tiempo de import.
+- **Bloqueo real: SOLO al ALTA, no a la edición** (el requerimiento decía
+  explícitamente "al generar una nueva orden") — `OrdenClienteService._pre_create` llama
+  a `_validar_credito_anunciante()` (import perezoso de `cobranza_factura`, mismo patrón
+  cross-módulo que ya usa F3 para leer `FacturaCliente`). Si `Anunciante.
+  monto_maximo_credito` está capturado y es `> 0`, y el adeudo vencido lo supera:
+  `DomainError` (400), **sin** mecanismo de `forzar`/excepción por rol — a diferencia del
+  patrón "dependencias activas" de catálogos (ADR con `forzar=True`), aquí el usuario no
+  pidió una vía de escape. Si `monto_maximo_credito` es `NULL` o `<= 0`: no se valida
+  nada (petición explícita: "si el monto no está capturado no se toma en cuenta").
+- **Frontend (alerta no bloqueante):** `OrdenClienteForm.tsx` consulta el endpoint nuevo
+  (`adeudoVencidoAnuncianteApi`, `modules/cobranza/api.ts`) al elegir el anunciante y
+  muestra "⚠️ El cliente tiene adeudos vencidos." junto al combo si
+  `tiene_adeudo_vencido` es verdadero — el bloqueo real lo decide siempre el backend al
+  guardar; esta alerta es solo informativa y no impide seguir capturando.
+- **Preguntas abiertas, fuera de este alcance (no resueltas, quedan para cuando el
+  equipo las confirme):** ¿aplica también a la EDICIÓN de una orden ya existente (p.ej.
+  si cambia el anunciante)? ¿algún rol puede forzar el paso aunque se exceda el tope?
+  ¿la suma de adeudo vencido debe incluir también lo facturado vía agencia, o solo lo
+  directo? ¿el tope debe compararse solo contra el adeudo vencido HISTÓRICO (lo que
+  implementa este ADR) o también sumando el importe de la orden que se está capturando?
+- **Verificado:** backend — 6 pruebas nuevas en `test_f3_02_cobranza_escritura.py`
+  (suma de adeudo vencido excluye lo no vencido, sin tope no bloquea, bloquea si excede,
+  permite si no excede, ignora facturas no vencidas, endpoint HTTP responde la suma y
+  el booleano) + suite completa 100% verde, `ruff` limpio. Frontend — 2 pruebas nuevas
+  en `OrdenClienteForm.test.tsx` (muestra/no muestra la alerta), `tsc --noEmit` y
+  `eslint` limpios.

@@ -100,6 +100,23 @@ con el mismo combo `useAgenciasInfo` que ya usaba el picker de pago múltiple) y
 parcialidad" (este campo tal cual) al DataTable de la lista — ningún cambio de pantalla
 en Facturación.
 
+**ADR-277 (petición del usuario) — adeudo vencido del anunciante, consumido por F1:**
+nuevo método `CobranzaFacturaService.adeudo_vencido(anunciante_id)` — suma
+`importe_pendiente_cobro` de TODAS las `CobranzaFactura` de ese anunciante que estén
+VENCIDAS, reusando el MISMO criterio del badge `vencida` de arriba (`estatus_cobro !=
+'cobrada'` y `fecha_estimada_cobro < hoy`), fila por fila (volumen chico por
+anunciante, sin consulta agregada). Nuevo endpoint `GET /cobranza/anunciantes/
+{anunciante_id}/adeudo-vencido` (`router_adeudo_anunciante`, permiso `cobranza:leer`) →
+`{anunciante_id, tiene_adeudo_vencido, suma_adeudo_vencido}`. Vive aquí (F3), no en
+Catálogos/Órdenes, porque "vencida" es una noción propia de este módulo. Consumido por
+`OrdenClienteService._pre_create` (F1) para BLOQUEAR el alta de una `OrdenCliente` si el
+adeudo vencido supera `Anunciante.monto_maximo_credito` (cuando está capturado y es
+`> 0`), y por `OrdenClienteForm.tsx` para una alerta no bloqueante al elegir el
+anunciante. Detalle completo (incluidas las preguntas abiertas que quedaron fuera de
+este alcance: edición vs. alta, override por rol, deuda vía agencia, si el tope debe
+sumar también la orden en curso) en `docs/arquitectura.md` (ADR-277) y
+`docs/modulos/f1-ordenes/f1-00-ordenes.md`.
+
 **Ajuste posterior (petición del usuario):** en `RegistrarPagoForm.tsx` (pago
 individual), "Número de pago" pasa de texto libre a CALCULADO y de solo lectura —
 cantidad de `PagoCliente` ya registrados para esa cobranza + 1 (conteo, no se parsea el
