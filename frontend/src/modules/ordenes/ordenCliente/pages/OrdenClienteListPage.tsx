@@ -6,11 +6,11 @@
 
 import { useMemo, useState } from "react";
 
-import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
+import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { RootBadge } from "../../components/EstadoBadge";
 import { CierreOCForm } from "../../cierre/components/CierreOCForm";
-import { fmtFecha, fmtMonto, fmtRangoFechas } from "../../format";
+import { fmtFecha, fmtFolio, fmtMonto, fmtRangoFechas } from "../../format";
 import { findAgencia, findAnunciante, findVendedor, marcas } from "../../state/catalogosCache";
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { useOrdenes } from "../../state/OrdenesContext";
@@ -65,12 +65,21 @@ export function OrdenClienteListPage({
   const [modo, setModo] = useState<Modo>("view");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Paginación SOLO de la tabla (petición del usuario) — el listado completo sigue
+  // viviendo en memoria (lo necesitan las bandejas del sidebar), aquí solo se corta lo
+  // que se renderiza.
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(20);
 
   const items = useMemo(() => {
     const filtrados = filtrarOrdenesCliente(state.ordenesCliente, state.ordenesEstacion, { filtro, search });
-    // Folio descendente: el folio más alto (el más reciente, por ser correlativo) primero.
-    return [...filtrados].sort((a, b) => b.folio_orden.localeCompare(a.folio_orden));
+    // Más reciente primero. ADR-275 (petición del usuario): antes se ordenaba
+    // comparando el folio como texto (asumía que más alto como texto = más reciente),
+    // pero eso deja de ser cierto en cuanto conviven folios con y sin ceros a la
+    // izquierda — se ordena por fecha de creación, que es monótona con el consecutivo.
+    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [state.ordenesCliente, state.ordenesEstacion, filtro, search]);
+  const itemsPagina = useMemo(() => items.slice((page - 1) * size, page * size), [items, page, size]);
   const selected = selectedId ? (state.ordenesCliente.find((o) => o.id === selectedId) ?? null) : null;
 
   const filtroDescripcion = filtro !== (filtroInicial ?? "todas") ? undefined : FILTRO_DESCRIPCION[filtro];
@@ -104,7 +113,7 @@ export function OrdenClienteListPage({
   if (modo === "new" || modo === "edit") {
     return (
       <OrdenClienteForm
-        title={modo === "new" ? "Nueva Orden de Servicio" : `Editar: ${selected?.folio_orden}`}
+        title={modo === "new" ? "Nueva Orden de Servicio" : `Editar: ${fmtFolio(selected?.folio_orden)}`}
         isEdit={modo === "edit"}
         estatusActual={selected?.estatus_orden}
         defaultValues={modo === "edit" ? selected ?? undefined : undefined}
@@ -200,7 +209,10 @@ export function OrdenClienteListPage({
 
       <CatalogToolbar
         search={search}
-        onSearch={setSearch}
+        onSearch={(v) => {
+          setSearch(v);
+          setPage(1);
+        }}
         searchPlaceholder="Buscar folio, anunciante, no. de orden…"
         filterLabel="Estado"
         filters={FILTROS}
@@ -208,12 +220,14 @@ export function OrdenClienteListPage({
         onFilter={(k) => {
           setFiltro(k as FiltroOrdenCliente);
           setSelectedId(null);
+          setPage(1);
         }}
         count={`${items.length} de ${state.ordenesCliente.length}`}
       />
 
       <ListDetailLayout
         list={
+          <>
           <table className="cat-table">
             <thead>
               <tr>
@@ -235,7 +249,7 @@ export function OrdenClienteListPage({
               </tr>
             </thead>
             <tbody>
-              {items.map((oc) => {
+              {itemsPagina.map((oc) => {
                 const anunciante = findAnunciante(oc.anunciante_id);
                 const agencia = findAgencia(oc.agencia_id);
                 const vendedor = findVendedor(oc.vendedor_principal_id);
@@ -245,7 +259,7 @@ export function OrdenClienteListPage({
                 return (
                   <tr key={oc.id} className={selectedId === oc.id ? "sel" : ""} onClick={() => setSelectedId(oc.id)}>
                     <td className="td-center">
-                      <div className="td-mono">{oc.folio_orden}</div>
+                      <div className="td-mono">{fmtFolio(oc.folio_orden)}</div>
                       <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{oc.numero_orden_cliente}</div>
                     </td>
                     <td className="td-mono td-center" style={{ fontSize: 11 }}>{fmtFecha(oc.created_at)}</td>
@@ -280,6 +294,18 @@ export function OrdenClienteListPage({
               )}
             </tbody>
           </table>
+          {items.length > 0 && (
+            <Paginator
+              page={page}
+              size={size}
+              total={items.length}
+              onChange={(np, ns) => {
+                setPage(np);
+                setSize(ns);
+              }}
+            />
+          )}
+          </>
         }
         detail={
           selected ? (

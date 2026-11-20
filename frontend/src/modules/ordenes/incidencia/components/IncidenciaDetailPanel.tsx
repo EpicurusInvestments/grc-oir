@@ -3,7 +3,7 @@
  * edición ni alta manual (nace siempre de `avanzarAReales`).
  */
 
-import { fmtFecha, fmtMonto } from "../../format";
+import { fmtFecha, fmtFolio, fmtMonto } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import type { Incidencia, OrdenEstacion } from "../../types";
 
@@ -27,7 +27,7 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
             <div className="dh-name">{fmtFecha(incidencia.fecha_transmision)}</div>
             <div className="dh-sub">
               <span className={`badge ${incidencia.tipo === "bonificacion" ? "b-teal" : "b-red"}`}>{incidencia.tipo}</span>
-              {oe && <span className="badge b-blue">{oe.folio_orden_interna}</span>}
+              {oe && <span className="badge b-blue">{fmtFolio(oe.folio_orden_interna)}</span>}
             </div>
           </div>
         </div>
@@ -37,7 +37,7 @@ export function IncidenciaDetailPanel({ incidencia, oe, onVerOE, onVerVerificaci
         <div className="sec">Origen</div>
         {oe ? (
           <div className="fv">
-            Orden de Transmisión <strong style={{ fontFamily: "var(--mono)" }}>{oe.folio_orden_interna}</strong> ·{" "}
+            Orden de Transmisión <strong style={{ fontFamily: "var(--mono)" }}>{fmtFolio(oe.folio_orden_interna)}</strong> ·{" "}
             {estacion?.nombre_estacion ?? "—"} · {afiliado?.nombre_afiliado ?? "—"}
             {plaza && <span className="muted"> ({plaza.nombre_plaza})</span>}
           </div>

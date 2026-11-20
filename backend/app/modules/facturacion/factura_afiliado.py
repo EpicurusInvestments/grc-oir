@@ -492,7 +492,8 @@ class FacturaAfiliadoService(
                 Estacion.afiliado_id == afiliado_id,
                 OrdenEstacion.estatus == EstatusOrdenEstacion.CERRADA.value,
             )
-            .order_by(OrdenEstacion.folio_orden_estacion)
+            # ADR-275: ordenar por `created_at`, no por el folio como texto.
+            .order_by(OrdenEstacion.created_at)
         ).all()
         return [
             OrdenEstacionFacturableAfiliadoRead(

@@ -4,10 +4,10 @@
 
 import { useMemo, useState } from "react";
 
-import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout } from "@/shared/ui";
+import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { EstadoOIBadge } from "../../components/EstadoBadge";
-import { fmtFecha, fmtMonto } from "../../format";
+import { fmtFecha, fmtFolio, fmtMonto } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oiImporte, oiPeriodoTexto, oiTotalSpots } from "../../state/selectors";
@@ -81,6 +81,10 @@ export function OrdenEstacionListPage({
   // Cambia en cada "Sí, generar otra" para forzar que `<OrdenEstacionForm>` se remonte en
   // blanco (si se reusara la misma key, se quedaría con los datos de la OE anterior).
   const [intentoNuevo, setIntentoNuevo] = useState(0);
+  // Paginación SOLO de la tabla (petición del usuario) — el listado completo sigue
+  // viviendo en memoria, aquí solo se corta lo que se renderiza.
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(20);
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -98,6 +102,7 @@ export function OrdenEstacionListPage({
     // Más reciente primero: para que una OI recién dada de alta aparezca al principio.
     return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [state.ordenesEstacion, state.ordenesCliente, filtro, search]);
+  const itemsPagina = useMemo(() => items.slice((page - 1) * size, page * size), [items, page, size]);
 
   const selected = selectedId ? (state.ordenesEstacion.find((o) => o.id === selectedId) ?? null) : null;
 
@@ -206,6 +211,7 @@ export function OrdenEstacionListPage({
       <RealesForm
         oe={selected}
         oc={state.ordenesCliente.find((o) => o.id === selected.orden_id)}
+        estacion={findEstacion(selected.estacion_id)}
         submitError={submitError}
         submitting={submitting}
         onAvanzar={async (horariosReales: PeriodoTransmisionRow[], extra) => {
@@ -258,7 +264,10 @@ export function OrdenEstacionListPage({
 
       <CatalogToolbar
         search={search}
-        onSearch={setSearch}
+        onSearch={(v) => {
+          setSearch(v);
+          setPage(1);
+        }}
         searchPlaceholder="Buscar folio, estación, afiliado, OC de origen…"
         filterLabel="Sub-estado"
         filters={FILTROS}
@@ -266,12 +275,14 @@ export function OrdenEstacionListPage({
         onFilter={(k) => {
           setFiltro(k as FiltroOI);
           setSelectedId(null);
+          setPage(1);
         }}
         count={`${items.length} de ${state.ordenesEstacion.length}`}
       />
 
       <ListDetailLayout
         list={
+          <>
           <table className="cat-table">
             <thead>
               <tr>
@@ -301,19 +312,19 @@ export function OrdenEstacionListPage({
               </tr>
             </thead>
             <tbody>
-              {items.map((oe) => {
+              {itemsPagina.map((oe) => {
                 const estacion = findEstacion(oe.estacion_id);
                 const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
                 const plaza = findPlaza(oe.plaza_id);
                 const oc = state.ordenesCliente.find((o) => o.id === oe.orden_id);
                 return (
                   <tr key={oe.id} className={selectedId === oe.id ? "sel" : ""} onClick={() => setSelectedId(oe.id)}>
-                    <td className="td-mono td-center">{oe.folio_orden_interna}</td>
+                    <td className="td-mono td-center">{fmtFolio(oe.folio_orden_interna)}</td>
                     <td className="td-mono td-center" style={{ fontSize: 11 }}>
                       {fmtFecha(oe.created_at)}
                     </td>
                     <td className="td-mono td-center" style={{ fontSize: 11 }}>
-                      {oc?.folio_orden ?? "—"}
+                      {oc ? fmtFolio(oc.folio_orden) : "—"}
                     </td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-2">{plaza?.nombre_plaza ?? "—"}</td>
@@ -358,6 +369,18 @@ export function OrdenEstacionListPage({
               )}
             </tbody>
           </table>
+          {items.length > 0 && (
+            <Paginator
+              page={page}
+              size={size}
+              total={items.length}
+              onChange={(np, ns) => {
+                setPage(np);
+                setSize(ns);
+              }}
+            />
+          )}
+          </>
         }
         detail={
           selected ? (

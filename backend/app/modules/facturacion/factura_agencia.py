@@ -482,7 +482,8 @@ class FacturaAgenciaService(
                 OrdenCliente.agencia_id == agencia_id,
                 OrdenCliente.estatus_orden.in_(FROZEN_STATES_OC),
             )
-            .order_by(OrdenCliente.folio_orden)
+            # ADR-275: ordenar por `created_at`, no por el folio como texto.
+            .order_by(OrdenCliente.created_at)
         ).all()
         return [
             OrdenClienteFacturableAgenciaRead(

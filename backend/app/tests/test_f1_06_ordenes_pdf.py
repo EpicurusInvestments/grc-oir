@@ -872,3 +872,45 @@ def test_pdf_reales_no_muestra_ningun_comentario(
 
     assert "2 spots no transmitidos por corte" not in texto
     assert "Detalle agregado por día" not in texto
+
+
+# ADR-276 (petición del usuario, con captura): el PDF de Reales SÍ debe mostrar la nota
+# REAL capturada en "Capturar reales" (`oe.notas_transmision`) — a diferencia del texto
+# fijo de la prueba anterior, que sigue sin aparecer.
+def test_pdf_reales_muestra_notas_de_transmision_capturadas(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)],
+            notas_transmision="Se repuso un spot por falla de transmisor.",
+        ),
+        VENTAS,
+    )
+
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id))
+
+    assert "Se repuso un spot por falla de transmisor." in texto
+
+
+def test_pdf_reales_sin_notas_de_transmision_no_muestra_la_etiqueta(
+    db: Session, oe_svc: OrdenEstacionService, oe_asignada
+) -> None:
+    _, oe = oe_asignada
+    dia_id = oe_svc.dias(oe.orden_estacion_id)[0].orden_estacion_dia_id
+    oe_svc.avanzar_programados(oe.orden_estacion_id, OrdenEstacionProgramadosIn(), VENTAS)
+    oe_svc.avanzar_reales(
+        oe.orden_estacion_id,
+        OrdenEstacionRealesIn(
+            dias=[OrdenEstacionDiaRealIn(orden_estacion_dia_id=dia_id, spots_verificados=4)]
+        ),
+        VENTAS,
+    )
+
+    texto = _texto_pdf(generar_pdf_reales(db, oe.orden_estacion_id))
+
+    assert "Notas de transmisi" not in texto

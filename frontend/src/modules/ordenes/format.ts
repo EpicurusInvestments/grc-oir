@@ -60,3 +60,34 @@ export function fmtRangoFechas(inicio: string, fin: string): string {
 export function oGuion(v: string | null | undefined): string {
   return v && v.trim() ? v : "—";
 }
+
+// ADR-275 (petición del usuario, con captura): el folio GUARDADO no cambia (folios
+// viejos siguen con su padding en la BD, evita migración de datos) — esto es solo
+// formato de DESPLIEGUE: quita los ceros a la izquierda del último segmento numérico
+// ("OS-2026-11-000061" → "OS-2026-11-61"), conservando la letra de estación si la
+// trae ("OT-2026-11-000066A" → "OT-2026-11-66A"). Folios nuevos ya nacen sin padding
+// (ver `_siguiente_folio` en el backend), así que aquí es un no-op para ellos.
+// ADR-276 (petición del usuario): descripción completa de la estación — "Siglas
+// Frecuencia TIPO_SEÑAL Nombre" (ADR-136/ADR-191), cualquier parte vacía se OMITE.
+// Un solo lugar para esta regla, reusada por el combo de Estación
+// (`OrdenEstacionForm.tsx`) y el encabezado de "Capturar reales" (`RealesForm.tsx`).
+export function descripcionEstacion(e: {
+  siglas?: string | null;
+  frecuencia?: string | null;
+  tipo_senal: string;
+  nombre_estacion: string;
+}): string {
+  return [e.siglas, e.frecuencia, e.tipo_senal.toUpperCase(), e.nombre_estacion]
+    .filter((parte): parte is string => !!parte)
+    .join(" ");
+}
+
+export function fmtFolio(folio: string | null | undefined): string {
+  if (!folio) return "—";
+  const partes = folio.split("-");
+  const ultima = partes[partes.length - 1];
+  const m = ultima.match(/^(\d+)([A-Za-z]*)$/);
+  if (!m) return folio;
+  partes[partes.length - 1] = String(Number(m[1])) + m[2];
+  return partes.join("-");
+}

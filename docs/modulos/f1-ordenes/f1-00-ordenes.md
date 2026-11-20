@@ -58,6 +58,37 @@ justificara, desde el primer commit de F1 — con la tabla vacía siempre ganaba
 (`40 + 1 = 41`). Piso cambiado a `0`. Detalle completo en `docs/arquitectura.md`
 (ADR-254).
 
+**ADR-275 (petición del usuario, con captura) — folios sin ceros a la izquierda:**
+`_siguiente_folio()` ya NO rellena con ceros el consecutivo (`OS-2026-11-61`, antes
+`OS-2026-11-000061`); por derivación textual del prefijo, `OrdenEstacion` nace igual
+(`OT-2026-11-66A`). Los folios YA EXISTENTES en la BD no se reescriben (sin migración de
+datos, sin riesgo sobre la unicidad) — el cambio es solo de GENERACIÓN hacia adelante;
+el frontend formatea CUALQUIER folio al desplegarlo (`fmtFolio()` en
+`modules/ordenes/format.ts`, quita ceros del último segmento solo para mostrarlo, nunca
+toca el valor guardado). Efecto colateral corregido: comparar folios como texto dejó de
+equivaler a "más reciente" en cuanto conviven ambos formatos — el criterio de orden pasó
+de "por folio" a "por `created_at`" en los listados de OC/OE y en las 4 consultas de
+"órdenes elegibles para facturar" de F2. Detalle completo en `docs/arquitectura.md`
+(ADR-275).
+
+**ADR-276 (petición del usuario, con captura) — "Capturar reales": nota real en el PDF
+y descripción de estación en el encabezado:** el PDF 3 ("Horarios reales de
+transmisión", `generar_pdf_reales`) vuelve a mostrar un comentario al final — ya no el
+texto fijo que se había quitado a propósito, sino `OrdenEstacion.notas_transmision` (el
+campo ya existía de punta a punta, el PDF simplemente no lo leía), solo si el usuario
+capturó algo. El encabezado de la pantalla (`RealesForm.tsx`) agrega la descripción
+completa de la estación ("Siglas Frecuencia TIPO_SEÑAL Nombre", mismo formato que el
+combo de Estación — extraído a `descripcionEstacion()` en `format.ts`) junto al folio,
+que antes era lo único que mostraba. Detalle completo en `docs/arquitectura.md`
+(ADR-276).
+
+**Paginación de las listas de OC/OE (sin ADR propio, ajuste menor):** las tablas de
+"Órdenes de Servicio" y "Órdenes de Transmisión" ganaron el componente `Paginator` ya
+usado en catálogos (10/20/50/100 por página) — SOLO corta lo que se renderiza; el
+arreglo completo se sigue trayendo en memoria vía `fetchAllPages`, porque las bandejas
+del sidebar ("Pendientes de asignar/cerrar/facturar") siguen necesitando el conjunto
+completo para sus contadores y filtros.
+
 **ADR-238 (bug reportado por el usuario, con captura) — fechas de "Campaña y montos":**
 el calendario de `OrdenClienteForm.tsx` adelantaba un día (bloqueaba elegir "hoy") por
 calcular el mínimo con `new Date().toISOString()`, que convierte a UTC antes de cortar
@@ -1148,6 +1179,16 @@ propuesta no le da captura sobre Órdenes.
   guardado) se valida contra `OrdenEstacionDia.fecha_transmision` de esas OE — si algún
   día ya capturado quedaría fuera del nuevo rango, `400 error_dominio`. No es un bloqueo
   en bloque: solo se dispara cuando de verdad se angosta al menos un lado.
+- **ADR-277 (petición del usuario) — bloqueo por adeudo vencido del anunciante al
+  capturar una OC:** `_pre_create` (SOLO alta, no edición) llama
+  `_validar_credito_anunciante()`: si el `Anunciante.monto_maximo_credito` está
+  capturado (`NULL`/`<= 0` = sin tope, no se valida) y su adeudo VENCIDO
+  (`CobranzaFacturaService.adeudo_vencido`, F3) lo supera, rechaza con `DomainError` —
+  sin excepción ni `forzar`. El frontend (`OrdenClienteForm.tsx`) además consulta ese
+  mismo dato al elegir el anunciante y muestra una alerta no bloqueante ("El cliente
+  tiene adeudos vencidos") antes de llegar al guardado. Detalle completo, incluidas las
+  preguntas abiertas que quedaron fuera de este alcance, en `docs/arquitectura.md`
+  (ADR-277) y en `docs/modulos/f3-cobranza-pagos/f3-cobranza-pagos.md`.
 - **ADR-180 (petición del usuario) — motivo obligatorio al cambiar fecha de campaña:**
   si `fecha_inicio_campania`/`fecha_fin_campania` de verdad cambian respecto al valor
   guardado (no basta con reenviarlas, el front siempre lo hace), el `PUT` exige

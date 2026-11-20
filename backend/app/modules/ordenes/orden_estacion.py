@@ -2640,7 +2640,9 @@ def get_orden_estacion_service(db: Session = Depends(get_db)) -> OrdenEstacionSe
         db,
         OrdenEstacion,
         search_columns=[OrdenEstacion.folio_orden_estacion],
-        default_order_by=[OrdenEstacion.folio_orden_estacion],
+        # ADR-275: mismo motivo que en OrdenCliente — ordenar por folio como texto se
+        # rompe en cuanto conviven folios con y sin ceros a la izquierda.
+        default_order_by=[OrdenEstacion.created_at, OrdenEstacion.folio_orden_estacion],
     )
     return OrdenEstacionService(repo)
 

@@ -851,10 +851,19 @@ def generar_pdf_reales(db: Session, orden_estacion_id: uuid.UUID) -> bytes:
         )
     )
 
-    # Bug corregido (petición del usuario, con captura): este PDF NO debe traer ningún
-    # comentario (ni de la OC ni de la OE) — y se quita el texto fijo que se mostraba
-    # cuando no hay reporte adjunto ("los comentarios que pones por default ... no
-    # sirven"), sin reemplazo.
+    # ADR-276 (petición del usuario, con captura): este PDF vuelve a traer un
+    # comentario — ya NO el texto fijo que se quitó antes ("los comentarios que pones
+    # por default ... no sirven"), sino las notas de transmisión REALES que se
+    # capturan en la pantalla "Capturar reales" (`oe.notas_transmision`). Solo se
+    # imprime si el usuario de verdad escribió algo.
+    if oe.notas_transmision:
+        elementos.append(Spacer(1, 10))
+        elementos.append(
+            Paragraph(
+                f'<font color="red"><b>Notas de transmisión:</b></font> {oe.notas_transmision}',
+                _VALOR,
+            )
+        )
     elementos.append(Spacer(1, 10))
     if oe.reporte_reales_ref:
         elementos.append(

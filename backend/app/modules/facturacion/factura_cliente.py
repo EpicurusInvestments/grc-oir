@@ -725,7 +725,8 @@ class FacturaClienteService(
             )
             .join(OrdenCliente, OrdenCliente.orden_id == FacturaClienteOrden.orden_id)
             .where(FacturaClienteOrden.factura_id.in_(ids))
-            .order_by(OrdenCliente.folio_orden)
+            # ADR-275: ordenar por `created_at`, no por el folio como texto.
+            .order_by(OrdenCliente.created_at)
         ).all()
         resultado: dict[uuid.UUID, list[OrdenDeFactura]] = {}
         for factura_id, *datos in filas:
@@ -1804,7 +1805,8 @@ class OrdenesPorFacturarRepository:
 
         total = self.db.scalar(select(func.count()).select_from(base.subquery())) or 0
         filas = self.db.execute(
-            base.order_by(OrdenCliente.folio_orden).offset((page - 1) * size).limit(size)
+            # ADR-275: ordenar por `created_at`, no por el folio como texto.
+            base.order_by(OrdenCliente.created_at).offset((page - 1) * size).limit(size)
         ).all()
         return list(filas), int(total)
 

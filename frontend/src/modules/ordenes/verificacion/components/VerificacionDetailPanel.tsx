@@ -3,7 +3,7 @@
  * ("vista derivada de la orden interna OE-xxx") — ver `VerificacionDerivada` en types.ts.
  */
 
-import { diaDeSemana, fmtFecha } from "../../format";
+import { diaDeSemana, fmtFecha, fmtFolio } from "../../format";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import type { Incidencia, OrdenEstacion, VerificacionDerivada } from "../../types";
 
@@ -24,7 +24,7 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
       <div className="dh">
         <div className="dh-row">
           <div>
-            <div className="dh-name">{verificacion.folioOrdenInterna}</div>
+            <div className="dh-name">{fmtFolio(verificacion.folioOrdenInterna)}</div>
             <div className="dh-sub">
               <span className="badge b-teal">Reconciliada</span>
               {estacion && <span className="badge b-blue">{estacion.nombre_estacion}</span>}
@@ -45,7 +45,7 @@ export function VerificacionDetailPanel({ verificacion, oe, incidencias, onVerOE
           }}
         >
           Vista derivada de la Orden de Transmisión{" "}
-          <strong style={{ fontFamily: "var(--mono)" }}>{verificacion.folioOrdenInterna}</strong> — no existe como registro propio; se
+          <strong style={{ fontFamily: "var(--mono)" }}>{fmtFolio(verificacion.folioOrdenInterna)}</strong> — no existe como registro propio; se
           calcula a partir de lo programado (efectivo) y lo real capturados en la OI. Llegar a 2.3 ya implica que quedó reconciliada.
         </div>
 

@@ -105,8 +105,8 @@ describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clo
       return { tabla: utils.container.querySelector("table") as HTMLTableElement };
     })();
 
-    const filaAsignada = within(tabla).getByText("OE-2026-0070A").closest("tr") as HTMLElement;
-    const filaProgramada = within(tabla).getByText("OE-2026-0071A").closest("tr") as HTMLElement;
+    const filaAsignada = within(tabla).getByText("OE-2026-70A").closest("tr") as HTMLElement;
+    const filaProgramada = within(tabla).getByText("OE-2026-71A").closest("tr") as HTMLElement;
     expect(within(filaAsignada).getByRole("button", { name: "📋 Clonar" })).toBeInTheDocument();
     expect(within(filaProgramada).queryByRole("button", { name: "📋 Clonar" })).toBeNull();
   });
@@ -114,10 +114,10 @@ describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clo
   it("clonar desde la tabla lleva al alta precargada, sin seleccionar la fila (sin activar edición)", () => {
     const { tabla, container } = renderPage();
 
-    const filaClonar = within(tabla).getByText("OE-2026-0054A").closest("tr") as HTMLElement;
+    const filaClonar = within(tabla).getByText("OE-2026-54A").closest("tr") as HTMLElement;
     fireEvent.click(within(filaClonar).getByRole("button", { name: "📋 Clonar" }));
 
-    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-0054A)")).toBeInTheDocument();
+    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-54A)")).toBeInTheDocument();
     // Estación sigue editable (no es modo edición) — a diferencia de "Editar", que la
     // deshabilita (`disabled={isEdit}` en `OrdenEstacionForm.tsx`).
     expect(fieldByLabelText<HTMLSelectElement>(container, "Estación")).not.toBeDisabled();
@@ -135,9 +135,9 @@ describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clo
       ),
     );
     const tabla = container.querySelector("table") as HTMLTableElement;
-    const fila = within(tabla).getByText("OE-2026-0070A").closest("tr") as HTMLElement;
+    const fila = within(tabla).getByText("OE-2026-70A").closest("tr") as HTMLElement;
     fireEvent.click(within(fila).getByRole("button", { name: "📋 Clonar" }));
-    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-0070A)")).toBeInTheDocument();
+    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-70A)")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
 
@@ -146,7 +146,7 @@ describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clo
     // pantalla — "Cancelar" debe quedarse aquí mismo.
     expect(onVerOC).not.toHaveBeenCalled();
     expect(screen.getByText("Órdenes de Transmisión")).toBeInTheDocument();
-    expect(screen.queryByText("Nueva Orden de Transmisión (clonada de OE-2026-0070A)")).toBeNull();
+    expect(screen.queryByText("Nueva Orden de Transmisión (clonada de OE-2026-70A)")).toBeNull();
   });
 });
 
@@ -154,11 +154,11 @@ describe("ADR-139 (corrige un bug real): cambiar de OE seleccionada resetea el p
   it("un diálogo de PDF abierto en la OE anterior no sigue abierto al seleccionar otra OE", async () => {
     const { tabla } = renderPage();
 
-    fireEvent.click(within(tabla).getByText("OE-2026-0054A"));
+    fireEvent.click(within(tabla).getByText("OE-2026-54A"));
     fireEvent.click(await screen.findByText(/PDF #1 · Orden de servicio/));
     expect(screen.getByText("🖨️ Imprimir")).toBeInTheDocument();
 
-    fireEvent.click(within(tabla).getByText("OE-2026-0054B"));
+    fireEvent.click(within(tabla).getByText("OE-2026-54B"));
     // Sin `key={oe.id}` en <OrdenEstacionDetailPanel>, React reutiliza la misma
     // instancia (y su estado local `abierto`) — el diálogo de la OE anterior seguiría
     // visible aquí, aunque nunca se le dio clic para esta OE.
@@ -169,19 +169,21 @@ describe("ADR-139 (corrige un bug real): cambiar de OE seleccionada resetea el p
 describe("Fix: OI preseleccionada filtra la tabla (no solo resalta la fila)", () => {
   it("sin preselección, se ven todas las OI", () => {
     const { tabla } = renderPage();
-    expect(within(tabla).getByText("OE-2026-0054A")).toBeInTheDocument();
-    expect(within(tabla).getByText("OE-2026-0054B")).toBeInTheDocument();
+    expect(within(tabla).getByText("OE-2026-54A")).toBeInTheDocument();
+    expect(within(tabla).getByText("OE-2026-54B")).toBeInTheDocument();
     expect(screen.getByText("2 de 2")).toBeInTheDocument();
   });
 
   it("con una OI preseleccionada, el buscador arranca con su folio y la tabla muestra solo esa fila", () => {
     const { tabla } = renderPage("oe-2");
 
+    // El buscador arranca con el folio CRUDO (sin formatear) — el formateo (ADR-275)
+    // es solo de despliegue en la tabla.
     const buscador = screen.getByPlaceholderText("Buscar folio, estación, afiliado, OC de origen…");
     expect((buscador as HTMLInputElement).value).toBe("OE-2026-0054B");
 
-    expect(within(tabla).getByText("OE-2026-0054B")).toBeInTheDocument();
-    expect(within(tabla).queryByText("OE-2026-0054A")).toBeNull();
+    expect(within(tabla).getByText("OE-2026-54B")).toBeInTheDocument();
+    expect(within(tabla).queryByText("OE-2026-54A")).toBeNull();
     expect(screen.getByText("1 de 2")).toBeInTheDocument();
   });
 });
@@ -202,9 +204,9 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
 
     expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
-    expect(within(filas[0]).getByText("OE-2026-0050A")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("OE-2026-50A")).toBeInTheDocument();
     expect(within(filas[0]).getByText("15-jun-26")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OE-2026-0041A")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OE-2026-41A")).toBeInTheDocument();
   });
 
   it("fix: con dos OI del MISMO día (empate en `created_at`, sin hora), la que va primero en el arreglo queda primero en la tabla", () => {
@@ -225,8 +227,8 @@ describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la 
     );
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
     const filas = within(tabla).getAllByRole("row").slice(1);
-    expect(within(filas[0]).getByText("OE-2026-0060A")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OE-2026-0059A")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("OE-2026-60A")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OE-2026-59A")).toBeInTheDocument();
   });
 });
 

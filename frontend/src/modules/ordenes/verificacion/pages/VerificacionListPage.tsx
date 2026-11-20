@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
-import { fmtFecha } from "../../format";
+import { fmtFecha, fmtFolio } from "../../format";
 import { findAfiliado, findEstacion } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { verificacionesDerivadas } from "../../state/selectors";
@@ -115,7 +115,7 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
                 const incDeV = state.incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
                 return (
                   <tr key={v.ordenEstacionId} className={selectedId === v.ordenEstacionId ? "sel" : ""} onClick={() => setSelectedId(v.ordenEstacionId)}>
-                    <td className="td-mono td-center">{v.folioOrdenInterna}</td>
+                    <td className="td-mono td-center">{fmtFolio(v.folioOrdenInterna)}</td>
                     <td className="td-mono td-center">{fmtFecha(v.fechaInicio)}</td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-2">{afiliado?.nombre_afiliado ?? "—"}</td>
