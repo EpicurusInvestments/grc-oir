@@ -183,14 +183,17 @@ export function FacturaAgenciaForm({
           <div className="fl fl-required">
             Agencia <FieldTag origin="catalogo" />
           </div>
-          <select className="fsel" value={agenciaId ?? ""} {...register("agencia_id")}>
-            <option value="">— Selecciona —</option>
-            {(agencias.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.etiqueta}
-              </option>
-            ))}
-          </select>
+          <Controller
+            control={control}
+            name="agencia_id"
+            render={({ field }) => (
+              <SearchableSelect
+                value={field.value}
+                onChange={field.onChange}
+                options={(agencias.data ?? []).map((a) => ({ value: a.id, label: a.etiqueta }))}
+              />
+            )}
+          />
           {errors.agencia_id && <div className="fe">{errors.agencia_id.message}</div>}
 
           <div className="r2">

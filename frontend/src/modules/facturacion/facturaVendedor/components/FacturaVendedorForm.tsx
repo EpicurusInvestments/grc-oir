@@ -181,14 +181,17 @@ export function FacturaVendedorForm({
           <div className="fl fl-required">
             Vendedor <FieldTag origin="catalogo" />
           </div>
-          <select className="fsel" value={vendedorId ?? ""} {...register("vendedor_id")}>
-            <option value="">— Selecciona —</option>
-            {(vendedores.data ?? []).map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.etiqueta}
-              </option>
-            ))}
-          </select>
+          <Controller
+            control={control}
+            name="vendedor_id"
+            render={({ field }) => (
+              <SearchableSelect
+                value={field.value}
+                onChange={field.onChange}
+                options={(vendedores.data ?? []).map((v) => ({ value: v.id, label: v.etiqueta }))}
+              />
+            )}
+          />
           {errors.vendedor_id && <div className="fe">{errors.vendedor_id.message}</div>}
 
           <div className="r2">
