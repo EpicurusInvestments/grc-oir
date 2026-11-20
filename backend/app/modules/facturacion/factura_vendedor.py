@@ -461,7 +461,9 @@ class FacturaVendedorService(
                 OrdenCliente.vendedor_principal_id == vendedor_id,
                 OrdenCliente.estatus_orden.in_(FROZEN_STATES_OC),
             )
-            .order_by(OrdenCliente.folio_orden)
+            # ADR-275: ordenar por `created_at`, no por el folio como texto — deja de
+            # ser válido como clave de orden en cuanto conviven folios con y sin ceros.
+            .order_by(OrdenCliente.created_at)
         ).all()
         return [
             OrdenClienteFacturableVendedorRead(

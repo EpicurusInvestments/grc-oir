@@ -262,7 +262,8 @@ def test_crear_oc_calcula_totales_y_folio(
     assert oc.mes_venta == 1
     assert oc.total_dias_campania == 28
     assert oc.estatus_orden == EstatusOrden.CAPTURADA  # ADR-100: sin Vo.Bo., directo aquí
-    assert oc.folio_orden == "OS-2026-01-000001"  # ADR-237: formato nuevo; ADR-254: piso en 0
+    # ADR-237: formato nuevo; ADR-254: piso en 0; ADR-275: sin ceros a la izquierda
+    assert oc.folio_orden == "OS-2026-01-1"
 
 
 def test_siguiente_folio_sigue_contando_los_folios_en_formato_viejo(
@@ -277,7 +278,7 @@ def test_siguiente_folio_sigue_contando_los_folios_en_formato_viejo(
     db.commit()
 
     nueva = oc_svc.create(_oc_payload(cat), VENTAS)
-    assert nueva.folio_orden == "OS-2026-01-000100"
+    assert nueva.folio_orden == "OS-2026-01-100"  # ADR-275: sin ceros a la izquierda
 
 
 # ── ADR-167/168: producto_tarifa/duracion_spot texto libre ───────────────────────

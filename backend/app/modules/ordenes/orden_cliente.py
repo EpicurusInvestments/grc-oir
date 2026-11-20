@@ -624,14 +624,19 @@ class OrdenClienteService(
 
         ADR-254 (corrige un bug real, petición del usuario): el piso era 40 (sin ningún
         ADR que lo justificara — quedó así desde el primer commit de F1), así que con la
-        tabla vacía el primer folio salía en 000041, no 000001. Piso en 0."""
+        tabla vacía el primer folio salía en 000041, no 000001. Piso en 0.
+
+        ADR-275 (petición del usuario, con captura): los folios ya NO llevan ceros a la
+        izquierda (`OS-2026-11-61`, antes `OS-2026-11-000061`) — los folios viejos no se
+        reescriben (se siguen mostrando con su padding original, el frontend los formatea
+        al desplegarlos), pero todo folio NUEVO nace ya sin padding."""
         existentes = db.scalars(select(OrdenCliente.folio_orden)).all()
         maximo = 0
         for folio in existentes:
             m = _FOLIO_RE_NUEVO.match(folio) or _FOLIO_RE_VIEJO.match(folio)
             if m:
                 maximo = max(maximo, int(m.group(1)))
-        return f"OS-{anio}-{mes:02d}-{maximo + 1:06d}"
+        return f"OS-{anio}-{mes:02d}-{maximo + 1}"
 
     def _validar_vendedores_distintos(
         self, vendedor_principal_id: uuid.UUID | None, vendedor_secundario_id: uuid.UUID | None
@@ -787,9 +792,41 @@ class OrdenClienteService(
 
         return False
 
+    # ADR-277 (petición del usuario): si el anunciante tiene `monto_maximo_credito`
+    # capturado (NULL o <= 0 = "sin tope", no se valida — petición explícita: "si el
+    # monto no está capturado no se toma en cuenta"), no se permite capturar la orden
+    # cuando su adeudo VENCIDO (no el saldo total, solo lo ya vencido) ya lo supera.
+    # Solo aplica al ALTA — el requerimiento es "al generar una nueva orden", no a
+    # editar una ya existente.
+    def _validar_credito_anunciante(self, db: Session, anunciante_id: uuid.UUID) -> None:
+        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.cobranza.cobranza_factura import (
+            CobranzaFactura,
+            CobranzaFacturaRepository,
+            CobranzaFacturaService,
+        )
+
+        anunciante = db.get(Anunciante, anunciante_id)
+        tope = anunciante.monto_maximo_credito if anunciante else None
+        if not tope or tope <= 0:
+            return
+        cobranza_svc = CobranzaFacturaService(
+            CobranzaFacturaRepository(
+                db, CobranzaFactura, default_order_by=[CobranzaFactura.fecha_estimada_cobro]
+            )
+        )
+        adeudo = cobranza_svc.adeudo_vencido(anunciante_id)
+        if adeudo > tope:
+            raise DomainError(
+                f"El cliente tiene un adeudo vencido de ${adeudo:,.2f}, que supera su "
+                f"monto máximo de crédito (${tope:,.2f}). No se puede capturar la orden.",
+                detalles={"adeudo_vencido": str(adeudo), "monto_maximo_credito": str(tope)},
+            )
+
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
         db = self._repo.db
         self._validar_fks_y_relaciones(db, payload)
+        self._validar_credito_anunciante(db, payload["anunciante_id"])
         self._validar_vendedores_distintos(
             payload["vendedor_principal_id"], payload.get("vendedor_secundario_id")
         )
@@ -1215,7 +1252,11 @@ def get_orden_cliente_service(db: Session = Depends(get_db)) -> OrdenClienteServ
         db,
         OrdenCliente,
         search_columns=[OrdenCliente.folio_orden, OrdenCliente.numero_orden_cliente],
-        default_order_by=[OrdenCliente.folio_orden],
+        # ADR-275 (petición del usuario): el folio ya no sirve como clave de orden —
+        # ordenar como TEXTO deja de equivaler a ordenar por antigüedad en cuanto
+        # conviven folios con y sin ceros a la izquierda. `created_at` es monótono con
+        # el consecutivo y no depende del formato del folio.
+        default_order_by=[OrdenCliente.created_at, OrdenCliente.folio_orden],
     )
     return OrdenClienteService(repo)
 

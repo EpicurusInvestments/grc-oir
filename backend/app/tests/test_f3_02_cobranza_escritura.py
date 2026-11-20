@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.db import Base, get_db
-from app.core.errors import register_error_handlers
+from app.core.errors import DomainError, register_error_handlers
 from app.modules.catalogos.afiliado import Afiliado
 from app.modules.catalogos.agencia import Agencia
 from app.modules.catalogos.anunciante import Anunciante
@@ -38,7 +38,12 @@ from app.modules.cobranza.cobranza_factura import CobranzaFactura, EstatusCobro,
 from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.factura_cliente import EstadoFacturacion, FacturaCliente
 from app.modules.facturacion.router import router as facturacion_router
-from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
+from app.modules.ordenes.orden_cliente import (
+    EstatusOrden,
+    OrdenCliente,
+    OrdenClienteRepository,
+    OrdenClienteService,
+)
 from app.modules.ordenes.orden_estacion import OrdenEstacion  # noqa: F401 — registra la tabla
 from app.modules.usuarios.models import Usuario
 
@@ -727,6 +732,132 @@ def test_una_factura_cobrada_nunca_esta_vencida_aunque_pase_la_fecha(
     )
     cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc")).json()
     assert cobranza["vencida"] is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-277 (petición del usuario): adeudo vencido del anunciante vs. su
+# `monto_maximo_credito` — alerta/bloqueo al capturar una OrdenCliente.
+# ══════════════════════════════════════════════════════════════════════════════
+def _oc_service(db: Session) -> OrdenClienteService:
+    return OrdenClienteService(
+        OrdenClienteRepository(db, OrdenCliente, search_columns=[OrdenCliente.folio_orden])
+    )
+
+
+def test_adeudo_vencido_suma_solo_lo_vencido_no_lo_pendiente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    from app.modules.cobranza.cobranza_factura import (
+        CobranzaFacturaRepository,
+        CobranzaFacturaService,
+    )
+
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date(2020, 1, 1)
+    db.commit()
+
+    svc = CobranzaFacturaService(
+        CobranzaFacturaRepository(
+            db, CobranzaFactura, default_order_by=[CobranzaFactura.fecha_estimada_cobro]
+        )
+    )
+    assert svc.adeudo_vencido(cat["anunciante_id"]) == Decimal("11600.00")
+
+    # Un pago parcial reduce el adeudo vencido (sigue vencida, pero por menos).
+    client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("1600.00", cat),
+        headers=_hdr("cxc"),
+    )
+    assert svc.adeudo_vencido(cat["anunciante_id"]) == Decimal("10000.00")
+
+
+def test_validar_credito_anunciante_sin_tope_capturado_no_bloquea(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date(2020, 1, 1)
+    db.commit()
+
+    # `cat["anunciante_id"]` se crea sin `monto_maximo_credito` (None) — petición del
+    # usuario: "si el monto no está capturado no se toma en cuenta".
+    _oc_service(db)._validar_credito_anunciante(db, cat["anunciante_id"])
+
+
+def test_validar_credito_anunciante_bloquea_si_el_adeudo_vencido_supera_el_tope(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    anunciante = db.get(Anunciante, cat["anunciante_id"])
+    anunciante.monto_maximo_credito = Decimal("5000.00")
+    db.commit()
+
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)  # total 11600.00
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date(2020, 1, 1)
+    db.commit()
+
+    with pytest.raises(DomainError):
+        _oc_service(db)._validar_credito_anunciante(db, cat["anunciante_id"])
+
+
+def test_validar_credito_anunciante_permite_si_el_adeudo_vencido_no_supera_el_tope(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    anunciante = db.get(Anunciante, cat["anunciante_id"])
+    anunciante.monto_maximo_credito = Decimal("50000.00")
+    db.commit()
+
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)  # total 11600.00
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date(2020, 1, 1)
+    db.commit()
+
+    _oc_service(db)._validar_credito_anunciante(db, cat["anunciante_id"])
+
+
+def test_validar_credito_anunciante_ignora_facturas_no_vencidas(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    anunciante = db.get(Anunciante, cat["anunciante_id"])
+    anunciante.monto_maximo_credito = Decimal("1.00")
+    db.commit()
+
+    # Factura con `fecha_estimada_cobro` a FUTURO (forzada explícitamente — no basta con
+    # no tocarla: con `dias_credito_default=30` desde la fecha de la orden, la fecha real
+    # del sistema puede ya haberla rebasado) — no cuenta como adeudo vencido aunque el
+    # tope sea minúsculo.
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date.today() + timedelta(days=30)
+    db.commit()
+
+    _oc_service(db)._validar_credito_anunciante(db, cat["anunciante_id"])
+
+
+def test_endpoint_adeudo_vencido_responde_la_suma_y_el_booleano(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    obj = db.get(CobranzaFactura, uuid.UUID(cobranza_id))
+    obj.fecha_estimada_cobro = date(2020, 1, 1)
+    db.commit()
+
+    r = client.get(
+        f"/api/v1/cobranza/anunciantes/{cat['anunciante_id']}/adeudo-vencido",
+        headers=_hdr("ventas"),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tiene_adeudo_vencido"] is True
+    assert body["suma_adeudo_vencido"] == "11600.00"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

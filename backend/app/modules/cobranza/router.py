@@ -16,6 +16,7 @@ from fastapi import APIRouter
 
 from app.modules.cobranza.adjuntos import router as adjuntos_router
 from app.modules.cobranza.cobranza_factura import (
+    router_adeudo_anunciante,
     router_cobranza,
     router_pagos_cliente,
     router_pagos_cliente_por_id,
@@ -26,6 +27,7 @@ from app.modules.cobranza.requisicion import router as requisicion_router
 router = APIRouter(prefix="/cobranza", tags=["cobranza"])
 
 router.include_router(router_cobranza)
+router.include_router(router_adeudo_anunciante)
 router.include_router(router_pagos_cliente)
 router.include_router(router_pagos_cliente_por_id)
 router.include_router(requisicion_router)

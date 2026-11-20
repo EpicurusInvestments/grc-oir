@@ -597,6 +597,26 @@ class CobranzaFacturaService(
         )
         return leida
 
+    # ADR-277 (petición del usuario): suma del adeudo VENCIDO de un anunciante —
+    # consumido por el alta de `OrdenCliente` (bloquea si excede `monto_maximo_credito`)
+    # y por el frontend (alerta al seleccionar el anunciante). Mismo criterio de
+    # "vencida" que `_enriquecida` (no cobrada + `fecha_estimada_cobro` ya pasó); se
+    # reusan `datos_factura`/`importe_cobrado` fila por fila — el número de facturas
+    # vencidas por anunciante es chico, no hace falta una consulta agregada.
+    def adeudo_vencido(self, anunciante_id: uuid.UUID) -> Decimal:
+        filas = self._repo.db.execute(
+            select(CobranzaFactura.cobranza_id, CobranzaFactura.factura_id).where(
+                CobranzaFactura.anunciante_id == anunciante_id,
+                CobranzaFactura.estatus_cobro != EstatusCobro.COBRADA.value,
+                CobranzaFactura.fecha_estimada_cobro < date.today(),
+            )
+        ).all()
+        total = Decimal("0")
+        for cobranza_id, factura_id in filas:
+            total_factura, _ = self.datos_factura(factura_id)
+            total += total_factura - self.importe_cobrado(cobranza_id)
+        return total.quantize(CENTAVOS)
+
     def get(self, id_: Any) -> CobranzaFacturaRead:
         return self._enriquecida(super().get(id_))
 
@@ -1203,8 +1223,35 @@ def get_pago_cliente_service(db: Session = Depends(get_db)) -> PagoClienteServic
     )
 
 
+# ADR-277 (petición del usuario): respuesta de "¿este anunciante tiene adeudo
+# vencido?" — consumida por Ventas al seleccionar el anunciante en el alta de
+# OrdenCliente (alerta) y por `OrdenClienteService` (bloqueo real, ver `orden_cliente.py`).
+class AdeudoVencidoRead(BaseModel):
+    anunciante_id: uuid.UUID
+    tiene_adeudo_vencido: bool
+    suma_adeudo_vencido: Decimal
+
+
 # ── Router ────────────────────────────────────────────────────────────────────
 router_cobranza = APIRouter(prefix="/facturas", tags=["cobranza:facturas"])
+
+router_adeudo_anunciante = APIRouter(prefix="/anunciantes", tags=["cobranza:facturas"])
+
+
+@router_adeudo_anunciante.get(
+    "/{anunciante_id}/adeudo-vencido", response_model=AdeudoVencidoRead
+)
+def obtener_adeudo_vencido(
+    anunciante_id: uuid.UUID,
+    usuario: CurrentUser = Depends(requiere_permiso("cobranza:leer")),
+    svc: CobranzaFacturaService = Depends(get_cobranza_factura_service),
+) -> AdeudoVencidoRead:
+    suma = svc.adeudo_vencido(anunciante_id)
+    return AdeudoVencidoRead(
+        anunciante_id=anunciante_id,
+        tiene_adeudo_vencido=suma > 0,
+        suma_adeudo_vencido=suma,
+    )
 
 
 @router_cobranza.get("", response_model=Page[CobranzaFacturaRead])
