@@ -197,22 +197,15 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <div className="fl fl-required">
                 Afiliado <FieldTag origin="catalogo" />
               </div>
-              <select
-                className="fsel"
+              <SearchableSelect
                 value={afiliadoId}
-                onChange={(e) => {
-                  setAfiliadoId(e.target.value);
+                onChange={(id) => {
+                  setAfiliadoId(id);
                   setFacturaAfiliadoId("");
                   setMontoRequisicion("");
                 }}
-              >
-                <option value="">— Selecciona —</option>
-                {(afiliados.data ?? []).map((a) => (
-                  <option key={a.afiliado_id} value={a.afiliado_id}>
-                    {a.nombre_afiliado}
-                  </option>
-                ))}
-              </select>
+                options={(afiliados.data ?? []).map((a) => ({ value: a.afiliado_id, label: a.nombre_afiliado }))}
+              />
               <div className="fl fl-required">Factura de la emisora</div>
               <select
                 className="fsel"
@@ -240,22 +233,15 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <div className="fl fl-required">
                 Agencia <FieldTag origin="catalogo" />
               </div>
-              <select
-                className="fsel"
+              <SearchableSelect
                 value={agenciaId}
-                onChange={(e) => {
-                  setAgenciaId(e.target.value);
+                onChange={(id) => {
+                  setAgenciaId(id);
                   setFacturaAgenciaId("");
                   setMontoRequisicion("");
                 }}
-              >
-                <option value="">— Selecciona —</option>
-                {(agencias.data ?? []).map((a) => (
-                  <option key={a.agencia_id} value={a.agencia_id}>
-                    {a.nombre_agencia}
-                  </option>
-                ))}
-              </select>
+                options={(agencias.data ?? []).map((a) => ({ value: a.agencia_id, label: a.nombre_agencia }))}
+              />
               <div className="fl fl-required">Factura de la agencia</div>
               <select
                 className="fsel"
@@ -283,23 +269,15 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <div className="fl fl-required">
                 Vendedor <FieldTag origin="catalogo" />
               </div>
-              <select
-                className="fsel"
+              <SearchableSelect
                 value={vendedorId}
-                onChange={(e) => {
-                  const id = e.target.value;
+                onChange={(id) => {
                   setVendedorId(id);
                   setFacturaVendedorId("");
                   setMontoRequisicion("");
                 }}
-              >
-                <option value="">— Selecciona —</option>
-                {(vendedores.data ?? []).map((v) => (
-                  <option key={v.vendedor_id} value={v.vendedor_id}>
-                    {v.nombre_vendedor}
-                  </option>
-                ))}
-              </select>
+                options={(vendedores.data ?? []).map((v) => ({ value: v.vendedor_id, label: v.nombre_vendedor }))}
+              />
               {/* Petición del usuario: al pagar la requisición, esta factura pasa a
                   "pagada" también — igual patrón que "pago_agencia". */}
               <div className="fl fl-required">Factura del vendedor</div>
@@ -329,23 +307,15 @@ export function RequisicionForm({ submitting, submitError, onSubmit, onCancel }:
               <div className="fl fl-required">
                 Agencia <FieldTag origin="catalogo" />
               </div>
-              <select
-                className="fsel"
+              <SearchableSelect
                 value={agenciaId}
-                onChange={(e) => {
-                  const id = e.target.value;
+                onChange={(id) => {
                   setAgenciaId(id);
                   const a = (agencias.data ?? []).find((x) => x.agencia_id === id);
                   setPctAgencia(a?.porcentaje_comision_agencia_default ?? "");
                 }}
-              >
-                <option value="">— Selecciona —</option>
-                {(agencias.data ?? []).map((a) => (
-                  <option key={a.agencia_id} value={a.agencia_id}>
-                    {a.nombre_agencia}
-                  </option>
-                ))}
-              </select>
+                options={(agencias.data ?? []).map((a) => ({ value: a.agencia_id, label: a.nombre_agencia }))}
+              />
               <div className="fl fl-required">Orden de cliente</div>
               <SearchableSelect
                 value={ordenId}

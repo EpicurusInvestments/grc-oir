@@ -3,12 +3,19 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { SavingOverlay } from "@/shared/ui";
 
 import type { PlazaCreate } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   nombre_plaza: z.string().trim().min(1, "El nombre de la plaza es obligatorio.").max(120),
@@ -49,11 +56,15 @@ export function PlazaForm({ title, defaultValues, submitting, onSubmit, onCancel
         <div className="sec">Datos de la plaza</div>
 
         <div className="fl fl-required">Nombre de la plaza</div>
-        <input className="fi" autoFocus {...register("nombre_plaza")} />
+        <input className="fi" autoFocus {...register("nombre_plaza", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_plaza?.message}</div>
 
         <div className="fl">Estado</div>
-        <input className="fi" placeholder="Ej. Nuevo León" {...register("estado")} />
+        <input
+          className="fi"
+          placeholder="Ej. Nuevo León"
+          {...register("estado", { onChange: aMayusculas })}
+        />
         <div className="fe">{errors.estado?.message}</div>
       </div>
       <div className="df">

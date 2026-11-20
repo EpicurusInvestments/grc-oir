@@ -22,6 +22,7 @@ Facturación/Órdenes).
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
@@ -31,7 +32,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import CheckConstraint, ForeignKey, Unicode, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -50,6 +51,26 @@ class TipoSenal(StrEnum):
     FM = "fm"
     AM = "am"
     TV = "tv"
+
+
+# Bug corregido (petición del usuario): "siglas" dejaba capturar cualquier texto
+# (espacios, acentos, símbolos). Solo letras y guiones (p.ej. "XHLAYA-FM") — el guión
+# se permite explícitamente porque así se ven las siglas reales con sufijo de banda.
+_SIGLAS_REGEX = re.compile(r"^[A-Z]+(-[A-Z]+)*$")
+
+
+def _normaliza_siglas(valor: str | None) -> str | None:
+    if valor is None:
+        return None
+    v = valor.strip().upper()
+    if not v:
+        return None
+    if not _SIGLAS_REGEX.match(v):
+        raise ValueError(
+            "Las siglas solo admiten letras y guiones, sin espacios ni otros caracteres "
+            '(ej. "XEW" o "XHLAYA-FM").'
+        )
+    return v
 
 
 class Estacion(Base):
@@ -81,6 +102,11 @@ class EstacionCreate(BaseModel):
     frecuencia: str | None = Field(default=None, max_length=40)
     tipo_senal: TipoSenal
 
+    @field_validator("siglas")
+    @classmethod
+    def _valida_siglas(cls, v: str | None) -> str | None:
+        return _normaliza_siglas(v)
+
 
 class EstacionUpdate(BaseModel):
     afiliado_id: uuid.UUID | None = None
@@ -89,6 +115,11 @@ class EstacionUpdate(BaseModel):
     siglas: str | None = Field(default=None, max_length=20)
     frecuencia: str | None = Field(default=None, max_length=40)
     tipo_senal: TipoSenal | None = None
+
+    @field_validator("siglas")
+    @classmethod
+    def _valida_siglas(cls, v: str | None) -> str | None:
+        return _normaliza_siglas(v)
 
 
 class EstacionRead(CatalogoReadBase):

@@ -209,20 +209,20 @@ export function FacturaAfiliadoForm({
           <div className="fl fl-required">
             Afiliado <FieldTag origin="catalogo" />
           </div>
-          {/* `value` explícito (además de `register`): las opciones llegan de una
-              consulta async (`useAfiliados`), y el `ref` de `register` solo fija el
-              valor inicial UNA vez, al montar — si en ese momento el catálogo todavía
-              no cargó, el afiliado ya elegido (al editar) se quedaría sin seleccionar
-              en el DOM aunque RHF internamente lo tenga bien. Con `value` controlado,
-              React lo vuelve a aplicar en cuanto las opciones existen. */}
-          <select className="fsel" value={watch("afiliado_id") ?? ""} {...register("afiliado_id")}>
-            <option value="">— Selecciona —</option>
-            {(afiliados.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.etiqueta}
-              </option>
-            ))}
-          </select>
+          {/* ADR-221b: `SearchableSelect` resuelve el label de la opción ya elegida en
+              CADA render (no solo al montar) — ya no hace falta el workaround de
+              `value` explícito para cuando el catálogo async todavía no había cargado. */}
+          <Controller
+            control={control}
+            name="afiliado_id"
+            render={({ field }) => (
+              <SearchableSelect
+                value={field.value}
+                onChange={field.onChange}
+                options={(afiliados.data ?? []).map((a) => ({ value: a.id, label: a.etiqueta }))}
+              />
+            )}
+          />
           {errors.afiliado_id && <div className="fe">{errors.afiliado_id.message}</div>}
 
           <div className="r2">

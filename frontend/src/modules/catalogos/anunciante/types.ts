@@ -35,6 +35,9 @@ export interface Anunciante extends CatalogoBase {
   uso_cfdi_default: string | null;
   referencia_anunciante: string | null;
   dias_credito_default: number;
+  /** PARÁMETRO SENSIBLE (petición del usuario, con captura): tope de crédito otorgado.
+   * `null` = sin tope capturado. */
+  monto_maximo_credito: number | null;
   // Derivados (solo lectura):
   agencia_nombre: string | null; // nombre_agencia (null si es directo)
   marcas_count: number;
@@ -60,6 +63,7 @@ export interface AnuncianteCreate {
   uso_cfdi_default?: string | null;
   referencia_anunciante?: string | null;
   dias_credito_default: number;
+  monto_maximo_credito?: number | null;
 }
 
 export interface AnuncianteUpdate extends Partial<AnuncianteCreate> {

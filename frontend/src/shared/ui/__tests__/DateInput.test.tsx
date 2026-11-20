@@ -52,7 +52,10 @@ describe("DateInput", () => {
     const onChange = vi.fn();
     render(<DateInput value="2026-11-17" onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: "Abrir calendario" }));
-    fireEvent.click(screen.getByRole("button", { name: "viernes, 20 de noviembre de 2026" }));
+    // Nombre accesible anclado solo al final (sin el día de la semana/"Hoy, " al
+    // inicio): `react-day-picker` le antepone "Hoy, " cuando ese día coincide con la
+    // fecha real del sistema que corre la prueba — ya pasó con el 2026-11-20 real.
+    fireEvent.click(screen.getByRole("button", { name: /20 de noviembre de 2026$/ }));
     expect(onChange).toHaveBeenCalledWith("2026-11-20");
     expect(screen.queryAllByRole("gridcell")).toHaveLength(0);
   });

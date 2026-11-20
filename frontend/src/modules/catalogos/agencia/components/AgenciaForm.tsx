@@ -13,14 +13,16 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import {
   DomicilioPostalInput,
   type DomicilioPostalValues,
   SavingOverlay,
+  SearchableSelect,
   SensitiveField,
 } from "@/shared/ui";
 
@@ -37,6 +39,12 @@ export type AgenciaFormOutput = AgenciaCreate & { motivo_cambio?: string | null 
 // vez de 3-4 antes de la fecha) pasaba la validación del front y tronaba hasta el back
 // con "Datos de entrada inválidos" — sin decir por qué ni en qué campo.
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 function buildSchema(isEdit: boolean, comisionOriginal?: string) {
   return z
@@ -122,6 +130,7 @@ export function AgenciaForm({
   const [contactosNuevos, setContactosNuevos] = useState<ContactoFormData[]>([]);
   const {
     register,
+    control,
     handleSubmit,
     watch,
     setValue,
@@ -209,7 +218,7 @@ export function AgenciaForm({
         <div className="sec">Datos fiscales</div>
 
         <div className="fl fl-required">Nombre de la agencia</div>
-        <input className="fi" autoFocus {...register("nombre_agencia")} />
+        <input className="fi" autoFocus {...register("nombre_agencia", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_agencia?.message}</div>
 
         <div className="fl fl-required">RFC</div>
@@ -218,19 +227,23 @@ export function AgenciaForm({
           placeholder="XXX000000XXX"
           maxLength={13}
           style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
-          {...register("rfc_agencia")}
+          {...register("rfc_agencia", { onChange: aMayusculas })}
         />
         <div className="fe">{errors.rfc_agencia?.message}</div>
 
         <div className="fl">Régimen fiscal (como receptora)</div>
-        <select className="fsel" {...register("regimen_fiscal")}>
-          <option value="">— Sin capturar —</option>
-          {(regimenes.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="regimen_fiscal"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin capturar —"
+              options={(regimenes.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         <div className="fe">{errors.regimen_fiscal?.message}</div>
 
         <div className="sec">Domicilio</div>
@@ -247,7 +260,7 @@ export function AgenciaForm({
           motivo={
             comisionCambiada
               ? {
-                  register: register("motivo_cambio"),
+                  register: register("motivo_cambio", { onChange: aMayusculas }),
                   error: errors.motivo_cambio?.message,
                 }
               : undefined

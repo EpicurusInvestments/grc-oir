@@ -179,6 +179,52 @@ def test_estacion_siglas_opcional(servicios: Servicios) -> None:
     assert sin_siglas.siglas is None
 
 
+# ── Bug corregido (petición del usuario): siglas solo letras y guiones ───────────
+def test_estacion_siglas_se_normaliza_a_mayusculas(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc)
+    creada = est_svc.create(
+        EstacionCreate(
+            afiliado_id=afi.afiliado_id,
+            plaza_id=plaza.plaza_id,
+            nombre_estacion="La Que Buena",
+            siglas="xhlaya-fm",
+            tipo_senal=TipoSenal.FM,
+        ),
+        USUARIO,
+    )
+    assert creada.siglas == "XHLAYA-FM"
+
+
+def test_estacion_siglas_con_espacio_se_rechaza(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc)
+    with pytest.raises(ValidationError):
+        EstacionCreate(
+            afiliado_id=afi.afiliado_id,
+            plaza_id=plaza.plaza_id,
+            nombre_estacion="La Que Buena",
+            siglas="XE W",
+            tipo_senal=TipoSenal.FM,
+        )
+
+
+def test_estacion_siglas_con_caracter_especial_se_rechaza(servicios: Servicios) -> None:
+    plaza_svc, afi_svc, est_svc = servicios
+    plaza = _plaza(plaza_svc)
+    afi = _afiliado(afi_svc)
+    with pytest.raises(ValidationError):
+        EstacionCreate(
+            afiliado_id=afi.afiliado_id,
+            plaza_id=plaza.plaza_id,
+            nombre_estacion="La Que Buena",
+            siglas="XEW.1",
+            tipo_senal=TipoSenal.FM,
+        )
+
+
 def test_estacion_afiliado_inexistente_falla(servicios: Servicios) -> None:
     plaza_svc, _, est_svc = servicios
     plaza = _plaza(plaza_svc)

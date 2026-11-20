@@ -334,7 +334,10 @@ describe("PagosClientePage", () => {
       target: { value: "SPEI-999" },
     });
     fireEvent.change(selects[1], { target: { value: "01" } });
-    fireEvent.change(selects[2], { target: { value: "cc-1" } });
+    // ADR-221b: "Cuenta contable" ya no es `<select>` — es un buscador (`SearchableSelect`).
+    const cuentaInput = container.querySelector('.form-card input[placeholder="Selecciona…"]') as HTMLInputElement;
+    fireEvent.change(cuentaInput, { target: { value: "4100-001 · Ingresos" } });
+    fireEvent.mouseDown(screen.getByText("4100-001 · Ingresos"));
 
     fireEvent.click(screen.getByRole("button", { name: "Registrar pago sin asignar" }));
 

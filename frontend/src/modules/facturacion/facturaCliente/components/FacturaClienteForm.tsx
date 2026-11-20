@@ -368,14 +368,18 @@ export function FacturaClienteForm({
         <textarea className="ftxt" {...register("direccion_facturacion")} />
 
         <div className="fl">Uso de CFDI</div>
-        <select className="fsel" {...register("uso_cfdi")}>
-          <option value="">— Sin capturar —</option>
-          {(usosCfdi.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="uso_cfdi"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin capturar —"
+              options={(usosCfdi.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         {errors.uso_cfdi && <div className="fe">{errors.uso_cfdi.message}</div>}
       </div>
 
@@ -436,14 +440,17 @@ export function FacturaClienteForm({
         <div className="fl fl-required">
           Cuenta contable <FieldTag origin="catalogo" />
         </div>
-        <select className="fsel" {...register("cuenta_contable_id")}>
-          <option value="">— Selecciona —</option>
-          {(cuentas.data ?? []).map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.etiqueta}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="cuenta_contable_id"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={(cuentas.data ?? []).map((c) => ({ value: c.id, label: c.etiqueta }))}
+            />
+          )}
+        />
         {errors.cuenta_contable_id && <div className="fe">{errors.cuenta_contable_id.message}</div>}
 
         <div className="fl fl-required">
@@ -479,27 +486,33 @@ export function FacturaClienteForm({
         <div className="fl fl-required">
           Clave del producto o servicio <FieldTag origin="catalogo" />
         </div>
-        <select className="fsel" {...register("clave_prod_serv")}>
-          <option value="">— Selecciona —</option>
-          {(clavesProdServ.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="clave_prod_serv"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={(clavesProdServ.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         {errors.clave_prod_serv && <div className="fe">{errors.clave_prod_serv.message}</div>}
 
         <div className="fl fl-required">
           Clave de unidad <FieldTag origin="catalogo" />
         </div>
-        <select className="fsel" {...register("clave_unidad")}>
-          <option value="">— Selecciona —</option>
-          {(clavesUnidad.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="clave_unidad"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={(clavesUnidad.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         {errors.clave_unidad && <div className="fe">{errors.clave_unidad.message}</div>}
 
         <div className="fl fl-required">

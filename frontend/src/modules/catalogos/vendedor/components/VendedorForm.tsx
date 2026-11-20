@@ -6,6 +6,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -14,6 +15,13 @@ import { SavingOverlay, SensitiveField } from "@/shared/ui";
 import type { VendedorCreate } from "../types";
 
 export type VendedorFormOutput = VendedorCreate & { motivo_cambio?: string | null };
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe. No aplica al
+// correo (no tiene sentido en mayúsculas).
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -117,7 +125,7 @@ export function VendedorForm({
         <div className="sec">Datos del vendedor</div>
 
         <div className="fl fl-required">Nombre</div>
-        <input className="fi" autoFocus {...register("nombre_vendedor")} />
+        <input className="fi" autoFocus {...register("nombre_vendedor", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_vendedor?.message}</div>
 
         <div className="fl">Correo</div>
@@ -134,7 +142,10 @@ export function VendedorForm({
           error={errors.porcentaje_comision_default?.message}
           motivo={
             comisionCambiada
-              ? { register: register("motivo_cambio"), error: errors.motivo_cambio?.message }
+              ? {
+                  register: register("motivo_cambio", { onChange: aMayusculas }),
+                  error: errors.motivo_cambio?.message,
+                }
               : undefined
           }
         />

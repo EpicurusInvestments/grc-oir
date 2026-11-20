@@ -116,12 +116,14 @@ def _agencia(svc: AgenciaService, nombre: str = "ACME Media") -> uuid.UUID:
     return a.agencia_id
 
 
-def _anunciante(svc: AnuncianteService, nombre: str = "Refrescos SA") -> uuid.UUID:
+def _anunciante(
+    svc: AnuncianteService, nombre: str = "Refrescos SA", rfc: str = "RSA950101AB1"
+) -> uuid.UUID:
     a = svc.create(
         AnuncianteCreate(
             nombre_comercial=nombre,
             nombre_fiscal=f"{nombre} de CV",
-            rfc_anunciante="RSA950101AB1",
+            rfc_anunciante=rfc,
             dias_credito_default=0,
         ),
         ADMIN,
@@ -230,8 +232,8 @@ def test_contacto_anunciante_desactivar_y_reactivar(
 def test_contacto_anunciante_listado_solo_del_anunciante_pedido(
     anunciante_svc: AnuncianteService, contacto_anunciante_svc: ContactoAnuncianteService
 ) -> None:
-    a1 = _anunciante(anunciante_svc, "Refrescos SA")
-    a2 = _anunciante(anunciante_svc, "Galletas SA")
+    a1 = _anunciante(anunciante_svc, "Refrescos SA", "RSA950101AB1")
+    a2 = _anunciante(anunciante_svc, "Galletas SA", "GAL950101AB2")
     contacto_anunciante_svc.create(
         ContactoAnuncianteCreate(anunciante_id=a1, nombre_contacto="De A1"), ADMIN
     )

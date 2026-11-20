@@ -167,6 +167,9 @@ export function AnuncianteCatalogPage() {
         anuncianteId={selected.anunciante_id}
         isEdit
         diasOriginal={String(selected.dias_credito_default)}
+        montoOriginal={
+          selected.monto_maximo_credito != null ? String(selected.monto_maximo_credito) : ""
+        }
         defaultValues={{
           nombre_comercial: selected.nombre_comercial,
           nombre_fiscal: selected.nombre_fiscal,
@@ -187,6 +190,8 @@ export function AnuncianteCatalogPage() {
           uso_cfdi_default: selected.uso_cfdi_default ?? "",
           referencia_anunciante: selected.referencia_anunciante ?? "",
           dias_credito_default: String(selected.dias_credito_default),
+          monto_maximo_credito:
+            selected.monto_maximo_credito != null ? String(selected.monto_maximo_credito) : "",
         }}
         submitting={actualizar.isPending}
         submitError={submitError}

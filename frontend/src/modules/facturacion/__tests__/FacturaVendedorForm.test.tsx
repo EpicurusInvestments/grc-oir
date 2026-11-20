@@ -74,8 +74,14 @@ function campoTrasEtiqueta<T extends Element = HTMLInputElement>(container: HTML
   return interno as T;
 }
 
+// ADR-221b (combos largos → SearchableSelect): se elige por LABEL, no por id — el campo
+// es un buscador, no un <select> nativo.
+const ETIQUETA_VENDEDOR: Record<string, string> = { "vd-1": "Carmen Aristegui", "vd-2": "Juan Pérez" };
 function elegirVendedor(container: HTMLElement, id = "vd-1") {
-  fireEvent.change(campoTrasEtiqueta<HTMLSelectElement>(container, "Vendedor"), { target: { value: id } });
+  const input = campoTrasEtiqueta<HTMLInputElement>(container, "Vendedor");
+  const texto = ETIQUETA_VENDEDOR[id];
+  fireEvent.change(input, { target: { value: texto } });
+  fireEvent.mouseDown(screen.getByText(texto));
 }
 
 function agregarOrden(folio: string) {
