@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -28,6 +29,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.audit import LogCambioParametro
 from app.core.db import Base
 from app.core.errors import (
+    ConflictError,
     DependenciasActivasError,
     DomainError,
     NotFoundError,
@@ -210,6 +212,94 @@ def test_editar_no_sensible_no_audita(anunciante_svc: AnuncianteService, db: Ses
     a = _anunciante(anunciante_svc, dias=30)
     anunciante_svc.update(a.anunciante_id, AnuncianteUpdate(referencia_anunciante="Nueva"), ADMIN)
     assert len(_logs(db, "dias_credito_default")) == 1  # solo el del alta
+
+
+# ── Bug corregido (petición del usuario, con captura): el RFC no se repite ───────
+def test_alta_con_rfc_repetido_se_rechaza(anunciante_svc: AnuncianteService) -> None:
+    _anunciante(anunciante_svc, nombre="Refrescos SA", rfc="RSA950101AB1")
+    with pytest.raises(ConflictError):
+        _anunciante(anunciante_svc, nombre="Otro anunciante", rfc="RSA950101AB1")
+
+
+def test_editar_con_rfc_de_otro_anunciante_se_rechaza(anunciante_svc: AnuncianteService) -> None:
+    _anunciante(anunciante_svc, nombre="Refrescos SA", rfc="RSA950101AB1")
+    b = _anunciante(anunciante_svc, nombre="Galletas SA", rfc="GAL950101AB2")
+    with pytest.raises(ConflictError):
+        anunciante_svc.update(
+            b.anunciante_id, AnuncianteUpdate(rfc_anunciante="RSA950101AB1"), ADMIN
+        )
+
+
+def test_editar_el_mismo_anunciante_con_su_propio_rfc_no_se_rechaza(
+    anunciante_svc: AnuncianteService,
+) -> None:
+    a = _anunciante(anunciante_svc, rfc="RSA950101AB1")
+    leido = anunciante_svc.update(
+        a.anunciante_id, AnuncianteUpdate(rfc_anunciante="RSA950101AB1"), ADMIN
+    )
+    assert leido.rfc_anunciante == "RSA950101AB1"
+
+
+# ── Nuevo campo sensible: monto_maximo_credito (petición del usuario) ────────────
+def test_alta_audita_monto_maximo_credito(anunciante_svc: AnuncianteService, db: Session) -> None:
+    a = anunciante_svc.create(
+        AnuncianteCreate(
+            nombre_comercial="Refrescos SA",
+            nombre_fiscal="Refrescos SA de CV",
+            rfc_anunciante="RSA950101AB1",
+            dias_credito_default=30,
+            monto_maximo_credito=Decimal("500000.00"),
+        ),
+        ADMIN,
+    )
+    assert a.monto_maximo_credito == Decimal("500000.00")
+    logs = _logs(db, "monto_maximo_credito")
+    assert len(logs) == 1
+    assert logs[0].valor_anterior is None
+    assert logs[0].valor_nuevo == "500000.00"
+
+
+def test_alta_sin_monto_maximo_credito_no_audita(
+    anunciante_svc: AnuncianteService, db: Session
+) -> None:
+    _anunciante(anunciante_svc)
+    assert _logs(db, "monto_maximo_credito") == []
+
+
+def test_editar_monto_maximo_credito_con_motivo_audita(
+    anunciante_svc: AnuncianteService, db: Session
+) -> None:
+    a = _anunciante(anunciante_svc)
+    anunciante_svc.update(
+        a.anunciante_id,
+        AnuncianteUpdate(monto_maximo_credito=Decimal("300000.00"), motivo_cambio="Línea nueva"),
+        ADMIN,
+    )
+    logs = _logs(db, "monto_maximo_credito")
+    assert len(logs) == 1
+    assert logs[0].valor_anterior is None
+    assert logs[0].valor_nuevo == "300000.00"
+    assert logs[0].motivo_cambio == "Línea nueva"
+
+
+def test_editar_monto_maximo_credito_sin_motivo_rechazado(
+    anunciante_svc: AnuncianteService,
+) -> None:
+    a = _anunciante(anunciante_svc)
+    with pytest.raises(DomainError):
+        anunciante_svc.update(
+            a.anunciante_id, AnuncianteUpdate(monto_maximo_credito=Decimal("300000.00")), ADMIN
+        )
+
+
+def test_editar_monto_maximo_credito_no_admin_rechazado(anunciante_svc: AnuncianteService) -> None:
+    a = _anunciante(anunciante_svc)
+    with pytest.raises(PermissionDeniedError):
+        anunciante_svc.update(
+            a.anunciante_id,
+            AnuncianteUpdate(monto_maximo_credito=Decimal("300000.00"), motivo_cambio="x"),
+            VENTAS,
+        )
 
 
 # ── Marca anidada ─────────────────────────────────────────────────────────────────

@@ -41,18 +41,19 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 from math import ceil
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import CheckConstraint, ForeignKey, Unicode, func, select
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, Unicode, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core import audit
 from app.core.db import Base, datetime2, get_db
-from app.core.errors import DependenciasActivasError, NotFoundError
+from app.core.errors import ConflictError, DependenciasActivasError, NotFoundError
 from app.core.security import CurrentUser, requiere_permiso
 from app.modules.catalogos.afiliado import RFC_REGEX  # regex oficial MX (fuente única, F0-01)
 from app.modules.catalogos.agencia import Agencia
@@ -61,8 +62,12 @@ from app.shared.base_service import BaseService
 from app.shared.crud_router import build_crud_router
 from app.shared.schemas import CatalogoReadBase, ListParams, Page
 
-# Campo sensible de la entidad (spec BD v2). Auditado + permiso por campo.
+# Campos sensibles de la entidad. Auditados + permiso por campo.
 CAMPO_DIAS_CREDITO = "dias_credito_default"
+#: Bug corregido (petición del usuario): "monto máximo de crédito" nuevo — mismo
+#: criterio de parámetro sensible que `dias_credito_default` (es otro límite de riesgo
+#: crediticio hacia el anunciante, no estaba en la spec original).
+CAMPO_MONTO_MAXIMO_CREDITO = "monto_maximo_credito"
 
 
 def _normaliza_rfc(valor: str) -> str:
@@ -82,6 +87,11 @@ class Anunciante(Base):
     __tablename__ = "anunciante"
     __table_args__ = (
         CheckConstraint("dias_credito_default >= 0", name="ck_anunciante_dias_credito"),
+        CheckConstraint(
+            "monto_maximo_credito IS NULL OR monto_maximo_credito >= 0",
+            name="ck_anunciante_monto_maximo_credito",
+        ),
+        UniqueConstraint("rfc_anunciante", name="uq_anunciante_rfc"),
     )
 
     anunciante_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -121,6 +131,10 @@ class Anunciante(Base):
     referencia_anunciante: Mapped[str | None] = mapped_column(Unicode(250), default=None)
     # PARÁMETRO SENSIBLE (spec): días de crédito por defecto.
     dias_credito_default: Mapped[int] = mapped_column(default=0)
+    # PARÁMETRO SENSIBLE (petición del usuario, con captura): tope de crédito otorgado
+    # al anunciante — límite de riesgo, no un dato operativo libre. `NULL` = sin tope
+    # capturado (no se inventa un default numérico).
+    monto_maximo_credito: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), default=None)
     activo: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(datetime2(), default=datetime.now)
     updated_at: Mapped[datetime | None] = mapped_column(
@@ -148,6 +162,7 @@ class AnuncianteCreate(BaseModel):
     uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     dias_credito_default: int = Field(default=0, ge=0)
+    monto_maximo_credito: Decimal | None = Field(default=None, ge=0)
 
     @field_validator("rfc_anunciante")
     @classmethod
@@ -175,7 +190,9 @@ class AnuncianteUpdate(BaseModel):
     uso_cfdi_default: str | None = Field(default=None, max_length=5)
     referencia_anunciante: str | None = Field(default=None, max_length=250)
     dias_credito_default: int | None = Field(default=None, ge=0)
-    # Transitorio (NO es columna): requerido si se modifica `dias_credito_default`.
+    monto_maximo_credito: Decimal | None = Field(default=None, ge=0)
+    # Transitorio (NO es columna): requerido si se modifica `dias_credito_default` o
+    # `monto_maximo_credito`.
     motivo_cambio: str | None = Field(default=None, max_length=500)
 
     @field_validator("rfc_anunciante")
@@ -207,6 +224,7 @@ class AnuncianteRead(CatalogoReadBase):
     uso_cfdi_default: str | None = None
     referencia_anunciante: str | None = None
     dias_credito_default: int
+    monto_maximo_credito: Decimal | None = None
     # Derivados (solo lectura; NO se aceptan en Create/Update):
     agencia_nombre: str | None = None  # nombre_agencia de la agencia (None si es directo)
     marcas_count: int = 0  # nº de marcas del anunciante (todas)
@@ -221,6 +239,12 @@ class AnuncianteListParams(ListParams):
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
 class AnuncianteRepository(BaseRepository[Anunciante]):
+    def get_by_rfc(self, rfc: str, excluir_id: uuid.UUID | None = None) -> Anunciante | None:
+        stmt = select(Anunciante).where(Anunciante.rfc_anunciante == rfc)
+        if excluir_id is not None:
+            stmt = stmt.where(Anunciante.anunciante_id != excluir_id)
+        return self.db.scalars(stmt).first()
+
     def _apply_filters(self, stmt: Any, params: ListParams) -> Any:
         stmt = super()._apply_filters(stmt, params)  # activo + q sobre search_columns
         relacion = getattr(params, "relacion", "todas")
@@ -328,6 +352,7 @@ class AnuncianteService(
 
     # ── reglas ──────────────────────────────────────────────────────────────────
     def _pre_create(self, payload: dict[str, Any], usuario: CurrentUser) -> None:
+        self._verificar_rfc_unico(payload["rfc_anunciante"], excluir_id=None)
         if payload.get("agencia_id") is not None:
             self._verificar_agencia(payload["agencia_id"])
         # PK explícita para auditar el ALTA de `dias_credito_default` con el id real.
@@ -343,9 +368,24 @@ class AnuncianteService(
             motivo=None,
             requiere_motivo=False,
         )
+        if payload.get(CAMPO_MONTO_MAXIMO_CREDITO) is not None:
+            audit.registrar_cambio_sensible(
+                db=self._anunciante_repo.db,
+                entidad=self.entidad,
+                entidad_id=payload["anunciante_id"],
+                campo=CAMPO_MONTO_MAXIMO_CREDITO,
+                anterior=None,
+                nuevo=payload[CAMPO_MONTO_MAXIMO_CREDITO],
+                usuario=usuario,
+                motivo=None,
+                requiere_motivo=False,
+            )
 
     def _pre_update(self, obj: Anunciante, payload: dict[str, Any], usuario: CurrentUser) -> None:
         motivo = payload.pop("motivo_cambio", None)  # transitorio: nunca llega a la BD
+
+        if "rfc_anunciante" in payload:
+            self._verificar_rfc_unico(payload["rfc_anunciante"], excluir_id=obj.anunciante_id)
 
         if "agencia_id" in payload and payload["agencia_id"] is not None:
             self._verificar_agencia(payload["agencia_id"])
@@ -364,6 +404,29 @@ class AnuncianteService(
                 usuario=usuario,
                 motivo=motivo,
                 requiere_motivo=True,
+            )
+
+        if (
+            CAMPO_MONTO_MAXIMO_CREDITO in payload
+            and payload[CAMPO_MONTO_MAXIMO_CREDITO] != obj.monto_maximo_credito
+        ):
+            audit.registrar_cambio_sensible(
+                db=self._anunciante_repo.db,
+                entidad=self.entidad,
+                entidad_id=obj.anunciante_id,
+                campo=CAMPO_MONTO_MAXIMO_CREDITO,
+                anterior=obj.monto_maximo_credito,
+                nuevo=payload[CAMPO_MONTO_MAXIMO_CREDITO],
+                usuario=usuario,
+                motivo=motivo,
+                requiere_motivo=True,
+            )
+
+    def _verificar_rfc_unico(self, rfc: str, excluir_id: uuid.UUID | None) -> None:
+        if self._anunciante_repo.get_by_rfc(rfc, excluir_id) is not None:
+            raise ConflictError(
+                f"Ya existe un anunciante con el RFC {rfc}.",
+                detalles={"campo": "rfc_anunciante", "valor": rfc},
             )
 
     def _pre_desactivar(self, obj: Anunciante, forzar: bool, usuario: CurrentUser) -> None:
