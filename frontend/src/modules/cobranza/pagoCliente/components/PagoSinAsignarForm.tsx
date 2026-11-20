@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 
-import { DateInput } from "@/shared/ui";
+import { DateInput, SearchableSelect } from "@/shared/ui";
 
 import { useCuentasContables, useFormasDePago, useMetodosDePago } from "../../hooks";
 import type { PagoClienteCreate } from "../../types";
@@ -149,18 +149,11 @@ export function PagoSinAsignarForm({ submitting = false, submitError, onConfirm,
             </div>
             <div>
               <div className="fl fl-required">Cuenta contable</div>
-              <select
-                className="fsel"
+              <SearchableSelect
                 value={cuentaContable}
-                onChange={(e) => setCuentaContable(e.target.value)}
-              >
-                <option value="">— Selecciona —</option>
-                {(cuentasContables.data ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.etiqueta}
-                  </option>
-                ))}
-              </select>
+                onChange={setCuentaContable}
+                options={(cuentasContables.data ?? []).map((c) => ({ value: c.id, label: c.etiqueta }))}
+              />
             </div>
           </div>
           <div className="fl">Fecha de depósito</div>

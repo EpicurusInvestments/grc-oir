@@ -8,6 +8,14 @@
  * Los `<select>` del formulario no tienen `<label>` asociado (mismo criterio que
  * `RegistrarPagoForm.test.tsx`), así que se ubican por posición con
  * `container.querySelectorAll("select.fsel")` en vez de por accesible name.
+ *
+ * ADR-221b (petición del usuario, "combos largos → buscador"): Afiliado/Agencia/
+ * Vendedor dejaron de ser `<select>` nativos — ahora son `SearchableSelect`, un
+ * `<input>` de texto cuyas opciones solo existen en el DOM mientras está abierto (y
+ * viven en un portal, no dentro del propio campo). `elegirEnBuscable` abre, escribe y
+ * confirma por clic — y esa misma espera (`findByText`) ya cubre que el catálogo
+ * mockeado haya resuelto, así que no hace falta un `findByText` previo "solo para
+ * sincronizar" antes de elegir esa misma opción.
  */
 
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
@@ -19,6 +27,9 @@ import { RequisicionForm } from "../requisicion/components/RequisicionForm";
 vi.mock("../api", () => ({
   afiliadosInfo: vi.fn().mockResolvedValue([
     { afiliado_id: "af-1", nombre_afiliado: "Radio Fórmula MX", razon_social_afiliado: "Radio Fórmula MX SA de CV" },
+    // Sin facturas en `facturasAfiliadoPagables` — usado para probar que cambiar de
+    // afiliado limpia el monto aunque el nuevo no tenga nada que autollenar.
+    { afiliado_id: "af-2", nombre_afiliado: "Afiliado Sin Facturas", razon_social_afiliado: "Afiliado Sin Facturas SA de CV" },
   ]),
   agenciasInfo: vi.fn().mockResolvedValue([
     { agencia_id: "ag-1", nombre_agencia: "Mindshare México", rfc_agencia: "MIN010101AAA", porcentaje_comision_agencia_default: "10.00" },
@@ -40,6 +51,24 @@ vi.mock("../api", () => ({
   ordenesInfo: vi.fn().mockResolvedValue([{ orden_id: "oc-1", folio_orden: "OC-2026-0041", total: "4698.00" }]),
 }));
 
+// Elige una opción ya existente: escribe su texto y confirma con clic.
+async function elegirEnBuscable(input: HTMLElement, texto: string) {
+  fireEvent.change(input, { target: { value: texto } });
+  fireEvent.mouseDown(await screen.findByText(texto));
+}
+
+// Solo espera a que el catálogo mockeado haya resuelto (sin elegir nada) — abre el
+// buscador, confirma que la opción ya está, y lo cierra sin tocarla.
+async function esperarCatalogo(input: HTMLElement, texto: string) {
+  fireEvent.focus(input);
+  await screen.findByText(texto);
+  fireEvent.mouseDown(document.body);
+}
+
+function buscador(container: HTMLElement): HTMLInputElement {
+  return container.querySelector('input[placeholder="Selecciona…"]') as HTMLInputElement;
+}
+
 function renderForm() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -52,10 +81,9 @@ function renderForm() {
 describe("RequisicionForm: autollenado del monto al elegir una factura", () => {
   it("pago_afiliado: elegir la factura de la emisora pinta su total en 'Monto de la requisición', y sigue editable", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
-    const [, selectAfiliado, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    await elegirEnBuscable(buscador(container), "Radio Fórmula MX");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fa-1" } });
 
     const monto = screen.getByDisplayValue("290.25") as HTMLInputElement;
@@ -67,14 +95,12 @@ describe("RequisicionForm: autollenado del monto al elegir una factura", () => {
 
   it("pago_agencia: elegir la factura de la agencia pinta su total", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "pago_agencia" } });
-    await screen.findByText("Mindshare México");
 
-    const [, selectAgencia, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAgencia, { target: { value: "ag-1" } });
+    await elegirEnBuscable(buscador(container), "Mindshare México");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fg-1" } });
 
     expect(screen.getByDisplayValue("704.70")).toBeInTheDocument();
@@ -82,14 +108,12 @@ describe("RequisicionForm: autollenado del monto al elegir una factura", () => {
 
   it("comision_vendedor: elegir la factura del vendedor pinta su total", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
-    await screen.findByText("Juan Arturo Rodríguez Morales");
 
-    const [, selectVendedor, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+    await elegirEnBuscable(buscador(container), "Juan Arturo Rodríguez Morales");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fv-1" } });
 
     expect(screen.getByDisplayValue("4698.00")).toBeInTheDocument();
@@ -99,24 +123,23 @@ describe("RequisicionForm: autollenado del monto al elegir una factura", () => {
 describe("RequisicionForm: bug reportado por el usuario — el monto quedaba con un dato pasado al cambiar de combo", () => {
   it("pago_afiliado: cambiar de afiliado (aunque el nuevo no tenga facturas) limpia el monto ya autollenado", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
-    const [, selectAfiliado, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    const afiliadoInput = buscador(container);
+    await elegirEnBuscable(afiliadoInput, "Radio Fórmula MX");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fa-1" } });
     expect(screen.getByDisplayValue("290.25")).toBeInTheDocument();
 
-    // "af-2" no existe en el catálogo mockeado — simula un afiliado sin facturas.
-    fireEvent.change(selectAfiliado, { target: { value: "af-2" } });
+    // "Afiliado Sin Facturas" no tiene nada en `facturasAfiliadoPagables`.
+    await elegirEnBuscable(afiliadoInput, "Afiliado Sin Facturas");
     expect(screen.queryByDisplayValue("290.25")).not.toBeInTheDocument();
   });
 
   it("pago_afiliado: volver la factura a '— Ninguna —' también limpia el monto", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
-    const [, selectAfiliado, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    await elegirEnBuscable(buscador(container), "Radio Fórmula MX");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fa-1" } });
     expect(screen.getByDisplayValue("290.25")).toBeInTheDocument();
 
@@ -126,26 +149,24 @@ describe("RequisicionForm: bug reportado por el usuario — el monto quedaba con
 
   it("comision_vendedor: cambiar de vendedor limpia el monto autollenado por la factura del vendedor anterior", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
-    await screen.findByText("Juan Arturo Rodríguez Morales");
 
-    const [, selectVendedor, selectFactura] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+    const vendedorInput = buscador(container);
+    await elegirEnBuscable(vendedorInput, "Juan Arturo Rodríguez Morales");
+    const [, selectFactura] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFactura, { target: { value: "fv-1" } });
     expect(screen.getByDisplayValue("4698.00")).toBeInTheDocument();
 
-    fireEvent.change(selectVendedor, { target: { value: "vd-2" } });
+    await elegirEnBuscable(vendedorInput, "María López Castro");
     expect(screen.queryByDisplayValue("4698.00")).not.toBeInTheDocument();
   });
 });
 
 describe("RequisicionForm: 'Comisión agencia' se quita del selector (petición del usuario)", () => {
-  it("el selector 'Tipo de requisición' ya no ofrece 'Comisión agencia'", async () => {
+  it("el selector 'Tipo de requisición' ya no ofrece 'Comisión agencia'", () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     const opciones = Array.from(selectTipo.querySelectorAll("option")).map((o) => o.textContent);
@@ -157,11 +178,10 @@ describe("RequisicionForm: 'Comisión agencia' se quita del selector (petición 
 describe("RequisicionForm: 'Pagos vendedor' (petición del usuario) — mismo patrón que 'Pago agencia'", () => {
   it("ya no muestra 'Orden de cliente' ni '% Comisión'", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
-    await screen.findByText("Juan Arturo Rodríguez Morales");
+    await esperarCatalogo(buscador(container), "Juan Arturo Rodríguez Morales");
 
     expect(screen.queryByText("Orden de cliente")).not.toBeInTheDocument();
     expect(screen.queryByText("% Comisión")).not.toBeInTheDocument();
@@ -176,11 +196,9 @@ describe("RequisicionForm: 'Pagos vendedor' (petición del usuario) — mismo pa
         <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
       </QueryClientProvider>,
     );
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
-    await screen.findByText("Juan Arturo Rodríguez Morales");
 
     expect(screen.queryByText("Factura del vendedor (opcional)")).not.toBeInTheDocument();
     expect(screen.getByText("Factura del vendedor")).toBeInTheDocument();
@@ -190,8 +208,7 @@ describe("RequisicionForm: 'Pagos vendedor' (petición del usuario) — mismo pa
 
     // Vendedor PRIMERO: elegirlo limpia el monto (fix de un bug anterior), así que debe
     // ir antes de capturar el monto, no después.
-    const [, selectVendedor] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+    await elegirEnBuscable(buscador(container), "Juan Arturo Rodríguez Morales");
 
     const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
     fireEvent.change(monto, { target: { value: "100.00" } });
@@ -211,13 +228,11 @@ describe("RequisicionForm: 'Pago afiliado'/'Pago agencia' (petición del usuario
         <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
       </QueryClientProvider>,
     );
-    await screen.findByText("Radio Fórmula MX");
 
     expect(screen.queryByText("Factura de la emisora (opcional)")).not.toBeInTheDocument();
     expect(screen.getByText("Factura de la emisora")).toBeInTheDocument();
 
-    const [, selectAfiliado] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    await elegirEnBuscable(buscador(container), "Radio Fórmula MX");
 
     const numero = container.querySelectorAll("input.fi")[0] as HTMLInputElement;
     fireEvent.change(numero, { target: { value: "REQ-TEST" } });
@@ -237,17 +252,14 @@ describe("RequisicionForm: 'Pago afiliado'/'Pago agencia' (petición del usuario
         <RequisicionForm onSubmit={onSubmit} onCancel={vi.fn()} />
       </QueryClientProvider>,
     );
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "pago_agencia" } });
-    await screen.findByText("Mindshare México");
 
     expect(screen.queryByText("Factura de la agencia (opcional)")).not.toBeInTheDocument();
     expect(screen.getByText("Factura de la agencia")).toBeInTheDocument();
 
-    const [, selectAgencia] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAgencia, { target: { value: "ag-1" } });
+    await elegirEnBuscable(buscador(container), "Mindshare México");
 
     const numero = container.querySelectorAll("input.fi")[0] as HTMLInputElement;
     fireEvent.change(numero, { target: { value: "REQ-TEST" } });
@@ -263,42 +275,38 @@ describe("RequisicionForm: 'Pago afiliado'/'Pago agencia' (petición del usuario
 describe("RequisicionForm: bug reportado por el usuario — cambiar de 'Tipo de requisición' no limpiaba los demás campos", () => {
   it("pago_afiliado → pago_agencia: limpia afiliado/factura/monto; el nuevo tipo no hereda nada del anterior", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
-    const [selectTipo, selectAfiliado, selectFacturaAfiliado] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectAfiliado, { target: { value: "af-1" } });
+    const [selectTipo] = container.querySelectorAll("select.fsel");
+    await elegirEnBuscable(buscador(container), "Radio Fórmula MX");
+    const [, selectFacturaAfiliado] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFacturaAfiliado, { target: { value: "fa-1" } });
     expect(screen.getByDisplayValue("290.25")).toBeInTheDocument();
 
     fireEvent.change(selectTipo, { target: { value: "pago_agencia" } });
-    await screen.findByText("Mindshare México");
+    await esperarCatalogo(buscador(container), "Mindshare México");
 
     // El monto autollenado por la factura de afiliado ya no debe seguir ahí.
     expect(screen.queryByDisplayValue("290.25")).not.toBeInTheDocument();
-    // El select de Afiliado/su factura ya no están en el DOM (cambió de rama) — si el
+    // El buscador de Afiliado/su factura ya no están en el DOM (cambió de rama) — si el
     // componente conservara el valor viejo "af-1" en el estado, no se notaría visualmente
     // porque el campo no se renderiza, pero si se vuelve a "pago_afiliado" debe verse limpio.
     fireEvent.change(selectTipo, { target: { value: "pago_afiliado" } });
-    await screen.findByText("Radio Fórmula MX");
-    const [, selectAfiliado2] = container.querySelectorAll("select.fsel");
-    expect((selectAfiliado2 as HTMLSelectElement).value).toBe("");
+    const afiliadoInput2 = buscador(container);
+    expect(afiliadoInput2.value).toBe("");
   });
 
   it("comision_vendedor → pago_afiliado: limpia vendedor/factura del vendedor/monto", async () => {
     const { container } = renderForm();
-    await screen.findByText("Radio Fórmula MX");
 
     const [selectTipo] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectTipo, { target: { value: "comision_vendedor" } });
-    await screen.findByText("Juan Arturo Rodríguez Morales");
 
-    const [, selectVendedor, selectFacturaVendedor] = container.querySelectorAll("select.fsel");
-    fireEvent.change(selectVendedor, { target: { value: "vd-1" } });
+    await elegirEnBuscable(buscador(container), "Juan Arturo Rodríguez Morales");
+    const [, selectFacturaVendedor] = container.querySelectorAll("select.fsel");
     fireEvent.change(selectFacturaVendedor, { target: { value: "fv-1" } });
     expect(screen.getByDisplayValue("4698.00")).toBeInTheDocument();
 
     fireEvent.change(selectTipo, { target: { value: "pago_afiliado" } });
-    await screen.findByText("Radio Fórmula MX");
 
     expect(screen.queryByDisplayValue("4698.00")).not.toBeInTheDocument();
     const monto = container.querySelector('input[inputmode="decimal"]') as HTMLInputElement;
