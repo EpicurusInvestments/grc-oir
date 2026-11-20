@@ -663,14 +663,18 @@ export function OrdenClienteForm({
                 <div className="fl fl-required">
                   Empresa facturadora <FieldTag origin="catalogo" />
                 </div>
-                <select className="fsel" disabled={congelado} {...register("empresa_facturadora_id")}>
-                  <option value="">Selecciona…</option>
-                  {empresasFacturadoras.filter(esActivo).map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.nombre_empresa}
-                    </option>
-                  ))}
-                </select>
+                <Controller
+                  control={control}
+                  name="empresa_facturadora_id"
+                  render={({ field }) => (
+                    <SearchableSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={congelado}
+                      options={empresasFacturadoras.filter(esActivo).map((e) => ({ value: e.id, label: e.nombre_empresa }))}
+                    />
+                  )}
+                />
                 <div className="fe">{errors.empresa_facturadora_id?.message}</div>
               </div>
             </div>
@@ -694,28 +698,25 @@ export function OrdenClienteForm({
                 <div className="fl fl-required">
                   Anunciante <FieldTag origin="catalogo" />
                 </div>
-                <select className="fsel" disabled={congelado} value={anuncianteId} onChange={(e) => onAnuncianteChange(e.target.value)}>
-                  <option value="">Selecciona…</option>
-                  {anunciantes.filter(esActivo).map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.nombre_comercial}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  value={anuncianteId}
+                  onChange={onAnuncianteChange}
+                  disabled={congelado}
+                  options={anunciantes.filter(esActivo).map((a) => ({ value: a.id, label: a.nombre_comercial }))}
+                />
                 <div className="fe">{errors.anunciante_id?.message}</div>
               </div>
               <div>
                 <div className="fl">
                   Agencia <FieldTag origin="catalogo" /> <span className="derivado-hint">sugerida del anunciante</span>
                 </div>
-                <select className="fsel" disabled={congelado} value={watch("agencia_id")} onChange={(e) => onAgenciaChange(e.target.value)}>
-                  <option value="">Sin agencia (venta directa)</option>
-                  {agencias.filter(esActivo).map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.nombre_agencia}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  value={watch("agencia_id") ?? ""}
+                  onChange={onAgenciaChange}
+                  disabled={congelado}
+                  emptyOptionLabel="Sin agencia (venta directa)"
+                  options={agencias.filter(esActivo).map((a) => ({ value: a.id, label: a.nombre_agencia }))}
+                />
                 <div className="fe">{errors.agencia_id?.message}</div>
               </div>
             </div>
@@ -1112,22 +1113,15 @@ export function OrdenClienteForm({
                 <div className="fl fl-required">
                   Vendedor principal <FieldTag origin="catalogo" />
                 </div>
-                <select
-                  className="fsel"
-                  disabled={congelado}
+                <SearchableSelect
                   value={vpId}
-                  onChange={(e) => onVendedorChange("vendedor_principal_id", e.target.value)}
-                >
-                  <option value="">Selecciona…</option>
-                  {vendedores
+                  onChange={(id) => onVendedorChange("vendedor_principal_id", id)}
+                  disabled={congelado}
+                  options={vendedores
                     .filter(esActivo)
                     .filter((v) => v.id !== vsId)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.nombre_vendedor}
-                      </option>
-                    ))}
-                </select>
+                    .map((v) => ({ value: v.id, label: v.nombre_vendedor }))}
+                />
                 <div className="fe">{errors.vendedor_principal_id?.message}</div>
               </div>
               <div>
@@ -1148,22 +1142,16 @@ export function OrdenClienteForm({
                 <div className="fl">
                   Vendedor secundario <FieldTag origin="catalogo" />
                 </div>
-                <select
-                  className="fsel"
+                <SearchableSelect
+                  value={vsId ?? ""}
+                  onChange={(id) => onVendedorChange("vendedor_secundario_id", id)}
                   disabled={congelado}
-                  value={vsId}
-                  onChange={(e) => onVendedorChange("vendedor_secundario_id", e.target.value)}
-                >
-                  <option value="">Sin vendedor secundario</option>
-                  {vendedores
+                  emptyOptionLabel="Sin vendedor secundario"
+                  options={vendedores
                     .filter(esActivo)
                     .filter((v) => v.id !== vpId)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.nombre_vendedor}
-                      </option>
-                    ))}
-                </select>
+                    .map((v) => ({ value: v.id, label: v.nombre_vendedor }))}
+                />
               </div>
               <div>
                 <SensitiveField

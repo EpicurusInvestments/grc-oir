@@ -167,10 +167,10 @@ function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}
 }
 
 describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radio group mutuamente excluyente", () => {
-  it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", () => {
+  it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", async () => {
     const { container } = renderForm();
     // ADR-242: "Facturación a la Agencia" exige tener una agencia seleccionada.
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Agencia Uno");
 
     // ADR-181: la etiqueta visible cambió a "Facturación a la Agencia" — el campo real
     // (`afiliado_factura_directo_al_cliente`) sigue siendo el mismo.
@@ -190,18 +190,18 @@ describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radi
 });
 
 describe("ADR-242 (bug reportado por el usuario, con captura): no se puede facturar a la agencia sin una agencia seleccionada", () => {
-  it("el radio 'Facturación a la Agencia' está deshabilitado mientras no haya agencia", () => {
+  it("el radio 'Facturación a la Agencia' está deshabilitado mientras no haya agencia", async () => {
     const { container } = renderForm();
     // Nota: no se simula un click sobre el radio deshabilitado — un `disabled` real en el
     // navegador ya impide que el usuario lo seleccione; lo que prueba el bug es que el
     // `disabled` esté puesto, no reimplementar el comportamiento nativo del DOM.
     expect(screen.getByLabelText(/Facturación a la Agencia/)).toBeDisabled();
 
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Agencia Uno");
     expect(screen.getByLabelText(/Facturación a la Agencia/)).toBeEnabled();
   });
 
-  it("si se quita la agencia mientras 'Facturación a la Agencia' está activa, regresa a 'Facturación directa al cliente'", () => {
+  it("si se quita la agencia mientras 'Facturación a la Agencia' está activa, regresa a 'Facturación directa al cliente'", async () => {
     const defaultValues = makeOCInput({
       anunciante_id: "an1",
       agencia_id: "ag1",
@@ -214,7 +214,7 @@ describe("ADR-242 (bug reportado por el usuario, con captura): no se puede factu
     const agencia = screen.getByLabelText(/Facturación a la Agencia/) as HTMLInputElement;
     expect(agencia.checked).toBe(true);
 
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Sin agencia (venta directa)");
 
     expect(agencia.checked).toBe(false);
     expect(directa.checked).toBe(true);
@@ -278,9 +278,9 @@ describe("ADR-181: 'Facturación a la Agencia' autocompleta la dirección con el
 });
 
 describe("Cascada anunciante → contrato / marca (1.7)", () => {
-  it("elegir un anunciante filtra sus contratos vigentes y sus marcas", () => {
+  it("elegir un anunciante filtra sus contratos vigentes y sus marcas", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Anunciante"), { target: { value: "an1" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Anunciante"), "Televisa Publicidad");
 
     const opcionesContrato = Array.from(fieldByLabelText<HTMLSelectElement>(container, "Contrato").options).map((o) => o.textContent);
     expect(opcionesContrato).toContain("Campaña Verano 2025");
@@ -293,27 +293,27 @@ describe("Cascada anunciante → contrato / marca (1.7)", () => {
     expect(opcionesMarca).not.toContain("Pan Bimbo");
   });
 
-  it("cambiar de anunciante limpia el contrato y la marca ya seleccionados", () => {
+  it("cambiar de anunciante limpia el contrato y la marca ya seleccionados", async () => {
     const { container } = renderForm();
-    const anuncianteSelect = fieldByLabelText<HTMLSelectElement>(container, "Anunciante");
-    fireEvent.change(anuncianteSelect, { target: { value: "an1" } });
+    const anuncianteInput = fieldByLabelText<HTMLInputElement>(container, "Anunciante");
+    await elegirEnBuscable(anuncianteInput, "Televisa Publicidad");
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Contrato"), { target: { value: "co1" } });
     fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Marca"), { target: { value: "mc1" } });
 
     expect(fieldByLabelText<HTMLSelectElement>(container, "Contrato").value).toBe("co1");
     expect(fieldByLabelText<HTMLSelectElement>(container, "Marca").value).toBe("mc1");
 
-    fireEvent.change(anuncianteSelect, { target: { value: "an2" } });
+    await elegirEnBuscable(anuncianteInput, "Grupo Bimbo");
 
     expect(fieldByLabelText<HTMLSelectElement>(container, "Contrato").value).toBe("");
     expect(fieldByLabelText<HTMLSelectElement>(container, "Marca").value).toBe("");
   });
 
-  it("elegir un anunciante con agencia asociada sugiere la agencia, su % de comisión y hereda la dirección de facturación", () => {
+  it("elegir un anunciante con agencia asociada sugiere la agencia, su % de comisión y hereda la dirección de facturación", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Anunciante"), { target: { value: "an1" } }); // agencia_id: ag1
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Anunciante"), "Televisa Publicidad"); // agencia_id: ag1
 
-    expect(fieldByLabelText<HTMLSelectElement>(container, "Agencia").value).toBe("ag1");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Agencia").value).toBe("Agencia Uno");
     // Bug corregido (petición del usuario): la agencia sugerida por el anunciante
     // también debe traer su % de comisión default (ag1 → 10), no dejarlo vacío.
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("10");
@@ -322,56 +322,56 @@ describe("Cascada anunciante → contrato / marca (1.7)", () => {
     );
   });
 
-  it("si el % de comisión ya se había capturado a mano, sugerir la agencia del anunciante no lo sobrescribe", () => {
+  it("si el % de comisión ya se había capturado a mano, sugerir la agencia del anunciante no lo sobrescribe", async () => {
     const { container } = renderForm();
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia"), {
       target: { value: "20" },
     });
 
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Anunciante"), { target: { value: "an1" } }); // sugeriría ag1 → 10
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Anunciante"), "Televisa Publicidad"); // sugeriría ag1 → 10
 
-    expect(fieldByLabelText<HTMLSelectElement>(container, "Agencia").value).toBe("ag1");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Agencia").value).toBe("Agencia Uno");
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("20");
   });
 
-  it("si el usuario ya eligió una agencia a mano, cambiar de anunciante no la sobrescribe (sugiere, no fuerza)", () => {
+  it("si el usuario ya eligió una agencia a mano, cambiar de anunciante no la sobrescribe (sugiere, no fuerza)", async () => {
     const { container } = renderForm();
-    const anuncianteSelect = fieldByLabelText<HTMLSelectElement>(container, "Anunciante");
-    fireEvent.change(anuncianteSelect, { target: { value: "an2" } }); // sugiere ag2
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag3" } }); // el usuario la cambia a mano
+    const anuncianteInput = fieldByLabelText<HTMLInputElement>(container, "Anunciante");
+    await elegirEnBuscable(anuncianteInput, "Grupo Bimbo"); // sugiere ag2
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Agencia Tres"); // el usuario la cambia a mano
 
-    fireEvent.change(anuncianteSelect, { target: { value: "an3" } }); // sugeriría ag1
+    await elegirEnBuscable(anuncianteInput, "Coca-Cola"); // sugeriría ag1
 
-    expect(fieldByLabelText<HTMLSelectElement>(container, "Agencia").value).toBe("ag3");
+    expect(fieldByLabelText<HTMLInputElement>(container, "Agencia").value).toBe("Agencia Tres");
   });
 });
 
 describe("Snapshots de comisión — 1.8", () => {
-  it("elegir un vendedor principal sugiere su % de comisión default del catálogo", () => {
+  it("elegir un vendedor principal sugiere su % de comisión default del catálogo", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal"), { target: { value: "ve1" } }); // Renata Aguilar, default 5
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Vendedor principal"), "Renata Aguilar"); // default 5
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").value).toBe("5");
   });
 
-  it("elegir una agencia sugiere su % de comisión default del catálogo", () => {
+  it("elegir una agencia sugiere su % de comisión default del catálogo", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } }); // default 10
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Agencia Uno"); // default 10
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("10");
   });
 
-  it("fix: cambiar de una agencia a otra SÍ actualiza el % (a diferencia de vendedor, no se respeta el valor anterior)", () => {
+  it("fix: cambiar de una agencia a otra SÍ actualiza el % (a diferencia de vendedor, no se respeta el valor anterior)", async () => {
     const { container } = renderForm();
-    const agenciaSelect = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
-    fireEvent.change(agenciaSelect, { target: { value: "ag1" } }); // default 10
-    fireEvent.change(agenciaSelect, { target: { value: "ag2" } }); // default 12
+    const agenciaInput = fieldByLabelText<HTMLInputElement>(container, "Agencia");
+    await elegirEnBuscable(agenciaInput, "Agencia Uno"); // default 10
+    await elegirEnBuscable(agenciaInput, "Agencia Dos"); // default 12
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("12");
   });
 
-  it("volver a 'Sin agencia' limpia el % de comisión agencia", () => {
+  it("volver a 'Sin agencia' limpia el % de comisión agencia", async () => {
     const { container } = renderForm();
-    const agenciaSelect = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
-    fireEvent.change(agenciaSelect, { target: { value: "ag1" } });
-    fireEvent.change(agenciaSelect, { target: { value: "" } });
+    const agenciaInput = fieldByLabelText<HTMLInputElement>(container, "Agencia");
+    await elegirEnBuscable(agenciaInput, "Agencia Uno");
+    await elegirEnBuscable(agenciaInput, "Sin agencia (venta directa)");
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").value).toBe("");
   });
 
@@ -383,9 +383,9 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(true);
   });
 
-  it("fix: al elegir una agencia, el campo '% comisión agencia' se habilita", () => {
+  it("fix: al elegir una agencia, el campo '% comisión agencia' se habilita", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Agencia"), { target: { value: "ag1" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Agencia"), "Agencia Uno");
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión agencia").disabled).toBe(false);
   });
 
@@ -401,31 +401,31 @@ describe("Snapshots de comisión — 1.8", () => {
     expect(onGuardar).not.toHaveBeenCalled();
   });
 
-  it("si el % ya se capturó a mano, cambiar de vendedor no lo sobrescribe", () => {
+  it("si el % ya se capturó a mano, cambiar de vendedor no lo sobrescribe", async () => {
     const { container } = renderForm();
-    const vendedorSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");
-    fireEvent.change(vendedorSelect, { target: { value: "ve1" } }); // auto-llena 5
+    const vendedorInput = fieldByLabelText<HTMLInputElement>(container, "Vendedor principal");
+    await elegirEnBuscable(vendedorInput, "Renata Aguilar"); // auto-llena 5
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal"), { target: { value: "8" } });
 
-    fireEvent.change(vendedorSelect, { target: { value: "ve2" } }); // Roberto López, default 4
+    await elegirEnBuscable(vendedorInput, "Roberto López"); // default 4
 
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal").value).toBe("8");
   });
 
-  it("ADR-142 (corrige un bug real): volver a 'Sin vendedor secundario' limpia el % de comisión", () => {
+  it("ADR-142 (corrige un bug real): volver a 'Sin vendedor secundario' limpia el % de comisión", async () => {
     const { container } = renderForm();
-    const vendedorSecundarioSelect = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
-    fireEvent.change(vendedorSecundarioSelect, { target: { value: "ve1" } }); // auto-llena 5
+    const vendedorSecundarioInput = fieldByLabelText<HTMLInputElement>(container, "Vendedor secundario");
+    await elegirEnBuscable(vendedorSecundarioInput, "Renata Aguilar"); // auto-llena 5
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("5");
 
-    fireEvent.change(vendedorSecundarioSelect, { target: { value: "" } }); // Sin vendedor secundario
+    await elegirEnBuscable(vendedorSecundarioInput, "Sin vendedor secundario");
 
     expect(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor secundario").value).toBe("");
   });
 
-  it("el badge dice 'del catálogo' cuando coincide con el default, y 'sobrescrito' cuando se modifica a mano", () => {
+  it("el badge dice 'del catálogo' cuando coincide con el default, y 'sobrescrito' cuando se modifica a mano", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal"), { target: { value: "ve1" } });
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Vendedor principal"), "Renata Aguilar");
     expect(screen.getByText("del catálogo")).toBeInTheDocument();
 
     fireEvent.change(fieldByLabelText<HTMLInputElement>(container, "% comisión vendedor principal"), { target: { value: "8" } });
@@ -709,7 +709,7 @@ describe("Congelamiento (FROZEN_STATES) — 1.5", () => {
     const { container } = renderForm({ isEdit: true, estatusActual: "orden_cerrada" });
     expect(fieldByLabelText<HTMLInputElement>(container, "Total de spots").disabled).toBe(true);
     expect(fieldByLabelText<HTMLInputElement>(container, "No. de orden del cliente").disabled).toBe(true);
-    expect(fieldByLabelText<HTMLSelectElement>(container, "Anunciante").disabled).toBe(true);
+    expect(fieldByLabelText<HTMLInputElement>(container, "Anunciante").disabled).toBe(true);
   });
 });
 
@@ -870,28 +870,32 @@ describe("Validación: fecha de venta no puede ser pasada", () => {
 });
 
 describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edición", () => {
-  it("agencia inactiva no aparece en el select, la activa sí", () => {
+  it("agencia inactiva no aparece en el buscable, la activa sí", () => {
     const { container } = renderForm();
-    const select = fieldByLabelText<HTMLSelectElement>(container, "Agencia");
-    expect(within(select).getByText("Agencia Uno")).toBeInTheDocument();
-    expect(within(select).queryByText("Agencia Dada de Baja")).toBeNull();
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Agencia"));
+    expect(screen.getByText("Agencia Uno")).toBeInTheDocument();
+    expect(screen.queryByText("Agencia Dada de Baja")).toBeNull();
   });
 
-  it("anunciante inactivo no aparece en el select, el activo sí", () => {
+  it("anunciante inactivo no aparece en el buscable, el activo sí", () => {
     const { container } = renderForm();
-    const select = fieldByLabelText<HTMLSelectElement>(container, "Anunciante");
-    expect(within(select).getByText("Televisa Publicidad")).toBeInTheDocument();
-    expect(within(select).queryByText("Anunciante Dado de Baja")).toBeNull();
+    // `SearchableSelect` (ADR-246/combos largos) renderiza sus opciones en un portal, no
+    // dentro del propio campo — hay que abrirlo (focus) y buscar en toda la pantalla.
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Anunciante"));
+    expect(screen.getByText("Televisa Publicidad")).toBeInTheDocument();
+    expect(screen.queryByText("Anunciante Dado de Baja")).toBeNull();
   });
 
-  it("vendedor inactivo no aparece en el select de vendedor principal ni secundario, el activo sí", () => {
+  it("vendedor inactivo no aparece en el buscable de vendedor principal ni secundario, el activo sí", () => {
     const { container } = renderForm();
-    const selectPrincipal = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");
-    const selectSecundario = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
-    expect(within(selectPrincipal).getByText("Renata Aguilar")).toBeInTheDocument();
-    expect(within(selectPrincipal).queryByText("Vendedor Dado de Baja")).toBeNull();
-    expect(within(selectSecundario).getByText("Renata Aguilar")).toBeInTheDocument();
-    expect(within(selectSecundario).queryByText("Vendedor Dado de Baja")).toBeNull();
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Vendedor principal"));
+    expect(screen.getByText("Renata Aguilar")).toBeInTheDocument();
+    expect(screen.queryByText("Vendedor Dado de Baja")).toBeNull();
+    fireEvent.mouseDown(document.body); // cierra el de principal antes de abrir el otro
+
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Vendedor secundario"));
+    expect(screen.getByText("Renata Aguilar")).toBeInTheDocument();
+    expect(screen.queryByText("Vendedor Dado de Baja")).toBeNull();
   });
 });
 
@@ -899,22 +903,22 @@ describe("Fix: catálogos inactivos no aparecen en el formulario de alta/edició
 // vendedor como principal y secundario a la vez — cada select excluye al que ya está
 // seleccionado en el otro.
 describe("Fix: no se puede repetir el mismo vendedor como principal y secundario", () => {
-  it("elegir un vendedor como principal lo quita de las opciones de secundario", () => {
+  it("elegir un vendedor como principal lo quita de las opciones de secundario", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal"), {
-      target: { value: "ve1" },
-    });
-    const selectSecundario = fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario");
-    expect(within(selectSecundario).queryByText("Renata Aguilar")).toBeNull();
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Vendedor principal"), "Renata Aguilar");
+    fireEvent.mouseDown(document.body);
+
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Vendedor secundario"));
+    expect(screen.queryByText("Renata Aguilar")).toBeNull();
   });
 
-  it("elegir un vendedor como secundario lo quita de las opciones de principal", () => {
+  it("elegir un vendedor como secundario lo quita de las opciones de principal", async () => {
     const { container } = renderForm();
-    fireEvent.change(fieldByLabelText<HTMLSelectElement>(container, "Vendedor secundario"), {
-      target: { value: "ve1" },
-    });
-    const selectPrincipal = fieldByLabelText<HTMLSelectElement>(container, "Vendedor principal");
-    expect(within(selectPrincipal).queryByText("Renata Aguilar")).toBeNull();
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Vendedor secundario"), "Renata Aguilar");
+    fireEvent.mouseDown(document.body);
+
+    fireEvent.focus(fieldByLabelText<HTMLInputElement>(container, "Vendedor principal"));
+    expect(screen.queryByText("Renata Aguilar")).toBeNull();
   });
 });
 
