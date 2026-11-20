@@ -77,7 +77,8 @@ import {
   ordenEstacionFormatoRealFromApi,
   ordenEstacionLayoutRealFromApi,
 } from "../../adapters/fromApi";
-import { diaDeSemana, fmtFecha, fmtMonto } from "../../format";
+import { descripcionEstacion, diaDeSemana, fmtFecha, fmtFolio, fmtMonto } from "../../format";
+import type { EstacionRef } from "../../state/catalogosCache";
 import { programadoEfectivo } from "../../state/selectors";
 import type {
   LayoutRealAplicado,
@@ -173,6 +174,10 @@ function diaNuevoInvalidoMotivo(
 interface RealesFormProps {
   oe: OrdenEstacion;
   oc?: OrdenCliente;
+  /** ADR-276 (petición del usuario): descripción completa de la estación para el
+   * encabezado — antes solo se mostraba el folio. Opcional por si el padre no la
+   * resolvió (se omite el bloque en vez de reventar). */
+  estacion?: EstacionRef;
   submitting?: boolean;
   submitError?: string | null;
   onAvanzar: (
@@ -182,7 +187,7 @@ interface RealesFormProps {
   onCancelar: () => void;
 }
 
-export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCancelar }: RealesFormProps) {
+export function RealesForm({ oe, oc, estacion, submitting, submitError, onAvanzar, onCancelar }: RealesFormProps) {
   const [overrides, setOverrides] = useState<Record<string, Draft>>(() => {
     const inicial: Record<string, Draft> = {};
     (oe.horarios_reales ?? []).forEach((row) => {
@@ -451,8 +456,9 @@ export function RealesForm({ oe, oc, submitting, submitError, onAvanzar, onCance
       <SavingOverlay visible={submitting} />
       <div className="cat-header">
         <div>
-          <div className="cat-title">Capturar reales — {oe.folio_orden_interna}</div>
+          <div className="cat-title">Capturar reales — {fmtFolio(oe.folio_orden_interna)}</div>
           <div className="cat-sub">
+            {estacion ? `${descripcionEstacion(estacion)} · ` : ""}
             {oe.periodo_transmision.length} días · {nModif} modificado(s) · Programados {totalProgramado} spots → Reales {totalReal}
           </div>
         </div>

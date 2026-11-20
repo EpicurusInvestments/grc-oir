@@ -73,7 +73,7 @@ import { asignarPorPosicion, CalendarioPeriodoTransmision } from "../../componen
 import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/PeriodoTransmisionGrid";
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_PELIGROSAS_FORMATO_REAL } from "../../constants";
-import { fmtMonto, fmtPct } from "../../format";
+import { descripcionEstacion, fmtFolio, fmtMonto, fmtPct } from "../../format";
 import {
   esActivo,
   findAfiliado,
@@ -660,9 +660,9 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
       <div className="cat-header">
         <div className="cat-title">
           {oe
-            ? `Editar: ${oe.folio_orden_interna}`
+            ? `Editar: ${fmtFolio(oe.folio_orden_interna)}`
             : clonarDesde
-              ? `Nueva Orden de Transmisión (clonada de ${clonarDesde.folio_orden_interna})`
+              ? `Nueva Orden de Transmisión (clonada de ${fmtFolio(clonarDesde.folio_orden_interna)})`
               : "Nueva Orden de Transmisión"}
         </div>
       </div>
@@ -696,7 +696,7 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
                 caso ya resuelto (folio en texto, `.fv.mono`, siempre corto). */}
             <div style={{ maxWidth: 420 }}>
               {ocIdFijo || isEdit ? (
-                <div className="fv mono">{oc?.folio_orden}</div>
+                <div className="fv mono">{oc ? fmtFolio(oc.folio_orden) : null}</div>
               ) : (
                 <>
                   <SearchableSelect
@@ -735,17 +735,10 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
                     value={estacionId}
                     onChange={onEstacionChange}
                     disabled={isEdit}
-                    options={estaciones.filter(esActivo).map((e) => {
-                      // ADR-136/ADR-191 (petición del usuario, corrige un primer intento
-                      // que SÍ incluía la plaza): "Siglas Frecuencia TipoSeñal Nombre",
-                      // separados por un solo espacio (sin Plaza) — cualquier parte vacía
-                      // (siglas/frecuencia faltantes) se OMITE en vez de mostrar un "—" o
-                      // dejar un espacio en blanco de más.
-                      const partes = [e.siglas, e.frecuencia, e.tipo_senal.toUpperCase(), e.nombre_estacion].filter(
-                        (parte): parte is string => !!parte,
-                      );
-                      return { value: e.id, label: partes.join(" ") };
-                    })}
+                    options={estaciones.filter(esActivo).map((e) => ({
+                      value: e.id,
+                      label: descripcionEstacion(e),
+                    }))}
                   />
                 </div>
                 {estacion && (

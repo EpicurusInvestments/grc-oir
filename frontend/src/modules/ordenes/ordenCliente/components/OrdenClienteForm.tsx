@@ -40,11 +40,12 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { useConstantes, useCrearMotivoCambio } from "@/modules/catalogos/constantesSistema/hooks";
+import { adeudoVencidoAnuncianteApi } from "@/modules/cobranza/api";
 import { useDuracionesSpot } from "@/modules/catalogos/duracionSpot/hooks";
 import { SIN_RESULTADO } from "@/modules/catalogos/duracionSpot/types";
 import { formatDomicilio } from "@/shared/lib/formatDomicilio";
@@ -321,6 +322,28 @@ export function OrdenClienteForm({
     const marcaId = watch("marca_id");
     if (marcaId && !marcas.some((m) => m.id === marcaId)) setValue("marca_id", "");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo debe correr cuando cambia el anunciante
+  }, [anuncianteId]);
+
+  // ADR-277 (petición del usuario): alerta NO bloqueante al seleccionar el anunciante —
+  // el bloqueo real (si el adeudo vencido excede `monto_maximo_credito`) lo decide el
+  // backend al guardar (`OrdenClienteService._validar_credito_anunciante`), esto solo
+  // informa. Se ignora cualquier error de la consulta (p.ej. sin permiso) para no
+  // estorbar la captura por un problema ajeno a la orden en sí.
+  const [alertaAdeudo, setAlertaAdeudo] = useState<string | null>(null);
+  useEffect(() => {
+    setAlertaAdeudo(null);
+    if (!anuncianteId) return;
+    let cancelado = false;
+    adeudoVencidoAnuncianteApi(anuncianteId)
+      .then((r) => {
+        if (!cancelado && r.tiene_adeudo_vencido) {
+          setAlertaAdeudo("El cliente tiene adeudos vencidos.");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
   }, [anuncianteId]);
 
   const onAnuncianteChange = (id: string) => {
@@ -705,6 +728,11 @@ export function OrdenClienteForm({
                   options={anunciantes.filter(esActivo).map((a) => ({ value: a.id, label: a.nombre_comercial }))}
                 />
                 <div className="fe">{errors.anunciante_id?.message}</div>
+                {alertaAdeudo && (
+                  <div className="state-msg error" style={{ margin: "6px 0 0", textAlign: "left" }}>
+                    ⚠️ {alertaAdeudo}
+                  </div>
+                )}
               </div>
               <div>
                 <div className="fl">

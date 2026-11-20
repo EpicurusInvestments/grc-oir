@@ -21,7 +21,7 @@ import { CommissionSnapshotBlock } from "../../components/CommissionSnapshotBloc
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { Timeline } from "../../components/Timeline";
 import { FROZEN_STATES, STATUS_LABELS, rootState } from "../../constants";
-import { fmtFecha, fmtMonto, fmtRangoFechas, oGuion } from "../../format";
+import { fmtFecha, fmtFolio, fmtMonto, fmtRangoFechas, oGuion } from "../../format";
 import {
   findAfiliado,
   findAgencia,
@@ -138,7 +138,7 @@ export function OrdenClienteDetailPanel({
       <div className="dh">
         <div className="dh-row">
           <div>
-            <div className="dh-name">{oc.folio_orden}</div>
+            <div className="dh-name">{fmtFolio(oc.folio_orden)}</div>
             <div className="dh-sub">
               <span className={`badge ${congelado ? "b-amber" : "b-teal"}`}>
                 {oc.estatus_orden === "orden_cliente_sin_vobo" || oc.estatus_orden === "orden_cliente_con_vobo"
@@ -293,7 +293,7 @@ export function OrdenClienteDetailPanel({
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5, gap: 8 }}>
                 <span>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text2)", fontWeight: 500 }}>
-                    {oe.folio_orden_interna}
+                    {fmtFolio(oe.folio_orden_interna)}
                   </span>{" "}
                   <span style={{ fontWeight: 600 }}>{estacion?.nombre_estacion ?? "—"}</span>
                   <span style={{ color: "var(--text3)" }}> · {afiliado?.nombre_afiliado ?? "—"}</span>

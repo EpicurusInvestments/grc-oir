@@ -51,6 +51,23 @@ export interface FiltrosCobranzaFactura extends ListParams {
   estatus_cobro?: string;
 }
 
+/** ADR-277 (petición del usuario): "¿este anunciante tiene adeudo vencido?" —
+ * consumido por Ventas al seleccionar el anunciante en el alta de OrdenCliente
+ * (alerta no bloqueante; el bloqueo real, si excede `monto_maximo_credito`, lo decide
+ * el backend al guardar). */
+export interface AdeudoVencidoAnunciante {
+  anunciante_id: string;
+  tiene_adeudo_vencido: boolean;
+  suma_adeudo_vencido: string;
+}
+
+export async function adeudoVencidoAnuncianteApi(anunciante_id: string) {
+  const { data } = await apiClient.get<AdeudoVencidoAnunciante>(
+    `${BASE}/anunciantes/${anunciante_id}/adeudo-vencido`,
+  );
+  return data;
+}
+
 export const cobranzaFacturaApi = {
   async list(params?: FiltrosCobranzaFactura) {
     const { data } = await apiClient.get<Page<CobranzaFactura>>(`${BASE}/facturas`, { params });

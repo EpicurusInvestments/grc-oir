@@ -42,33 +42,37 @@ function renderPage(ocIdPreseleccionada?: string) {
 describe("Fix: OC preseleccionada filtra la tabla (no solo resalta la fila)", () => {
   it("sin preselección, se ven todas las OC", () => {
     const { tabla } = renderPage();
-    expect(within(tabla).getByText("OC-2026-0041")).toBeInTheDocument();
-    expect(within(tabla).getByText("OC-2026-0042")).toBeInTheDocument();
+    expect(within(tabla).getByText("OC-2026-41")).toBeInTheDocument();
+    expect(within(tabla).getByText("OC-2026-42")).toBeInTheDocument();
     expect(screen.getByText("2 de 2")).toBeInTheDocument();
   });
 
   it("con una OC preseleccionada, el buscador arranca con su folio y la tabla muestra solo esa fila", () => {
     const { tabla } = renderPage("oc-2");
 
+    // El buscador arranca con el folio CRUDO (sin formatear) — es lo que de verdad
+    // filtra contra `folio_orden` (ver `filtrarOrdenesCliente`), el formateo
+    // (ADR-275) es solo de despliegue en la tabla.
     const buscador = screen.getByPlaceholderText("Buscar folio, anunciante, no. de orden…");
     expect((buscador as HTMLInputElement).value).toBe("OC-2026-0042");
 
-    expect(within(tabla).getByText("OC-2026-0042")).toBeInTheDocument();
-    expect(within(tabla).queryByText("OC-2026-0041")).toBeNull();
+    expect(within(tabla).getByText("OC-2026-42")).toBeInTheDocument();
+    expect(within(tabla).queryByText("OC-2026-41")).toBeNull();
     expect(screen.getByText("1 de 2")).toBeInTheDocument();
   });
 });
 
-describe("Fix: la tabla muestra columna Fecha y ordena por folio descendente", () => {
-  it("ordena por folio descendente, aunque haya sido dada de alta antes", () => {
-    // "oc-folio-mayor" se creó ANTES que "oc-folio-menor" (created_at más viejo), pero su
-    // folio es mayor — debe aparecer primero: el orden es por folio, no por fecha de alta.
-    const ocFolioMenor = makeOC({ id: "oc-folio-menor", folio_orden: "OC-2026-0041", created_at: "2026-06-15" });
-    const ocFolioMayor = makeOC({ id: "oc-folio-mayor", folio_orden: "OC-2026-0050", created_at: "2026-01-01" });
+describe("Fix: la tabla muestra columna Fecha y ordena por fecha de creación descendente", () => {
+  it("ordena por fecha de creación, más reciente primero, aunque su folio sea menor", () => {
+    // ADR-275 (petición del usuario): el folio ya NO sirve como clave de orden — desde
+    // que conviven folios con y sin ceros a la izquierda, comparar como texto deja de
+    // equivaler a "más reciente" — ahora se ordena por `created_at`.
+    const ocVieja = makeOC({ id: "oc-vieja", folio_orden: "OC-2026-0041", created_at: "2026-01-01" });
+    const ocNueva = makeOC({ id: "oc-nueva", folio_orden: "OC-2026-0005", created_at: "2026-06-15" });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const utils = render(
       <QueryClientProvider client={qc}>
-        <OrdenesProvider initialState={{ ordenesCliente: [ocFolioMenor, ocFolioMayor], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+        <OrdenesProvider initialState={{ ordenesCliente: [ocVieja, ocNueva], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
           <OrdenClienteListPage onSeleccionarOE={vi.fn()} onAsignarEstaciones={vi.fn()} />
         </OrdenesProvider>
       </QueryClientProvider>,
@@ -77,7 +81,7 @@ describe("Fix: la tabla muestra columna Fecha y ordena por folio descendente", (
 
     expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
-    expect(within(filas[0]).getByText("OC-2026-0050")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OC-2026-0041")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("OC-2026-5")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OC-2026-41")).toBeInTheDocument();
   });
 });

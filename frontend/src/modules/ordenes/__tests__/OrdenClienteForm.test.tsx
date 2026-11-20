@@ -74,6 +74,15 @@ vi.mock("@/modules/catalogos/constantesSistema/api", () => ({
   },
 }));
 
+// ADR-277: alerta de adeudos vencidos al elegir el anunciante — se mockea sin
+// adeudo por default; las pruebas que sí la necesitan usan `mockResolvedValueOnce`.
+const adeudoVencidoMock = vi
+  .fn()
+  .mockResolvedValue({ anunciante_id: "", tiene_adeudo_vencido: false, suma_adeudo_vencido: "0.00" });
+vi.mock("@/modules/cobranza/api", () => ({
+  adeudoVencidoAnuncianteApi: (id: string) => adeudoVencidoMock(id),
+}));
+
 // Sembrado una sola vez, a nivel de módulo: an1/an3 sugieren ag1, an2 sugiere ag2 — cubre la
 // cascada anunciante→agencia/contrato/marca y los defaults de comisión de vendedor/agencia.
 agencias.push(
@@ -165,6 +174,35 @@ function renderForm(props: Partial<ComponentProps<typeof OrdenClienteForm>> = {}
   );
   return { ...utils, onGuardar, onCancelar };
 }
+
+describe("ADR-277: alerta de adeudos vencidos al elegir el anunciante", () => {
+  it("muestra la alerta cuando el anunciante tiene adeudo vencido", async () => {
+    adeudoVencidoMock.mockResolvedValueOnce({
+      anunciante_id: "an1",
+      tiene_adeudo_vencido: true,
+      suma_adeudo_vencido: "11600.00",
+    });
+    const { container } = renderForm();
+
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Anunciante"), "Televisa Publicidad");
+
+    expect(await screen.findByText(/El cliente tiene adeudos vencidos\./)).toBeInTheDocument();
+  });
+
+  it("no muestra ninguna alerta cuando el anunciante no tiene adeudo vencido", async () => {
+    adeudoVencidoMock.mockResolvedValueOnce({
+      anunciante_id: "an2",
+      tiene_adeudo_vencido: false,
+      suma_adeudo_vencido: "0.00",
+    });
+    const { container } = renderForm();
+
+    await elegirEnBuscable(fieldByLabelText<HTMLInputElement>(container, "Anunciante"), "Grupo Bimbo");
+
+    await waitFor(() => expect(adeudoVencidoMock).toHaveBeenCalledWith("an2"));
+    expect(screen.queryByText(/adeudos vencidos/)).toBeNull();
+  });
+});
 
 describe("ADR-141: 'Facturación directa'/'Facturación a la Agencia' es un radio group mutuamente excluyente", () => {
   it("arranca con 'Facturación directa al cliente' seleccionada por default, y elegir la otra la desmarca", async () => {

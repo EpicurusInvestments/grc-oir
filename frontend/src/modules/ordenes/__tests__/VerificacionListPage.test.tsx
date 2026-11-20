@@ -38,8 +38,8 @@ describe("Fix: Verificaciones ordena por cuándo llegó a 2.3, más reciente pri
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
 
     const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
-    expect(within(filas[0]).getByText("OE-2026-0050A")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OE-2026-0041A")).toBeInTheDocument();
+    expect(within(filas[0]).getByText("OE-2026-50A")).toBeInTheDocument();
+    expect(within(filas[1]).getByText("OE-2026-41A")).toBeInTheDocument();
     expect(screen.getByText("2 de 2")).toBeInTheDocument();
   });
 });

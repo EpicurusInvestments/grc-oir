@@ -22,7 +22,7 @@ import { previsualizarPdfOrdenEstacion, type TipoPdfOrdenEstacion } from "../../
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { agruparPorFecha } from "../../components/PeriodoTransmisionGrid";
 import { IVA_RATE } from "../../constants";
-import { diaDeSemana, fmtFecha, fmtMonto, fmtPct, oGuion } from "../../format";
+import { diaDeSemana, fmtFecha, fmtFolio, fmtMonto, fmtPct, oGuion } from "../../format";
 import { findAfiliado, findAnunciante, findEstacion, findPlaza, tarifaReferencia } from "../../state/catalogosCache";
 import { oiImporte, oiTotalSpots } from "../../state/selectors";
 import type { Incidencia, LogEnvioCorreo, OrdenCliente, OrdenEstacion, OrdenEstacionAudio } from "../../types";
@@ -175,7 +175,7 @@ export function OrdenEstacionDetailPanel({
       <div className="dh">
         <div className="dh-row">
           <div>
-            <div className="dh-name">{oe.folio_orden_interna}</div>
+            <div className="dh-name">{fmtFolio(oe.folio_orden_interna)}</div>
             <div className="dh-sub">
               <EstadoOIBadge estatus={oe.estatus} />
               {estacion && <span className="badge b-blue">{estacion.nombre_estacion}</span>}
@@ -197,7 +197,7 @@ export function OrdenEstacionDetailPanel({
         {oc ? (
           <div className="rel-item" onClick={onVerOC} style={{ cursor: "pointer" }}>
             <div>
-              <div className="rel-name">{oc.folio_orden}</div>
+              <div className="rel-name">{fmtFolio(oc.folio_orden)}</div>
               <div className="rel-sub">{oc.producto}</div>
             </div>
             <span className="fv link">Ver OC →</span>

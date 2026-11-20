@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
 
-import { fmtFecha, fmtMonto } from "../../format";
+import { fmtFecha, fmtFolio, fmtMonto } from "../../format";
 import { findEstacion } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { IncidenciaDetailPanel } from "../components/IncidenciaDetailPanel";
@@ -109,7 +109,7 @@ export function IncidenciaListPage({ incIdPreseleccionada, onVerOE, onVerVerific
                   <tr key={i.id} className={selectedId === i.id ? "sel" : ""} onClick={() => setSelectedId(i.id)}>
                     <td className="td-mono td-center">{fmtFecha(i.fecha_transmision)}</td>
                     <td className="td-mono td-center" style={{ fontSize: 11 }}>
-                      {oe?.folio_orden_interna ?? "—"}
+                      {oe ? fmtFolio(oe.folio_orden_interna) : "—"}
                     </td>
                     <td className="td-main">{estacion?.nombre_estacion ?? "—"}</td>
                     <td className="td-center">

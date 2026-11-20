@@ -19,7 +19,7 @@ import { SavingOverlay } from "@/shared/ui";
 import { AdjuntoOrdenInput } from "../../components/AdjuntoOrdenInput";
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { IVA_RATE } from "../../constants";
-import { fmtMonto } from "../../format";
+import { fmtFolio, fmtMonto } from "../../format";
 import { findAgencia, findVendedor } from "../../state/catalogosCache";
 import { ajusteIncidenciasDeOEs, totalRealDeOE, totalesOC } from "../../state/selectors";
 import type { Incidencia, OrdenCliente, OrdenEstacion } from "../../types";
@@ -79,7 +79,7 @@ export function CierreOCForm({ oc, oesDeLaOC, incidencias, submitting, submitErr
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <SavingOverlay visible={submitting} />
       <div className="cat-header">
-        <div className="cat-title">Cerrar orden — {oc.folio_orden}</div>
+        <div className="cat-title">Cerrar orden — {fmtFolio(oc.folio_orden)}</div>
       </div>
 
       {/* Dos columnas, como "Nueva orden del cliente": lo calculado/derivado (resumen) a la

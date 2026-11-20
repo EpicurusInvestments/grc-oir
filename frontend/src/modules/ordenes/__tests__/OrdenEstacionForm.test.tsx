@@ -13,6 +13,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionForm } from "../ordenEstacion/components/OrdenEstacionForm";
+import { fmtFolio } from "../format";
 import { OrdenesProvider } from "../state/OrdenesContext";
 import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
@@ -239,7 +240,7 @@ describe("ADR-210: 'Clonar' precarga una OE nueva con los datos de otra, sin act
     expect(fieldByLabelText<HTMLTextAreaElement>(container, "Observaciones de la estación").value).toBe(
       "Observación de la OE original",
     );
-    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2025-0009A)")).toBeInTheDocument();
+    expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2025-9A)")).toBeInTheDocument();
   });
 
   it("no activa modo edición: sigue pidiendo Material a Transmitir y guarda con la OC como alta nueva (no PATCH)", async () => {
@@ -1200,7 +1201,7 @@ describe("Edición de OE existente (corrección de errores de captura, antes de 
       oe: { estacion_id: "es1", precio_spot: 700, observaciones_estacion: "Nota original" },
     });
 
-    expect(screen.getByText(`Editar: ${oe!.folio_orden_interna}`)).toBeInTheDocument();
+    expect(screen.getByText(`Editar: ${fmtFolio(oe!.folio_orden_interna)}`)).toBeInTheDocument();
     expect(fieldByLabelText<HTMLInputElement>(container, "Tarifa por spot").value).toBe("700.00");
     expect(screen.getByDisplayValue("Nota original")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
