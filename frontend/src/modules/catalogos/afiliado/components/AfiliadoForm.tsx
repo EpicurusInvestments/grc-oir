@@ -14,6 +14,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -22,6 +23,12 @@ import { SavingOverlay } from "@/shared/ui";
 import type { AfiliadoCreate } from "../types";
 import type { ContactoFormData } from "./ContactoInlineForm";
 import { ContactosSection } from "./ContactosSection";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
 
@@ -48,6 +55,10 @@ interface AfiliadoFormProps {
   defaultValues?: Partial<AfiliadoFormValues>;
   isEdit?: boolean;
   submitting?: boolean;
+  /** Bug corregido (petición del usuario, con captura): un RFC repetido lo rechaza el
+   *  backend (409), pero antes el error se perdía sin mostrarse — el formulario se
+   *  quedaba ahí sin explicar nada. */
+  submitError?: string | null;
   /** `contactosNuevos` solo trae algo en ALTA; en edición siempre llega vacío, porque ahí
    *  ya se sincronizan solos contra el backend. */
   onSubmit: (data: AfiliadoCreate, contactosNuevos: ContactoFormData[]) => void;
@@ -60,6 +71,7 @@ export function AfiliadoForm({
   defaultValues,
   isEdit = false,
   submitting,
+  submitError,
   onSubmit,
   onCancel,
 }: AfiliadoFormProps) {
@@ -99,11 +111,11 @@ export function AfiliadoForm({
         <div className="sec">Identificación</div>
 
         <div className="fl fl-required">Nombre del afiliado</div>
-        <input className="fi" autoFocus {...register("nombre_afiliado")} />
+        <input className="fi" autoFocus {...register("nombre_afiliado", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_afiliado?.message}</div>
 
         <div className="fl fl-required">Razón social</div>
-        <input className="fi" {...register("razon_social_afiliado")} />
+        <input className="fi" {...register("razon_social_afiliado", { onChange: aMayusculas })} />
         <div className="fe">{errors.razon_social_afiliado?.message}</div>
 
         <div className="fl fl-required">RFC</div>
@@ -111,7 +123,7 @@ export function AfiliadoForm({
           className="fi"
           maxLength={13}
           style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
-          {...register("rfc_afiliado")}
+          {...register("rfc_afiliado", { onChange: aMayusculas })}
         />
         <div className="fe">{errors.rfc_afiliado?.message}</div>
 
@@ -122,13 +134,20 @@ export function AfiliadoForm({
           onContactosNuevosChange={setContactosNuevos}
         />
       </div>
-      <div className="df">
-        <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
-          Cancelar
-        </button>
-        <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
-          {submitting ? "Guardando…" : "Guardar"}
-        </button>
+      <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+        {submitError && (
+          <div className="state-msg error" style={{ margin: 0, textAlign: "left" }}>
+            {submitError}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
+            Cancelar
+          </button>
+          <button type="submit" className="btn btn-sm btn-teal" disabled={submitting}>
+            {submitting ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
       </div>
     </form>
   );

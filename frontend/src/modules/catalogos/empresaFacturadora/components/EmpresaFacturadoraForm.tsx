@@ -3,15 +3,22 @@
  * domicilio estructurado con autocompletado por código postal (ADR-059). */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import type { ChangeEvent } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { DomicilioPostalInput, type DomicilioPostalValues, SavingOverlay } from "@/shared/ui";
+import { DomicilioPostalInput, type DomicilioPostalValues, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { useConstantes } from "../../constantesSistema/hooks";
 import type { EmpresaFacturadoraCreate } from "../types";
 
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   nombre_empresa: z.string().trim().min(1, "El nombre es obligatorio.").max(200),
@@ -61,6 +68,7 @@ export function EmpresaFacturadoraForm({
 }: EmpresaFacturadoraFormProps) {
   const {
     register,
+    control,
     handleSubmit,
     watch,
     setValue,
@@ -136,7 +144,7 @@ export function EmpresaFacturadoraForm({
         <div className="sec">Datos fiscales</div>
 
         <div className="fl fl-required">Nombre / Razón social</div>
-        <input className="fi" autoFocus {...register("nombre_empresa")} />
+        <input className="fi" autoFocus {...register("nombre_empresa", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_empresa?.message}</div>
 
         <div className="fl fl-required">RFC</div>
@@ -144,19 +152,23 @@ export function EmpresaFacturadoraForm({
           className="fi"
           maxLength={13}
           style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
-          {...register("rfc_empresa")}
+          {...register("rfc_empresa", { onChange: aMayusculas })}
         />
         <div className="fe">{errors.rfc_empresa?.message}</div>
 
         <div className="fl">Régimen fiscal</div>
-        <select className="fsel" {...register("regimen_fiscal")}>
-          <option value="">— Sin capturar —</option>
-          {(regimenes.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="regimen_fiscal"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin capturar —"
+              options={(regimenes.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         <div className="fe">{errors.regimen_fiscal?.message}</div>
 
         <div className="sec">Domicilio</div>

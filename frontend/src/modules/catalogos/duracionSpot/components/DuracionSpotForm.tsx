@@ -11,12 +11,19 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { SavingOverlay } from "@/shared/ui";
 
 import type { DuracionSpotCatalogoCreate } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   producto: z.string().trim().min(1, "El producto es obligatorio.").max(60),
@@ -72,7 +79,7 @@ export function DuracionSpotForm({
           className="fi"
           autoFocus
           placeholder="p. ej. Spot, Mención, Jingle promocional…"
-          {...register("producto")}
+          {...register("producto", { onChange: aMayusculas })}
         />
         <div className="fe">{errors.producto?.message}</div>
 
@@ -80,7 +87,7 @@ export function DuracionSpotForm({
         <input
           className="fi"
           placeholder="p. ej. 20, 1, sin duración… (vacío = «sin resultado»)"
-          {...register("descripcion_duracion")}
+          {...register("descripcion_duracion", { onChange: aMayusculas })}
         />
         <div className="fv muted" style={{ fontSize: 11, marginTop: 2 }}>
           Si se deja vacía, se guarda como «sin resultado» (equivale a no capturar

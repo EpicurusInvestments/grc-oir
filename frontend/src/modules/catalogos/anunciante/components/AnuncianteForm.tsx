@@ -7,14 +7,16 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import {
   DomicilioPostalInput,
   type DomicilioPostalValues,
   SavingOverlay,
+  SearchableSelect,
   SensitiveField,
 } from "@/shared/ui";
 
@@ -31,9 +33,15 @@ export interface AgenciaOpcion {
   nombre_agencia: string;
 }
 
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
+
 const RFC_REGEX = /^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
 
-function buildSchema(isEdit: boolean, diasOriginal?: string) {
+function buildSchema(isEdit: boolean, diasOriginal?: string, montoOriginal?: string) {
   return z
     .object({
       nombre_comercial: z.string().trim().min(1, "El nombre comercial es obligatorio.").max(200),
@@ -77,19 +85,32 @@ function buildSchema(isEdit: boolean, diasOriginal?: string) {
           const n = Number(v);
           return Number.isInteger(n) && n >= 0 && n <= 3650;
         }, "Debe ser un entero ≥ 0."),
+      // Bug corregido (petición del usuario): nuevo parámetro sensible — mismo criterio
+      // que `dias_credito_default` (tope de riesgo, no un dato operativo libre). Vacío =
+      // sin tope capturado, no se fuerza un 0.
+      monto_maximo_credito: z
+        .string()
+        .trim()
+        .optional()
+        .refine((v) => {
+          if (!v) return true;
+          const n = Number(v);
+          return !Number.isNaN(n) && n >= 0;
+        }, "Debe ser un número ≥ 0, o déjalo vacío si no aplica tope."),
       motivo_cambio: z.string().trim().max(500).optional(),
     })
     .superRefine((d, ctx) => {
-      if (
+      const diasCambiaron =
+        isEdit && diasOriginal !== undefined && d.dias_credito_default !== diasOriginal;
+      const montoCambio =
         isEdit &&
-        diasOriginal !== undefined &&
-        d.dias_credito_default !== diasOriginal &&
-        !d.motivo_cambio?.trim()
-      ) {
+        montoOriginal !== undefined &&
+        (d.monto_maximo_credito?.trim() || "") !== montoOriginal;
+      if ((diasCambiaron || montoCambio) && !d.motivo_cambio?.trim()) {
         ctx.addIssue({
           path: ["motivo_cambio"],
           code: z.ZodIssueCode.custom,
-          message: "Indica el motivo del cambio de días de crédito.",
+          message: "Indica el motivo del cambio.",
         });
       }
     });
@@ -106,6 +127,7 @@ interface AnuncianteFormProps {
   anuncianteId?: string | null;
   defaultValues?: Partial<AnuncianteFormValues>;
   diasOriginal?: string;
+  montoOriginal?: string;
   isEdit?: boolean;
   submitting?: boolean;
   submitError?: string | null;
@@ -121,6 +143,7 @@ export function AnuncianteForm({
   anuncianteId = null,
   defaultValues,
   diasOriginal,
+  montoOriginal,
   isEdit = false,
   submitting,
   submitError,
@@ -130,12 +153,13 @@ export function AnuncianteForm({
   const [contactosNuevos, setContactosNuevos] = useState<ContactoFormData[]>([]);
   const {
     register,
+    control,
     handleSubmit,
     watch,
     setValue,
     formState: { errors },
   } = useForm<AnuncianteFormValues>({
-    resolver: zodResolver(buildSchema(isEdit, diasOriginal)),
+    resolver: zodResolver(buildSchema(isEdit, diasOriginal, montoOriginal)),
     defaultValues: {
       nombre_comercial: "",
       nombre_fiscal: "",
@@ -156,6 +180,7 @@ export function AnuncianteForm({
       uso_cfdi_default: "",
       referencia_anunciante: "",
       dias_credito_default: "0",
+      monto_maximo_credito: "",
       motivo_cambio: "",
       ...defaultValues,
     },
@@ -163,6 +188,10 @@ export function AnuncianteForm({
 
   const diasCambiados =
     isEdit && diasOriginal !== undefined && watch("dias_credito_default") !== diasOriginal;
+  const montoCambio =
+    isEdit &&
+    montoOriginal !== undefined &&
+    (watch("monto_maximo_credito")?.trim() || "") !== montoOriginal;
 
   const { useList } = useConstantes();
   const regimenes = useList({ grupo: "RegimenFiscal", activo: true, size: 100 });
@@ -209,6 +238,9 @@ export function AnuncianteForm({
         uso_cfdi_default: data.uso_cfdi_default?.trim() || null,
         referencia_anunciante: data.referencia_anunciante?.trim() || null,
         dias_credito_default: Number(data.dias_credito_default),
+        monto_maximo_credito: data.monto_maximo_credito?.trim()
+          ? Number(data.monto_maximo_credito)
+          : null,
         ...(isEdit && motivo ? { motivo_cambio: motivo } : {}),
       },
       contactosNuevos,
@@ -225,11 +257,11 @@ export function AnuncianteForm({
         <div className="sec">Identificación</div>
 
         <div className="fl fl-required">Nombre comercial</div>
-        <input className="fi" autoFocus {...register("nombre_comercial")} />
+        <input className="fi" autoFocus {...register("nombre_comercial", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_comercial?.message}</div>
 
         <div className="fl fl-required">Nombre fiscal / Razón social</div>
-        <input className="fi" {...register("nombre_fiscal")} />
+        <input className="fi" {...register("nombre_fiscal", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_fiscal?.message}</div>
 
         <div className="r2">
@@ -239,39 +271,47 @@ export function AnuncianteForm({
               className="fi"
               maxLength={13}
               style={{ textTransform: "uppercase", fontFamily: "var(--mono)" }}
-              {...register("rfc_anunciante")}
+              {...register("rfc_anunciante", { onChange: aMayusculas })}
             />
             <div className="fe">{errors.rfc_anunciante?.message}</div>
           </div>
           <div>
             <div className="fl">Referencia interna</div>
-            <input className="fi" {...register("referencia_anunciante")} />
+            <input className="fi" {...register("referencia_anunciante", { onChange: aMayusculas })} />
             <div className="fe">{errors.referencia_anunciante?.message}</div>
           </div>
         </div>
 
         <div className="fl">Régimen fiscal (como receptor, si factura directa)</div>
-        <select className="fsel" {...register("regimen_fiscal")}>
-          <option value="">— Sin capturar —</option>
-          {(regimenes.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="regimen_fiscal"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin capturar —"
+              options={(regimenes.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         <div className="fe">{errors.regimen_fiscal?.message}</div>
 
         <div className="fl">
           Uso de CFDI (default de factura, si factura directa)
         </div>
-        <select className="fsel" {...register("uso_cfdi_default")}>
-          <option value="">— Sin capturar —</option>
-          {(usosCfdi.data?.items ?? []).map((c) => (
-            <option key={c.clave} value={c.clave}>
-              {c.clave} · {c.descripcion}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="uso_cfdi_default"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin capturar —"
+              options={(usosCfdi.data?.items ?? []).map((c) => ({ value: c.clave, label: `${c.clave} · ${c.descripcion}` }))}
+            />
+          )}
+        />
         <div className="fe">{errors.uso_cfdi_default?.message}</div>
 
         <div className="sec">Domicilio</div>
@@ -279,14 +319,18 @@ export function AnuncianteForm({
 
         <div className="sec">Relación comercial</div>
         <div className="fl">Agencia que lo representa</div>
-        <select className="fsel" {...register("agencia_id")}>
-          <option value="">— Sin agencia (directo) —</option>
-          {agencias.map((g) => (
-            <option key={g.agencia_id} value={g.agencia_id}>
-              {g.nombre_agencia}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="agencia_id"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              emptyOptionLabel="— Sin agencia (directo) —"
+              options={agencias.map((g) => ({ value: g.agencia_id, label: g.nombre_agencia }))}
+            />
+          )}
+        />
         <div className="fe" />
 
         <ContactosSection
@@ -307,7 +351,26 @@ export function AnuncianteForm({
           error={errors.dias_credito_default?.message}
           motivo={
             diasCambiados
-              ? { register: register("motivo_cambio"), error: errors.motivo_cambio?.message }
+              ? {
+                  register: register("motivo_cambio", { onChange: aMayusculas }),
+                  error: errors.motivo_cambio?.message,
+                }
+              : undefined
+          }
+        />
+        <SensitiveField
+          label="Monto máximo de crédito"
+          inputMode="decimal"
+          placeholder="Sin tope capturado"
+          hint="Límite de crédito otorgado a este anunciante. Déjalo vacío si no aplica tope."
+          register={register("monto_maximo_credito")}
+          error={errors.monto_maximo_credito?.message}
+          motivo={
+            montoCambio
+              ? {
+                  register: register("motivo_cambio", { onChange: aMayusculas }),
+                  error: errors.motivo_cambio?.message,
+                }
               : undefined
           }
         />

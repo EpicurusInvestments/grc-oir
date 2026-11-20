@@ -50,6 +50,12 @@ export function AfiliadoCatalogPage() {
   const [selected, setSelected] = useState<Afiliado | null>(null);
   const [modo, setModo] = useState<Modo>("view");
   const [confirmBaja, setConfirmBaja] = useState<{ message: string } | null>(null);
+  // Bug corregido (petición del usuario, con captura): un RFC repetido lo rechaza el
+  // backend (409 ConflictError), pero el error se perdía sin mostrarse en el form.
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const mensajeDeError = (e: unknown): string =>
+    e instanceof ApiRequestError ? e.message : "Ocurrió un error inesperado.";
 
   const params: ListParams = { page, size, activo: activoDeFiltro(filtro), q: q || undefined };
   const list = useList(params);
@@ -61,24 +67,35 @@ export function AfiliadoCatalogPage() {
   const reset = () => {
     setSelected(null);
     setModo("view");
+    setSubmitError(null);
   };
 
   const onCrear = async (data: AfiliadoCreate, contactosNuevos: ContactoFormData[]) => {
-    const nuevo = await crear.mutateAsync(data);
-    // Los contactos se capturaron en memoria durante el alta (todavía no había
-    // afiliado_id) — se crean ahora, uno por uno, ya con el id real.
-    for (const contacto of contactosNuevos) {
-      await crearContacto.mutateAsync({ afiliado_id: nuevo.afiliado_id, ...contacto });
+    setSubmitError(null);
+    try {
+      const nuevo = await crear.mutateAsync(data);
+      // Los contactos se capturaron en memoria durante el alta (todavía no había
+      // afiliado_id) — se crean ahora, uno por uno, ya con el id real.
+      for (const contacto of contactosNuevos) {
+        await crearContacto.mutateAsync({ afiliado_id: nuevo.afiliado_id, ...contacto });
+      }
+      setSelected(nuevo);
+      setModo("view");
+    } catch (e) {
+      setSubmitError(mensajeDeError(e));
     }
-    setSelected(nuevo);
-    setModo("view");
   };
 
   const onActualizar = async (data: AfiliadoCreate) => {
     if (!selected) return;
-    const upd = await actualizar.mutateAsync({ id: selected.afiliado_id, data });
-    setSelected(upd);
-    setModo("view");
+    setSubmitError(null);
+    try {
+      const upd = await actualizar.mutateAsync({ id: selected.afiliado_id, data });
+      setSelected(upd);
+      setModo("view");
+    } catch (e) {
+      setSubmitError(mensajeDeError(e));
+    }
   };
 
   const cambiarEstado = async (a: Afiliado, activo: boolean, forzar = false) => {
@@ -105,6 +122,7 @@ export function AfiliadoCatalogPage() {
       <AfiliadoForm
         title="Nuevo afiliado"
         submitting={crear.isPending}
+        submitError={submitError}
         onSubmit={onCrear}
         onCancel={reset}
       />
@@ -121,8 +139,12 @@ export function AfiliadoCatalogPage() {
           rfc_afiliado: selected.rfc_afiliado,
         }}
         submitting={actualizar.isPending}
+        submitError={submitError}
         onSubmit={onActualizar}
-        onCancel={() => setModo("view")}
+        onCancel={() => {
+          setModo("view");
+          setSubmitError(null);
+        }}
       />
     );
   } else if (selected) {
@@ -130,7 +152,10 @@ export function AfiliadoCatalogPage() {
       <AfiliadoDetailPanel
         afiliado={selected}
         canWrite={canWrite}
-        onEdit={() => setModo("edit")}
+        onEdit={() => {
+          setModo("edit");
+          setSubmitError(null);
+        }}
         onToggleActivo={() => cambiarEstado(selected, !selected.activo)}
         togglingActivo={setEstado.isPending}
       />
@@ -164,6 +189,7 @@ export function AfiliadoCatalogPage() {
               onClick={() => {
                 setSelected(a);
                 setModo("view");
+                setSubmitError(null);
               }}
             >
               <td className="td-main">
@@ -224,6 +250,7 @@ export function AfiliadoCatalogPage() {
             onClick={() => {
               setSelected(null);
               setModo("new");
+              setSubmitError(null);
             }}
           >
             + Nuevo afiliado

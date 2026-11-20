@@ -120,7 +120,8 @@ describe("DomicilioPostalInput", () => {
     // La captura sigue siendo manual: se puede escribir colonia a mano.
     const colonia = screen.getAllByRole("textbox")[1]; // CP es el primer input, Colonia el segundo
     fireEvent.change(colonia, { target: { value: "Colonia Capturada a Mano" } });
-    expect(screen.getByDisplayValue("Colonia Capturada a Mano")).toBeInTheDocument();
+    // Petición del usuario ("IMPORTANTE"): los campos de captura se guardan en mayúsculas.
+    expect(screen.getByDisplayValue("COLONIA CAPTURADA A MANO")).toBeInTheDocument();
   });
 
   it("un campo autocompletado se puede corregir a mano después", async () => {
@@ -140,7 +141,8 @@ describe("DomicilioPostalInput", () => {
     const colonia = await screen.findByDisplayValue("Lomas Altas");
 
     fireEvent.change(colonia, { target: { value: "Lomas Altas (corregido a mano)" } });
-    expect(screen.getByDisplayValue("Lomas Altas (corregido a mano)")).toBeInTheDocument();
+    // Petición del usuario ("IMPORTANTE"): los campos de captura se guardan en mayúsculas.
+    expect(screen.getByDisplayValue("LOMAS ALTAS (CORREGIDO A MANO)")).toBeInTheDocument();
   });
 
   it("fix: al editar un registro ya guardado, no reabre la lista de colonias del CP aunque tenga varias", async () => {

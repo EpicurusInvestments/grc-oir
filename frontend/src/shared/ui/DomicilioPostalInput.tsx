@@ -67,7 +67,9 @@ export function DomicilioPostalInput({ values, onChange, disabled }: DomicilioPo
 
   const campo =
     (nombre: keyof DomicilioPostalValues) => (e: React.ChangeEvent<HTMLInputElement>) => {
-      const valor = e.target.value;
+      // Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van
+      // en mayúsculas, en todos los catálogos — excepto "codigo_postal" (dígitos).
+      const valor = nombre === "codigo_postal" ? e.target.value : e.target.value.toUpperCase();
       if (nombre === "codigo_postal") {
         setListaCerrada(false);
         if (valor.trim() === "") {

@@ -4,10 +4,17 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { SavingOverlay } from "@/shared/ui";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   nombre_marca: z.string().trim().min(1, "El nombre de la marca es obligatorio.").max(160),
@@ -51,7 +58,12 @@ export function MarcaInlineForm({
       <div className="if-title">{title}</div>
 
       <div className="fl fl-required">Nombre de la marca</div>
-      <input className="fi" autoFocus placeholder="Ej. Pan Bimbo" {...register("nombre_marca")} />
+      <input
+        className="fi"
+        autoFocus
+        placeholder="Ej. Pan Bimbo"
+        {...register("nombre_marca", { onChange: aMayusculas })}
+      />
       <div className="fe">{errors.nombre_marca?.message}</div>
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>

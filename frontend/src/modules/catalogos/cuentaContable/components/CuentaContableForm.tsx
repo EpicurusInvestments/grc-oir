@@ -5,6 +5,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -12,6 +13,12 @@ import { SavingOverlay } from "@/shared/ui";
 
 import type { CuentaContableCreate } from "../types";
 import { TIPO_CUENTA_OPCIONES } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   codigo_cuenta: z.string().trim().min(1, "El código es obligatorio.").max(40),
@@ -70,11 +77,11 @@ export function CuentaContableForm({
         <div className="sec">Datos de la cuenta</div>
 
         <div className="fl fl-required">Código de cuenta</div>
-        <input className="fi mono" autoFocus {...register("codigo_cuenta")} />
+        <input className="fi mono" autoFocus {...register("codigo_cuenta", { onChange: aMayusculas })} />
         <div className="fe">{errors.codigo_cuenta?.message}</div>
 
         <div className="fl fl-required">Nombre de cuenta</div>
-        <input className="fi" {...register("nombre_cuenta")} />
+        <input className="fi" {...register("nombre_cuenta", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_cuenta?.message}</div>
 
         <div className="fl fl-required">Tipo de cuenta</div>

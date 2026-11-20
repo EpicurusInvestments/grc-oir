@@ -10,10 +10,18 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { SavingOverlay } from "@/shared/ui";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe. No aplica a
+// teléfono (dígitos) ni correo (no tiene sentido en mayúsculas).
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -95,7 +103,7 @@ export function ContactoInlineForm({
         className="fi"
         autoFocus
         placeholder="Ej. Fernanda Ortiz"
-        {...register("nombre_contacto")}
+        {...register("nombre_contacto", { onChange: aMayusculas })}
       />
       <div className="fe">{errors.nombre_contacto?.message}</div>
 
@@ -103,7 +111,7 @@ export function ContactoInlineForm({
       <input
         className="fi"
         placeholder="Ej. Gerente de operación"
-        {...register("puesto_contacto")}
+        {...register("puesto_contacto", { onChange: aMayusculas })}
       />
 
       <div className="r2">

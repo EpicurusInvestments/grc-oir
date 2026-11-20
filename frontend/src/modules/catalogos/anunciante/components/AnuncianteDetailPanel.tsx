@@ -64,7 +64,10 @@ const ESTADO_BADGE: Record<AnuncianteContrato["estado_contrato"], string> = {
   cancelado: "b-red",
 };
 
-const CAMPO_LABEL: Record<string, string> = { dias_credito_default: "Días de crédito" };
+const CAMPO_LABEL: Record<string, string> = {
+  dias_credito_default: "Días de crédito",
+  monto_maximo_credito: "Monto máximo de crédito",
+};
 const labelCampo = (c: string) => CAMPO_LABEL[c] ?? c;
 
 interface AnuncianteDetailPanelProps {
@@ -168,6 +171,19 @@ export function AnuncianteDetailPanel({
         <div className="fv mono">{anunciante.dias_credito_default} días</div>
         <div className="fv muted" style={{ marginTop: -6, fontSize: 11 }}>
           Valor sugerido al crear cobranzas. Puede sobreescribirse por factura.
+        </div>
+
+        <div className="fl">
+          Monto máximo de crédito <FieldTag origin="audit" />
+        </div>
+        <div className="fv mono">
+          {anunciante.monto_maximo_credito != null
+            ? anunciante.monto_maximo_credito.toLocaleString("es-MX", {
+                style: "currency",
+                currency: "MXN",
+                minimumFractionDigits: 2,
+              })
+            : "— Sin tope capturado —"}
         </div>
 
         {/* ── Marcas anidadas ── */}

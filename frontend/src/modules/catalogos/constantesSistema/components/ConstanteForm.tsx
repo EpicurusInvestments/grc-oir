@@ -10,6 +10,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -17,6 +18,12 @@ import { SavingOverlay } from "@/shared/ui";
 
 import type { ConstanteSistemaCreate, GrupoConstante } from "../types";
 import { GRUPO_LABEL, GRUPOS } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   grupo: z.enum(GRUPOS),
@@ -98,7 +105,7 @@ export function ConstanteForm({
         <div className="fe">{errors.grupo?.message}</div>
 
         <div className="fl fl-required">Clave</div>
-        <input className="fi mono" readOnly={isEdit} {...register("clave")} />
+        <input className="fi mono" readOnly={isEdit} {...register("clave", { onChange: aMayusculas })} />
         {esMotivoCambio && (
           <div className="fv muted" style={{ marginTop: 2 }}>
             El sistema agrega un sufijo numérico automático (p.ej. «CambioFecha» →
@@ -109,11 +116,19 @@ export function ConstanteForm({
         <div className="fe">{errors.clave?.message}</div>
 
         <div className="fl fl-required">Descripción</div>
-        <input className="fi" autoFocus={isEdit} {...register("descripcion")} />
+        <input
+          className="fi"
+          autoFocus={isEdit}
+          {...register("descripcion", { onChange: aMayusculas })}
+        />
         <div className="fe">{errors.descripcion?.message}</div>
 
         <div className="fl">Valor configurable</div>
-        <input className="fi mono" placeholder="Opcional (p.ej. 33, D)" {...register("valor")} />
+        <input
+          className="fi mono"
+          placeholder="Opcional (p.ej. 33, D)"
+          {...register("valor", { onChange: aMayusculas })}
+        />
         <div className="fe">{errors.valor?.message}</div>
       </div>
 

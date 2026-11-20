@@ -2,12 +2,19 @@
  * nombre requerido (≤160, único CI — lo valida el backend) y descripción opcional. */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { SavingOverlay } from "@/shared/ui";
 
 import type { CategoriaCreate } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 const schema = z.object({
   nombre_categoria: z.string().trim().min(1, "El nombre es obligatorio.").max(160),
@@ -59,11 +66,11 @@ export function CategoriaForm({
         <div className="sec">Datos del giro empresarial</div>
 
         <div className="fl fl-required">Nombre</div>
-        <input className="fi" autoFocus {...register("nombre_categoria")} />
+        <input className="fi" autoFocus {...register("nombre_categoria", { onChange: aMayusculas })} />
         <div className="fe">{errors.nombre_categoria?.message}</div>
 
         <div className="fl">Descripción</div>
-        <textarea className="ftxt" rows={2} {...register("descripcion_categoria")} />
+        <textarea className="ftxt" rows={2} {...register("descripcion_categoria", { onChange: aMayusculas })} />
         <div className="fe">{errors.descripcion_categoria?.message}</div>
       </div>
 

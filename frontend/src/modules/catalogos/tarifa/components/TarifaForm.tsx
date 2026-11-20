@@ -48,6 +48,7 @@
  * exigía el motivo (`algunSensibleCambio`).
  */
 
+import type { ChangeEvent } from "react";
 import { useMemo } from "react";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -65,6 +66,12 @@ import { calcularNetaPreview, fmtMoneda } from "../format";
 import type { TarifaPlazaCreate } from "../types";
 
 const esSinResultado = (v: string) => v.trim().toLowerCase() === SIN_RESULTADO;
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLTextAreaElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 // ADR-179: clave base (sin sufijo) del grupo MotivoCambio reservada para Tarifa.
 const CLAVE_BASE_MOTIVO_TARIFA = "cambiotarifa";
@@ -247,26 +254,34 @@ export function TarifaForm({
         <div className="sec">Clasificación</div>
 
         <div className="fl fl-required">Anunciante</div>
-        <select className="fsel" autoFocus {...register("anunciante_id")}>
-          <option value="">Selecciona…</option>
-          {anunciantes.map((a) => (
-            <option key={a.anunciante_id} value={a.anunciante_id}>
-              {a.nombre_comercial}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="anunciante_id"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={anunciantes.map((a) => ({ value: a.anunciante_id, label: a.nombre_comercial }))}
+            />
+          )}
+        />
         <div className="fe">{errors.anunciante_id?.message}</div>
 
         <div className="fl fl-required">Nombre de la emisora</div>
-        <select className="fsel" {...register("estacion_id")}>
-          <option value="">Selecciona…</option>
-          {estaciones.map((e) => (
-            <option key={e.estacion_id} value={e.estacion_id}>
-              {e.nombre_estacion}
-              {e.siglas ? ` (${e.siglas})` : ""}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="estacion_id"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={estaciones.map((e) => ({
+                value: e.estacion_id,
+                label: e.siglas ? `${e.nombre_estacion} (${e.siglas})` : e.nombre_estacion,
+              }))}
+            />
+          )}
+        />
         <div className="fe">{errors.estacion_id?.message}</div>
 
         <div className="fl fl-required">
@@ -378,7 +393,7 @@ export function TarifaForm({
         <div className="fe" />
 
         <div className="fl">Notas</div>
-        <textarea className="ftxt" rows={2} {...register("notas")} />
+        <textarea className="ftxt" rows={2} {...register("notas", { onChange: aMayusculas })} />
         <div className="fe">{errors.notas?.message}</div>
       </div>
 

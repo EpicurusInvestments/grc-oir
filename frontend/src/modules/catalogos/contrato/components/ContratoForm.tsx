@@ -8,12 +8,19 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { ChangeEvent } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { DateInput, MoneyInput, SavingOverlay, SensitiveField } from "@/shared/ui";
+import { DateInput, MoneyInput, SavingOverlay, SearchableSelect, SensitiveField } from "@/shared/ui";
 
 import type { ContratoCreate } from "../types";
+
+// Petición del usuario ("IMPORTANTE"): todos los campos de captura de texto van en
+// mayúsculas, en todos los catálogos — se transforma mientras se escribe.
+function aMayusculas(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  e.target.value = e.target.value.toUpperCase();
+}
 
 export type ContratoFormOutput = ContratoCreate & { motivo_cambio?: string | null };
 
@@ -138,14 +145,17 @@ export function ContratoForm({
         <div className="sec">Identificación</div>
 
         <div className="fl fl-required">Anunciante</div>
-        <select className="fsel" autoFocus {...register("anunciante_id")}>
-          <option value="">Selecciona…</option>
-          {anunciantes.map((a) => (
-            <option key={a.anunciante_id} value={a.anunciante_id}>
-              {a.nombre_comercial}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={control}
+          name="anunciante_id"
+          render={({ field }) => (
+            <SearchableSelect
+              value={field.value}
+              onChange={field.onChange}
+              options={anunciantes.map((a) => ({ value: a.anunciante_id, label: a.nombre_comercial }))}
+            />
+          )}
+        />
         <div className="fe">{errors.anunciante_id?.message}</div>
 
         <div className="r2">
@@ -155,13 +165,13 @@ export function ContratoForm({
               className="fi"
               style={{ fontFamily: "var(--mono)" }}
               placeholder="CT-2026-001"
-              {...register("numero_contrato")}
+              {...register("numero_contrato", { onChange: aMayusculas })}
             />
             <div className="fe">{errors.numero_contrato?.message}</div>
           </div>
           <div>
             <div className="fl fl-required">Nombre del contrato</div>
-            <input className="fi" {...register("nombre_contrato")} />
+            <input className="fi" {...register("nombre_contrato", { onChange: aMayusculas })} />
             <div className="fe">{errors.nombre_contrato?.message}</div>
           </div>
         </div>
@@ -207,18 +217,29 @@ export function ContratoForm({
           error={errors.porcentaje_comision_contrato?.message}
           motivo={
             comisionCambiada
-              ? { register: register("motivo_cambio"), error: errors.motivo_cambio?.message }
+              ? {
+                  register: register("motivo_cambio", { onChange: aMayusculas }),
+                  error: errors.motivo_cambio?.message,
+                }
               : undefined
           }
         />
 
         <div className="sec">Condiciones y observaciones</div>
         <div className="fl">Condiciones comerciales</div>
-        <textarea className="ftxt" rows={2} {...register("condiciones_comerciales")} />
+        <textarea
+          className="ftxt"
+          rows={2}
+          {...register("condiciones_comerciales", { onChange: aMayusculas })}
+        />
         <div className="fe">{errors.condiciones_comerciales?.message}</div>
 
         <div className="fl">Observaciones</div>
-        <textarea className="ftxt" rows={2} {...register("observaciones_contrato")} />
+        <textarea
+          className="ftxt"
+          rows={2}
+          {...register("observaciones_contrato", { onChange: aMayusculas })}
+        />
         <div className="fe">{errors.observaciones_contrato?.message}</div>
       </div>
 
