@@ -795,6 +795,23 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   corregir solo lo que alimenta `cantidad`, `COSTO` vuelve a reconstruir el
   `precio_unitario` real. Detalle completo en `docs/arquitectura.md`.
 
+- **Corrección posterior: `Detalle` deja de ser UN solo renglón consolidado — ahora un
+  renglón POR Orden de Estación (ADR-279, bug real, petición del usuario con
+  captura).** Lo anterior (ADR-066/ADR-069, arriba) seguía produciendo un único
+  renglón de `Detalle` para TODA la factura, sin importar cuántas órdenes/estaciones
+  cubriera — era una decisión de diseño documentada en el código, no un descuido. Ya
+  no: `Detalle` trae un renglón por cada `OrdenEstacion` de cada orden de la factura,
+  con `CONCEPTO = [Siglas] [Frecuencia] [Producto] [Duración]` de esa estación,
+  `CANT` derivado de `OrdenEstacion.importe_estacion / precio_spot`, `COSTO =
+  precio_spot` e `IMPORTE = importe_estacion` — todo a nivel estación, ya no
+  consolidado. `ClaveProdServ`/`ClaveUnidad`/`ObjetoImp` siguen siendo un solo valor
+  por factura, repetido igual en cada renglón (ver "Pendientes/dudas" más abajo).
+  Además, `Personalizados.Campaña` deja de ser "el producto si todas las órdenes
+  coinciden, si no la descripción manual" — ahora es un párrafo POR ORDEN (número de
+  orden, marca, campaña, folio y periodo, agencia si aplica), apilado con salto de
+  línea real cuando la factura cubre varias órdenes. Aplica siempre, no solo en
+  facturación múltiple. Detalle completo en `docs/arquitectura.md` (ADR-279).
+
 - **Rediseño del detalle de "Facturas de afiliado" + edición conectada (petición del
   usuario, sin ADR — solo frontend, ningún cambio de esquema/servicio).** El panel de
   detalle (`FacturasAfiliadoPage.tsx`) tenía un diseño más viejo/plano que el resto de
@@ -1033,6 +1050,12 @@ campo sin uso real.
 - **Codificación del archivo plano.** Se asume CP1252 (`TIMBRADO_ENCODING`), pero el
   ejemplo llegó con sus acentos ya corruptos, así que no se pudo deducir del archivo.
   **Confirmar con el PAC antes de producción.**
+- **`ClaveProdServ`/`ClaveUnidad`/`ObjetoImp` siguen siendo un solo valor por factura,
+  no por orden/estación (ADR-279).** Desde que `Detalle` tiene un renglón por Orden de
+  Estación, cabría que estos 3 campos variaran por renglón (una estación con un
+  producto/servicio distinto al resto) — hoy se repite el MISMO valor capturado una
+  vez por factura en cada renglón, porque ese dato no existe a nivel orden/estación en
+  el modelo. Si el PAC llega a exigir que varíen por renglón, requeriría captura nueva.
 - **`TipoComprobante` (ADR-223): se captura por factura pero NO está conectado al
   archivo plano.** `IdDoc.Tipo` del layout trae hoy un código fijo
   (`_TIPO_DOCUMENTO = "33"`, observado en el ejemplo real) que corresponde a "factura

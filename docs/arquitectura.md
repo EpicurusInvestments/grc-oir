@@ -11250,3 +11250,71 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   el booleano) + suite completa 100% verde, `ruff` limpio. Frontend — 2 pruebas nuevas
   en `OrdenClienteForm.test.tsx` (muestra/no muestra la alerta), `tsc --noEmit` y
   `eslint` limpios.
+
+### ADR-279 — Archivo plano: un renglón de Detalle por Orden de Estación, concepto por orden
+
+- **Estado:** aceptada · **Fecha:** 2026-11-20 (petición del usuario, con captura: un
+  archivo `.txt` real generado por el sistema mostrando el bug — "en el detalle de la
+  factura... solo pone el detalle de la primera [orden], cuando debería de poner un
+  registro por cada una" — más dos PDFs de referencia, "Formato actual" vs "Formato
+  ideal", mostrando el detalle deseado desglosado por estación).
+- **No era un bug accidental: reemplaza una decisión de diseño ya documentada.** El
+  código de `_detalle()` (`adapter_pac_v40.py`) traía un comentario explícito: "el
+  modelo factura la orden completa, no por partida" — una "decisión del equipo" sin ADR
+  numerado, consolidar TODA la factura en un solo renglón sin importar cuántas órdenes o
+  estaciones cubriera. Este ADR la sustituye por completo.
+- **Granularidad: por Orden de Estación, no por Orden de Servicio** (confirmado con el
+  usuario antes de programar) — "cantidad de spots" y "precio del spot" son datos que
+  solo existen a nivel estación (`OrdenEstacion.precio_spot`), no a nivel orden.
+  `ClaveProdServ`/`ClaveUnidad`/`ObjetoImp` siguen siendo el MISMO valor capturado una
+  sola vez por factura (no existe ese dato por orden/estación todavía) y se repiten
+  igual en cada renglón nuevo — confirmado como aceptable, no queda como pendiente de
+  alcance menor.
+- **Nuevo `RenglonDetalle`** (`backend/app/integrations/timbrado/port.py`): dataclass
+  con `concepto`/`cantidad`/`precio_unitario`/`importe`. `DatosTimbrado.cantidad` (int
+  consolidado) se eliminó; se reemplazó por `DatosTimbrado.renglones: tuple[RenglonDetalle, ...]`.
+  `adapter_pac_v40.py::_detalle()` ahora itera esa tupla — un renglón de Detalle
+  (con su propio `Impuesto2`/`BaseImp2` calculados sobre el IMPORTE de ESE renglón, ya
+  no sobre el subtotal de toda la factura) por cada elemento.
+- **`FacturaClienteService._datos_timbrado()`** (`factura_cliente.py`) arma los
+  renglones con `_renglones_detalle()`: por cada `OrdenCliente` de la factura, trae sus
+  `OrdenEstacion`, resuelve `Estacion` en una sola consulta por lote (mismo patrón que
+  `_nombres_emisoras()`), y arma `CONCEPTO = [Siglas] [Frecuencia] [Producto] [Duración]`
+  (Siglas/Frecuencia del catálogo `Estacion`; Producto/Duración de
+  `OrdenEstacion.producto_tarifa`/`duracion_spot`), omitiendo partes vacías.
+  `CANT` se deriva de `OrdenEstacion.importe_estacion / OrdenEstacion.precio_spot`
+  (redondeado) — no existe un campo "spots facturables" persistido aparte;
+  `importe_estacion` YA es ese cálculo (`spots_facturables * precio_spot`) en todo el
+  ciclo de vida de la OE, así que dividir lo recupera sin reimplementar la agregación
+  por día. `COSTO` = `precio_spot`, `IMPORTE` = `importe_estacion`, ambos de ESA estación.
+- **`Personalizados.Campaña` ahora es un párrafo POR ORDEN, no "producto común o
+  fallback a la descripción manual".** Plantilla exacta (`_concepto_orden()`):
+  `[numero_orden_cliente]; PARA SU PRODUCTO: [Marca]; CAMPAÑA: [OrdenCliente.producto];
+  Orden de Servicio [folio_orden] PERIODO: [fecha_inicio_campania] -
+  [fecha_fin_campania]; POR CONDUCTO DE [Agencia]` — cualquier parte sin dato (marca
+  nula, producto vacío, sin agencia) se OMITE completa, nunca se imprime una etiqueta
+  vacía. Reemplaza por completo a `_producto_comun()` (que antes solo emitía el
+  producto si TODAS las órdenes coincidían, si no caía a `descripcion_factura`) —
+  esa función se eliminó. Con varias órdenes, los párrafos se apilan con un salto de
+  línea real (CRLF): nuevo helper `_texto_multilinea()` en el adaptador, que a
+  diferencia de `_texto()` (pensado para texto libre capturado a mano, donde un salto
+  sería accidental) preserva el salto INTENCIONAL entre párrafos.
+- **Aplica siempre**, no solo en facturación múltiple (confirmado con el usuario) — una
+  factura de una sola orden con una sola estación también produce un solo renglón por
+  este mismo camino; ya no hay dos formatos de Detalle distintos según cuántas órdenes
+  cubra la factura.
+- **Sin cambios:** `Totales`, `ExImpuestos` (a nivel factura), `Personalizados.
+  Descripcion1..5` (sigue siendo `descripcion_factura`/`observaciones_factura`,
+  capturado a mano), `Personalizados.Orden`/`Solicitud` (siguen consolidados con coma).
+- **Pendiente abierto para el futuro:** `ClaveProdServ`/`ClaveUnidad`/`ObjetoImp` siguen
+  siendo un solo valor por factura, no por orden/estación — si el PAC llega a exigir que
+  varíen por renglón, requeriría captura nueva en el modelo (hoy no existe ese dato a
+  ese nivel).
+- **Verificado:** backend — suite completa (pytest) 100% verde, `ruff` limpio; pruebas
+  nuevas/reescritas en `test_f2_03_timbrado_pac_v40.py` (renglones múltiples, IVA por
+  renglón, Detalle vacío sin tronar) y `test_f2_02_facturacion_escritura.py` (spots
+  reales y bonificables ahora a nivel estación, facturación múltiple con 2 órdenes → 3
+  renglones de Detalle, párrafo de concepto por orden). Probado además a mano contra
+  datos reales de la base de desarrollo (una factura de 1 orden/1 estación y una de 2
+  órdenes/3 estaciones), confirmando la aritmética de cada renglón y el párrafo de
+  `Personalizados.Campaña` con CRLF real entre órdenes.

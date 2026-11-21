@@ -189,6 +189,7 @@ def _orden_estacion(
     orden_id: uuid.UUID,
     estatus: str,
     *,
+    precio_spot: Decimal = Decimal("1000.00"),
     importe_estacion: Decimal = Decimal("10000.00"),
     importe_oir: Decimal = Decimal("3000.00"),
     iva_oir: Decimal = Decimal("480.00"),
@@ -208,7 +209,7 @@ def _orden_estacion(
             estacion_id=cat["estacion_id"],
             plaza_id=cat["plaza_id"],
             duracion_spot="30s",
-            precio_spot=Decimal("1000.00"),
+            precio_spot=precio_spot,
             importe_estacion=importe_estacion,
             porcentaje_participacion_oir=Decimal("30.00"),
             importe_oir=importe_oir,
@@ -818,12 +819,26 @@ def test_el_endpoint_avisa_de_los_campos_fiscales_que_faltan(
     assert "X-Campos-Faltantes" in r.headers["access-control-expose-headers"]
 
 
-def test_el_archivo_plano_lleva_los_spots_reales_no_uno_fijo(
+# ADR-279 (petición del usuario, corrige un bug real): `Detalle` ya NO consolida toda la
+# factura en un renglón "1" fijo (ni en el total de spots de la OC) — ahora hay un
+# renglón POR Orden de Estación, con la cantidad/costo/importe de ESA estación.
+def test_el_archivo_plano_trae_un_renglon_por_orden_de_estacion_con_sus_spots_reales(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Bug real: `Detalle.CANT` era "1" fijo sin importar cuántos spots tuviera la
-    orden. La OC de `cat` (vía `_orden`) es 10 spots a $1000.00 c/u = $10,000.00."""
-    factura_id, _ = _crear_factura(client, db, cat)
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-OE1")
+    _orden_estacion(
+        db, cat, orden_id, "cerrada", precio_spot=Decimal("1000.00"),
+        importe_estacion=Decimal("10000.00"),
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "FMEX-9500"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    factura_id = r.json()["factura_id"]
+
     r = client.get(
         f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
@@ -831,26 +846,32 @@ def test_el_archivo_plano_lleva_los_spots_reales_no_uno_fijo(
     lineas = texto.split("\r\n")
     linea_detalle = lineas[lineas.index("================ Detalle") + 2]
 
-    assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT: spots reales
-    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = 10000.00 / 10
-    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = subtotal
+    assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT = 10000.00 / 1000.00
+    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = precio_spot
+    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = importe_estacion
 
 
 def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Bug real corregido (ADR-069): con Spots Bonificables (ADR-067), `subtotal` ya
-    representa solo lo FACTURABLE, pero `Detalle.CANT` seguía trayendo el total de spots
-    (con bonificables incluidos) — `Detalle.COSTO` salía diluido por debajo del
-    `precio_unitario` real. 100 spots a $1.00, 5 bonificables -> 95 facturables ($95.00)."""
-    orden_id = _orden(
+    """Los Spots Bonificables (ADR-067) ya NO cuentan en `Detalle.CANT`: viven en
+    `OrdenEstacion.cantidad_spots_bonificables`, y `importe_estacion` YA los descuenta
+    (`spots_facturables * precio_spot`) — `Detalle.CANT` se deriva de ahí
+    (`importe_estacion / precio_spot`), nunca del total de spots asignados."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-BONIF", subtotal=Decimal("95.00"))
+    _orden_estacion(
         db,
         cat,
-        "orden_cerrada",
-        "OC-BONIF",
-        subtotal=Decimal("95.00"),
-        total_spots=100,
-        cantidad_spots_bonificables=5,
+        orden_id,
+        "cerrada",
+        precio_spot=Decimal("1.00"),
+        importe_estacion=Decimal("95.00"),
+        importe_oir=Decimal("0.00"),
+        iva_oir=Decimal("0.00"),
+        total_oir=Decimal("0.00"),
+        importe_emisora=Decimal("95.00"),
+        iva_emisora=Decimal("15.20"),
+        total_emisora=Decimal("110.20"),
     )
     db.commit()
     r = client.post(
@@ -869,8 +890,8 @@ def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
     linea_detalle = lineas[lineas.index("================ Detalle") + 2]
 
     assert linea_detalle[49:59].strip() == "95"  # Detalle.CANT: spots FACTURABLES, no 100
-    assert linea_detalle[74:88].strip() == "1.00"  # Detalle.COSTO reconstruye precio_unitario
-    assert linea_detalle[88:114].strip() == "95.00"  # Detalle.IMPORTE = subtotal, sin cambios
+    assert linea_detalle[74:88].strip() == "1.00"  # Detalle.COSTO = precio_spot
+    assert linea_detalle[88:114].strip() == "95.00"  # Detalle.IMPORTE = importe_estacion
 
 
 # ── Serie derivada del número de factura (ADR-060 bis) ────────────────────────
@@ -3101,12 +3122,18 @@ def test_timbrar_y_cancelar_mueven_todas_las_ordenes(
     assert [db.get(OrdenCliente, o).estatus_orden for o in (a, b)] == ["orden_cerrada"] * 2
 
 
-def test_el_archivo_plano_consolida_los_folios_de_todas_las_ordenes(
+# ADR-279 (petición del usuario, corrige un bug real): antes "decisión del equipo" era
+# UNA sola línea de detalle aunque la factura cubriera varias órdenes — ahora hay un
+# renglón por cada Orden de Estación de CADA orden, y el concepto general (antes "el
+# producto si coincide, si no la descripción manual") es un párrafo POR orden, apilado
+# con salto de línea.
+def test_el_archivo_plano_trae_un_renglon_por_cada_orden_de_estacion_en_multifactura(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Decisión del equipo: UNA línea de detalle, con los campos de campaña concatenados."""
     a = _orden(db, cat, "orden_cerrada", "OC-P1", producto="SPOT RADIO")
     b = _orden(db, cat, "orden_cerrada", "OC-P2", producto="SPOT RADIO")
+    _orden_estacion(db, cat, a, "cerrada")
+    _orden_estacion(db, cat, b, "cerrada")
     db.commit()
     factura_id = client.post(
         "/api/v1/facturacion/clientes",
@@ -3121,17 +3148,16 @@ def test_el_archivo_plano_consolida_los_folios_de_todas_las_ordenes(
     texto = r.content.decode("cp1252")
     assert "OC-P1, OC-P2" in texto
     assert "NUM-OC-P1, NUM-OC-P2" in texto
-    # Producto común: se emite tal cual, no la descripción de la factura.
-    assert "SPOT RADIO" in texto
-    # Una sola línea de detalle pese a ser dos órdenes: cabecera + 1 fila.
+    # Cabecera + 2 renglones (uno por cada Orden de Estación, una por orden).
     detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
-    assert len([ln for ln in detalle.split("\r\n") if ln.strip()]) == 2
+    assert len([ln for ln in detalle.split("\r\n") if ln.strip()]) == 3
 
 
-def test_el_archivo_plano_cae_a_la_descripcion_si_los_productos_difieren(
+def test_el_archivo_plano_arma_un_parrafo_de_concepto_por_cada_orden(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """Inventar una campaña común sería peor que usar lo que capturó Facturación."""
+    """Ya no se infiere "producto común, o si difieren la descripción manual" — cada
+    orden aporta SIEMPRE su propio párrafo, nunca se cae a `descripcion_factura`."""
     a = _orden(db, cat, "orden_cerrada", "OC-Q1", producto="SPOT RADIO")
     b = _orden(db, cat, "orden_cerrada", "OC-Q2", producto="MENCION EN VIVO")
     db.commit()
@@ -3145,7 +3171,10 @@ def test_el_archivo_plano_cae_a_la_descripcion_si_los_productos_difieren(
         f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
     )
     texto = r.content.decode("cp1252")
-    assert "Servicios de transmisión febrero 2026" in texto
+    assert "CAMPAÑA: SPOT RADIO" in texto
+    assert "CAMPAÑA: MENCION EN VIVO" in texto
+    assert "NUM-OC-Q1" in texto
+    assert "NUM-OC-Q2" in texto
 
 
 def test_la_bandeja_se_filtra_por_anunciante(

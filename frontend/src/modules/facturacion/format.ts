@@ -47,6 +47,21 @@ export function fmtFecha(iso: string | null | undefined): string {
   return `${dia}-${MESES_ABREV[Number(mes) - 1]}-${anio.slice(-2)}`;
 }
 
+// ADR-278 (petición del usuario, con captura): mismo criterio que `ordenes/format.ts`
+// (ADR-275) — el folio GUARDADO no cambia, esto es solo formato de DESPLIEGUE: quita
+// los ceros a la izquierda del último segmento numérico ("OS-2026-11-000061" →
+// "OS-2026-11-61"). No se reutiliza el de `ordenes` a propósito (ver docstring de
+// arriba del archivo).
+export function fmtFolio(folio: string | null | undefined): string {
+  if (!folio) return "—";
+  const partes = folio.split("-");
+  const ultima = partes[partes.length - 1];
+  const m = ultima.match(/^(\d+)([A-Za-z]*)$/);
+  if (!m) return folio;
+  partes[partes.length - 1] = String(Number(m[1])) + m[2];
+  return partes.join("-");
+}
+
 export function oGuion(valor: string | null | undefined): string {
   return valor && valor.trim() ? valor : "—";
 }

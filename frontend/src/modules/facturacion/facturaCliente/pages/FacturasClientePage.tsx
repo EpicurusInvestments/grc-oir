@@ -23,7 +23,7 @@ import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } fr
 
 import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
 import { adjuntosFacturacionApi, facturaClienteApi } from "../../api";
-import { badgeEstadoFactura, fmtFecha, fmtMoneda, oGuion } from "../../format";
+import { badgeEstadoFactura, fmtFecha, fmtFolio, fmtMoneda, oGuion } from "../../format";
 import { useFacturasCliente, useFacturasDelAnunciante, useOrdenesPorFacturar } from "../../hooks";
 import {
   ESTADO_FACTURACION_LABEL,
@@ -622,16 +622,17 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
       <table className="cat-table">
         <thead>
           <tr>
-            <th style={{ width: "11%" }}>No. factura</th>
-            <th style={{ width: "11%" }} className="td-center">Pedido</th>
-            <th style={{ width: "18%" }}>Razón social receptor</th>
-            <th style={{ width: "12%" }}>Empresa emisora</th>
-            <th style={{ width: "11%" }} className="td-center">Fecha</th>
-            <th style={{ width: "11%" }} className="td-center">
+            <th style={{ width: "10%" }}>No. factura</th>
+            <th style={{ width: "9%" }} className="td-center">Pedido</th>
+            <th style={{ width: "15%" }}>Razón social receptor</th>
+            <th style={{ width: "10%" }}>Empresa emisora</th>
+            <th style={{ width: "13%" }}>Órdenes relacionadas</th>
+            <th style={{ width: "9%" }} className="td-center">Fecha</th>
+            <th style={{ width: "10%" }} className="td-center">
               Total
             </th>
-            <th style={{ width: "14%" }} className="td-center">Folio fiscal</th>
-            <th style={{ width: "12%" }} className="td-center">
+            <th style={{ width: "13%" }} className="td-center">Folio fiscal</th>
+            <th style={{ width: "11%" }} className="td-center">
               Estado
             </th>
           </tr>
@@ -650,6 +651,11 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               <td className="td-2">{f.razon_social_facturacion}</td>
               <td className="td-2" style={{ fontSize: 12 }}>
                 {oGuion(f.empresa_facturadora)}
+              </td>
+              <td className="td-2 mono" style={{ fontSize: 11 }}>
+                {f.ordenes.length > 0
+                  ? f.ordenes.map((o) => fmtFolio(o.folio_orden)).join(", ")
+                  : "—"}
               </td>
               <td className="td-2 mono td-center" style={{ fontSize: 11 }}>
                 {fmtFecha(f.fecha_factura)}
@@ -722,7 +728,7 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar número, pedido, razón social…"
+        searchPlaceholder="Buscar número, pedido, razón social, folio de orden…"
         filterLabel="Estado"
         filters={FILTROS}
         activeFilter={filtro}

@@ -23,7 +23,7 @@ from app.integrations.timbrado.adapter_pac_v40 import (
     ErrorCodificacionTimbrado,
     TimbradoExportPacV40,
 )
-from app.integrations.timbrado.port import DatosTimbrado, DomicilioFiscal
+from app.integrations.timbrado.port import DatosTimbrado, DomicilioFiscal, RenglonDetalle
 
 REFERENCIA = (
     Path(__file__).resolve().parents[3]
@@ -214,19 +214,47 @@ def test_mapea_los_datos_de_la_factura(datos: DatosTimbrado) -> None:
     assert "Orden            OC-2025-0046" in texto
 
 
-# ── ADR-224 (petición del usuario, bug real): `observaciones` llegaba resuelto hasta
-# `DatosTimbrado` pero nunca se escribía en ningún lado del layout — se descartaba en
-# silencio. Ahora se anexa al mismo texto libre que ya cargan `Detalle.concepto` y
-# `Personalizados.Descripcion1..5`. ──
-def test_observaciones_se_integran_al_concepto_del_detalle() -> None:
-    """`Detalle.concepto` es de ANCHO FIJO (49 caracteres) — con descripción + comentario
-    cortos (como aquí) ambos caben completos; una combinación más larga se trunca, igual
-    que ya truncaba una descripción larga por sí sola antes de este fix (ver
-    `test_sin_observaciones_el_concepto_no_cambia` para el caso sin comentario)."""
-    datos_con_obs = _datos_completos(descripcion="Spot radio", observaciones="Pagar ya.")
-    texto = TimbradoExportPacV40().exportar(datos_con_obs).decode("cp1252")
+# ── ADR-279 (petición del usuario, corrige un bug real): antes `Detalle` era SIEMPRE un
+# solo renglón consolidado para toda la factura, sin importar cuántas órdenes/estaciones
+# cubriera. Ahora hay un renglón por cada Orden de Estación (`RenglonDetalle`). ──
+def test_el_detalle_trae_un_renglon_por_cada_orden_de_estacion() -> None:
+    datos_dos_renglones = _datos_completos(
+        renglones=(
+            RenglonDetalle(
+                concepto="XEW FM SPOT 20",
+                cantidad=10,
+                precio_unitario=Decimal("500.00"),
+                importe=Decimal("5000.00"),
+            ),
+            RenglonDetalle(
+                concepto="XHTEST AM MENCION 30",
+                cantidad=5,
+                precio_unitario=Decimal("200.00"),
+                importe=Decimal("1000.00"),
+            ),
+        )
+    )
+    texto = TimbradoExportPacV40().exportar(datos_dos_renglones).decode("cp1252")
     detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
-    assert "Spot radio — Observaciones: Pagar ya." in detalle
+    renglones = [ln for ln in detalle.split(CRLF) if ln.strip() and "CONCEPTO" not in ln]
+
+    assert len(renglones) == 2
+    assert "XEW FM SPOT 20" in renglones[0]
+    assert renglones[0][49:59].strip() == "10"  # Detalle.CANT
+    assert renglones[0][74:88].strip() == "500.00"  # Detalle.COSTO
+    assert renglones[0][88:114].strip() == "5000.00"  # Detalle.IMPORTE
+    assert "XHTEST AM MENCION 30" in renglones[1]
+    assert renglones[1][49:59].strip() == "5"
+    assert renglones[1][88:114].strip() == "1000.00"
+
+
+def test_sin_renglones_el_detalle_queda_vacio_pero_no_truena() -> None:
+    """Defensivo: una factura sin órdenes resueltas (no debería pasar en producción) no
+    debe tronar — el Detalle simplemente queda sin renglones."""
+    texto = TimbradoExportPacV40().exportar(_datos_completos()).decode("cp1252")
+    detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
+    assert "CONCEPTO" in detalle
+    assert not [ln for ln in detalle.split(CRLF) if ln.strip() and "CONCEPTO" not in ln]
 
 
 def test_observaciones_se_integran_a_personalizados_descripcion() -> None:
@@ -249,19 +277,26 @@ def test_sin_observaciones_el_concepto_no_cambia() -> None:
     assert "Observaciones:" not in texto
 
 
-def test_detalle_cantidad_es_la_suma_de_spots_y_costo_se_deriva() -> None:
-    """Bug real: antes `Detalle.CANT` era "1" fijo (toda la campaña como una sola
-    unidad), sin importar cuántos spots tuviera la orden. Ahora es la cantidad real;
-    `COSTO` se deriva de `subtotal / cantidad` para que IMPORTE = COSTO × CANT cuadre —
-    `IMPORTE` sigue siendo el subtotal completo, sin cambios."""
-    datos_con_cantidad = _datos_completos(subtotal=Decimal("10000.00"), cantidad=20)
-    texto = TimbradoExportPacV40().exportar(datos_con_cantidad).decode("cp1252")
-    lineas = texto.split(CRLF)
-    linea_detalle = lineas[lineas.index("================ Detalle") + 2]
+def test_detalle_impuesto2_se_calcula_por_renglon() -> None:
+    """`Impuesto2`/`BaseImp2` (IVA de cada renglón) se calculan sobre el IMPORTE de ESE
+    renglón, no sobre el subtotal consolidado de la factura — cada renglón es su propia
+    partida."""
+    datos = _datos_completos(
+        renglones=(
+            RenglonDetalle(
+                concepto="XEW FM SPOT 20",
+                cantidad=10,
+                precio_unitario=Decimal("500.00"),
+                importe=Decimal("5000.00"),
+            ),
+        )
+    )
+    texto = TimbradoExportPacV40().exportar(datos).decode("cp1252")
+    detalle = texto.split("================ Detalle")[1].split("XXXFINDETA")[0]
+    renglon = next(ln for ln in detalle.split(CRLF) if "XEW FM SPOT 20" in ln)
 
-    assert linea_detalle[49:59].strip() == "20"  # Detalle.CANT
-    assert linea_detalle[74:88].strip() == "500.00"  # Detalle.COSTO = 10000.00 / 20
-    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = subtotal
+    assert renglon[204:219].strip() == "5000.00"  # Detalle.BaseImp2
+    assert renglon[189:204].strip() == "800.00"  # Detalle.Importe2 = 5000.00 * 0.16
 
 
 def test_documento_relacionado_solo_si_sustituye_a_otro(datos: DatosTimbrado) -> None:

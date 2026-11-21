@@ -19,7 +19,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from math import ceil
 from typing import Any
@@ -36,6 +36,7 @@ from sqlalchemy import (
     Uuid,
     case,
     func,
+    or_,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -44,7 +45,12 @@ from app.core.config import settings
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
 from app.core.errors import ConflictError, DomainError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
-from app.integrations.timbrado import DatosTimbrado, DomicilioFiscal, get_timbrado_export
+from app.integrations.timbrado import (
+    DatosTimbrado,
+    DomicilioFiscal,
+    RenglonDetalle,
+    get_timbrado_export,
+)
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
 from app.shared.schemas import ListParams, Page
@@ -113,10 +119,80 @@ def _tiene_factura_vigente(orden_id: Any) -> Any:
     )
 
 
-def _producto_comun(ordenes: list[Any]) -> str | None:
-    """Producto de las órdenes si TODAS coinciden; `None` si difieren o no hay ninguno."""
-    productos = {o.producto for o in ordenes if o.producto}
-    return productos.pop() if len(productos) == 1 else None
+# ADR-279 (petición del usuario, con captura): reemplaza a `_producto_comun()` — antes
+# el "Campaña" del archivo plano solo se llenaba si TODAS las órdenes compartían el
+# mismo `producto`, si no caía al texto manual `descripcion_factura`. Ahora cada orden
+# aporta su propio párrafo (siempre, nunca se adivina un valor común); con varias
+# órdenes se apilan con salto de línea — la sección `Personalizados` del layout es
+# clave-valor, no de ancho fijo, así que un salto interno no rompe nada.
+def _concepto_orden(oc: Any, marca_nombre: str | None, agencia_nombre: str | None) -> str:
+    partes = [
+        oc.numero_orden_cliente,
+        f"PARA SU PRODUCTO: {marca_nombre}" if marca_nombre else None,
+        f"CAMPAÑA: {oc.producto}" if oc.producto else None,
+        (
+            f"Orden de Servicio {oc.folio_orden} PERIODO: "
+            f"{oc.fecha_inicio_campania:%d/%m/%Y} - {oc.fecha_fin_campania:%d/%m/%Y}"
+        ),
+    ]
+    if agencia_nombre:
+        partes.append(f"POR CONDUCTO DE {agencia_nombre}")
+    return "; ".join(p for p in partes if p)
+
+
+# ADR-279 (petición del usuario, corrige un bug real): antes `Detalle` era SIEMPRE un
+# solo renglón consolidado para toda la factura, sin importar cuántas órdenes/estaciones
+# cubriera — ahora hay un renglón por cada Orden de Estación (estación) de cada orden,
+# porque "cantidad de spots" y "precio del spot" solo existen a ese nivel.
+def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
+    from app.modules.catalogos.estacion import Estacion
+    from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+    orden_ids = [oc.orden_id for oc in ordenes]
+    if not orden_ids:
+        return []
+    oes = db.scalars(
+        select(OrdenEstacion)
+        .where(OrdenEstacion.orden_id.in_(orden_ids))
+        .order_by(OrdenEstacion.created_at)
+    ).all()
+    estaciones = {
+        e.estacion_id: e
+        for e in db.scalars(
+            select(Estacion).where(
+                Estacion.estacion_id.in_({oe.estacion_id for oe in oes})
+            )
+        ).all()
+    }
+    renglones: list[RenglonDetalle] = []
+    for oe in oes:
+        estacion = estaciones.get(oe.estacion_id)
+        concepto = " ".join(
+            p
+            for p in (
+                estacion.siglas if estacion else None,
+                estacion.frecuencia if estacion else None,
+                oe.producto_tarifa,
+                oe.duracion_spot,
+            )
+            if p
+        )
+        precio_spot = Decimal(oe.precio_spot)
+        importe = Decimal(oe.importe_estacion)
+        cantidad = (
+            int((importe / precio_spot).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            if precio_spot > 0
+            else 0
+        )
+        renglones.append(
+            RenglonDetalle(
+                concepto=concepto,
+                cantidad=cantidad,
+                precio_unitario=precio_spot,
+                importe=importe,
+            )
+        )
+    return renglones
 
 
 # ADR-269 (petición del usuario, con captura): estándar nuevo — el prefijo (la serie,
@@ -136,6 +212,25 @@ def _normaliza_numero_factura(valor: str) -> str:
             "(ej. FMEX-001246): el prefijo, un guion y solo dígitos."
         )
     return v
+
+
+_FOLIO_ULTIMO_SEGMENTO_REGEX = re.compile(r"^(\d+)([A-Za-z]*)$")
+
+
+# ADR-278 (petición del usuario, con captura): mismo criterio que `fmtFolio` en
+# `frontend/src/modules/ordenes/format.ts` (ADR-275) — el folio GUARDADO de una orden
+# vieja sigue con ceros a la izquierda, pero en pantalla se muestra sin ellos. Si la
+# búsqueda solo comparara contra el valor crudo, escribir el folio TAL COMO SE VE
+# ("OS-2026-11-71") no encontraría la factura cuya orden quedó guardada como
+# "OS-2026-11-000071" — este helper reproduce el mismo formateo para que la búsqueda
+# encuentre la factura con cualquiera de las dos formas.
+def _folio_sin_padding(folio: str) -> str:
+    partes = folio.split("-")
+    m = _FOLIO_ULTIMO_SEGMENTO_REGEX.match(partes[-1])
+    if not m:
+        return folio
+    partes[-1] = str(int(m.group(1))) + m.group(2)
+    return "-".join(partes)
 
 
 # ADR-269 (petición del usuario, con captura): el folio fiscal del CFDI (UUID que
@@ -657,12 +752,49 @@ class FacturaClienteRepository(BaseRepository[FacturaCliente]):
         if estado is not None:
             stmt = stmt.where(FacturaCliente.estado_facturacion == estado)
         if params.q:
-            patron = f"%{params.q.strip()}%"
-            stmt = stmt.where(
-                FacturaCliente.numero_factura.ilike(patron)
-                | FacturaCliente.razon_social_facturacion.ilike(patron)
-                | FacturaCliente.folio_fiscal_sat.ilike(patron)
-            )
+            # ADR-278 (petición del usuario, con captura): la búsqueda ahora también
+            # encuentra una factura por el folio de CUALQUIERA de sus órdenes
+            # relacionadas (antes solo buscaba en columnas de la propia factura).
+            from app.modules.ordenes.orden_cliente import OrdenCliente
+
+            q = params.q.strip()
+            patron = f"%{q}%"
+            condiciones = [
+                FacturaCliente.numero_factura.ilike(patron),
+                FacturaCliente.razon_social_facturacion.ilike(patron),
+                FacturaCliente.folio_fiscal_sat.ilike(patron),
+                select(FacturaClienteOrden.factura_id)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaClienteOrden.orden_id)
+                .where(
+                    FacturaClienteOrden.factura_id == FacturaCliente.factura_id,
+                    OrdenCliente.folio_orden.ilike(patron),
+                )
+                .exists(),
+            ]
+            # El `ilike` de arriba ya cubre el caso normal (folio nuevo, o folio viejo
+            # buscado tal cual está guardado). Lo que NO cubre: un folio VIEJO (con
+            # ceros a la izquierda, ADR-275) buscado tal como se VE en pantalla, sin
+            # ceros — para eso se resuelve en Python (bajo volumen, no amerita una
+            # función SQL distinta por dialecto, ver `_folio_sin_padding`).
+            q_lower = q.lower()
+            # Pre-filtro barato antes de traer filas a Python: un folio VIEJO (ADR-237,
+            # consecutivo padeado a 6 dígitos) con relleno de verdad SIEMPRE trae "00"
+            # (el consecutivo nunca pasó de los cientos a la fecha de ADR-275, que
+            # congeló el formato viejo) — descarta de entrada los folios nuevos, que
+            # nunca necesitan esta normalización.
+            folios_con_padding = self.db.execute(
+                select(FacturaClienteOrden.factura_id, OrdenCliente.folio_orden)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaClienteOrden.orden_id)
+                .where(OrdenCliente.folio_orden.contains("00"))
+            ).all()
+            ids_sin_padding_coinciden = {
+                factura_id
+                for factura_id, folio in folios_con_padding
+                if q_lower in _folio_sin_padding(folio).lower()
+            }
+            if ids_sin_padding_coinciden:
+                condiciones.append(FacturaCliente.factura_id.in_(ids_sin_padding_coinciden))
+            stmt = stmt.where(or_(*condiciones))
         return stmt
 
 
@@ -1092,7 +1224,7 @@ class FacturaClienteService(
     def _datos_timbrado(self, obj: FacturaCliente) -> DatosTimbrado:
         """Resuelve TODO lo que el layout necesita. La integracion no consulta la base."""
         from app.modules.catalogos.agencia import Agencia
-        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.catalogos.anunciante import Anunciante, Marca
         from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
         from app.modules.ordenes.orden_cliente import OrdenCliente
 
@@ -1152,6 +1284,30 @@ class FacturaClienteService(
             if f.folio_fiscal_sat
         )
 
+        # ADR-279 (petición del usuario): Marca/Agencia de cada orden, en UNA consulta
+        # cada una (mismo patrón por lote que `_nombres_emisoras`) — para armar el
+        # párrafo de concepto de `_concepto_orden()` sin una consulta por orden.
+        marcas_ids = {oc.marca_id for oc in ordenes if oc.marca_id}
+        nombres_marca = (
+            {
+                m.marca_id: m.nombre_marca
+                for m in db.scalars(select(Marca).where(Marca.marca_id.in_(marcas_ids))).all()
+            }
+            if marcas_ids
+            else {}
+        )
+        agencias_ids = {oc.agencia_id for oc in ordenes if oc.agencia_id}
+        nombres_agencia = (
+            {
+                a.agencia_id: a.nombre_agencia
+                for a in db.scalars(
+                    select(Agencia).where(Agencia.agencia_id.in_(agencias_ids))
+                ).all()
+            }
+            if agencias_ids
+            else {}
+        )
+
         return DatosTimbrado(
             numero_factura=obj.numero_factura,
             # El layout pide fecha Y hora; el modelo guarda solo la fecha de emision, asi
@@ -1166,16 +1322,10 @@ class FacturaClienteService(
             iva=Decimal(obj.iva_factura),
             total=Decimal(obj.total_factura),
             tasa_iva=IVA_RATE,
-            # `Detalle.CANT` (ADR-066, corregido en ADR-069): spots FACTURABLES de las
-            # órdenes de esta factura (total_spots − cantidad_spots_bonificables de cada
-            # una, ADR-067) — no el total de spots ni "1" fijo. Con esto, `Detalle.COSTO`
-            # (subtotal / cantidad, ver `adapter_pac_v40.py::_detalle()`) reconstruye la
-            # tarifa pactada real, sin tocar esa fórmula: antes CANT traía el total de
-            # spots (con bonificables) mientras `subtotal` ya solo reflejaba lo facturable
-            # (ADR-067), así que COSTO salía diluido por debajo de `precio_unitario`.
-            # `or 1` es defensivo (no debería pasar: `total_spots > 0` es CHECK de la OC),
-            # para no dividir entre cero al derivar `Detalle.COSTO`.
-            cantidad=sum(o.total_spots - o.cantidad_spots_bonificables for o in ordenes) or 1,
+            # ADR-279 (petición del usuario, corrige un bug real): un renglón de
+            # `Detalle` por cada Orden de Estación de las órdenes de esta factura — antes
+            # era siempre un solo renglón consolidado para toda la factura.
+            renglones=tuple(_renglones_detalle(db, ordenes)),
             emisor_nombre=emisor.nombre_empresa if emisor else "",
             emisor_rfc=emisor.rfc_empresa if emisor else "",
             emisor_direccion=emisor.direccion_empresa if emisor else None,
@@ -1184,19 +1334,26 @@ class FacturaClienteService(
             receptor_rfc=obj.rfc_facturacion,
             receptor_direccion=obj.direccion_facturacion,
             receptor_domicilio=receptor_domicilio,
-            # Detalle CONSOLIDADO (decisión del equipo): una sola línea de concepto por
-            # el total de la factura, no una por orden. Los campos de campaña, que en el
-            # layout son de una sola orden, se concatenan; van en la sección
-            # `Personalizados`, que es clave-valor y no de ancho fijo, así que no los
-            # trunca el formato. Queda abierto si el PAC les impone un largo máximo.
+            # `orden_folio`/`orden_numero_cliente` siguen consolidados (concatenados con
+            # coma): son referencias cortas, van en campos de una sola línea.
             orden_folio=", ".join(o.folio_orden for o in ordenes) or None,
             orden_numero_cliente=", ".join(
                 o.numero_orden_cliente for o in ordenes if o.numero_orden_cliente
             )
             or None,
-            # El producto solo se emite si TODAS coinciden; si no, describir una campaña
-            # inventada sería peor que caer a la descripción que capturó Facturación.
-            orden_producto=_producto_comun(ordenes) or obj.descripcion_factura,
+            # ADR-279 (petición del usuario): un párrafo de concepto POR ORDEN (ya no
+            # "el producto si todas coinciden, si no la descripción manual") — con varias
+            # órdenes se apilan con salto de línea (`Personalizados` es clave-valor, no
+            # de ancho fijo).
+            orden_producto=(
+                "\r\n".join(
+                    _concepto_orden(
+                        oc, nombres_marca.get(oc.marca_id), nombres_agencia.get(oc.agencia_id)
+                    )
+                    for oc in ordenes
+                )
+                or obj.descripcion_factura
+            ),
             porcentaje_comision_agencia=(
                 Decimal(orden.porcentaje_comision_agencia_snap)
                 if orden and orden.porcentaje_comision_agencia_snap is not None
