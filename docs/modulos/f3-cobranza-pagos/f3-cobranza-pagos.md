@@ -124,6 +124,31 @@ texto libre del último, que podría no ser numérico). El pago múltiple no cam
 siendo texto libre, porque reparte un solo pago entre varias facturas con historiales
 distintos y no hay un "siguiente" único que calcular ahí.
 
+**ADR-281 (petición del usuario, con captura) — columnas "Fecha de pago"/"Fecha de
+aplicación", orden por fecha de pago y pago individual oculto:** `CobranzaFacturaRead`
+gana `fecha_pago`/`fecha_deposito` (derivados en lectura, nunca columnas — mismo
+criterio que `ultimo_numero_pago` de ADR-226): `fecha_pago_cliente`/`fecha_deposito` del
+`PagoCliente` MÁS RECIENTE de la cobranza, mismo criterio de "último" que
+`ultimo_numero_pago` (orden por `fecha_pago_cliente` desc, `created_at` desc como
+desempate); `None` en cualquiera de las dos si todavía no hay pagos. `_info_pagos()`
+ahora devuelve 4 valores en vez de 2 (misma consulta). La columna de la lista "Fecha de
+aplicación" (nombre de negocio pedido para esa columna) mapea a `fecha_deposito`;
+"Fecha de pago" mapea a `fecha_pago_cliente`. El orden de la lista pasa de solo
+`fecha_estimada_cobro` a `[fecha_estimada_cobro, <fecha del último pago>]` — el
+desempate se resuelve con una subconsulta escalar correlacionada a `PagoCliente` (vive
+en la tabla hija), pasada directo en `default_order_by`. La búsqueda de esta lista
+sigue siendo 100% client-side (mismo límite de siempre, ver ADR-233/241 para "Pagos
+recibidos") y ahora también compara contra estas 2 fechas, en ISO crudo y en el formato
+de pantalla ("dd-mmm-aa"). Además, las etiquetas de `PagoMultipleForm.tsx` estaban
+INVERTIDAS respecto a `RegistrarPagoForm.tsx` (bug de JSX, el `state`/payload interno
+siempre mapeó bien) — se homologaron a "Fecha del pago"/"Fecha de depósito" en ambos
+formularios. Y se agregó `MOSTRAR_PAGO_INDIVIDUAL = false` en
+`CobranzaFacturasPage.tsx` (mismo patrón que `MOSTRAR_BOTON_VER_EN_COBRANZA` de F2) para
+ocultar el botón "+ Registrar pago": todos los pagos se capturan ahora por Pago Múltiple,
+aunque sea de una sola factura; el formulario y el endpoint individuales siguen
+existiendo, solo se ocultó el botón. Detalle completo en `docs/arquitectura.md`
+(ADR-281).
+
 ### PagoCliente (10 campos spec + 5 campos nuevos ADR-225)
 PK `pago_cliente_id`. FK `CobranzaFactura` (N:1, **NULLABLE desde ADR-229** — ver abajo).
 Captura manual por **CxC**. `metodo_pago_clave` (mismo ajuste que arriba — texto, no FK).

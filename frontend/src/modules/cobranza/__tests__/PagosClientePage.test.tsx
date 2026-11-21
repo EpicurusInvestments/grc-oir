@@ -62,6 +62,8 @@ const cobranzaBase: CobranzaFactura = {
   numero_factura: "F-000",
   ultimo_numero_pago: null,
   siguiente_numero_pago: "2",
+  fecha_pago: null,
+  fecha_deposito: null,
 };
 
 function grupo(overrides: Partial<PagoGrupo> & { pago_cliente_id: string }): PagoGrupo {

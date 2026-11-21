@@ -11370,3 +11370,62 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   actualizada a la plantilla nueva, `tsc --noEmit`/`eslint` limpios, suite completa sin
   regresiones nuevas. Probado además a mano contra datos reales de la base de
   desarrollo.
+
+### ADR-281 — Cobranza: homologa las fechas de pago, oculta el pago individual y agrega columnas/orden/búsqueda por fecha de pago en la lista
+
+- **Estado:** aceptada · **Fecha:** 2026-11-21 (petición del usuario, con 2 capturas: el
+  formulario de "Pago múltiple" encimado con el de pago individual mostrando etiquetas de
+  fecha distintas, y la lista "Cobranza de facturas" con la columna "Parcialidad"
+  marcada). Son 3 cambios relacionados en la misma pantalla de Cobranza (F3).
+- **Bug 1 — etiquetas de fecha INVERTIDAS en "Pago múltiple".** `PagoCliente` solo tiene
+  2 columnas de fecha: `fecha_pago_cliente` (obligatoria, la fecha REAL en que pagó el
+  cliente) y `fecha_deposito` (opcional, fecha de depósito bancario, ADR-225/ver F3-02).
+  El pago INDIVIDUAL (`RegistrarPagoForm.tsx`) ya las etiquetaba bien: "Fecha del pago"
+  (obligatoria) → `fecha_pago_cliente`, "Fecha de depósito" (opcional) → `fecha_deposito`.
+  El pago MÚLTIPLE (`PagoMultipleForm.tsx`) tenía las etiquetas cambiadas entre sí: "Fecha
+  pago" (sin asterisco) apuntaba en realidad a `fecha_deposito`, y "Fecha de aplicación"
+  (con asterisco) apuntaba en realidad a `fecha_pago_cliente`. Era puramente un bug de
+  JSX — el `state`/payload interno siempre mapeó correcto, nunca se guardó mal un dato.
+  Corregido para que ambos formularios usen EXACTAMENTE las mismas 2 etiquetas ("Fecha del
+  pago" / "Fecha de depósito"); el mensaje de validación también se corrigió de "Captura
+  la fecha de aplicación" a "Captura la fecha del pago".
+- **Cambio 2 — se oculta el pago INDIVIDUAL.** Todos los pagos del cliente se capturan
+  ahora por "Pago múltiple" (aunque sea de una sola factura). Constante
+  `MOSTRAR_PAGO_INDIVIDUAL = false` en `CobranzaFacturasPage.tsx` (mismo patrón ya usado
+  en el proyecto para ocultar sin borrar — ver `MOSTRAR_BOTON_VER_EN_COBRANZA` en
+  `FacturasClientePage.tsx` de F2) que oculta el botón "+ Registrar pago" del panel de
+  detalle. `RegistrarPagoForm.tsx` y su endpoint de alta individual NO se borraron, solo
+  se ocultó el botón que lo abre — reactivable cambiando esa constante a `true`.
+- **Cambio 3 — columnas "Fecha de pago"/"Fecha de aplicación", orden y búsqueda en la
+  lista.** `CobranzaFacturaRead` gana `fecha_pago`/`fecha_deposito` (derivados en
+  lectura, nunca columnas — mismo criterio que `ultimo_numero_pago` de ADR-226): la
+  `fecha_pago_cliente`/`fecha_deposito` del `PagoCliente` MÁS RECIENTE de la cobranza,
+  mismo criterio de "último" que ya usaba `ultimo_numero_pago` (orden por
+  `fecha_pago_cliente` desc, `created_at` desc como desempate); `None` en cualquiera de
+  las dos si todavía no hay ningún pago. `_info_pagos()` (antes devolvía
+  `(ultimo_numero_pago, siguiente_numero_pago)`) se extiende a una tupla de 4 elementos
+  en la MISMA consulta. Pese a que la columna de la lista se llama "Fecha de aplicación"
+  (nombre de negocio pedido por el usuario para esa columna, distinto al del campo en el
+  formulario), internamente mapea a `fecha_deposito` — "Fecha de pago" mapea a
+  `fecha_pago_cliente`. Orden de la lista: `default_order_by` pasa de solo
+  `fecha_estimada_cobro` a `[fecha_estimada_cobro, <subconsulta correlacionada de la
+  fecha del último pago>]` — el desempate vive en la tabla hija `PagoCliente`, así que se
+  resuelve con una subconsulta escalar correlacionada (`select(...).where(...).order_by(
+  ...).limit(1).correlate(CobranzaFactura).scalar_subquery()`) pasada directo como
+  elemento de `default_order_by`. Búsqueda: el buscador de esta lista siempre fue 100%
+  client-side (el backend no soporta `q` aquí — ver docstring de
+  `CobranzaFacturaRepository._apply_filters`, mismo límite documentado en ADR-233/241
+  para "Pagos recibidos"); ahora también compara contra estas 2 fechas, tanto en ISO
+  crudo como en el formato que se ve en pantalla ("dd-mmm-aa").
+- **Verificado:** backend — 3 pruebas nuevas en `test_f3_02_cobranza_escritura.py`
+  (fechas `null` sin pagos, fechas del último pago, orden por fecha estimada + fecha de
+  pago), más la corrección de un segundo punto de llamada a `_info_pagos()` en
+  `PagoClienteService.asignar()` que seguía desempacando solo 2 valores tras extender la
+  tupla a 4 (`ValueError: too many values to unpack`, detectado por la suite). Suite
+  completa 100% verde, `ruff` limpio. Frontend — 4 fixtures de prueba actualizados con
+  los campos nuevos, prueba del botón individual reescrita para confirmar que YA NO
+  aparece, prueba nueva de las 2 columnas + búsqueda por fecha; `tsc --noEmit`/`eslint`
+  limpios, suite completa sin regresiones nuevas (los 12 fallos preexistentes y no
+  relacionados de siempre). Probado además a mano contra datos reales de la base de
+  desarrollo vía `GET /cobranza/facturas`, confirmando que `fecha_pago`/`fecha_deposito`
+  llegan pobladas (o `null` sin pagos) y el orden resultante.

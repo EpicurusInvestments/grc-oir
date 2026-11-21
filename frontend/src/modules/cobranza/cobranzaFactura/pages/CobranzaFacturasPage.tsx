@@ -35,6 +35,13 @@ import { ESTATUS_COBRO_LABEL, type CobranzaFactura, type PagoClienteCreate } fro
 import { PagoMultipleForm } from "../components/PagoMultipleForm";
 import { RegistrarPagoForm } from "../components/RegistrarPagoForm";
 
+// ADR-281 (petición del usuario): se oculta el pago INDIVIDUAL — todos los pagos del
+// cliente se capturan por "Pago múltiple" (aunque sea de una sola factura), que ya
+// quedó homologado con las mismas 2 fechas que aquí ("Fecha del pago"/"Fecha de
+// depósito"). El formulario y el endpoint siguen existiendo (no se borró nada), solo
+// se quita el botón que lo abre — poner esto en `true` lo reactiva sin tocar nada más.
+const MOSTRAR_PAGO_INDIVIDUAL = false;
+
 type Filtro = "all" | "pendiente" | "cobro_parcial" | "cobrada" | "vencidas";
 
 const FILTROS = [
@@ -133,7 +140,14 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
         const an = anuncianteMap.get(c.anunciante_id);
         return (
           (c.numero_factura ?? "").toLowerCase().includes(qq) ||
-          (an?.nombre_comercial ?? "").toLowerCase().includes(qq)
+          (an?.nombre_comercial ?? "").toLowerCase().includes(qq) ||
+          // ADR-281 (petición del usuario): también se busca por "Fecha de pago"/"Fecha
+          // de aplicación" — contra el ISO crudo Y el formato que se ve en la columna
+          // ("dd-mmm-aa"), para que funcione sin importar cómo lo teclee el usuario.
+          (c.fecha_pago ?? "").toLowerCase().includes(qq) ||
+          fmtFecha(c.fecha_pago).toLowerCase().includes(qq) ||
+          (c.fecha_deposito ?? "").toLowerCase().includes(qq) ||
+          fmtFecha(c.fecha_deposito).toLowerCase().includes(qq)
         );
       });
     }
@@ -513,9 +527,11 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
               <button type="button" className="btn btn-sm" onClick={iniciarEdicion}>
                 Editar condiciones
               </button>
-              <button type="button" className="btn btn-amber btn-sm" onClick={() => setModo("pagar")}>
-                + Registrar pago
-              </button>
+              {MOSTRAR_PAGO_INDIVIDUAL && (
+                <button type="button" className="btn btn-amber btn-sm" onClick={() => setModo("pagar")}>
+                  + Registrar pago
+                </button>
+              )}
             </>
           )}
         </div>
@@ -535,6 +551,8 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
             <th>Agencia</th>
             <th className="td-center">Días cr.</th>
             <th className="td-center">Fecha estimada</th>
+            <th className="td-center">Fecha de pago</th>
+            <th className="td-center">Fecha de aplicación</th>
             <th className="td-center">Total</th>
             <th className="td-center">Cobrado</th>
             <th className="td-center">Pendiente</th>
@@ -567,6 +585,8 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
                     </div>
                   )}
                 </td>
+                <td className="mono td-center" style={{ fontSize: 11 }}>{fmtFecha(c.fecha_pago)}</td>
+                <td className="mono td-center" style={{ fontSize: 11 }}>{fmtFecha(c.fecha_deposito)}</td>
                 <td className="td-center mono">{fmtMoneda(String(total))}</td>
                 <td className="td-center mono" style={{ color: Number(c.importe_cobrado) > 0 ? "var(--green-text)" : undefined }}>
                   {Number(c.importe_cobrado) > 0 ? fmtMoneda(c.importe_cobrado) : "—"}
@@ -655,7 +675,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar factura o anunciante…"
+        searchPlaceholder="Buscar factura, anunciante, fecha de pago o de aplicación…"
         filterLabel="Estado"
         filters={FILTROS}
         activeFilter={filtro}

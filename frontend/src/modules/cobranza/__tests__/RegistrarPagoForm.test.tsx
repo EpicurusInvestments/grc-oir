@@ -49,6 +49,8 @@ const cobranza: CobranzaFactura = {
   numero_factura: "B-0010023454343",
   ultimo_numero_pago: null,
   siguiente_numero_pago: "1",
+  fecha_pago: null,
+  fecha_deposito: null,
 };
 
 /** ADR-225: selecciona Forma de pago y Cuenta contable (obligatorios, además de Método
