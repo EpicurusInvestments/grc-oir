@@ -634,6 +634,33 @@ def test_busqueda_por_texto(client: TestClient, datos: dict[str, uuid.UUID]) -> 
     assert r.json()["total"] == 0
 
 
+# ADR-278 (petición del usuario, con captura): la búsqueda también encuentra la
+# factura por el folio de cualquiera de sus órdenes relacionadas.
+def test_busqueda_por_folio_de_orden_relacionada(
+    client: TestClient, datos: dict[str, uuid.UUID]
+) -> None:
+    r = client.get(
+        "/api/v1/facturacion/clientes", params={"q": "OC-2026-0001"}, headers=_hdr("facturacion")
+    )
+    assert r.json()["total"] == 1
+    r = client.get(
+        "/api/v1/facturacion/clientes", params={"q": "OC-2026-9999"}, headers=_hdr("facturacion")
+    )
+    assert r.json()["total"] == 0
+
+
+# ADR-278 (petición del usuario, con captura): un folio VIEJO con ceros a la izquierda
+# (ADR-237, "OC-2026-0001") también se encuentra buscando como se VE en pantalla, sin
+# ceros (ADR-275 solo cambió el despliegue, el valor guardado sigue con padding).
+def test_busqueda_por_folio_de_orden_sin_ceros_a_la_izquierda(
+    client: TestClient, datos: dict[str, uuid.UUID]
+) -> None:
+    r = client.get(
+        "/api/v1/facturacion/clientes", params={"q": "OC-2026-1"}, headers=_hdr("facturacion")
+    )
+    assert r.json()["total"] == 1
+
+
 # ── RBAC: dos claves de módulo (ficha de F2) ──────────────────────────────────
 @pytest.mark.parametrize(
     "area", ["facturacion", "ventas", "tesoreria", "cxc", "cxp", "direccion", "nominas", "admin"]

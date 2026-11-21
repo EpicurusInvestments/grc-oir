@@ -49,6 +49,20 @@ class DomicilioFiscal:
 
 
 @dataclass(frozen=True)
+class RenglonDetalle:
+    """Un renglón de la sección `Detalle` del layout (ADR-279, petición del usuario,
+    corrige un bug real): antes la factura completa era UN solo renglón consolidado,
+    sin importar cuántas Órdenes de Estación cubriera — ahora hay uno POR Orden de
+    Estación (estación) de cada Orden de Servicio de la factura, porque "cantidad de
+    spots" y "precio del spot" son datos que solo existen a ese nivel."""
+
+    concepto: str
+    cantidad: int
+    precio_unitario: Decimal
+    importe: Decimal
+
+
+@dataclass(frozen=True)
 class DatosTimbrado:
     """Todo lo que el layout del PAC necesita, resuelto por el servicio.
 
@@ -74,10 +88,10 @@ class DatosTimbrado:
     #: Tasa de IVA vigente (de configuración central, no un literal).
     tasa_iva: Decimal = Decimal("0.16")
     moneda: str = "MXN"
-    #: `Detalle.CANT` (bug real): spots totales de las órdenes de esta factura — antes
-    #: se ponía "1" fijo (la campaña completa como una sola unidad). `Detalle.COSTO` se
-    #: deriva de `subtotal / cantidad` para que `IMPORTE = COSTO * CANT` siga cuadrando.
-    cantidad: int = 1
+    #: Renglones de `Detalle` (ADR-279) — uno por Orden de Estación de la factura. Antes
+    #: este dataclass traía un `cantidad: int` consolidado (toda la factura como un solo
+    #: renglón); ahora cada renglón trae su propia cantidad/precio/importe.
+    renglones: tuple[RenglonDetalle, ...] = ()
 
     # ── Emisor (EmpresaFacturadora) ────────────────────────────────────────────
     emisor_nombre: str = ""

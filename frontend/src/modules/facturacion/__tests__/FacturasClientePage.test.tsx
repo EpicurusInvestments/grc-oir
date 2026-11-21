@@ -104,7 +104,10 @@ function renderCon(factura: FacturaCliente, onIrAListasParaFacturar: () => void 
 async function abrirDetalle(factura: FacturaCliente) {
   renderCon(factura);
   (await screen.findByText(factura.numero_factura)).click();
-  await screen.findByText("Órdenes relacionadas");
+  // ADR-278: "Órdenes relacionadas" ahora también es el encabezado de una columna de
+  // la tabla (además del título de esta sección del detalle) — ya no es un texto único
+  // en la página, así que no se puede usar `findByText` a secas.
+  await screen.findAllByText("Órdenes relacionadas");
 }
 
 describe("FacturasClientePage", () => {
@@ -120,6 +123,37 @@ describe("FacturasClientePage", () => {
     expect(screen.getAllByText("Preparada").length).toBeGreaterThan(0);
     // El monto llega como string decimal y se muestra como moneda MXN.
     expect(screen.getByText(/\$11,600\.00/)).toBeInTheDocument();
+  });
+
+  // ADR-278 (petición del usuario, con captura): columna "Órdenes relacionadas" en la
+  // TABLA (lista los folios separados por comas), distinta de la sección del mismo
+  // nombre en el panel de detalle.
+  it("la tabla lista los folios de las órdenes relacionadas, separados por comas y sin ceros a la izquierda", async () => {
+    const ordenUna: OrdenDeFactura = {
+      orden_id: "oc-1",
+      folio_orden: "OC-2025-0051",
+      numero_orden_cliente: "LALA-YOG-11",
+      fecha_inicio_campania: "2025-06-01",
+      fecha_fin_campania: "2025-06-30",
+      subtotal: "10000.00",
+    };
+    const ordenDos: OrdenDeFactura = {
+      orden_id: "oc-2",
+      folio_orden: "OC-2025-0052",
+      numero_orden_cliente: "LALA-YOG-12",
+      fecha_inicio_campania: "2025-07-01",
+      fecha_fin_campania: "2025-07-31",
+      subtotal: "5000.00",
+    };
+    renderCon({ ...base, ordenes: [ordenUna, ordenDos] });
+    expect(await screen.findByText("OC-2025-51, OC-2025-52")).toBeInTheDocument();
+  });
+
+  it("sin órdenes relacionadas, la columna muestra un guion", async () => {
+    renderCon({ ...base, ordenes: [] });
+    expect(await screen.findByText("A-1041")).toBeInTheDocument();
+    const fila = (await screen.findByText("A-1041")).closest("tr") as HTMLElement;
+    expect(fila.textContent).toContain("—");
   });
 
   it("fix: muestra el folio de la orden del cliente en el header del detalle", async () => {
@@ -530,7 +564,7 @@ describe("FacturasClientePage", () => {
   it("muestra «Órdenes relacionadas» también con UNA sola orden", async () => {
     await abrirDetalle({ ...base, ordenes: [ordenUna] });
 
-    expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
+    expect(screen.getAllByText("Órdenes relacionadas").length).toBeGreaterThan(0);
     expect(screen.getAllByText("OC-2025-0051").length).toBeGreaterThan(0);
     expect(screen.getByText("LALA-YOG-11")).toBeInTheDocument();
     expect(screen.getByText(/01-jun-25 → 30-jun-25/)).toBeInTheDocument();
@@ -562,7 +596,7 @@ describe("FacturasClientePage", () => {
 
   it("sin órdenes asociadas lo dice, en vez de dejar la sección vacía", async () => {
     await abrirDetalle({ ...base, ordenes: [] });
-    expect(screen.getByText("Órdenes relacionadas")).toBeInTheDocument();
+    expect(screen.getAllByText("Órdenes relacionadas").length).toBeGreaterThan(0);
     expect(screen.getByText("Sin órdenes asociadas.")).toBeInTheDocument();
   });
 });

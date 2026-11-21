@@ -256,6 +256,14 @@ def _monto(valor: Decimal | None) -> str:
     return f"{valor:.2f}" if valor is not None else ""
 
 
+def _texto_multilinea(valor: object) -> str:
+    """Como `_texto()`, pero preserva saltos de línea INTENCIONALES (ADR-279):
+    `orden_producto` apila a propósito un párrafo por cada orden de la factura
+    separados por CRLF — a diferencia de `_texto()` (pensado para texto libre
+    capturado a mano, donde un salto sí sería accidental y rompería el layout)."""
+    return str(valor).rstrip() if valor is not None else ""
+
+
 def _concepto_completo(d: DatosTimbrado) -> str:
     """Texto libre del concepto: la descripción capturada + los comentarios adicionales
     (`observaciones`), si los hay.
@@ -379,28 +387,31 @@ class TimbradoExportPacV40:
             ) from exc
 
     def _detalle(self, datos: DatosTimbrado) -> list[str]:
-        """Una sola línea de concepto: el modelo factura la orden completa, no por
-        partida, pero la CANTIDAD sí es la real (spots totales, bug real corregido) — el
-        COSTO se deriva de `subtotal / cantidad` para que IMPORTE = COSTO × CANT cuadre."""
-        costo_unitario = (Decimal(datos.subtotal) / Decimal(datos.cantidad)).quantize(
-            Decimal("0.01")
-        )
-        celdas = {
-            "concepto": _concepto_completo(datos),
-            "cantidad": str(datos.cantidad),
-            "unidad": _texto(datos.clave_unidad),
-            "costo": _monto(costo_unitario),
-            "importe": _monto(datos.subtotal),
-            "clave_prod_serv": _texto(datos.clave_prod_serv),
-            "clave_unidad": _texto(datos.clave_unidad),
-            "impuesto2": _IMPUESTO_IVA,
-            "tipo_fact2": _TIPO_FACTOR_TASA,
-            "tasa_o_cuota2": f"{datos.tasa_iva:.6f}",
-            "importe2": _monto(datos.iva),
-            "base_imp2": _monto(datos.subtotal),
-            "objeto_imp": _OBJETO_IMPUESTO_SI,
-        }
-        return [_CABECERA_DETALLE, self.formatear_detalle(celdas), "", _FIN_DETALLE]
+        """Un renglón POR Orden de Estación de la factura (ADR-279, petición del
+        usuario, corrige un bug real): antes era SIEMPRE una sola línea consolidada
+        para toda la factura, sin importar cuántas órdenes/estaciones cubriera."""
+        lineas = [_CABECERA_DETALLE]
+        for r in datos.renglones:
+            iva_renglon = (r.importe * datos.tasa_iva).quantize(Decimal("0.01"))
+            celdas = {
+                "concepto": _texto(r.concepto),
+                "cantidad": str(r.cantidad),
+                "unidad": _texto(datos.clave_unidad),
+                "costo": _monto(r.precio_unitario),
+                "importe": _monto(r.importe),
+                "clave_prod_serv": _texto(datos.clave_prod_serv),
+                "clave_unidad": _texto(datos.clave_unidad),
+                "impuesto2": _IMPUESTO_IVA,
+                "tipo_fact2": _TIPO_FACTOR_TASA,
+                "tasa_o_cuota2": f"{datos.tasa_iva:.6f}",
+                "importe2": _monto(iva_renglon),
+                "base_imp2": _monto(r.importe),
+                "objeto_imp": _OBJETO_IMPUESTO_SI,
+            }
+            lineas.append(self.formatear_detalle(celdas))
+        lineas.append("")
+        lineas.append(_FIN_DETALLE)
+        return lineas
 
     @staticmethod
     def formatear_detalle(celdas: dict[str, str]) -> str:
@@ -475,7 +486,7 @@ class TimbradoExportPacV40:
             ("ExImpuestos", "TipoFact2"): _TIPO_FACTOR_TASA,
             ("ExImpuestos", "Baseiva1"): _monto(d.subtotal),
             # ── Personalizados (referencias comerciales de OIR) ──
-            ("Personalizados", "Campaña"): _texto(d.orden_producto),
+            ("Personalizados", "Campaña"): _texto_multilinea(d.orden_producto),
             ("Personalizados", "Solicitud"): _texto(d.orden_numero_cliente),
             ("Personalizados", "PeriodoTrans"): _periodo(d.periodo_inicio, d.periodo_fin),
             ("Personalizados", "Orden"): _texto(d.orden_folio),
