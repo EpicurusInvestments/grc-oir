@@ -50,6 +50,7 @@ const orden: OrdenPorFacturar = {
   agencia: null,
   vendedor: "Patricia Méndez",
   producto: "Yoghurt Lala Bebible 900ml",
+  marca: "Lala",
   fecha_inicio_campania: "2025-06-01",
   fecha_fin_campania: "2025-06-30",
   subtotal: "504000.00",
@@ -152,8 +153,14 @@ describe("ListasParaFacturarPage", () => {
     expect(screen.getByText("Datos heredados de la orden")).toBeInTheDocument();
     expect(screen.getByText("OC-2025-0051")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Busca por folio o número/)).not.toBeInTheDocument();
-    // Y la descripción viene pre-cargada, como en la pantalla aprobada.
-    expect(screen.getByDisplayValue(/Servicios de transmisión publicitaria/)).toBeInTheDocument();
+    // Y la descripción viene pre-cargada, como en la pantalla aprobada — ADR-280: misma
+    // plantilla que arma el archivo plano por cada orden.
+    expect(
+      screen.getByDisplayValue(
+        "LALA-YOG-11; PARA SU PRODUCTO: Lala; CAMPAÑA: Yoghurt Lala Bebible 900ml; " +
+          "Orden de Servicio OC-2025-0051 PERIODO: 01/06/2025 - 30/06/2025",
+      ),
+    ).toBeInTheDocument();
   });
 
   // ADR-269 (petición del usuario, con captura): "Número de factura" ya no acepta
