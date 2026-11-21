@@ -151,6 +151,7 @@ def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
     orden_ids = [oc.orden_id for oc in ordenes]
     if not orden_ids:
         return []
+    ordenes_por_id = {oc.orden_id: oc for oc in ordenes}
     oes = db.scalars(
         select(OrdenEstacion)
         .where(OrdenEstacion.orden_id.in_(orden_ids))
@@ -166,6 +167,7 @@ def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
     }
     renglones: list[RenglonDetalle] = []
     for oe in oes:
+        oc = ordenes_por_id.get(oe.orden_id)
         estacion = estaciones.get(oe.estacion_id)
         concepto = " ".join(
             p
@@ -177,19 +179,32 @@ def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
             )
             if p
         )
-        precio_spot = Decimal(oe.precio_spot)
-        importe = Decimal(oe.importe_estacion)
+        # Spots facturables de ESTA estación: se derivan de `importe_estacion /
+        # precio_spot` (el costo NEGOCIADO con la estación, puramente interno) solo
+        # para recuperar la CANTIDAD real — nunca se expone ese precio al cliente.
+        precio_spot_estacion = Decimal(oe.precio_spot)
+        importe_estacion = Decimal(oe.importe_estacion)
         cantidad = (
-            int((importe / precio_spot).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-            if precio_spot > 0
+            int(
+                (importe_estacion / precio_spot_estacion).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+            if precio_spot_estacion > 0
             else 0
         )
+        # ADR-280 (petición del usuario, corrige un bug real): el COSTO/IMPORTE que ve
+        # el CLIENTE en su factura es el precio que OIR le PACTÓ A ÉL
+        # (`OrdenCliente.precio_unitario`) — nunca el costo interno que OIR negoció con
+        # la estación (`OrdenEstacion.precio_spot`); eso filtraría el margen de OIR.
+        precio_cliente = Decimal(oc.precio_unitario) if oc else precio_spot_estacion
+        importe_cliente = (Decimal(cantidad) * precio_cliente).quantize(CENTAVOS)
         renglones.append(
             RenglonDetalle(
                 concepto=concepto,
                 cantidad=cantidad,
-                precio_unitario=precio_spot,
-                importe=importe,
+                precio_unitario=precio_cliente,
+                importe=importe_cliente,
             )
         )
     return renglones
@@ -1820,6 +1835,10 @@ class OrdenPorFacturarRead(BaseModel):
     agencia: str | None = None
     vendedor: str | None = None
     producto: str | None = None
+    #: ADR-280 (petición del usuario): para la sugerencia de Concepto del formulario de
+    #: alta, que ahora replica la misma plantilla que `_concepto_orden()` del archivo
+    #: plano — necesita el nombre de la Marca, no solo su id.
+    marca: str | None = None
     fecha_inicio_campania: date
     fecha_fin_campania: date
     subtotal: Decimal
@@ -1859,7 +1878,7 @@ class OrdenesPorFacturarRepository:
         agencia_id: uuid.UUID | None = None,
     ) -> tuple[list[Any], int]:
         from app.modules.catalogos.agencia import Agencia
-        from app.modules.catalogos.anunciante import Anunciante
+        from app.modules.catalogos.anunciante import Anunciante, Marca
         from app.modules.catalogos.empresa_facturadora import EmpresaFacturadora
         from app.modules.catalogos.vendedor import Vendedor
         from app.modules.ordenes.orden_cliente import EstatusOrden, OrdenCliente
@@ -1874,6 +1893,7 @@ class OrdenesPorFacturarRepository:
                 Agencia.nombre_agencia.label("agencia"),
                 Vendedor.nombre_vendedor.label("vendedor"),
                 OrdenCliente.producto,
+                Marca.nombre_marca.label("marca"),
                 OrdenCliente.fecha_inicio_campania,
                 OrdenCliente.fecha_fin_campania,
                 OrdenCliente.subtotal,
@@ -1919,6 +1939,7 @@ class OrdenesPorFacturarRepository:
             )
             .outerjoin(Agencia, Agencia.agencia_id == OrdenCliente.agencia_id)
             .outerjoin(Vendedor, Vendedor.vendedor_id == OrdenCliente.vendedor_principal_id)
+            .outerjoin(Marca, Marca.marca_id == OrdenCliente.marca_id)
             # El corazón de la bandeja: "cerrada y sin factura VIGENTE".
             # Se expresa con NOT EXISTS y no con LEFT JOIN + IS NULL. Con la relación N:M
             # (ADR-064) el LEFT JOIN encadenado produce UNA FILA POR FACTURA de la orden,

@@ -11318,3 +11318,55 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   datos reales de la base de desarrollo (una factura de 1 orden/1 estación y una de 2
   órdenes/3 estaciones), confirmando la aritmética de cada renglón y el párrafo de
   `Personalizados.Campaña` con CRLF real entre órdenes.
+
+### ADR-280 — Corrige 2 bugs reales de ADR-279: costo del Detalle y concepto del formulario de alta
+
+- **Estado:** aceptada · **Fecha:** 2026-11-21 (petición del usuario, con captura: una
+  pantalla de "Nueva factura" mostrando la descripción sugerida todavía con el formato
+  viejo, más el archivo plano real generado mostrando el COSTO equivocado). Es una
+  CORRECCIÓN sobre ADR-279 (implementado el día anterior), no un cambio de alcance
+  nuevo — ADR-279 quedó incompleto en estos 2 puntos.
+- **Bug 1 — `Detalle.COSTO`/`IMPORTE`/`Importe2` exponían el costo INTERNO con la
+  estación, no el precio pactado con el cliente.** `_renglones_detalle()` usaba
+  `OrdenEstacion.precio_spot` (lo que OIR negocia/paga a la estación/afiliado) para
+  `COSTO` e `IMPORTE` — eso transparentaba al CLIENTE el margen de OIR (la diferencia
+  entre lo que le cobra y lo que le paga a la estación), algo que una factura NUNCA debe
+  revelar. Corregido: `COSTO`/`IMPORTE` ahora usan `OrdenCliente.precio_unitario` (el
+  precio que OIR le pactó AL CLIENTE). La CANTIDAD de spots sigue derivándose de
+  `OrdenEstacion.importe_estacion / OrdenEstacion.precio_spot` (ese cálculo interno
+  solo recupera el número de spots, nunca se expone el precio interno en sí);
+  `IMPORTE = cantidad * precio_unitario`, recalculado (ya no se reusa
+  `importe_estacion` directo). `_renglones_detalle()` ahora arma primero un
+  `{orden_id: OrdenCliente}` para poder resolver el `precio_unitario` de la orden dueña
+  de cada `OrdenEstacion`. Ejemplo real verificado: `precio_spot=50` (estación),
+  `precio_unitario=100` (cliente), 9 spots → antes COSTO=50.00/IMPORTE=450.00, ahora
+  COSTO=100.00/IMPORTE=900.00.
+- **Bug 2 — la sugerencia de "Concepto" del formulario de alta se había quedado con la
+  plantilla VIEJA.** El backend (`Personalizados.Campaña`) ya armaba bien el párrafo
+  nuevo por orden desde ADR-279, pero `FacturaClienteForm.tsx` seguía pre-cargando
+  "Descripción del servicio" (`descripcion_factura`, editable por Facturación antes de
+  guardar) con la plantilla vieja de `descripcionSugerida()` (ADR-224: "Servicios de
+  transmisión publicitaria — [campaña] del [fechas]. [N] spots de [duración] a $[precio]
+  c/u. Monto: $[subtotal]. Según orden [número]. Folio: [folio]."). Reescrita para usar
+  EXACTAMENTE la misma plantilla que ya usa el backend (`_concepto_orden()`): `[No de
+  Orden del Cliente]; PARA SU PRODUCTO: [marca]; CAMPAÑA: [campaña]; Orden de Servicio
+  [folio] PERIODO: [fecha inicio] - [fecha fin]; POR CONDUCTO DE [agencia]` (omitiendo lo
+  que no aplique), apilada con salto de línea en facturación múltiple. Para esto se
+  agregó el campo `marca` (nombre de la Marca, antes solo viajaba el id) a
+  `OrdenPorFacturarRead`/`OrdenesPorFacturarRepository.listar()` (nuevo `outerjoin` con
+  el catálogo `Marca` vía `OrdenCliente.marca_id`) y al tipo `OrdenPorFacturar` del
+  frontend. Nuevo helper `fechaDDMMAAAA()` en el formulario (formato `dd/mm/aaaa`, igual
+  al que ya usa el backend para el periodo del concepto).
+- **Sin cambios:** la granularidad por Orden de Estación, el concepto de cada renglón de
+  `Detalle` (`Siglas Frecuencia Producto Duración`), y el párrafo de `Personalizados.
+  Campaña` en sí (ya estaba bien desde ADR-279) — este ADR solo corrige QUÉ PRECIO se
+  muestra en el Detalle y sincroniza la sugerencia del formulario con lo que el backend
+  ya hacía.
+- **Verificado:** backend — nueva prueba
+  `test_el_archivo_plano_usa_el_precio_del_cliente_no_el_de_la_estacion` (con
+  `precio_spot`/`precio_unitario` DISTINTOS a propósito, para probar que no se confunden)
+  + la prueba de bonificables actualizada con los nuevos valores esperados + suite
+  completa 100% verde, `ruff` limpio. Frontend — `ListasParaFacturarPage.test.tsx`
+  actualizada a la plantilla nueva, `tsc --noEmit`/`eslint` limpios, suite completa sin
+  regresiones nuevas. Probado además a mano contra datos reales de la base de
+  desarrollo.

@@ -847,8 +847,57 @@ def test_el_archivo_plano_trae_un_renglon_por_orden_de_estacion_con_sus_spots_re
     linea_detalle = lineas[lineas.index("================ Detalle") + 2]
 
     assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT = 10000.00 / 1000.00
-    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = precio_spot
-    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = importe_estacion
+    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = precio_unitario (OC)
+    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE = CANT * COSTO
+
+
+# ADR-280 (petición del usuario, con captura, corrige un bug real): `Detalle.COSTO`/
+# `IMPORTE` traían el precio INTERNO que OIR negoció con la estación
+# (`OrdenEstacion.precio_spot`) — eso le transparentaba al cliente el margen de OIR. El
+# costo que debe ver el cliente es el que OIR le pactó A ÉL (`OrdenCliente.
+# precio_unitario`), que puede ser distinto del costo interno con la estación.
+def test_el_archivo_plano_usa_el_precio_del_cliente_no_el_de_la_estacion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(
+        db, cat, "orden_cerrada", "OC-MARGEN",
+        subtotal=Decimal("10000.00"),  # 10 spots a $1000.00 (precio_unitario de la OC)
+    )
+    _orden_estacion(
+        db,
+        cat,
+        orden_id,
+        "cerrada",
+        precio_spot=Decimal("600.00"),  # lo que OIR paga/negocia con la estación
+        importe_estacion=Decimal("6000.00"),  # 10 spots * 600.00 (costo interno)
+        importe_oir=Decimal("4000.00"),
+        iva_oir=Decimal("640.00"),
+        total_oir=Decimal("4640.00"),
+        importe_emisora=Decimal("2000.00"),
+        iva_emisora=Decimal("320.00"),
+        total_emisora=Decimal("2320.00"),
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/clientes",
+        json=_payload_factura(orden_id, cat["cuenta_id"], "FMEX-9700"),
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 201, r.text
+    factura_id = r.json()["factura_id"]
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{factura_id}/archivo-plano", headers=_hdr("facturacion")
+    )
+    texto = r.content.decode("cp1252")
+    lineas = texto.split("\r\n")
+    linea_detalle = lineas[lineas.index("================ Detalle") + 2]
+
+    assert linea_detalle[49:59].strip() == "10"  # Detalle.CANT: 6000.00 / 600.00 (interno)
+    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO: precio_unitario (OC)
+    assert linea_detalle[88:114].strip() == "10000.00"  # Detalle.IMPORTE: 10 * 1000.00
+    # El costo interno con la estación (600.00) no aparece en la columna COSTO.
+    assert linea_detalle[74:88].strip() != "600.00"
 
 
 def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
@@ -857,7 +906,10 @@ def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
     """Los Spots Bonificables (ADR-067) ya NO cuentan en `Detalle.CANT`: viven en
     `OrdenEstacion.cantidad_spots_bonificables`, y `importe_estacion` YA los descuenta
     (`spots_facturables * precio_spot`) — `Detalle.CANT` se deriva de ahí
-    (`importe_estacion / precio_spot`), nunca del total de spots asignados."""
+    (`importe_estacion / precio_spot`), nunca del total de spots asignados. `precio_spot`
+    (1.00) es el costo INTERNO con la estación — solo se usa para recuperar la cantidad;
+    `Detalle.COSTO`/`IMPORTE` (ADR-280) usan `OrdenCliente.precio_unitario` (1000.00, el
+    default de `_orden`), el precio pactado con el CLIENTE."""
     orden_id = _orden(db, cat, "orden_cerrada", "OC-BONIF", subtotal=Decimal("95.00"))
     _orden_estacion(
         db,
@@ -890,8 +942,8 @@ def test_el_archivo_plano_con_bonificables_usa_spots_facturables_en_cant(
     linea_detalle = lineas[lineas.index("================ Detalle") + 2]
 
     assert linea_detalle[49:59].strip() == "95"  # Detalle.CANT: spots FACTURABLES, no 100
-    assert linea_detalle[74:88].strip() == "1.00"  # Detalle.COSTO = precio_spot
-    assert linea_detalle[88:114].strip() == "95.00"  # Detalle.IMPORTE = importe_estacion
+    assert linea_detalle[74:88].strip() == "1000.00"  # Detalle.COSTO = precio_unitario (OC)
+    assert linea_detalle[88:114].strip() == "95000.00"  # Detalle.IMPORTE = CANT * COSTO
 
 
 # ── Serie derivada del número de factura (ADR-060 bis) ────────────────────────

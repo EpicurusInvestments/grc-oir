@@ -812,6 +812,22 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   línea real cuando la factura cubre varias órdenes. Aplica siempre, no solo en
   facturación múltiple. Detalle completo en `docs/arquitectura.md` (ADR-279).
 
+- **Corrección posterior: `Detalle.COSTO`/`IMPORTE` traían el precio INTERNO con la
+  estación, no el del cliente (ADR-280, bug real, petición del usuario con captura).**
+  Lo de arriba (ADR-279) usaba `OrdenEstacion.precio_spot` para `COSTO`/`IMPORTE` —
+  eso transparentaba al CLIENTE el margen de OIR (la diferencia entre lo que le cobra
+  y lo que le paga a la estación/afiliado). Corregido: `COSTO`/`IMPORTE` ahora usan
+  `OrdenCliente.precio_unitario` (el precio PACTADO CON EL CLIENTE); la cantidad de
+  spots sigue derivándose de `importe_estacion / precio_spot` (ese cálculo interno
+  solo recupera el número de spots, nunca el precio en sí) y `IMPORTE = cantidad *
+  precio_unitario`. Junto con esto, la sugerencia de "Descripción del servicio" del
+  formulario de alta (`FacturaClienteForm.tsx::descripcionSugerida()`, antes ADR-224)
+  se reescribió para usar la MISMA plantilla nueva que `Personalizados.Campaña`
+  (`_concepto_orden()`) — se había quedado con el formato viejo pese a que el backend
+  ya estaba corregido desde ADR-279. Para eso, la bandeja "órdenes por facturar"
+  (`OrdenPorFacturarRead`/`OrdenPorFacturar`) ahora también trae el nombre de la Marca
+  (antes solo el id). Detalle completo en `docs/arquitectura.md` (ADR-280).
+
 - **Rediseño del detalle de "Facturas de afiliado" + edición conectada (petición del
   usuario, sin ADR — solo frontend, ningún cambio de esquema/servicio).** El panel de
   detalle (`FacturasAfiliadoPage.tsx`) tenía un diseño más viejo/plano que el resto de

@@ -504,6 +504,9 @@ export interface OrdenPorFacturar {
   agencia: string | null;
   vendedor: string | null;
   producto: string | null;
+  /** ADR-280 (petición del usuario): para la sugerencia de Concepto, que replica la
+   *  misma plantilla que arma el archivo plano por cada orden. */
+  marca: string | null;
   fecha_inicio_campania: string;
   fecha_fin_campania: string;
   subtotal: string;

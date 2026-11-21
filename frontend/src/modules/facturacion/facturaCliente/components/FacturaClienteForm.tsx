@@ -93,24 +93,31 @@ interface Props {
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
-/** Concepto sugerido (ADR-224, petición del usuario): un renglón por orden — Campaña,
- *  periodo, spots, costo del spot, monto de la orden, número de orden cliente y folio de
- *  la orden de servicio — unidos con salto de línea cuando la factura cubre varias
- *  órdenes (facturación múltiple, ADR-064). Con una sola orden es un solo renglón, igual
- *  que antes (más los 3 datos nuevos: costo del spot, monto y folio). */
+/** `dd/mm/aaaa` a partir de un ISO `aaaa-mm-dd` — mismo formato que usa el archivo
+ *  plano para el PERIODO del concepto (`_concepto_orden()` en el backend, ADR-279/280),
+ *  distinto del `fmtFecha` general de este módulo ("dd-mmm-aa"). */
+function fechaDDMMAAAA(iso: string): string {
+  const [anio, mes, dia] = iso.slice(0, 10).split("-");
+  return `${dia}/${mes}/${anio}`;
+}
+
+/** Concepto sugerido (ADR-280, petición del usuario): replica EXACTAMENTE la misma
+ *  plantilla que arma `_concepto_orden()` en el backend para `Personalizados.Campaña`
+ *  del archivo plano — un párrafo por orden, con las partes sin dato omitidas (marca
+ *  nula, campaña vacía, sin agencia), unidos con salto de línea cuando la factura cubre
+ *  varias órdenes (facturación múltiple, ADR-064). */
 function descripcionSugerida(ordenes: OrdenPorFacturar[]): string {
   return ordenes
     .map((o) => {
-      const spots =
-        o.total_spots != null && o.duracion_spot
-          ? ` ${o.total_spots} spots de ${o.duracion_spot} a ${fmtMoneda(o.precio_unitario)} c/u.`
-          : "";
-      return (
-        `Servicios de transmisión publicitaria — ${o.producto ?? "Campaña"} del ` +
-        `${fmtFecha(o.fecha_inicio_campania)} al ${fmtFecha(o.fecha_fin_campania)}.${spots} ` +
-        `Monto: ${fmtMoneda(o.subtotal)}. Según orden ${o.numero_orden_cliente}. ` +
-        `Folio: ${o.folio_orden}.`
-      );
+      const partes = [
+        o.numero_orden_cliente,
+        o.marca ? `PARA SU PRODUCTO: ${o.marca}` : null,
+        o.producto ? `CAMPAÑA: ${o.producto}` : null,
+        `Orden de Servicio ${o.folio_orden} PERIODO: ` +
+          `${fechaDDMMAAAA(o.fecha_inicio_campania)} - ${fechaDDMMAAAA(o.fecha_fin_campania)}`,
+      ];
+      if (o.agencia) partes.push(`POR CONDUCTO DE ${o.agencia}`);
+      return partes.filter((p): p is string => !!p).join("; ");
     })
     .join("\n");
 }
