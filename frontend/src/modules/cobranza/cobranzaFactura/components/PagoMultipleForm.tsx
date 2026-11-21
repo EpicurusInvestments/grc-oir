@@ -229,7 +229,7 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
       return;
     }
     if (!fecha.trim()) {
-      setError("Captura la fecha de aplicación.");
+      setError("Captura la fecha del pago.");
       return;
     }
     if (!montoTotal || montoTotalNum <= 0) {
@@ -394,17 +394,20 @@ export function PagoMultipleForm({ onCancelar, onRegistrado, origenHuerfano }: P
 
           <div className="form-card">
             <div className="form-card-title">Datos del pago recibido</div>
-            {/* Petición del usuario: orden Fecha pago/Fecha aplicación, Forma de pago/
-                Cuenta contable, Referencia bancaria/Monto total — "Número de pago" se
-                quitó de aquí (ver tabla de abajo, columna "Parcialidad"). */}
+            {/* ADR-281 (petición del usuario, corrige un bug real): las etiquetas estaban
+                INVERTIDAS respecto a lo que de verdad capturan — "Fecha pago" llenaba
+                `fecha_deposito` y "Fecha de aplicación" llenaba `fecha_pago_cliente".
+                Ahora usan EXACTAMENTE las mismas 2 etiquetas que `RegistrarPagoForm.tsx`
+                (el pago individual), homologadas: "Fecha del pago" (fecha_pago_cliente,
+                obligatoria) y "Fecha de depósito" (fecha_deposito, opcional). */}
             <div className="r2">
               <div>
-                <div className="fl">Fecha pago</div>
-                <DateInput value={fechaDeposito} onChange={setFechaDeposito} />
+                <div className="fl fl-required">Fecha del pago</div>
+                <DateInput value={fecha} onChange={setFecha} />
               </div>
               <div>
-                <div className="fl fl-required">Fecha de aplicación</div>
-                <DateInput value={fecha} onChange={setFecha} />
+                <div className="fl">Fecha de depósito</div>
+                <DateInput value={fechaDeposito} onChange={setFechaDeposito} />
               </div>
             </div>
             <div className="r2">

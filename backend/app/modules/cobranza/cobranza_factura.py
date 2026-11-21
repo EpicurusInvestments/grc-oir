@@ -293,6 +293,12 @@ class CobranzaFacturaRead(BaseModel):
     #: puede no ser numérico). El frontend lo envía tal cual, de solo lectura, como
     #: `numero_pago` de ESE renglón al registrar el pago múltiple.
     siguiente_numero_pago: str = "1"
+    #: ADR-281 (petición del usuario, columnas "Fecha de pago"/"Fecha de aplicación" de
+    #: la lista): fecha real del pago y fecha de depósito del ÚLTIMO `PagoCliente` de
+    #: esta cobranza — mismo criterio de "último" que `ultimo_numero_pago` arriba.
+    #: `None` si todavía no hay ningún pago.
+    fecha_pago: date | None = None
+    fecha_deposito: date | None = None
 
 
 class CobranzaFacturaListParams(ListParams):
@@ -552,20 +558,27 @@ class CobranzaFacturaService(
         )
         return Decimal(total or 0).quantize(CENTAVOS)
 
-    def _info_pagos(self, cobranza_id: uuid.UUID) -> tuple[str | None, str]:
-        """`(ultimo_numero_pago, siguiente_numero_pago)` en UNA sola consulta (`COUNT(*)
-        OVER()` junto con el `numero_pago` más reciente — ver docstrings de
-        `CobranzaFacturaRead`): orden por `fecha_pago_cliente` desc, `created_at` desc
-        como desempate. Sin pagos todavía: `(None, "1")`."""
+    def _info_pagos(
+        self, cobranza_id: uuid.UUID
+    ) -> tuple[str | None, str, date | None, date | None]:
+        """`(ultimo_numero_pago, siguiente_numero_pago, fecha_pago, fecha_deposito)` en
+        UNA sola consulta (`COUNT(*) OVER()` junto con los datos del pago más reciente —
+        ver docstrings de `CobranzaFacturaRead`): orden por `fecha_pago_cliente` desc,
+        `created_at` desc como desempate. Sin pagos todavía: `(None, "1", None, None)`."""
         fila = self._repo.db.execute(
-            select(PagoCliente.numero_pago, func.count().over().label("total"))
+            select(
+                PagoCliente.numero_pago,
+                func.count().over().label("total"),
+                PagoCliente.fecha_pago_cliente,
+                PagoCliente.fecha_deposito,
+            )
             .where(PagoCliente.cobranza_id == cobranza_id)
             .order_by(PagoCliente.fecha_pago_cliente.desc(), PagoCliente.created_at.desc())
             .limit(1)
         ).one_or_none()
         if fila is None:
-            return None, "1"
-        return fila[0], str(fila[1] + 1)
+            return None, "1", None, None
+        return fila[0], str(fila[1] + 1), fila[2], fila[3]
 
     def datos_factura(self, factura_id: uuid.UUID) -> tuple[Decimal, str]:
         """`(total_factura, numero_factura)` de la factura — UNA consulta, sin importar
@@ -588,9 +601,12 @@ class CobranzaFacturaService(
         leida.importe_cobrado = cobrado
         leida.importe_pendiente_cobro = (total_factura - cobrado).quantize(CENTAVOS)
         leida.numero_factura = numero_factura
-        leida.ultimo_numero_pago, leida.siguiente_numero_pago = self._info_pagos(
-            leida.cobranza_id
-        )
+        (
+            leida.ultimo_numero_pago,
+            leida.siguiente_numero_pago,
+            leida.fecha_pago,
+            leida.fecha_deposito,
+        ) = self._info_pagos(leida.cobranza_id)
         leida.vencida = (
             leida.estatus_cobro != EstatusCobro.COBRADA.value
             and leida.fecha_estimada_cobro < date.today()
@@ -770,9 +786,23 @@ class CobranzaFacturaService(
 
 
 def get_cobranza_factura_service(db: Session = Depends(get_db)) -> CobranzaFacturaService:
+    # ADR-281 (petición del usuario): "ordenar por fecha estimada y luego por fecha de
+    # pago" — la fecha de pago vive en `PagoCliente` (tabla hija), así que el desempate
+    # es una subconsulta correlacionada al ÚLTIMO pago de cada cobranza (mismo criterio
+    # de "último" que `_info_pagos`: `fecha_pago_cliente` desc, `created_at` desc).
+    ultima_fecha_pago = (
+        select(PagoCliente.fecha_pago_cliente)
+        .where(PagoCliente.cobranza_id == CobranzaFactura.cobranza_id)
+        .order_by(PagoCliente.fecha_pago_cliente.desc(), PagoCliente.created_at.desc())
+        .limit(1)
+        .correlate(CobranzaFactura)
+        .scalar_subquery()
+    )
     return CobranzaFacturaService(
         CobranzaFacturaRepository(
-            db, CobranzaFactura, default_order_by=[CobranzaFactura.fecha_estimada_cobro]
+            db,
+            CobranzaFactura,
+            default_order_by=[CobranzaFactura.fecha_estimada_cobro, ultima_fecha_pago],
         )
     )
 
@@ -904,7 +934,7 @@ class PagoClienteService:
         restante = (pago.monto_aplicado - data.monto_aplicado).quantize(CENTAVOS)
 
         if restante > 0:
-            _, siguiente_numero_pago = servicio_cobranza._info_pagos(data.cobranza_id)
+            _, siguiente_numero_pago, _, _ = servicio_cobranza._info_pagos(data.cobranza_id)
             resultado = PagoCliente(
                 pago_cliente_id=uuid4(),
                 cobranza_id=data.cobranza_id,

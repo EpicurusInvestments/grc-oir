@@ -34,6 +34,8 @@ const facturaPendiente: CobranzaFactura = {
   numero_factura: "A-0001",
   ultimo_numero_pago: null,
   siguiente_numero_pago: "2",
+  fecha_pago: null,
+  fecha_deposito: null,
 };
 
 const facturaCobrada: CobranzaFactura = {

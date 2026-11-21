@@ -53,6 +53,12 @@ export interface CobranzaFactura {
    *  de pagos ya registrados para esta cobranza + 1, como string — siempre un número,
    *  nunca `null` (por conteo, no por parsear `ultimo_numero_pago`). */
   siguiente_numero_pago: string;
+  /** ADR-281 (petición del usuario, columnas "Fecha de pago"/"Fecha de aplicación" de
+   *  la lista): fecha real del pago y fecha de depósito del ÚLTIMO `PagoCliente` de
+   *  esta cobranza — mismo criterio de "último" que `ultimo_numero_pago`. `null` si
+   *  todavía no hay ningún pago. */
+  fecha_pago: string | null;
+  fecha_deposito: string | null;
 }
 
 /** Único campo editable de `CobranzaFactura` vía `PUT`. */

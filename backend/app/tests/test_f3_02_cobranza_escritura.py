@@ -1250,6 +1250,73 @@ def test_ultimo_numero_pago_tambien_lo_alimenta_el_pago_multiple(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ADR-281 (petición del usuario): columnas "Fecha de pago"/"Fecha de aplicación" de la
+# lista — `fecha_pago`/`fecha_deposito` del ÚLTIMO PagoCliente (mismo criterio de
+# "último" que `ultimo_numero_pago`) y orden por `fecha_estimada_cobro` + esa fecha.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_fecha_pago_y_fecha_deposito_son_null_sin_pagos(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2080")
+    cobranza_id = _cobranza_id(db, factura_id)
+    r = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc"))
+    assert r.json()["fecha_pago"] is None
+    assert r.json()["fecha_deposito"] is None
+
+
+def test_fecha_pago_y_fecha_deposito_toman_el_ultimo_pago(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2081")
+    cobranza_id = _cobranza_id(db, factura_id)
+
+    pago1 = _pago("3000.00", cat, fecha="2026-03-05")
+    pago1["fecha_deposito"] = "2026-03-06"
+    client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos", json=pago1, headers=_hdr("cxc")
+    )
+    # Se captura DESPUÉS pero con fecha de pago ANTERIOR: no debe desplazar al de arriba.
+    pago_fuera_de_orden = _pago("1000.00", cat, fecha="2026-03-01")
+    pago_fuera_de_orden["fecha_deposito"] = "2026-03-02"
+    client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=pago_fuera_de_orden,
+        headers=_hdr("cxc"),
+    )
+
+    r = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc"))
+    assert r.json()["fecha_pago"] == "2026-03-05"
+    assert r.json()["fecha_deposito"] == "2026-03-06"
+
+
+def test_el_listado_ordena_por_fecha_estimada_y_luego_por_fecha_de_pago(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Dos cobranzas con la MISMA `fecha_estimada_cobro` (mismo `dias_credito`, misma
+    fecha ancla) se desempatan por la fecha del último pago — la que pagó ANTES aparece
+    primero."""
+    factura_a, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2090")
+    factura_b, _, _ = _crear_y_timbrar_factura(client, db, cat, "FMEX-2091")
+    cobranza_a = _cobranza_id(db, factura_a)
+    cobranza_b = _cobranza_id(db, factura_b)
+
+    client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_b}/pagos",
+        json=_pago("1000.00", cat, fecha="2026-03-01"),
+        headers=_hdr("cxc"),
+    )
+    client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_a}/pagos",
+        json=_pago("1000.00", cat, fecha="2026-03-10"),
+        headers=_hdr("cxc"),
+    )
+
+    r = client.get("/api/v1/cobranza/facturas", headers=_hdr("cxc"))
+    ids = [f["cobranza_id"] for f in r.json()["items"]]
+    assert ids.index(cobranza_b) < ids.index(cobranza_a)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ADR-227 (petición del usuario): "Número de Parcialidad" calculada en la tabla de
 # Pago Múltiple + tope de monto por renglón contra el pendiente (solo frontend).
 # ══════════════════════════════════════════════════════════════════════════════

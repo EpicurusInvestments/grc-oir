@@ -106,6 +106,8 @@ const base: CobranzaFactura = {
   numero_factura: "A-001245",
   ultimo_numero_pago: null,
   siguiente_numero_pago: "1",
+  fecha_pago: null,
+  fecha_deposito: null,
 };
 
 function renderCon(cobranza: CobranzaFactura) {
@@ -128,6 +130,42 @@ describe("CobranzaFacturasPage", () => {
     getMock.mockReset();
     updateMock.mockReset();
     pagosListMock.mockReset();
+  });
+
+  // ADR-281 (petición del usuario): columnas nuevas "Fecha de pago"/"Fecha de
+  // aplicación" (tomadas del último `PagoCliente`, `null` sin pagos aún) + búsqueda por
+  // esos campos.
+  it("muestra las columnas 'Fecha de pago'/'Fecha de aplicación' y permite buscar por ellas", async () => {
+    const conPago: CobranzaFactura = {
+      ...base,
+      cobranza_id: "cb-pago",
+      factura_id: "f-pago",
+      numero_factura: "A-9000",
+      fecha_pago: "2026-03-05",
+      fecha_deposito: "2026-03-06",
+    };
+    listMock.mockResolvedValue({ items: [base, conPago], total: 2, page: 1, size: 20, pages: 1 });
+    getMock.mockResolvedValue(base);
+    pagosListMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <CobranzaFacturasPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("A-9000")).toBeInTheDocument();
+    expect(screen.getByText("05-mar-26")).toBeInTheDocument();
+    expect(screen.getByText("06-mar-26")).toBeInTheDocument();
+    // Sin pago: las 2 columnas nuevas muestran "—", sin tronar.
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+
+    const buscador = screen.getByPlaceholderText(/fecha de pago o de aplicación/);
+    fireEvent.change(buscador, { target: { value: "05-mar-26" } });
+    await waitFor(() => expect(screen.getByText("A-9000")).toBeInTheDocument());
+    expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
   });
 
   it("lista las cobranzas con su total y estado legible", async () => {
@@ -186,11 +224,14 @@ describe("CobranzaFacturasPage", () => {
     expect(guardar).toBeDisabled();
   });
 
-  it("en 'pendiente' ofrece registrar pago y editar condiciones", async () => {
+  // ADR-281 (petición del usuario): el botón INDIVIDUAL de "+ Registrar pago" se
+  // ocultó — todos los pagos se capturan por "Pago múltiple" (botón del header, fuera
+  // del detalle, siempre visible, no depende de la factura seleccionada).
+  it("en 'pendiente' ofrece editar condiciones, pero ya no el botón individual de pago", async () => {
     renderCon(base);
     (await screen.findByText("A-001245")).click();
     await waitFor(() => expect(screen.getByText("Editar condiciones")).toBeInTheDocument());
-    expect(screen.getAllByText(/Registrar pago/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "+ Registrar pago" })).not.toBeInTheDocument();
   });
 
   it("en 'cobrada' NO ofrece registrar pago ni editar — solo el badge de cerrada", async () => {
