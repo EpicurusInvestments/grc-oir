@@ -17,6 +17,7 @@ import {
   agenciasFacturables,
   anunciantesFacturables,
   costoApi,
+  crearRequisicionDesdeFactura,
   cuentasContables,
   facturaAfiliadoApi,
   facturaAgenciaApi,
@@ -424,3 +425,8 @@ export const useFacturaDeOrden = (ordenId: string | null | undefined) =>
     queryFn: () => facturaClienteApi.list({ orden_id: ordenId as string, size: 10 }),
     enabled: !!ordenId,
   });
+
+/** ADR-282: genera la Requisicion de pago embebida en la pantalla de la Factura (sin
+ *  invalidar nada de este módulo — la Requisicion no es una entidad de Facturación). */
+export const useCrearRequisicionDesdeFactura = () =>
+  useMutation({ mutationFn: crearRequisicionDesdeFactura });

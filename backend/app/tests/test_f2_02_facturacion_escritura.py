@@ -1453,13 +1453,8 @@ def test_cxp_no_puede_autorizar_su_propia_factura(
     client: TestClient, cat: dict[str, uuid.UUID]
 ) -> None:
     fid = _crear_factura_afiliado(client, cat)
-    r = client.post(
-        f"/api/v1/facturacion/afiliados/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
-    assert r.status_code == 200
-    # Ni por el canal operativo ni por el dedicado: CxP no autoriza.
+    # Ni por el canal operativo ni por el dedicado: CxP no autoriza (ADR-282: ya no hay
+    # paso intermedio "en_revision", la factura ya nace en "recibida").
     r = client.post(
         f"/api/v1/facturacion/afiliados/{fid}/estatus",
         json={"estatus": "autorizada"},
@@ -1476,11 +1471,8 @@ def test_direccion_y_admin_si_autorizan(
     client: TestClient, cat: dict[str, uuid.UUID], area: str
 ) -> None:
     fid = _crear_factura_afiliado(client, cat)
-    client.post(
-        f"/api/v1/facturacion/afiliados/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
+    # ADR-282: ya no hay paso intermedio "en_revision" — se autoriza directo desde
+    # "recibida".
     r = client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr(area))
     assert r.status_code == 200, area
     assert r.json()["estatus_factura_afiliado"] == "autorizada"
@@ -1503,11 +1495,6 @@ def test_autorizar_factura_afiliado_bloquea_si_la_orden_no_esta_cobrada(
     )
     assert r.status_code == 201, r.text
     fid = r.json()["factura_afiliado_id"]
-    client.post(
-        f"/api/v1/facturacion/afiliados/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
 
     r = client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr("direccion"))
     assert r.status_code == 400, r.text
@@ -1537,11 +1524,6 @@ def test_autorizar_factura_agencia_bloquea_si_la_orden_no_esta_cobrada(
     )
     assert r.status_code == 201, r.text
     fid = r.json()["factura_agencia_id"]
-    client.post(
-        f"/api/v1/facturacion/agencias/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
 
     r = client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
     assert r.status_code == 400, r.text
@@ -1570,11 +1552,6 @@ def test_autorizar_factura_vendedor_bloquea_si_la_orden_no_esta_cobrada(
     )
     assert r.status_code == 201, r.text
     fid = r.json()["factura_vendedor_id"]
-    client.post(
-        f"/api/v1/facturacion/vendedores/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
 
     r = client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
     assert r.status_code == 400, r.text
@@ -2130,11 +2107,6 @@ def test_editar_factura_agencia_autorizada_no_permite_reasignar(
         db.get(OrdenCliente, uuid.UUID(o["orden_id"])).estatus_orden = "cobrada"
     db.commit()
 
-    client.post(
-        f"/api/v1/facturacion/agencias/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
     r = client.post(f"/api/v1/facturacion/agencias/{fid}/autorizar", headers=_hdr("direccion"))
     assert r.status_code == 200, r.text
 
@@ -2617,11 +2589,6 @@ def test_editar_factura_vendedor_autorizada_no_permite_reasignar(
         db.get(OrdenCliente, uuid.UUID(o["orden_id"])).estatus_orden = "cobrada"
     db.commit()
 
-    client.post(
-        f"/api/v1/facturacion/vendedores/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
     r = client.post(f"/api/v1/facturacion/vendedores/{fid}/autorizar", headers=_hdr("direccion"))
     assert r.status_code == 200, r.text
 
@@ -3986,11 +3953,6 @@ def test_editar_factura_afiliado_autorizada_no_permite_reasignar_ni_reconciliar(
     """Mismo candado que ya protege monto/IVA (`Una factura autorizada o pagada ya no
     se edita`): también aplica a `afiliado_id`/`ordenes_estacion_ids`."""
     fid = _crear_factura_afiliado(client, cat)
-    client.post(
-        f"/api/v1/facturacion/afiliados/{fid}/estatus",
-        json={"estatus": "en_revision"},
-        headers=_hdr("cxp"),
-    )
     client.post(f"/api/v1/facturacion/afiliados/{fid}/autorizar", headers=_hdr("direccion"))
 
     r = client.put(

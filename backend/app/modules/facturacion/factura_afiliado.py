@@ -49,18 +49,20 @@ from app.shared.schemas import ListParams, Page
 
 
 class EstatusFacturaProveedor(StrEnum):
-    """Estados de las facturas que OIR RECIBE (spec: mismos 4 valores para afiliado y
-    agencia). Se define UNA vez aquí y `factura_agencia.py` lo importa — mismo criterio
-    que `EstatusOrden`, definido en `orden_cliente.py` y reutilizado por
-    `orden_estacion.py` en F1.
+    """Estados de las facturas que OIR RECIBE (afiliado, agencia y vendedor comparten
+    estos 3 valores). Se define UNA vez aquí y `factura_agencia.py`/`factura_vendedor.py`
+    lo importan — mismo criterio que `EstatusOrden`, definido en `orden_cliente.py` y
+    reutilizado por `orden_estacion.py` en F1.
 
-    `en_revision → autorizada` NO lo ejecuta quien capturó: es de Dirección/Admin
-    (regla de área explícita en el servicio, Tanda 2 — mismo patrón que el canal de
-    comisiones de F1, que tampoco se resuelve con la matriz RBAC de módulo).
+    ADR-282 (petición del usuario, con captura): se quitó el estatus intermedio
+    `en_revision` — antes `recibida → en_revision → autorizada`, ahora `recibida →
+    autorizada` directo. `recibida → autorizada` sigue sin ejecutarlo quien capturó: es
+    de Dirección/Admin (regla de área explícita en el servicio, Tanda 2 — mismo patrón
+    que el canal de comisiones de F1, que tampoco se resuelve con la matriz RBAC de
+    módulo).
     """
 
     RECIBIDA = "recibida"
-    EN_REVISION = "en_revision"
     AUTORIZADA = "autorizada"
     PAGADA = "pagada"
 
@@ -247,16 +249,12 @@ class FacturaAfiliadoListParams(ListParams):
 
 # ── Schemas de escritura (Tanda 2) ───────────────────────────────────────────────
 # Transiciones permitidas. `autorizada` exige área Dirección/Admin (ver el servicio).
+# ADR-282: ya no hay paso intermedio `en_revision`. "Devolver a capturista" (frontend)
+# es la misma transición `recibida -> recibida`, idempotente (ver `transicionar()`): no
+# cambia el estatus, solo permite que Dirección deje la factura donde estaba tras
+# revisarla sin autorizarla.
 TRANSICIONES_PROVEEDOR: dict[str, set[str]] = {
-    EstatusFacturaProveedor.RECIBIDA.value: {EstatusFacturaProveedor.EN_REVISION.value},
-    EstatusFacturaProveedor.EN_REVISION.value: {
-        EstatusFacturaProveedor.AUTORIZADA.value,
-        # Vuelta atrás deliberada: si la revisión encuentra un error, la factura regresa
-        # a `recibida` para que CxP la corrija. La spec dibuja el flujo lineal pero no
-        # prohíbe el rechazo, y sin esta arista una factura mal capturada quedaría
-        # atorada para siempre.
-        EstatusFacturaProveedor.RECIBIDA.value,
-    },
+    EstatusFacturaProveedor.RECIBIDA.value: {EstatusFacturaProveedor.AUTORIZADA.value},
     EstatusFacturaProveedor.AUTORIZADA.value: {EstatusFacturaProveedor.PAGADA.value},
     EstatusFacturaProveedor.PAGADA.value: set(),  # terminal
 }
@@ -632,10 +630,7 @@ class FacturaAfiliadoService(
         from app.modules.catalogos.afiliado import Afiliado
 
         obj = self._get_or_404(id_)
-        if obj.estatus_factura_afiliado not in (
-            EstatusFacturaProveedor.RECIBIDA.value,
-            EstatusFacturaProveedor.EN_REVISION.value,
-        ):
+        if obj.estatus_factura_afiliado != EstatusFacturaProveedor.RECIBIDA.value:
             raise ConflictError(
                 "Una factura autorizada o pagada ya no se edita.",
                 detalles={"estatus_factura_afiliado": obj.estatus_factura_afiliado},
@@ -752,7 +747,7 @@ class FacturaAfiliadoService(
     def autorizar(
         self, factura_afiliado_id: uuid.UUID, usuario: CurrentUser
     ) -> FacturaAfiliadoRead:
-        """CANAL DEDICADO para `en_revision -> autorizada`. Solo Direccion/Admin.
+        """CANAL DEDICADO para `recibida -> autorizada`. Solo Direccion/Admin.
 
         Mismo diseno que el canal de comisiones de F1 (`PATCH /clientes/{id}/comisiones`):
         el permiso del ROUTER es `costos:leer` a proposito, porque Direccion NO tiene
@@ -931,9 +926,9 @@ def cambiar_estatus_factura_afiliado(
     usuario: CurrentUser = Depends(requiere_permiso("costos:editar")),
     svc: FacturaAfiliadoService = Depends(get_factura_afiliado_service),
 ) -> FacturaAfiliadoRead:
-    """`recibida → en_revision → autorizada → pagada` (con vuelta de `en_revision` a
-    `recibida` si la revisión rechaza). **`autorizada` exige área Dirección o Admin** —
-    403 si lo intenta el propio CxP que capturó."""
+    """`recibida → autorizada → pagada` (ADR-282: ya no hay paso intermedio). También
+    sirve para "Devolver a capturista" (`recibida → recibida`, idempotente). **`autorizada`
+    exige área Dirección o Admin** — 403 si lo intenta el propio CxP que capturó."""
     return svc.transicionar(item_id, payload.estatus, usuario)
 
 
@@ -956,7 +951,7 @@ def autorizar_factura_afiliado(
     usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
     svc: FacturaAfiliadoService = Depends(get_factura_afiliado_service),
 ) -> FacturaAfiliadoRead:
-    """Canal dedicado `en_revision → autorizada`. Permiso de router deliberadamente
+    """Canal dedicado `recibida → autorizada`. Permiso de router deliberadamente
     `costos:leer` (Dirección no tiene captura sobre el módulo); la autorización real
     —solo Dirección/Admin— se valida DENTRO del servicio. 403 para cualquier otra área,
     incluida la CxP que capturó la factura."""

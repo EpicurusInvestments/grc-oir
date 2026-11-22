@@ -19,6 +19,7 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
+import { RequisicionInlineForm } from "../../components/RequisicionInlineForm";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, fmtPorcentaje, oGuion } from "../../format";
 import { useFacturasVendedor, useOrdenesVendedor } from "../../hooks";
 import {
@@ -32,8 +33,8 @@ import {
 import { FacturaVendedorForm } from "../components/FacturaVendedorForm";
 
 /** Solo antes de autorizar (mismo candado que el backend): una factura `autorizada`/
- *  `pagada` ya no se edita. */
-const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida", "en_revision"]);
+ *  `pagada` ya no se edita. ADR-282: ya no existe "en_revision". */
+const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida"]);
 
 /** Timeline del ciclo de vida — mismo patrón que `TimelineAgencia`. */
 function TimelineVendedor({ estatus }: { estatus: EstatusProveedor }) {
@@ -87,7 +88,6 @@ type Filtro = "todas" | EstatusProveedor;
 const FILTROS = [
   { key: "todas", label: "Todas" },
   { key: "recibida", label: "Recibidas" },
-  { key: "en_revision", label: "En revisión" },
   { key: "autorizada", label: "Autorizadas" },
   { key: "pagada", label: "Pagadas" },
 ];
@@ -279,6 +279,15 @@ export function FacturasVendedorPage() {
               </div>
             </>
           )}
+
+          {estatus === "autorizada" && (
+            <RequisicionInlineForm
+              tipo="comision_vendedor"
+              montoSugerido={selected.total_factura_vendedor}
+              vendedorComisionId={selected.vendedor_id}
+              facturaVendedorId={selected.factura_vendedor_id}
+            />
+          )}
         </div>
 
         <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
@@ -291,24 +300,9 @@ export function FacturasVendedorPage() {
               agencia/afiliado: esa transición queda pendiente de resolverse por otro
               canal, no por un botón operativo aquí. */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {/* ADR-282: ya no hay paso intermedio "en_revision" — Autorizar/Devolver
+                aparecen directo sobre "recibida". */}
             {estatus === "recibida" && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={cambiarEstatus.isPending}
-                onClick={() =>
-                  ejecutar(() =>
-                    cambiarEstatus.mutateAsync({
-                      id: selected.factura_vendedor_id,
-                      estatus: "en_revision",
-                    }),
-                  )
-                }
-              >
-                Pasar a revisión
-              </button>
-            )}
-            {estatus === "en_revision" && (
               <>
                 <button
                   type="button"

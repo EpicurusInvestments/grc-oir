@@ -13,6 +13,7 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { adjuntosFacturacionApi, nombreDeAdjuntoFacturacionRef } from "../../api";
+import { RequisicionInlineForm } from "../../components/RequisicionInlineForm";
 import { FacturaAfiliadoForm } from "../components/FacturaAfiliadoForm";
 import { badgeEstatusProveedor, fmtFecha, fmtMoneda, oGuion } from "../../format";
 import { useAsignacionesAfiliado, useFacturasAfiliado } from "../../hooks";
@@ -26,8 +27,8 @@ import {
 } from "../../types";
 
 /** Solo antes de autorizar (mismo candado que el backend, `FacturaAfiliadoService.update`):
- *  una factura `autorizada`/`pagada` ya no se edita. */
-const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida", "en_revision"]);
+ *  una factura `autorizada`/`pagada` ya no se edita. ADR-282: ya no existe "en_revision". */
+const PUEDE_EDITAR = new Set<EstatusProveedor>(["recibida"]);
 
 /** Timeline del ciclo de vida (mismo patrón que `Timeline` de Facturas al cliente):
  *  `ESTATUS_PROVEEDOR` ya está en orden y sin "cancelada" (esta entidad no la tiene). */
@@ -82,7 +83,6 @@ type Filtro = "todas" | EstatusProveedor;
 const FILTROS = [
   { key: "todas", label: "Todas" },
   { key: "recibida", label: "Recibidas" },
-  { key: "en_revision", label: "En revisión" },
   { key: "autorizada", label: "Autorizadas" },
   { key: "pagada", label: "Pagadas" },
 ];
@@ -342,6 +342,15 @@ export function FacturasAfiliadoPage() {
               )}
             </div>
           ))}
+
+          {estatus === "autorizada" && (
+            <RequisicionInlineForm
+              tipo="pago_afiliado"
+              montoSugerido={selected.total_factura_afiliado}
+              afiliadoId={selected.afiliado_id}
+              facturaAfiliadoId={selected.factura_afiliado_id}
+            />
+          )}
         </div>
 
         <div className="df" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
@@ -351,24 +360,9 @@ export function FacturasAfiliadoPage() {
             </div>
           )}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {/* ADR-282: ya no hay paso intermedio "en_revision" — Autorizar/Devolver
+                aparecen directo sobre "recibida". */}
             {estatus === "recibida" && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={cambiarEstatus.isPending}
-                onClick={() =>
-                  ejecutar(() =>
-                    cambiarEstatus.mutateAsync({
-                      id: selected.factura_afiliado_id,
-                      estatus: "en_revision",
-                    }),
-                  )
-                }
-              >
-                Pasar a revisión
-              </button>
-            )}
-            {estatus === "en_revision" && (
               <>
                 <button
                   type="button"

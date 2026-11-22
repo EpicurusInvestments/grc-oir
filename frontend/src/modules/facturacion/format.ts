@@ -93,8 +93,6 @@ export function badgeEstatusProveedor(estatus: string): string {
   switch (estatus) {
     case "recibida":
       return "b-gray";
-    case "en_revision":
-      return "b-amber";
     case "autorizada":
       return "b-blue";
     case "pagada":

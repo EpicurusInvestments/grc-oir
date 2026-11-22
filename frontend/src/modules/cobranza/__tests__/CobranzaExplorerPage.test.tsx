@@ -85,6 +85,7 @@ const pendiente: Requisicion = {
   created_by: "u-1",
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
+  folio_factura_origen: null,
 };
 const autorizada: Requisicion = { ...pendiente, requisicion_id: "rq-2", numero_requisicion: "REQ-AUTORIZADA", estatus_requisicion: "autorizada" };
 const todas = [pendiente, autorizada];

@@ -380,11 +380,54 @@ también (`.transicionar(..., "pagada", ...)`) la `FacturaAfiliado`/`FacturaAgen
 `FacturaVendedor` que tenga enlazada por FK, siempre (sin verificar si existen otras
 requisiciones pendientes sobre la misma factura — decisión explícita del usuario).
 
-**Combos "disponibles" del alta (ADR-217):** `GET /cobranza/requisiciones/facturas-
+**Combos "disponibles" del alta clásica (ADR-217):** `GET /cobranza/requisiciones/facturas-
 {afiliado,agencia,vendedor}-disponibles` — facturas `autorizada` que NINGUNA
 `Requisicion` (de cualquier estatus) tiene ligada todavía; reemplazan, para el alta de
 Requisicion, el pedir directo `/facturacion/afiliados|agencias|vendedores` (ese listado
-genérico de Facturación sigue mostrando TODAS las facturas, sin este filtro).
+genérico de Facturación sigue mostrando TODAS las facturas, sin este filtro). **ADR-282:**
+desde que el alta de `pago_afiliado`/`pago_agencia`/`comision_vendedor` se movió al
+bloque embebido en su propia pantalla de Factura (F2 — ver más abajo), estos 3 combos ya
+no los usa ningún formulario del frontend (la factura se conoce por contexto); se dejan
+intactos (siguen probados) por si se necesitan de nuevo, no se borraron.
+
+**ADR-282 (petición del usuario, con captura) — folio automático, validación reforzada
+y reubicación del alta:**
+- **Folio automático:** `numero_requisicion` dejó de capturarse a mano —
+  `RequisicionCreate` ya no tiene ese campo (`extra="forbid"`, mandarlo da 422). Se
+  genera siempre en `RequisicionService._siguiente_numero_requisicion()`, mismo patrón
+  que el folio de `OrdenCliente` (ADR-237/254/275): `RQ-AAAA-MM-consecutivo`,
+  consecutivo GLOBAL (no reinicia por año/mes), sin padding, escaneando el máximo
+  existente por regex en vez de una secuencia de BD.
+- **Validación de elegibilidad reforzada:** antes, que una factura ya estuviera "usada"
+  o no estuviera `autorizada` solo lo filtraban los combos "disponibles" de arriba — el
+  propio `create()` no lo exigía. Como el alta embebida en Facturación ya no pasa por
+  esos combos, se agregó `RequisicionService._validar_factura_disponible()`: 400
+  `error_dominio` si la factura no está `autorizada`, 409 `conflicto` si ya tiene otra
+  Requisicion ligada. Aplica a los 3 tipos con factura de origen; `comision_agencia` no
+  tiene factura, no aplica.
+- **Columna/búsqueda "Folio":** `RequisicionRead` expone `folio_factura_origen`
+  (resuelto en lote por página en el servicio, `_enriquecer_folios()` — mismo patrón por
+  lote que `_conteo_asignaciones` de F2, evita N+1 contra las 3 tablas posibles); `null`
+  para `comision_agencia`. `q` ahora también busca ese folio (`EXISTS` correlacionado
+  contra `FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`, ya que una requisición
+  solo trae UNA de las 3 FKs a la vez). En el frontend, la columna que antes se llamaba
+  "Origen" (resuelta en el cliente con catálogos `xxxInfo`, con una limitación conocida
+  si la factura ya no estaba en ese lote) se renombró a "Folio" y usa directo este campo.
+- **"Requisiciones de pago" pasa a ser CONSULTA, salvo "Comisión agencia":** el botón de
+  alta de `RequisicionesPage.tsx` ahora dice "+ Nueva comisión de agencia" y solo crea
+  ese tipo — es el único sin factura de origen (es un pago sobre una `OrdenCliente`
+  directamente), así que sigue siendo el único que se da de alta aquí. Para los otros 3
+  tipos, el alta vive en su propia pantalla de Factura (F2): `RequisicionInlineForm.tsx`,
+  un componente **del módulo `facturacion`** (no de `cobranza`) — decisión de
+  arquitectura: el proyecto ya tenía la dependencia unidireccional `cobranza →
+  facturacion` (en ambas capas), así que el componente embebido vive del lado de
+  Facturación, con un tipo y una función de API LOCALES y mínimos
+  (`RequisicionDesdeFacturaCreate`/`crearRequisicionDesdeFactura()` en
+  `facturacion/types.ts`/`api.ts`, que pegan directo a `/cobranza/requisiciones`) en vez
+  de importar nada del módulo `cobranza`. `RequisicionForm.tsx` (el formulario clásico de
+  esta pantalla) se simplificó: ya no tiene selector de "Tipo de requisición" ni los
+  bloques de los otros 3 tipos, solo Agencia + Orden de cliente + % Comisión + Monto +
+  OC SAP + Observaciones.
 
 **Badge "Orden de servicio" del detalle (ADR-218, actualizado en ADR-219):** junto al
 estado/tipo, mismo patrón que el badge de orden en Facturas de Cliente (ADR-064) —

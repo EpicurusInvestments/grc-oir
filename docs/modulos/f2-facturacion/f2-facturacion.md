@@ -193,7 +193,18 @@ diferencia de FacturaAgencia/FacturaAfiliado/FacturaVendedor (ADR-086, que orden
 ### FacturaAfiliado (13 campos spec + 2 aditivos)
 PK `factura_afiliado_id`. FK a `Afiliado`. Captura manual o carga de archivo, por **CxP**
 (no Facturación — ver RBAC). `total_factura_afiliado` calculado
-(`monto + iva`). Estados: `recibida → en_revision → autorizada → pagada`.
+(`monto + iva`). Estados: `recibida → autorizada → pagada` (**ADR-282**: se quitó el
+paso intermedio `en_revision` que traía la spec v2 — petición explícita del usuario,
+afecta por igual a `FacturaAgencia`/`FacturaVendedor`, que comparten el mismo enum
+`EstatusFacturaProveedor` y la misma `TRANSICIONES_PROVEEDOR`; ver ADR-282 en
+`docs/arquitectura.md`). "Autorizar" y "Devolver a capturista" (esta última ahora es
+`recibida → recibida`, idempotente) se ofrecen juntos directo sobre `recibida`.
+
+**Alta de Requisicion embebida (ADR-282):** cuando la factura está `autorizada`, el
+detalle muestra un bloque "Generar requisición de pago"
+(`RequisicionInlineForm.tsx`, compartido por las 3 pantallas de este grupo) que da de
+alta la `Requisicion` de F3 sin salir de esta pantalla — ver la ficha de F3 para el
+detalle del endpoint y la validación de elegibilidad.
 
 **`ordenes_asignadas` (ADR-084, no es columna de la tabla):** cuántas `OrdenEstacion`
 tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre
@@ -452,9 +463,10 @@ del grid de 2 columnas. `AdjuntoFacturaInput.tsx` ahora trunca a un largo FIJO (
 Admin es superusuario automático en todo módulo (ADR-040) — **no listarlo
 explícitamente** en la matriz, ya lo resuelve `_nivel()`.
 
-**Autorización confirmada:** el paso `en_revision→autorizada` de `FacturaAfiliado`/
-`FacturaAgencia`/`FacturaVendedor` lo ejecuta **Dirección o Admin** (mismo criterio que
-la edición de comisiones post-cierre en F1) — no el propio CxP que capturó el registro.
+**Autorización confirmada:** el paso `recibida→autorizada` (ADR-282: antes
+`en_revision→autorizada`) de `FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor` lo
+ejecuta **Dirección o Admin** (mismo criterio que la edición de comisiones post-cierre
+en F1) — no el propio CxP que capturó el registro.
 
 ## Convenciones técnicas obligatorias (de los ADRs de F1, aplican igual aquí)
 
@@ -852,7 +864,7 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
 
 - **Timeline de Facturas de afiliado + se quita "Marcar pagada" del detalle (petición
   del usuario, solo frontend).** Se agregó un timeline al detalle (mismo patrón que el
-  de "Facturas al cliente"), con las 4 fases REALES de `ESTATUS_PROVEEDOR` — recibida →
+  de "Facturas al cliente"), con las fases REALES de `ESTATUS_PROVEEDOR` — recibida →
   en_revision → autorizada → pagada, ya en orden — sin inventar ni combinar estados
   (el usuario pidió inicialmente 3 fases agrupadas, pero se confirmó usar las 4 reales).
   Aparte, se quitó el botón "Marcar pagada" (transición `autorizada → pagada` por
@@ -860,6 +872,10 @@ la edición de comisiones post-cierre en F1) — no el propio CxP que capturó e
   canal (p.ej. Requisiciones en F3), no por este botón operativo. Verificado: 3 pruebas
   nuevas del timeline (orden de las fases, "done"/"current" en `autorizada` y en
   `recibida`); suite completa del módulo en verde (43/43).
+
+  > **Actualizado por ADR-282:** el timeline ya solo tiene 3 fases (`recibida →
+  > autorizada → pagada`) — se quitó `en_revision` de `ESTATUS_PROVEEDOR`. Las pruebas
+  > del timeline se reescribieron para 3 pasos, no 4.
 
 - **Combo "Folio de la Orden Interna" en el alta de FacturaAfiliado + PDF/XML por
   separado (ADR-070, petición del usuario).** Corrección de terminología: el estado

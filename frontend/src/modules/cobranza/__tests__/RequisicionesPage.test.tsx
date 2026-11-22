@@ -69,6 +69,7 @@ const base: Requisicion = {
   created_by: "u-1",
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
+  folio_factura_origen: null,
 };
 
 function renderCon(r: Requisicion) {
@@ -99,16 +100,13 @@ describe("RequisicionesPage", () => {
     expect(screen.getAllByText(/\$526,176\.00/).length).toBeGreaterThan(0);
   });
 
-  it("fix (reportado por el usuario, con captura): la columna 'Origen' resuelve la factura aunque ya no esté en el combo de 'disponibles' del alta", async () => {
-    // La requisición YA tiene esta factura ligada (así se creó) — el combo del alta
-    // (`facturasAfiliadoPagables`, ADR-217) la EXCLUYE porque ya está usada, pero el
-    // "Origen" de la lista debe seguir resolviéndola con `facturasAfiliadoInfo`
-    // (sin ese filtro) en vez de mostrar "—".
+  it("ADR-282: la columna 'Folio' usa `folio_factura_origen` (resuelto por el backend), no el combo de 'disponibles' del alta", async () => {
+    // Antes esta columna ("Origen") se resolvía con `facturasAfiliadoInfo`, que podía
+    // quedarse corto si la factura ya no estaba en ese lote — ahora el backend manda el
+    // folio ya resuelto, sin depender de ningún catálogo del cliente.
     facturasAfiliadoPagablesMock.mockResolvedValue([]);
-    facturasAfiliadoInfoMock.mockResolvedValue([
-      { factura_afiliado_id: "fa-1", afiliado_id: "af-1", factura_emisora: "AFLI-003", total_factura_afiliado: "10317.00" },
-    ]);
-    renderCon({ ...base, factura_afiliado_id: "fa-1" });
+    facturasAfiliadoInfoMock.mockResolvedValue([]);
+    renderCon({ ...base, factura_afiliado_id: "fa-1", folio_factura_origen: "AFLI-003" });
     expect(await screen.findByText("AFLI-003")).toBeInTheDocument();
   });
 

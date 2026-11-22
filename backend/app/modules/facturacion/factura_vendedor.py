@@ -607,10 +607,7 @@ class FacturaVendedorService(
         from app.modules.catalogos.vendedor import Vendedor
 
         obj = self._get_or_404(id_)
-        if obj.estatus_factura_vendedor not in (
-            EstatusFacturaProveedor.RECIBIDA.value,
-            EstatusFacturaProveedor.EN_REVISION.value,
-        ):
+        if obj.estatus_factura_vendedor != EstatusFacturaProveedor.RECIBIDA.value:
             raise ConflictError(
                 "Una factura autorizada o pagada ya no se edita.",
                 detalles={"estatus_factura_vendedor": obj.estatus_factura_vendedor},
@@ -697,7 +694,7 @@ class FacturaVendedorService(
     def autorizar(
         self, factura_vendedor_id: uuid.UUID, usuario: CurrentUser
     ) -> FacturaVendedorRead:
-        """Canal dedicado `en_revision -> autorizada`. Solo Direccion/Admin — mismo
+        """Canal dedicado `recibida -> autorizada`. Solo Direccion/Admin — mismo
         diseño y motivo que en `FacturaAfiliado`/`FacturaAgencia`."""
         if usuario.area not in (Area.DIRECCION, Area.ADMIN):
             raise PermissionDeniedError(
@@ -827,6 +824,6 @@ def autorizar_factura_vendedor(
     usuario: CurrentUser = Depends(requiere_permiso("costos:leer")),
     svc: FacturaVendedorService = Depends(get_factura_vendedor_service),
 ) -> FacturaVendedorRead:
-    """Canal dedicado `en_revision → autorizada`, solo Dirección/Admin — mismo criterio
+    """Canal dedicado `recibida → autorizada`, solo Dirección/Admin — mismo criterio
     que en facturas de afiliado/agencia."""
     return svc.autorizar(item_id, usuario)

@@ -1135,10 +1135,13 @@ aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de c
 entregada → cobrada`, con rama a `cancelada` desde los 4 primeros. El paso a `cobrada` lo
 hará **F3**: F2 declara el estado pero no lo dispara.
 
-`FacturaAfiliado.estatus_factura_afiliado` y `FacturaAgencia.estatus_factura_agencia`:
-`recibida → en_revision → autorizada → pagada`. **`en_revision → autorizada` exige área
-Dirección o Admin** (chequeo explícito en el servicio, no la matriz de módulo — mismo
-patrón que `/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
+`FacturaAfiliado.estatus_factura_afiliado`, `FacturaAgencia.estatus_factura_agencia` y
+`FacturaVendedor.estatus_factura_vendedor` (mismo enum compartido `EstatusFacturaProveedor`):
+`recibida → autorizada → pagada` (**ADR-282**, petición del usuario: se quitó el paso
+intermedio `en_revision` que traía la spec v2 — desviación explícita y pedida, no una
+mejora unilateral). **`recibida → autorizada` exige área Dirección o Admin** (chequeo
+explícito en el servicio, no la matriz de módulo — mismo patrón que
+`/ordenes/clientes/{id}/comisiones`): quien captura no autoriza.
 
 `CostoAdicional` no tiene máquina de estados.
 
@@ -1301,10 +1304,12 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   lo que sigue — mismo criterio que `ordenes_estacion_ids` de Afiliado) y recalcula
   monto/iva/total/comisión contra el nuevo conjunto.
 - **`POST .../{id}/estatus`** (`costos:editar`) — transiciones **operativas** de CxP:
-  `recibida ↔ en_revision` y `autorizada → pagada`. Pedir `autorizada` por aquí da **403**
-  y remite al canal dedicado.
+  `recibida → recibida` (idempotente — es el "Devolver a capturista" del frontend, ya no
+  cambia nada de estado desde ADR-282) y `autorizada → pagada`. Pedir `autorizada` por
+  aquí da **403** y remite al canal dedicado.
 - **`POST .../{id}/autorizar`** (`costos:leer`) — **canal dedicado** para
-  `en_revision → autorizada`. El permiso del router es `leer` a propósito, porque Dirección
+  `recibida → autorizada` (**ADR-282**: antes era `en_revision → autorizada`, ya no hay
+  paso intermedio). El permiso del router es `leer` a propósito, porque Dirección
   **no** tiene captura sobre `costos`; la autorización real (solo **Dirección/Admin**) se
   valida dentro del servicio → **403** para cualquier otra área, incluida la CxP que
   capturó. Mismo diseño que `PATCH /ordenes/clientes/{id}/comisiones` en F1. Ver ADR-046.
@@ -1407,12 +1412,27 @@ handoff, nunca por un endpoint propio de alta:
 
 - **`GET /cobranza/requisiciones`** (`pagos:leer`) — filtros `tipo_requisicion`,
   `estatus_requisicion`, `afiliado_id`, `agencia_id`, `vendedor_comision_id`. `q` busca en
-  número de requisición y número de OC de SAP.
+  número de requisición, número de OC de SAP, y (**ADR-282**) el folio de la factura de
+  origen (`FacturaAfiliado.factura_emisora`/`FacturaAgencia.folio_factura_agencia`/
+  `FacturaVendedor.folio_factura_vendedor`, vía `EXISTS` correlacionado). La lectura
+  expone **`folio_factura_origen`** (ese mismo folio, resuelto en lote por página en el
+  servicio — `null` para `comision_agencia`, que no tiene factura ligada).
 - **`GET /cobranza/requisiciones/{id}`** (`pagos:leer`).
-- **`POST /cobranza/requisiciones`** (`pagos:crear`) — alta por CxP. `tipo_requisicion`
+- **`POST /cobranza/requisiciones`** (`pagos:crear`) — alta por CxP. **`numero_requisicion`
+  NO se acepta en el payload** (**ADR-282**, `extra="forbid"` → **422** si se manda): es
+  "Calculado", el servicio lo genera siempre con el formato `RQ-AAAA-MM-consecutivo`
+  (mismo patrón que el folio de `OrdenCliente`, ADR-237/254/275 — consecutivo GLOBAL, sin
+  padding, `AAAA-MM` solo etiqueta el momento del alta). `tipo_requisicion`
   exige FKs distintas (**400 `error_dominio`** si faltan): `pago_afiliado` →
-  `afiliado_id`; `pago_agencia` → `agencia_id`; `comision_vendedor` →
-  `vendedor_comision_id` + `orden_id`; `comision_agencia` → `agencia_id` + `orden_id`.
+  `afiliado_id` + `factura_afiliado_id`; `pago_agencia` → `agencia_id` +
+  `factura_agencia_id`; `comision_vendedor` → `vendedor_comision_id` +
+  `factura_vendedor_id`; `comision_agencia` → `agencia_id` + `orden_id`. **ADR-282**: para
+  los 3 tipos con factura de origen, el servicio además valida que esa factura esté
+  `autorizada` (**400 `error_dominio`** si no) y que NINGUNA otra `Requisicion` (de
+  cualquier estatus) la tenga ya ligada (**409 `conflicto`** si sí) — antes esto solo lo
+  filtraban los combos `facturas-*-disponibles` del alta clásica; ahora se exige también
+  en el servicio porque el alta embebida en cada pantalla de Factura (F2, ver la ficha de
+  ese módulo) ya no pasa por esos combos.
   Hereda `razon_social_afiliada` del catálogo. Sugiere `porcentaje_comision_vendedor`/
   `porcentaje_comision_agencia_req` desde el catálogo (`Vendedor`/`Agencia`) si se omiten,
   y calcula `requisicion_comision_vendedor`/`requisicion_comision_agencia` sobre
