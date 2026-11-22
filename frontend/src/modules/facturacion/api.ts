@@ -39,6 +39,8 @@ import type {
   OrdenEstacionFacturableAfiliado,
   OrdenFacturable,
   OrdenPorFacturar,
+  RequisicionDesdeFacturaCreate,
+  RequisicionDesdeFacturaRead,
   TimbrarInput,
 } from "./types";
 
@@ -447,4 +449,19 @@ export async function vendedoresActivos(): Promise<OpcionCatalogo[]> {
     { params: { activo: true, size: 100 } },
   );
   return data.items.map((v) => ({ id: v.vendedor_id, etiqueta: v.nombre_vendedor }));
+}
+
+/** ADR-282: genera la Requisicion de pago de una Factura de afiliado/agencia/vendedor ya
+ *  `autorizada`, directo desde su propia pantalla — pega a `/cobranza/requisiciones` sin
+ *  pasar por el módulo `cobranza` del frontend (ver docstring de `RequisicionDesdeFacturaCreate`
+ *  en `types.ts`). El backend valida de nuevo "autorizada + sin requisición previa"
+ *  (409/400 si no) — esto solo evita el viaje redondo cuando ya se sabe que no aplica. */
+export async function crearRequisicionDesdeFactura(
+  payload: RequisicionDesdeFacturaCreate,
+): Promise<RequisicionDesdeFacturaRead> {
+  const { data } = await apiClient.post<RequisicionDesdeFacturaRead>(
+    "/cobranza/requisiciones",
+    payload,
+  );
+  return data;
 }

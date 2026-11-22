@@ -40,6 +40,8 @@ vi.mock("../api", () => ({
   formasDePago: vi.fn().mockResolvedValue([]),
   afiliadosActivos: vi.fn().mockResolvedValue([{ id: "af-1", etiqueta: "Radiorama Jalisco SA de CV" }]),
   agenciasActivas: vi.fn().mockResolvedValue([]),
+  // ADR-282: bloque embebido de alta de Requisicion (visible en estatus "autorizada").
+  crearRequisicionDesdeFactura: vi.fn(),
 }));
 
 const base: FacturaAfiliado = {
@@ -125,24 +127,23 @@ describe("FacturasAfiliadoPage — rediseño del detalle", () => {
     autorizarMock.mockReset();
   });
 
-  it("el timeline muestra las 4 fases reales, en orden", async () => {
+  it("el timeline muestra las 3 fases reales, en orden (ADR-282: sin 'en revisión')", async () => {
     const { container } = await abrirDetalle(base);
     // Acotado a `.timeline`: el badge del encabezado también dice "Autorizada".
     const timeline = within(container.querySelector(".timeline") as HTMLElement);
     const pasos = [...container.querySelectorAll(".tl-lbl")].map((el) => el.textContent);
-    expect(pasos).toEqual(["Recibida", "En revisión", "Autorizada", "Pagada"]);
+    expect(pasos).toEqual(["Recibida", "Autorizada", "Pagada"]);
     expect(timeline.getByText("Autorizada")).toBeInTheDocument();
   });
 
-  it("en 'autorizada', las 3 primeras fases quedan 'done' y esa es la 'current'", async () => {
+  it("en 'autorizada', la fase previa queda 'done' y esa es la 'current'", async () => {
     const { container } = await abrirDetalle(base); // base viene con estatus "autorizada"
     const pasos = container.querySelectorAll(".tl-step");
-    expect(pasos).toHaveLength(4);
+    expect(pasos).toHaveLength(3);
     expect(pasos[0]).toHaveClass("done");
-    expect(pasos[1]).toHaveClass("done");
-    expect(pasos[2]).toHaveClass("current");
-    expect(pasos[3]).not.toHaveClass("done");
-    expect(pasos[3]).not.toHaveClass("current");
+    expect(pasos[1]).toHaveClass("current");
+    expect(pasos[2]).not.toHaveClass("done");
+    expect(pasos[2]).not.toHaveClass("current");
   });
 
   it("en 'recibida' (la primera fase), ningún paso previo queda 'done'", async () => {

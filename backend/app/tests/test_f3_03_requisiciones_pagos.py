@@ -283,7 +283,6 @@ def test_alta_comision_vendedor_ya_no_requiere_orden_ni_calcula_porcentaje(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0001",
             "tipo_requisicion": "comision_vendedor",
             "vendedor_comision_id": str(cat["vendedor_id"]),
             "factura_vendedor_id": str(factura_id),
@@ -308,7 +307,6 @@ def test_alta_comision_vendedor_rechaza_sin_vendedor_ni_factura_vendedor(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0002",
             "tipo_requisicion": "comision_vendedor",
             "monto_requisicion": "1000.00",
         },
@@ -328,7 +326,6 @@ def test_alta_pago_afiliado_calcula_diferencia_afiliada_negativa(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0003",
             "tipo_requisicion": "pago_afiliado",
             "afiliado_id": str(cat["afiliado_id"]),
             "factura_afiliado_id": str(factura_af_id),
@@ -348,7 +345,6 @@ def test_alta_pago_afiliado_requiere_afiliado_id(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0004",
             "tipo_requisicion": "pago_afiliado",
             "monto_requisicion": "1000.00",
         },
@@ -365,7 +361,6 @@ def test_alta_pago_afiliado_requiere_factura_afiliado_id(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0004B",
             "tipo_requisicion": "pago_afiliado",
             "afiliado_id": str(cat["afiliado_id"]),
             "monto_requisicion": "1000.00",
@@ -383,7 +378,6 @@ def test_alta_pago_agencia_requiere_agencia_id_y_factura_agencia_id(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0004C",
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "monto_requisicion": "1000.00",
@@ -409,7 +403,6 @@ def _crear_requisicion_simple(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": numero,
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "factura_agencia_id": str(factura_id),
@@ -505,7 +498,6 @@ def test_rbac_direccion_solo_lee_no_puede_capturar(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0106",
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "monto_requisicion": "1000.00",
@@ -529,7 +521,6 @@ def test_pagar_requisicion_pago_afiliado_cierra_la_factura_afiliado(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0200",
             "tipo_requisicion": "pago_afiliado",
             "afiliado_id": str(cat["afiliado_id"]),
             "factura_afiliado_id": str(factura_id),
@@ -563,7 +554,6 @@ def test_pagar_requisicion_pago_agencia_cierra_la_factura_agencia(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0201",
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "factura_agencia_id": str(factura_id),
@@ -594,7 +584,6 @@ def test_pagar_requisicion_comision_vendedor_con_factura_vendedor_id_cierra_esa_
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0202",
             "tipo_requisicion": "comision_vendedor",
             "orden_id": str(orden_id),
             "vendedor_comision_id": str(cat["vendedor_id"]),
@@ -628,7 +617,6 @@ def test_alta_comision_vendedor_rechaza_sin_factura_vendedor(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0203",
             "tipo_requisicion": "comision_vendedor",
             "orden_id": str(orden_id),
             "vendedor_comision_id": str(cat["vendedor_id"]),
@@ -650,7 +638,6 @@ def test_pagar_requisicion_comision_agencia_no_truena_sin_factura_que_cerrar(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-0204",
             "tipo_requisicion": "comision_agencia",
             "orden_id": str(orden_id),
             "agencia_id": str(cat["agencia_id"]),
@@ -684,7 +671,6 @@ def test_facturas_afiliado_disponibles_excluye_las_ya_usadas_por_una_requisicion
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-DISP-01",
             "tipo_requisicion": "pago_afiliado",
             "afiliado_id": str(cat["afiliado_id"]),
             "factura_afiliado_id": str(factura_usada),
@@ -713,7 +699,6 @@ def test_facturas_agencia_disponibles_excluye_las_ya_usadas_por_una_requisicion(
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-DISP-02",
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "factura_agencia_id": str(factura_usada),
@@ -742,7 +727,6 @@ def test_facturas_vendedor_disponibles_excluye_las_ya_usadas_por_una_requisicion
     r = client.post(
         "/api/v1/cobranza/requisiciones",
         json={
-            "numero_requisicion": "REQ-DISP-03",
             "tipo_requisicion": "comision_vendedor",
             "vendedor_comision_id": str(cat["vendedor_id"]),
             "orden_id": str(orden_id),
@@ -759,6 +743,167 @@ def test_facturas_vendedor_disponibles_excluye_las_ya_usadas_por_una_requisicion
     ids = {item["factura_vendedor_id"] for item in r.json()}
     assert str(factura_libre) in ids
     assert str(factura_usada) not in ids
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-282 (petición del usuario, con captura): número automático + folio de origen
+# ══════════════════════════════════════════════════════════════════════════════
+def test_numero_requisicion_se_genera_automatico_con_formato_rq_anio_mes_consecutivo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_1 = _factura_afiliado(db, cat, Decimal("5000.00"))
+    factura_2 = _factura_afiliado(db, cat, Decimal("6000.00"))
+    db.commit()
+
+    r1 = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_1),
+            "monto_requisicion": "5000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r1.status_code == 201, r1.text
+    numero_1 = r1.json()["numero_requisicion"]
+    hoy = date.today()
+    prefijo = f"RQ-{hoy.year}-{hoy.month:02d}-"
+    assert numero_1.startswith(prefijo)
+
+    r2 = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_2),
+            "monto_requisicion": "6000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r2.status_code == 201, r2.text
+    numero_2 = r2.json()["numero_requisicion"]
+    assert int(numero_2.removeprefix(prefijo)) == int(numero_1.removeprefix(prefijo)) + 1
+
+
+def test_crear_requisicion_con_numero_requisicion_en_el_payload_se_rechaza(
+    client: TestClient, cat: dict[str, uuid.UUID]
+) -> None:
+    """`numero_requisicion` es "Calculado" (ADR-282): el esquema tiene `extra="forbid"`,
+    así que mandarlo desde el cliente es un 422, no se ignora en silencio."""
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "numero_requisicion": "RQ-2026-01-1",
+            "tipo_requisicion": "comision_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(uuid.uuid4()),
+            "monto_requisicion": "1000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 422
+
+
+def test_crear_requisicion_rechaza_factura_afiliado_no_autorizada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = uuid.uuid4()
+    db.add(
+        FacturaAfiliado(
+            factura_afiliado_id=factura_id,
+            afiliado_id=cat["afiliado_id"],
+            factura_emisora="AF-RECIBIDA",
+            fecha_factura_afiliado=date(2026, 3, 1),
+            monto_factura_afiliado=Decimal("1000.00"),
+            iva_factura_afiliado=Decimal("160.00"),
+            total_factura_afiliado=Decimal("1160.00"),
+            estatus_factura_afiliado="recibida",
+            created_by=ADMIN_ID,
+        )
+    )
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "1160.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["codigo"] == "error_dominio"
+
+
+def test_crear_requisicion_rechaza_factura_afiliado_ya_usada_por_otra_requisicion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = _factura_afiliado(db, cat, Decimal("5000.00"))
+    db.commit()
+    payload = {
+        "tipo_requisicion": "pago_afiliado",
+        "afiliado_id": str(cat["afiliado_id"]),
+        "factura_afiliado_id": str(factura_id),
+        "monto_requisicion": "5000.00",
+    }
+    r1 = client.post("/api/v1/cobranza/requisiciones", json=payload, headers=_hdr("cxp"))
+    assert r1.status_code == 201, r1.text
+
+    r2 = client.post("/api/v1/cobranza/requisiciones", json=payload, headers=_hdr("cxp"))
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["error"]["codigo"] == "conflicto"
+
+
+def test_listado_expone_y_busca_por_folio_de_la_factura_de_origen(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = uuid.uuid4()
+    db.add(
+        FacturaAfiliado(
+            factura_afiliado_id=factura_id,
+            afiliado_id=cat["afiliado_id"],
+            factura_emisora="EMI-FOLIO-BUSQUEDA",
+            fecha_factura_afiliado=date(2026, 3, 1),
+            monto_factura_afiliado=Decimal("1000.00"),
+            iva_factura_afiliado=Decimal("160.00"),
+            total_factura_afiliado=Decimal("1160.00"),
+            estatus_factura_afiliado=EstatusFacturaProveedor.AUTORIZADA.value,
+            created_by=ADMIN_ID,
+        )
+    )
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "1160.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    req_id = r.json()["requisicion_id"]
+    assert r.json()["folio_factura_origen"] == "EMI-FOLIO-BUSQUEDA"
+
+    r_get = client.get(f"/api/v1/cobranza/requisiciones/{req_id}", headers=_hdr("cxp"))
+    assert r_get.json()["folio_factura_origen"] == "EMI-FOLIO-BUSQUEDA"
+
+    r_q = client.get(
+        "/api/v1/cobranza/requisiciones", params={"q": "FOLIO-BUSQUEDA"}, headers=_hdr("cxp")
+    )
+    assert r_q.status_code == 200, r_q.text
+    ids = {item["requisicion_id"] for item in r_q.json()["items"]}
+    assert req_id in ids
+
+    r_vacio = client.get(
+        "/api/v1/cobranza/requisiciones", params={"q": "NO-EXISTE-XYZ"}, headers=_hdr("cxp")
+    )
+    assert r_vacio.json()["items"] == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

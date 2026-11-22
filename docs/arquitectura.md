@@ -11429,3 +11429,95 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   relacionados de siempre). Probado además a mano contra datos reales de la base de
   desarrollo vía `GET /cobranza/facturas`, confirmando que `fecha_pago`/`fecha_deposito`
   llegan pobladas (o `null` sin pagos) y el orden resultante.
+
+### ADR-282 — Facturación: quita el paso "en revisión"; Cobranza: folio automático de Requisicion y reubica su alta en las pantallas de Factura
+
+- **Estado:** aceptada · **Fecha:** 2026-11-21 (petición del usuario, con capturas —
+  encabezado "EN CUENTAS POR PAGAR" aunque el cambio real toca Facturación F2 y
+  Cobranza/Pagos F3). Dos decisiones de alcance se resolvieron explícitamente con el
+  usuario antes de implementar (ver más abajo), el resto es desarrollo directo de lo
+  pedido.
+- **(a) Se quita el estatus intermedio `en_revision`.** Antes: `recibida → en_revision →
+  autorizada → pagada` (con vuelta de `en_revision` a `recibida` si Dirección rechazaba,
+  "Devolver a capturista"). Ahora: `recibida → autorizada → pagada` directo —
+  "Autorizar"/"Devolver a capturista" aparecen juntos sobre `recibida` ("Devolver a
+  capturista" sigue existiendo, ahora es la transición idempotente `recibida →
+  recibida`, ya no cambia nada). **Decisión de alcance confirmada con el usuario:**
+  aplica a las **3 entidades** que comparten el mecanismo (`FacturaAfiliado`,
+  `FacturaAgencia`, `FacturaVendedor` — mismo enum `EstatusFacturaProveedor` y misma
+  `TRANSICIONES_PROVEEDOR`, definidos una vez en `factura_afiliado.py`), no solo
+  Agencia como mostraba la captura — separarlas habría roto el mecanismo compartido.
+  **Este estatus venía de la especificación BD v2 formal** (no era una decisión de
+  implementación): quitarlo es una desviación EXPLÍCITA, pedida por el usuario, no una
+  "mejora" unilateral. Migración `backend/migrations/versions/
+  20261121_1000-b7c8d9e0f1a2_f2_quita_en_revision_proveedor.py`: endurece los 3 CHECK
+  (`ck_factura_{afiliado,agencia,vendedor}_estatus`), con un `UPDATE` defensivo de
+  `en_revision → recibida` antes de endurecer (sin datos así en la BD de desarrollo al
+  escribirla, pero una BD distinta sí podría tenerlos). El candado de edición
+  (`update()`, los 3 archivos) ahora solo permite editar en `recibida`.
+- **(b) `Requisicion` (F3): folio automático.** `numero_requisicion` dejó de capturarse
+  a mano — `RequisicionCreate` ya no acepta ese campo (`extra="forbid"` → 422 si se
+  manda). Se genera siempre en `RequisicionService._siguiente_numero_requisicion()`,
+  mismo patrón que `OrdenClienteService._siguiente_folio()` (ADR-237/254/275):
+  `RQ-AAAA-MM-consecutivo`, consecutivo GLOBAL (no reinicia por año/mes, `AAAA-MM` solo
+  etiqueta el momento del alta), sin padding, escaneando el máximo existente por regex
+  en vez de una secuencia de BD.
+- **(c) Validación de elegibilidad reforzada en el servicio.** Antes, que una factura ya
+  estuviera "usada" por otra requisición o no estuviera `autorizada` solo lo filtraban
+  los combos `facturas-{afiliado,agencia,vendedor}-disponibles` (ADR-217) del alta
+  clásica — `create()` no lo exigía. Como el nuevo alta embebida en Facturación ya NO
+  pasa por esos combos (la factura ya se conoce por contexto), se agregó
+  `RequisicionService._validar_factura_disponible()`: 400 `error_dominio` si la factura
+  no está `autorizada`, 409 `conflicto` si ya tiene otra requisición ligada (de
+  cualquier estatus). Aplica a los 3 tipos con factura de origen; `comision_agencia` no
+  tiene factura, no aplica.
+- **(d) Reubicación del alta a las 3 pantallas de Factura (F2).** **Decisión de alcance
+  confirmada con el usuario:** los 4 tipos se mueven, cada uno a su pantalla
+  correspondiente — `pago_afiliado` → Facturas de afiliado, `pago_agencia` → Facturas de
+  agencia, `comision_vendedor` ("Pagos vendedor" en la UI) → Facturas de vendedor;
+  `comision_agencia` (sin factura de origen, es un pago sobre `OrdenCliente` directo)
+  **se queda como única excepción** en "Requisiciones de pago". Nuevo componente
+  `frontend/src/modules/facturacion/components/RequisicionInlineForm.tsx`, compartido
+  por `FacturasAfiliadoPage.tsx`/`FacturasAgenciaPage.tsx`/`FacturasVendedorPage.tsx`:
+  visible solo cuando la factura está `autorizada`, captura Número de OC (SAP)
+  opcional + Monto sugerido/editable + Observaciones de CxP (afiliado/agencia/vendedor y
+  su factura ya se conocen por contexto), y llama al mismo
+  `POST /cobranza/requisiciones` de siempre. **Decisión de arquitectura:** el componente
+  vive en el módulo `facturacion`, NO en `cobranza` — el proyecto ya tenía la
+  dependencia unidireccional `cobranza → facturacion` (en ambas capas, backend y
+  frontend); ponerlo en `cobranza` la habría invertido. Para no importar nada de
+  `cobranza` desde `facturacion`, se agregó en `facturacion/types.ts`/`api.ts` un tipo y
+  una función LOCALES y mínimos (`RequisicionDesdeFacturaCreate`/
+  `crearRequisicionDesdeFactura()`, una copia del payload del endpoint, no una
+  importación) que pegan directo a `/cobranza/requisiciones` vía `apiClient`.
+- **(e) "Requisiciones de pago" pasa a ser consulta.** El botón de alta ahora dice
+  "+ Nueva comisión de agencia" y solo da de alta ese tipo. `RequisicionForm.tsx` se
+  simplificó: ya no tiene selector de "Tipo de requisición" ni los bloques de los otros
+  3 tipos — solo Agencia + Orden de cliente + % Comisión + Monto + OC SAP +
+  Observaciones. Se conservan tarjetas de KPI, filtros, detalle y los botones
+  "Cancelar"/"Marcar pagada" para los 3 tipos que ya no se crean aquí.
+- **(f) Columna "Folio" reemplaza a "Origen".** Backend: `RequisicionRead` expone
+  `folio_factura_origen` (el folio real de la factura de origen según el tipo, resuelto
+  en lote por página — mismo patrón por lote que `_conteo_asignaciones` de F2, evita N+1
+  contra las 3 tablas posibles); `_apply_filters` del repositorio ahora también busca
+  `q` contra ese folio (`EXISTS` correlacionado, una requisición solo trae UNA de las 3
+  FKs a la vez). Frontend: la columna "Origen" (resuelta en el cliente con catálogos
+  `xxxInfo`, con una limitación conocida — si la factura ya no estaba en ese lote,
+  mostraba el folio sin resolver) se renombró a "Folio" y usa directo el campo del
+  backend, siempre correcto. La paginación de esta lista YA era real contra el backend
+  desde antes (no se tocó).
+- **Verificado:** backend — suite completa (`pytest app/tests`, incluida
+  `test_f2_02_facturacion_escritura.py` con ~8 aserciones reescritas sin el paso
+  intermedio, y `test_f3_03_requisiciones_pagos.py` con 6 pruebas nuevas: folio
+  automático y su formato, rechazo 422 si se manda `numero_requisicion`, rechazo 400 si
+  la factura no está `autorizada`, rechazo 409 si ya está usada, columna/búsqueda por
+  folio de origen) 100% verde; migración probada de ida y vuelta (`upgrade`/`downgrade`/
+  `upgrade`) sobre una copia de la BD de desarrollo sin perder datos; `ruff` limpio.
+  Frontend — `tsc --noEmit`/`eslint` limpios, suite `vitest` completa 100% verde (191
+  pruebas, incluidas las de las 3 páginas de Factura con el timeline de 3 fases y el
+  nuevo `RequisicionInlineForm.tsx`, y `RequisicionForm.tsx`/`RequisicionesPage.tsx`
+  reescritas para el alta acotada a "Comisión agencia"). Probado además a mano contra
+  datos reales de desarrollo: alta de una `FacturaAfiliado` (nace en `recibida`),
+  autorización directa sin paso intermedio, generación de su Requisicion con folio
+  `RQ-2026-11-1`, rechazo 409 al reintentar sobre la misma factura, y búsqueda por el
+  folio de la factura de origen.

@@ -283,14 +283,19 @@ export interface Requisicion {
   created_by: string;
   created_at: string;
   updated_at: string | null;
+  /** ADR-282: folio de la factura de origen (Afiliado/Agencia/Vendedor, según
+   *  `tipo_requisicion`); `null` para `comision_agencia` (no tiene factura ligada). */
+  folio_factura_origen: string | null;
 }
 
 /** Las FKs obligatorias dependen de `tipo_requisicion` (el backend las valida, 400 si
  *  falta la que corresponde): `pago_afiliado`→`afiliado_id`; `pago_agencia`→`agencia_id`;
  *  `comision_vendedor`→`vendedor_comision_id`+`orden_id`;
- *  `comision_agencia`→`agencia_id`+`orden_id`. */
+ *  `comision_agencia`→`agencia_id`+`orden_id`.
+ *
+ *  ADR-282: `numero_requisicion` ya NO se captura — el backend lo genera siempre
+ *  (`RQ-AAAA-MM-consecutivo`), mandarlo es un 422 (`extra=forbid`). */
 export interface RequisicionCreate {
-  numero_requisicion: string;
   numero_oc_sap?: string | null;
   tipo_requisicion: TipoRequisicion;
   factura_afiliado_id?: string | null;

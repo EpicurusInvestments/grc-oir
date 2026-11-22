@@ -48,6 +48,7 @@ calculadas, que son informativas/de verificación, no una fórmula que sustituya
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -62,7 +63,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.auth.identity import Area
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
-from app.core.errors import DomainError, PermissionDeniedError, StateTransitionError
+from app.core.errors import ConflictError, DomainError, PermissionDeniedError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
@@ -87,6 +88,13 @@ class EstatusRequisicion(StrEnum):
 
 _TIPOS_SQL = ", ".join(f"'{t.value}'" for t in TipoRequisicion)
 _ESTADOS_SQL = ", ".join(f"'{e.value}'" for e in EstatusRequisicion)
+
+#: ADR-282 (petición del usuario): el número de requisición ya NO se captura a mano —
+#: se genera en el servidor con el mismo patrón prefijo+año+mes+consecutivo que
+#: `OrdenCliente._siguiente_folio()` (ADR-237/254/275). Sin "formato viejo" que migrar:
+#: los valores manuales previos (p.ej. "RE-01") simplemente no matchean el regex y no
+#: cuentan para el consecutivo, que arranca en 1 la primera vez que se genera uno.
+_FOLIO_REQUISICION_RE = re.compile(r"^RQ-\d{4}-\d{2}-(\d+)$")
 
 TRANSICIONES: dict[str, set[str]] = {
     EstatusRequisicion.PENDIENTE.value: {
@@ -240,6 +248,10 @@ class RequisicionRead(BaseModel):
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
+    #: Folio de la factura de origen (emisora/agencia/vendedor, según `tipo_requisicion`)
+    #: — se resuelve en el servicio, en lote por página (columna "Folio" de la pantalla
+    #: de consulta). `None` para `comision_agencia` (no tiene factura ligada).
+    folio_factura_origen: str | None = None
 
 
 class RequisicionListParams(ListParams):
@@ -251,9 +263,11 @@ class RequisicionListParams(ListParams):
 
 
 class RequisicionCreate(BaseModel):
+    """`numero_requisicion` NO se acepta (ADR-282): es "Calculado", se genera siempre en
+    el servicio (`RequisicionService._siguiente_numero_requisicion`)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    numero_requisicion: str = Field(min_length=1, max_length=30)
     numero_oc_sap: str | None = Field(default=None, max_length=30)
     tipo_requisicion: TipoRequisicion
     factura_afiliado_id: uuid.UUID | None = None
@@ -341,10 +355,45 @@ class RequisicionRepository(BaseRepository[Requisicion]):
             if valor is not None:
                 stmt = stmt.where(getattr(Requisicion, campo) == valor)
         if params.q:
+            # ADR-282: también busca por el folio de la factura de origen (Afiliado/
+            # Agencia/Vendedor, según `tipo_requisicion`) — vive en otra tabla, así que
+            # se arma como EXISTS correlacionado en vez de un JOIN (una requisición solo
+            # trae UNA de las tres FKs, nunca las tres a la vez).
+            from app.modules.facturacion.factura_afiliado import FacturaAfiliado
+            from app.modules.facturacion.factura_agencia import FacturaAgencia
+            from app.modules.facturacion.factura_vendedor import FacturaVendedor
+
             patron = f"%{params.q.strip()}%"
+            folio_afiliado = (
+                select(FacturaAfiliado.factura_afiliado_id)
+                .where(
+                    FacturaAfiliado.factura_afiliado_id == Requisicion.factura_afiliado_id,
+                    FacturaAfiliado.factura_emisora.ilike(patron),
+                )
+                .exists()
+            )
+            folio_agencia = (
+                select(FacturaAgencia.factura_agencia_id)
+                .where(
+                    FacturaAgencia.factura_agencia_id == Requisicion.factura_agencia_id,
+                    FacturaAgencia.folio_factura_agencia.ilike(patron),
+                )
+                .exists()
+            )
+            folio_vendedor = (
+                select(FacturaVendedor.factura_vendedor_id)
+                .where(
+                    FacturaVendedor.factura_vendedor_id == Requisicion.factura_vendedor_id,
+                    FacturaVendedor.folio_factura_vendedor.ilike(patron),
+                )
+                .exists()
+            )
             stmt = stmt.where(
                 Requisicion.numero_requisicion.ilike(patron)
                 | Requisicion.numero_oc_sap.ilike(patron)
+                | folio_afiliado
+                | folio_agencia
+                | folio_vendedor
             )
         return stmt
 
@@ -359,6 +408,78 @@ class RequisicionService(
     def __init__(self, repo: RequisicionRepository) -> None:
         super().__init__(repo)
         self._repo = repo
+
+    def _siguiente_numero_requisicion(self, hoy: date) -> str:
+        """Mismo patrón que `OrdenClienteService._siguiente_folio()` (ADR-237/254/275):
+        consecutivo GLOBAL (no reinicia por año/mes, `AAAA-MM` solo etiqueta el momento
+        del alta), sin padding de ceros. Escanea el máximo existente por regex en vez de
+        una secuencia de BD — mismo criterio, mismo costo, mismo riesgo de carrera
+        (aceptado para este volumen, igual que en Órdenes)."""
+        existentes = self._repo.db.scalars(select(Requisicion.numero_requisicion)).all()
+        maximo = 0
+        for numero in existentes:
+            m = _FOLIO_REQUISICION_RE.match(numero)
+            if m:
+                maximo = max(maximo, int(m.group(1)))
+        return f"RQ-{hoy.year}-{hoy.month:02d}-{maximo + 1}"
+
+    def _enriquecer_folios(self, items: list[RequisicionRead]) -> None:
+        """Folio de la factura de origen, en lote (columna "Folio" de la pantalla de
+        consulta) — mismo patrón por lote que `_conteo_asignaciones` en
+        `factura_afiliado.py`: evita N+1 contra las 3 tablas posibles."""
+        from app.modules.facturacion.factura_afiliado import FacturaAfiliado
+        from app.modules.facturacion.factura_agencia import FacturaAgencia
+        from app.modules.facturacion.factura_vendedor import FacturaVendedor
+
+        db = self._repo.db
+        ids_af = {i.factura_afiliado_id for i in items if i.factura_afiliado_id is not None}
+        ids_ag = {i.factura_agencia_id for i in items if i.factura_agencia_id is not None}
+        ids_vd = {i.factura_vendedor_id for i in items if i.factura_vendedor_id is not None}
+
+        folios_af: dict[uuid.UUID, str] = {}
+        if ids_af:
+            filas = db.execute(
+                select(FacturaAfiliado.factura_afiliado_id, FacturaAfiliado.factura_emisora).where(
+                    FacturaAfiliado.factura_afiliado_id.in_(ids_af)
+                )
+            ).all()
+            folios_af = dict(filas)
+
+        folios_ag: dict[uuid.UUID, str] = {}
+        if ids_ag:
+            filas = db.execute(
+                select(
+                    FacturaAgencia.factura_agencia_id, FacturaAgencia.folio_factura_agencia
+                ).where(FacturaAgencia.factura_agencia_id.in_(ids_ag))
+            ).all()
+            folios_ag = dict(filas)
+
+        folios_vd: dict[uuid.UUID, str] = {}
+        if ids_vd:
+            filas = db.execute(
+                select(
+                    FacturaVendedor.factura_vendedor_id, FacturaVendedor.folio_factura_vendedor
+                ).where(FacturaVendedor.factura_vendedor_id.in_(ids_vd))
+            ).all()
+            folios_vd = dict(filas)
+
+        for item in items:
+            if item.factura_afiliado_id is not None:
+                item.folio_factura_origen = folios_af.get(item.factura_afiliado_id)
+            elif item.factura_agencia_id is not None:
+                item.folio_factura_origen = folios_ag.get(item.factura_agencia_id)
+            elif item.factura_vendedor_id is not None:
+                item.folio_factura_origen = folios_vd.get(item.factura_vendedor_id)
+
+    def list(self, params: ListParams) -> Page[RequisicionRead]:
+        pagina = super().list(params)
+        self._enriquecer_folios(pagina.items)
+        return pagina
+
+    def get(self, id_: Any) -> RequisicionRead:
+        leida = super().get(id_)
+        self._enriquecer_folios([leida])
+        return leida
 
     def _pre_update(
         self, obj: Requisicion, payload: dict[str, Any], usuario: CurrentUser
@@ -403,6 +524,32 @@ class RequisicionService(
                 payload["diferencia_afiliada"] = (
                     payload["monto_requisicion"] - Decimal(factura_af.total_factura_afiliado)
                 ).quantize(CENTAVOS)
+
+    def _validar_factura_disponible(
+        self,
+        estatus_actual: str,
+        estatus_requerido: str,
+        nombre: str,
+        columna_fk: Any,
+        factura_id: uuid.UUID,
+    ) -> None:
+        """Mismo criterio que antes solo aplicaban los combos `facturas_*_disponibles`:
+        la factura debe estar `autorizada` y no tener ya otra Requisicion ligada (de
+        cualquier estatus) — reforzado aquí porque el formulario embebido ya no pasa por
+        esos combos."""
+        if estatus_actual != estatus_requerido:
+            raise DomainError(
+                f"Solo se puede generar una requisición de una {nombre} '{estatus_requerido}'.",
+                detalles={"estatus_actual": estatus_actual},
+            )
+        ya_usada = self._repo.db.scalar(
+            select(Requisicion.requisicion_id).where(columna_fk == factura_id).limit(1)
+        )
+        if ya_usada is not None:
+            raise ConflictError(
+                f"Esa {nombre} ya tiene una requisición registrada.",
+                detalles={"factura_id": str(factura_id)},
+            )
 
     def create(self, data: RequisicionCreate, usuario: CurrentUser) -> RequisicionRead:
         from app.modules.catalogos.afiliado import Afiliado
@@ -491,10 +638,17 @@ class RequisicionService(
                     Decimal(orden.total) * pct_agencia / Decimal(100)
                 ).quantize(CENTAVOS)
 
-        # ── Diferencia de márgenes con el afiliado (puede ser negativa) ──
+        # ── Elegibilidad + diferencia de márgenes con el afiliado (puede ser negativa) ──
+        # ADR-282: antes solo el combo "disponibles" filtraba "autorizada + sin
+        # requisición previa"; ahora el formulario embebido en cada pantalla de Factura
+        # (Afiliado/Agencia/Vendedor) ya NO pasa por ese combo, así que la regla se
+        # refuerza aquí, en el servicio — nunca confiar solo en lo que ya filtró el front.
         diferencia_afiliada = None
         if data.factura_afiliado_id is not None:
-            from app.modules.facturacion.factura_afiliado import FacturaAfiliado
+            from app.modules.facturacion.factura_afiliado import (
+                EstatusFacturaProveedor,
+                FacturaAfiliado,
+            )
 
             factura_af = db.get(FacturaAfiliado, data.factura_afiliado_id)
             if factura_af is None:
@@ -502,25 +656,58 @@ class RequisicionService(
                     "La FacturaAfiliado indicada no existe.",
                     detalles={"factura_afiliado_id": str(data.factura_afiliado_id)},
                 )
+            self._validar_factura_disponible(
+                factura_af.estatus_factura_afiliado,
+                EstatusFacturaProveedor.AUTORIZADA.value,
+                "FacturaAfiliado",
+                Requisicion.factura_afiliado_id,
+                data.factura_afiliado_id,
+            )
             diferencia_afiliada = (
                 data.monto_requisicion - Decimal(factura_af.total_factura_afiliado)
             ).quantize(CENTAVOS)
 
+        if data.factura_agencia_id is not None:
+            from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+            from app.modules.facturacion.factura_agencia import FacturaAgencia
+
+            factura_ag = db.get(FacturaAgencia, data.factura_agencia_id)
+            if factura_ag is None:
+                raise DomainError(
+                    "La FacturaAgencia indicada no existe.",
+                    detalles={"factura_agencia_id": str(data.factura_agencia_id)},
+                )
+            self._validar_factura_disponible(
+                factura_ag.estatus_factura_agencia,
+                EstatusFacturaProveedor.AUTORIZADA.value,
+                "FacturaAgencia",
+                Requisicion.factura_agencia_id,
+                data.factura_agencia_id,
+            )
+
         # Petición del usuario: valida que la FacturaVendedor exista, si se capturó —
-        # mismo criterio que `factura_afiliado_id` arriba (no tiene un cálculo propio
-        # como `diferencia_afiliada`, solo existencia).
+        # mismo criterio que `factura_afiliado_id` arriba.
         if data.factura_vendedor_id is not None:
+            from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
             from app.modules.facturacion.factura_vendedor import FacturaVendedor
 
-            if db.get(FacturaVendedor, data.factura_vendedor_id) is None:
+            factura_vd = db.get(FacturaVendedor, data.factura_vendedor_id)
+            if factura_vd is None:
                 raise DomainError(
                     "La FacturaVendedor indicada no existe.",
                     detalles={"factura_vendedor_id": str(data.factura_vendedor_id)},
                 )
+            self._validar_factura_disponible(
+                factura_vd.estatus_factura_vendedor,
+                EstatusFacturaProveedor.AUTORIZADA.value,
+                "FacturaVendedor",
+                Requisicion.factura_vendedor_id,
+                data.factura_vendedor_id,
+            )
 
         obj = Requisicion(
             requisicion_id=uuid4(),
-            numero_requisicion=data.numero_requisicion,
+            numero_requisicion=self._siguiente_numero_requisicion(date.today()),
             numero_oc_sap=data.numero_oc_sap,
             tipo_requisicion=tipo.value,
             factura_afiliado_id=data.factura_afiliado_id,
@@ -543,7 +730,9 @@ class RequisicionService(
         db.add(obj)
         db.commit()
         db.refresh(obj)
-        return self._to_read(obj)
+        leida = self._to_read(obj)
+        self._enriquecer_folios([leida])
+        return leida
 
     # ── Combos "disponibles" del alta ─────────────────────────────────────────────
     def facturas_afiliado_disponibles(self) -> list[FacturaAfiliadoDisponibleRead]:
@@ -732,7 +921,13 @@ router = APIRouter(prefix="/requisiciones", tags=["pagos:requisiciones"])
 def listar_requisiciones(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    q: str | None = Query(None, description="Busca en número de requisición u OC de SAP"),
+    q: str | None = Query(
+        None,
+        description=(
+            "Busca en número de requisición, OC de SAP, o el folio de la factura "
+            "de origen (Afiliado/Agencia/Vendedor)"
+        ),
+    ),
     tipo_requisicion: str | None = Query(None),
     estatus_requisicion: str | None = Query(None),
     afiliado_id: uuid.UUID | None = Query(None),

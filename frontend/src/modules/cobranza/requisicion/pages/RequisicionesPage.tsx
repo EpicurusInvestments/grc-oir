@@ -1,16 +1,26 @@
 /** Requisiciones de pago (F3) — solicitudes de pago a afiliados, agencias y comisiones,
  * capturadas por CxP con autorización de Dirección/Admin por canal dedicado (ADR-046).
  *
+ * ADR-282 (petición del usuario, con captura): esta pantalla pasó a ser de CONSULTA
+ * para `pago_afiliado`/`pago_agencia`/`comision_vendedor` — su alta se movió al bloque
+ * embebido en la pantalla de su propia factura (F2, Facturas de afiliado/agencia/
+ * vendedor). Solo `comision_agencia` (sin factura de origen) se sigue creando aquí. La
+ * columna "Folio" usa `folio_factura_origen` (resuelto por el backend, en lote, siempre
+ * correcto) en vez del catálogo `xxxInfo` del cliente — reemplaza la limitación conocida
+ * que tenía antes esa columna.
+ *
  * "Comisiones" (tercer filtro de tipo) agrupa `comision_vendedor` + `comision_agencia`:
  * el backend solo filtra por UN `tipo_requisicion` a la vez, así que este pill trae el
  * lote sin filtrar y agrupa en el cliente — mismo criterio de "ampliar y filtrar en el
  * cliente" que el resto de este módulo.
  *
- * El "Origen del pago" del detalle (factura de afiliado/agencia/vendedor u orden, según
- * el tipo) se resuelve con los catálogos `xxxInfo` (facturas `autorizada`, SIN filtrar
- * por si ya tienen una requisición ligada — ver ADR-217) y órdenes de los últimos 100 —
- * una requisición cuyo origen ya no está en ese lote (p.ej. la factura pasó a `pagada`
- * por otra vía) muestra el folio crudo en vez del resuelto: limitación conocida, no rompe.
+ * El "Origen del pago" del DETALLE (factura de afiliado/agencia/vendedor u orden, según
+ * el tipo) sigue resolviéndose con los catálogos `xxxInfo` (facturas `autorizada`, SIN
+ * filtrar por si ya tienen una requisición ligada — ver ADR-217) y órdenes de los
+ * últimos 100 — una requisición cuyo origen ya no está en ese lote (p.ej. la factura
+ * pasó a `pagada` por otra vía) muestra el folio crudo en vez del resuelto: limitación
+ * conocida, no rompe. No se tocó al agregar la columna "Folio" de la lista (alcance
+ * acotado a lo pedido).
  *
  * "Pagos vendedor" (`comision_vendedor`, renombrado en la UI — petición del usuario):
  * ya NO captura `orden_id` ni `porcentaje_comision_vendedor`, se simplificó al mismo
@@ -461,7 +471,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             <th className="td-center">OC SAP</th>
             <th className="td-center">Tipo</th>
             <th>Beneficiario</th>
-            <th className="td-center">Origen</th>
+            <th className="td-center">Folio</th>
             <th className="td-center">Monto</th>
             <th className="td-center">Pago</th>
             <th className="td-center">Estado</th>
@@ -482,7 +492,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
                 </span>
               </td>
               <td className="td-main">{beneficiario(r)}</td>
-              <td className="mono td-center" style={{ fontSize: 11 }}>{origen(r)}</td>
+              <td className="mono td-center" style={{ fontSize: 11 }}>{oGuion(r.folio_factura_origen)}</td>
               <td className="td-center mono">{fmtMoneda(r.monto_requisicion)}</td>
               <td className="mono td-center" style={{ fontSize: 11, color: r.fecha_pago_requisicion ? "var(--green-text)" : "var(--text3)" }}>
                 {fmtFecha(r.fecha_pago_requisicion)}
@@ -521,10 +531,14 @@ export function RequisicionesPage({ filtroInicial }: Props) {
         <div>
           <div className="cat-title">Requisiciones de pago</div>
           <div className="cat-sub">
-            Solicitudes de pago a afiliados, agencias y comisiones. Cada requisición
-            requiere autorización de Dirección antes de ejecutarse.
+            Consulta de las solicitudes de pago a afiliados, agencias y comisiones. Cada
+            requisición requiere autorización de Dirección antes de ejecutarse.
           </div>
         </div>
+        {/* ADR-282: el alta de "Pago afiliado"/"Pago agencia"/"Pagos vendedor" se movió
+            a la pantalla de su propia factura (F2) — esta pantalla ya es de consulta
+            para esos 3 tipos. "Comisión agencia" (sin factura de origen) sigue
+            creándose aquí, es la única excepción. */}
         <button
           type="button"
           className="btn btn-phase"
@@ -534,7 +548,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             setSubmitError(null);
           }}
         >
-          <i className="pi pi-plus" aria-hidden="true" /> Nueva requisición
+          <i className="pi pi-plus" aria-hidden="true" /> Nueva comisión de agencia
         </button>
       </div>
 
@@ -561,7 +575,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar número o OC SAP…"
+        searchPlaceholder="Buscar número, OC SAP o folio de la factura…"
         filterLabel="Estado"
         filters={FILTROS_ESTATUS}
         activeFilter={filtroEstatus}

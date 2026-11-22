@@ -44,6 +44,8 @@ vi.mock("../api", () => ({
   afiliadosActivos: vi.fn().mockResolvedValue([]),
   agenciasActivas: vi.fn().mockResolvedValue([]),
   vendedoresActivos: vi.fn().mockResolvedValue([{ id: "vd-1", etiqueta: "Juan Pérez" }]),
+  // ADR-282: bloque embebido de alta de Requisicion (visible en estatus "autorizada").
+  crearRequisicionDesdeFactura: vi.fn(),
 }));
 
 const base: FacturaVendedor = {
@@ -113,10 +115,10 @@ describe("FacturasVendedorPage — Órdenes asignadas (N:M)", () => {
     autorizarMock.mockReset();
   });
 
-  it("el timeline muestra las 4 fases reales, en orden", async () => {
+  it("el timeline muestra las 3 fases reales, en orden (ADR-282: sin 'en revisión')", async () => {
     const { container } = await abrirDetalle(base);
     const pasos = [...container.querySelectorAll(".tl-lbl")].map((el) => el.textContent);
-    expect(pasos).toEqual(["Recibida", "En revisión", "Autorizada", "Pagada"]);
+    expect(pasos).toEqual(["Recibida", "Autorizada", "Pagada"]);
     const timeline = within(container.querySelector(".timeline") as HTMLElement);
     expect(timeline.getByText("Autorizada")).toBeInTheDocument();
   });

@@ -33,12 +33,13 @@ export const ESTADO_FACTURACION_LABEL: Record<EstadoFacturacion, string> = {
   cancelada: "Cancelada",
 };
 
-export const ESTATUS_PROVEEDOR = ["recibida", "en_revision", "autorizada", "pagada"] as const;
+// ADR-282: se quitó el paso intermedio "en_revision" — ahora "recibida" pasa directo a
+// "autorizada" (o se queda en "recibida" vía "Devolver a capturista").
+export const ESTATUS_PROVEEDOR = ["recibida", "autorizada", "pagada"] as const;
 export type EstatusProveedor = (typeof ESTATUS_PROVEEDOR)[number];
 
 export const ESTATUS_PROVEEDOR_LABEL: Record<EstatusProveedor, string> = {
   recibida: "Recibida",
-  en_revision: "En revisión",
   autorizada: "Autorizada",
   pagada: "Pagada",
 };
@@ -526,4 +527,32 @@ export interface OrdenPorFacturar {
   /** Sugerencia de `AGREGADOS.UsoCFDI` (el formulario la precarga, editable). Solo existe
    *  si el receptor es el Anunciante directo — la Agencia no tiene esa columna. */
   receptor_uso_cfdi_default: string | null;
+}
+
+// ── Requisición embebida (ADR-282) ──────────────────────────────────────────────
+/** ADR-282 (petición del usuario, con captura): desde cada pantalla de Factura
+ * (Afiliado/Agencia/Vendedor, ya `autorizada`) se puede generar directo su Requisicion
+ * de pago, sin pasar por "Requisiciones de pago". Este tipo es una copia MÍNIMA y LOCAL
+ * del payload que espera `POST /cobranza/requisiciones` — Facturación NO importa nada
+ * del módulo `cobranza` (misma regla de capas que el backend: cobranza depende de
+ * facturacion, nunca al revés). Solo cubre los 3 tipos con factura de origen;
+ * `comision_agencia` sigue dándose de alta en Requisiciones de pago. */
+export type TipoRequisicionDesdeFactura = "pago_afiliado" | "pago_agencia" | "comision_vendedor";
+
+export interface RequisicionDesdeFacturaCreate {
+  tipo_requisicion: TipoRequisicionDesdeFactura;
+  numero_oc_sap?: string | null;
+  monto_requisicion: string;
+  observaciones_cuentas_por_pagar?: string | null;
+  afiliado_id?: string | null;
+  factura_afiliado_id?: string | null;
+  agencia_id?: string | null;
+  factura_agencia_id?: string | null;
+  vendedor_comision_id?: string | null;
+  factura_vendedor_id?: string | null;
+}
+
+export interface RequisicionDesdeFacturaRead {
+  requisicion_id: string;
+  numero_requisicion: string;
 }

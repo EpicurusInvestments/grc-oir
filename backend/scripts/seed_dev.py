@@ -1547,7 +1547,7 @@ FACTURAS_CLIENTE_MOCK = [
 #: (clave, oe_claves a las que se reparte, folio de la emisora, estatus)
 FACTURAS_AFILIADO_MOCK = [
     ("fa1", ["oe12", "oe13"], "EMI-2025-118", "autorizada"),
-    ("fa2", ["oe16"], "EMI-2025-204", "en_revision"),
+    ("fa2", ["oe16"], "EMI-2025-204", "recibida"),
 ]
 
 #: (clave, oc, folio, porcentaje, estatus)
