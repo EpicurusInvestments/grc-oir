@@ -1,5 +1,7 @@
 /** Modal de confirmación (p.ej. activar/desactivar un catálogo). Envuelve Dialog. */
 
+import type { ReactNode } from "react";
+
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 
@@ -19,6 +21,12 @@ interface ConfirmDialogProps {
    *  los 8 llamadores existentes no los pasan, así que no cambia nada para ellos. */
   extraLabel?: string;
   onExtra?: () => void;
+  /** ADR-286 (petición del usuario): contenido extra DEBAJO del mensaje (p.ej. un
+   *  textarea de motivo obligatorio) — opcional, no rompe ningún uso existente. */
+  children?: ReactNode;
+  /** ADR-286: deshabilita el botón de confirmar (p.ej. mientras el motivo esté vacío),
+   *  sin tocar `cancelLabel`/`extraLabel`. */
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmDialog({
@@ -33,6 +41,8 @@ export function ConfirmDialog({
   onCancel,
   extraLabel,
   onExtra,
+  children,
+  confirmDisabled = false,
 }: ConfirmDialogProps) {
   const footer = (
     <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", padding: "4px 24px 20px" }}>
@@ -48,6 +58,7 @@ export function ConfirmDialog({
         label={confirmLabel}
         severity={danger ? "danger" : undefined}
         loading={loading}
+        disabled={confirmDisabled}
         onClick={onConfirm}
         style={{ fontSize: 12, padding: "0 14px" }}
       />
@@ -69,6 +80,7 @@ export function ConfirmDialog({
       contentStyle={{ padding: "0 24px 20px" }}
     >
       <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text2)", margin: 0 }}>{message}</p>
+      {children}
     </Dialog>
   );
 }

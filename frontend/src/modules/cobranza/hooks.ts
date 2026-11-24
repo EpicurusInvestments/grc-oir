@@ -160,17 +160,20 @@ export function usePagoGrupoDetalle(pagoId: string | null) {
   });
 }
 
-/** ADR-271: cancela TODO el pago global de una sola vez (ver `pagoClienteApi.cancelar`).
- *  A diferencia de `crear`/`asignar`/`crearMultiple`, esto NUNCA llega a tocar F2/F1 (se
- *  rechaza de entrada si alguna factura ya está `cobrada`), así que solo invalida las
- *  claves de este módulo. */
+/** ADR-271/286: cancela TODO el pago global de una sola vez (ver
+ *  `pagoClienteApi.cancelar`) — con motivo obligatorio. Desde ADR-286 SÍ puede llegar a
+ *  tocar F2/F1 (si deshace una factura/orden ya `cobrada`), igual que `crear`/`asignar`/
+ *  `crearMultiple` — mismas 4 claves. */
 export function useCancelarPago() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (pagoId: string) => pagoClienteApi.cancelar(pagoId),
+    mutationFn: ({ pagoId, motivo }: { pagoId: string; motivo: string }) =>
+      pagoClienteApi.cancelar(pagoId, motivo),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [K_PAGOS] });
       qc.invalidateQueries({ queryKey: [K_COBRANZA] });
+      qc.invalidateQueries({ queryKey: [K_FACTURACION_CLIENTES] });
+      qc.invalidateQueries({ queryKey: [K_ORDENES] });
     },
   });
 }

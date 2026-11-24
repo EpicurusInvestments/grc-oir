@@ -9,9 +9,11 @@
  * (`usePagoGrupoDetalle`) muestra sus facturas aplicadas (factura/parcialidad/monto) y
  * el total real del pago.
  *
- * Botón nuevo "Cancelación de Pago": cancela TODO el pago de una sola vez (baja lógica,
- * `estatus_pago`, NUNCA borra) y regresa el saldo pendiente a sus facturas — rechazado
- * si cualquiera de ellas ya está `cobrada` (ver `cobranza_factura.py`, `cancelar()`).
+ * Botón "Cancelación de Pago": cancela TODO el pago de una sola vez (baja lógica,
+ * `estatus_pago`, NUNCA borra), con motivo obligatorio, y regresa el saldo pendiente a
+ * sus facturas — SÍ puede deshacer una factura ya `cobrada` (ADR-286); se rechaza solo
+ * si ya se autorizó/pagó una comisión de agencia/vendedor/afiliado con base en ese
+ * cobro (ver `cobranza_factura.py`, `cancelar()`).
  *
  * Solo lectura para el ALTA: capturar/asignar un pago sigue viviendo en el detalle de
  * "Cobranza de facturas" (`CobranzaFacturasPage`) o en el flujo de "Pagos no asignados"
@@ -83,6 +85,8 @@ export function PagosClientePage() {
   // ADR-271: confirmación antes de cancelar un pago global.
   const [cancelando, setCancelando] = useState(false);
   const [cancelarError, setCancelarError] = useState<string | null>(null);
+  // ADR-286 (petición del usuario): motivo obligatorio al cancelar.
+  const [motivoCancelacion, setMotivoCancelacion] = useState("");
 
   const grupos = useGruposPagoCliente();
   const noAsignados = useNoAsignados();
@@ -184,6 +188,7 @@ export function PagosClientePage() {
   const seleccionarGrupo = (g: PagoGrupo) => {
     setSelected({ tipo: "grupo", data: g });
     setCancelarError(null);
+    setMotivoCancelacion("");
   };
   const seleccionarSinAsignar = (p: PagoClienteConCobranza) => {
     setSelected({ tipo: "sin_asignar", data: p });
@@ -193,18 +198,22 @@ export function PagosClientePage() {
   };
 
   const confirmarCancelar = () => {
-    if (selected?.tipo !== "grupo") return;
+    if (selected?.tipo !== "grupo" || !motivoCancelacion.trim()) return;
     setCancelarError(null);
-    cancelarPago.mutate(selected.data.pago_cliente_id, {
-      onSuccess: () => {
-        setCancelando(false);
-        setSelected(null);
+    cancelarPago.mutate(
+      { pagoId: selected.data.pago_cliente_id, motivo: motivoCancelacion.trim() },
+      {
+        onSuccess: () => {
+          setCancelando(false);
+          setMotivoCancelacion("");
+          setSelected(null);
+        },
+        onError: (e) => {
+          setCancelando(false);
+          setCancelarError(mensajeDeError(e));
+        },
       },
-      onError: (e) => {
-        setCancelando(false);
-        setCancelarError(mensajeDeError(e));
-      },
-    });
+    );
   };
 
   const listNode = soloNoAsignados ? (
@@ -548,6 +557,12 @@ export function PagosClientePage() {
           <div className="fv mono">{fmtFecha(selected.data.fecha_pago_cliente)}</div>
           <div className="fl">Facturas cubiertas</div>
           <div className="fv mono">{selected.data.cantidad_facturas}</div>
+          {detalleGrupo.data?.motivo_cancelacion && (
+            <>
+              <div className="fl">Motivo de cancelación</div>
+              <div className="fv">{detalleGrupo.data.motivo_cancelacion}</div>
+            </>
+          )}
 
           <div style={{ marginTop: 14 }}>
             <button
@@ -675,16 +690,32 @@ export function PagosClientePage() {
         message={
           selected?.tipo === "grupo"
             ? `¿Cancelar este pago de ${fmtMoneda(selected.data.monto_pago)} del ${fmtFecha(selected.data.fecha_pago_cliente)}? ` +
-              "Se regresará el saldo pendiente a las facturas que cubría. Si alguna ya está " +
-              "COBRADA en su totalidad, el backend rechazará la cancelación."
+              "Se regresará el saldo pendiente a las facturas que cubría — incluso si alguna " +
+              "ya está COBRADA en su totalidad. Solo se rechaza si ya se autorizó o pagó una " +
+              "comisión de agencia/vendedor/afiliado con base en ese cobro."
             : ""
         }
         confirmLabel="Cancelar pago"
         danger
         loading={cancelarPago.isPending}
+        confirmDisabled={!motivoCancelacion.trim()}
         onConfirm={confirmarCancelar}
-        onCancel={() => setCancelando(false)}
-      />
+        onCancel={() => {
+          setCancelando(false);
+          setMotivoCancelacion("");
+        }}
+      >
+        <label className="fl" style={{ display: "block", marginTop: 10 }}>
+          Motivo de la cancelación *
+        </label>
+        <textarea
+          className="fsel"
+          style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+          value={motivoCancelacion}
+          onChange={(e) => setMotivoCancelacion(e.target.value)}
+          placeholder="Explica por qué se cancela este pago…"
+        />
+      </ConfirmDialog>
     </>
   );
 }

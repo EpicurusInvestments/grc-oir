@@ -45,6 +45,7 @@ from app.modules.facturacion import (  # noqa: F401  (F2 — Facturación)
     factura_afiliado,
     factura_agencia,
     factura_cliente,
+    factura_vendedor,
 )
 from app.modules.ordenes import (  # noqa: F401  (F1 — ver ADR-028 y siguientes)
     incidencia,

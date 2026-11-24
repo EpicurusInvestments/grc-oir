@@ -1411,11 +1411,21 @@ handoff, nunca por un endpoint propio de alta:
 - **`POST /cobranza/facturas/{cobranza_id}/pagos`** (`cobranza:crear`) — alta de un
   `PagoCliente`. Recalcula `estatus_cobro`/`fecha_cobro` del padre en la misma
   transacción; si el pago completa el total, dispara la cascada del handoff (arriba).
-- **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — recalcula el padre
-  tras borrar. **Guardarraíl de una sola vía**: si la `CobranzaFactura` está `cobrada` y
-  borrar este pago la dejaría por debajo de `total_factura`, se rechaza con **409
-  `conflicto`** (no se puede "des-cobrar" una factura ya cerrada en cascada); borrar un
-  pago que deja un **excedente** que sigue cubriendo el total sí se permite.
+- **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — SOLO pagos sin
+  asignar (ADR-035/271): si el pago ya tiene `cobranza_id`, rechaza con **400** (usar
+  `POST .../cancelar`).
+- **`POST /cobranza/pagos/{pago_id}/cancelar`** (`cobranza:editar`, `204`, ADR-271/286)
+  — cancela TODO el pago "global" de una sola vez (todas las filas que comparten
+  `pago_multiple_id`, o la única fila si es individual): baja **lógica**
+  (`estatus_pago='cancelado'`), nunca borra. Body obligatorio `{"motivo": "..."}`
+  (`min_length=3`, **422** si falta o viene vacío) — se persiste en
+  `PagoCliente.motivo_cancelacion`. Recalcula CADA `CobranzaFactura` afectada en la misma
+  transacción; **ADR-286**: SÍ puede deshacer una factura/orden ya `cobrada` (revierte la
+  cascada `CobranzaFactura → FacturaCliente → OrdenCliente`) — se rechaza con **409
+  `conflicto`** solo si alguna orden involucrada ya tiene una `FacturaAgencia`/
+  `FacturaVendedor`/`FacturaAfiliado` autorizada o pagada con base en ese cobro (todo-o-
+  nada: si cualquiera de las N facturas del grupo está comprometida, se rechaza el grupo
+  completo). **409** también si el pago ya estaba `cancelado`.
 
 ### Requisicion
 

@@ -199,6 +199,7 @@ describe("PagosClientePage", () => {
       ],
       total_pago: "998.00", // < suma de aplicaciones: hubo un ajuste, el total NO es la suma mostrada
       estatus_pago: "pagado",
+      motivo_cancelacion: null,
     };
     const { container } = renderPagina();
     detalleMock.mockReturnValue({ data: detalle, isLoading: false, isError: false });
@@ -227,6 +228,7 @@ describe("PagosClientePage", () => {
       ],
       total_pago: "600.00",
       estatus_pago: "pagado",
+      motivo_cancelacion: null,
     };
     gruposMock.mockReturnValue({ data: [grupoA, grupoB, grupoViejo], isLoading: false, isError: false });
     detalleMock.mockReturnValue({ data: detalle, isLoading: false, isError: false });
@@ -252,10 +254,11 @@ describe("PagosClientePage", () => {
     expect(screen.getByTestId("ubicacion")).toHaveTextContent("/cobranza?cobranza_id=cb-1");
   });
 
-  // ADR-271 (petición del usuario, "Cancelación de Pago"): el botón nuevo del detalle.
-  it("'Cancelación de Pago' pide confirmación y llama a cancelar con el id del pago", async () => {
+  // ADR-271/286 (petición del usuario, "Cancelación de Pago"): el botón del detalle, con
+  // motivo obligatorio.
+  it("'Cancelación de Pago' pide confirmación + motivo y llama a cancelar con el id del pago", async () => {
     detalleMock.mockReturnValue({
-      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "pagado" },
+      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "pagado", motivo_cancelacion: null },
       isLoading: false,
       isError: false,
     });
@@ -265,9 +268,18 @@ describe("PagosClientePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancelación de Pago" }));
 
     expect(screen.getByText(/¿Cancelar este pago/)).toBeInTheDocument();
+    // Sin motivo, "Cancelar pago" está deshabilitado.
+    expect(screen.getByRole("button", { name: "Cancelar pago" })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("Explica por qué se cancela este pago…"), {
+      target: { value: "Pago duplicado por error de captura." },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Cancelar pago" }));
 
-    expect(cancelarMutate).toHaveBeenCalledWith("pg-A", expect.anything());
+    expect(cancelarMutate).toHaveBeenCalledWith(
+      { pagoId: "pg-A", motivo: "Pago duplicado por error de captura." },
+      expect.anything(),
+    );
   });
 
   it("'Cancelación de Pago' está deshabilitado si el pago ya está cancelado", async () => {
@@ -275,7 +287,7 @@ describe("PagosClientePage", () => {
       grupo({ pago_cliente_id: "pg-1", estatus_pago: "cancelado" }),
     ]);
     detalleMock.mockReturnValue({
-      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "cancelado" },
+      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "cancelado", motivo_cancelacion: "Error de captura." },
       isLoading: false,
       isError: false,
     });
@@ -283,18 +295,22 @@ describe("PagosClientePage", () => {
     fireEvent.click(container.querySelectorAll("tbody tr")[0]);
 
     expect(await screen.findByRole("button", { name: "Cancelación de Pago" })).toBeDisabled();
+    expect(screen.getByText("Error de captura.")).toBeInTheDocument();
   });
 
   it("si el backend rechaza la cancelación, muestra el mensaje de error", async () => {
     const { container } = renderPagina();
     detalleMock.mockReturnValue({
-      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "pagado" },
+      data: { aplicaciones: [], total_pago: "1000.00", estatus_pago: "pagado", motivo_cancelacion: null },
       isLoading: false,
       isError: false,
     });
 
     fireEvent.click(container.querySelectorAll("tbody tr")[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Cancelación de Pago" }));
+    fireEvent.change(screen.getByPlaceholderText("Explica por qué se cancela este pago…"), {
+      target: { value: "Pago duplicado por error de captura." },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Cancelar pago" }));
 
     // `mensajeDeError` solo usa el mensaje real si es un `ApiRequestError` — un error

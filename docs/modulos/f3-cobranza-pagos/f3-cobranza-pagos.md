@@ -324,6 +324,26 @@ consultados) — "Pagos recibidos" se reestructura y se agrega cancelación:**
 - Migración `f1a2b3c4d5e6` (columna + CHECK). Endpoints nuevos: `GET /pagos` (agrupado),
   `GET /pagos/{id}/detalle`, `POST /pagos/{id}/cancelar` (permiso `cobranza:editar`, 204).
 
+**ADR-286 (petición del usuario, con captura) — reemplaza la regla "ciega" de ADR-271;
+ver la entrada completa en `arquitectura.md`:** el usuario reportó que cancelar un pago
+que cubre varias facturas fallaba con el mensaje de "nota de crédito" — investigando se
+confirmó que la regla de ADR-271 bloqueaba igual para 1 o N facturas (un pago múltiple
+solo tiene más probabilidad de tocar una ya `cobrada`). Pedido explícito: **sí** debe
+poder cancelarse aunque eso deshaga una orden/factura ya `cobrada`, con **motivo
+obligatorio** (columna nueva `pago_cliente.motivo_cancelacion`, migración `5782aa74d8d8`).
+Resumen del cambio (detalle técnico completo en `arquitectura.md`):
+- `PagoClienteService.cancelar` ya NO rechaza por "ya cobrada" — en vez de eso,
+  `CobranzaFacturaService.recalcular_tras_pago` detecta la transición hacia atrás y
+  dispara `FacturaClienteService.revertir_cobro` → `OrdenClienteService.revertir_cobro`
+  (gemelos hacia atrás de `marcar_cobrada`, mismo patrón de handoff sin `commit` propio).
+- Lo único que SÍ bloquea (validado ANTES de tocar cualquier fila, todo-o-nada sobre el
+  grupo completo): que alguna orden ya tenga una `FacturaAgencia`/`FacturaVendedor`/
+  `FacturaAfiliado` autorizada o pagada con base en que estaba `cobrada`
+  (`comisiones_comprometidas_de_orden` en `factura_cliente.py`) — eso sí es un compromiso
+  tomado que ya no se puede deshacer limpiamente.
+- `POST /pagos/{id}/cancelar` ahora exige body `{"motivo": "..."}` (`min_length=3`).
+- `PagoGrupoDetalleRead`/`PagoClienteRead` exponen `motivo_cancelacion`.
+
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
 factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M

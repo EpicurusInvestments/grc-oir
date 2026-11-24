@@ -11671,3 +11671,88 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   Manual: servidores de desarrollo reiniciados, `curl` contra `/api/v1/ordenes/clientes`
   y `/api/v1/ordenes/estaciones` con `page`/`size`/`listas_para_cerrar`/
   `tiene_incidencias` reales — paginación, filtros y orden descendente correctos.
+
+### ADR-286 — Cobranza: cancelar un pago SÍ puede deshacer una orden/factura ya "cobrada", con motivo obligatorio (reemplaza el candado ciego de ADR-271)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura e
+  investigación de 2 agentes antes de implementar).
+- **Disparador:** en "Pagos recibidos", cancelar un pago fallaba con *"requiere una nota
+  de crédito que el sistema no maneja"* cuando alguna factura que ese pago tocó ya
+  llegó a `cobrada`. El usuario lo reportó como "falla en pagos múltiples"; la
+  investigación (lectura completa de `PagoClienteService.cancelar`, líneas 1226-1240 de
+  entonces) confirmó que la regla de **ADR-271** bloqueaba igual para 1 o N facturas —
+  un pago múltiple solo tiene más probabilidad de tocar alguna ya cobrada, al tocar más
+  facturas por operación. Preguntado explícitamente, el usuario confirmó que quiere la
+  **reversa completa** (deshacer aunque implique "des-cobrar"), más **motivo
+  obligatorio** al cancelar (no existía: el endpoint no recibía body).
+- **Por qué es seguro revertir "cobrada":** se investigó a fondo (lectura de
+  `factura_agencia.py`/`factura_vendedor.py`/`factura_afiliado.py`) que
+  `OrdenCliente.estatus_orden == "cobrada"` es solo un **gate de lectura** —
+  `_validar_cobradas_antes_de_autorizar` (ADR-264) lo exige ANTES de poder `autorizar()`
+  una `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado`, pero NADA se dispara
+  automáticamente cuando la orden llega a `cobrada`. Revertirla no deja nada huérfano,
+  **salvo** que ya se haya autorizado/pagado una de esas 3 facturas de comisión con base
+  en ese estado — ahí sí es un compromiso tomado que ya no se puede deshacer limpiamente,
+  y es lo único que bloquea.
+- **Cambio — la cascada ahora SÍ tiene reversa** (`backend/app/modules/cobranza/
+  cobranza_factura.py`, `backend/app/modules/facturacion/factura_cliente.py`,
+  `backend/app/modules/ordenes/orden_cliente.py`):
+  - `CobranzaFacturaService.recalcular_tras_pago`: captura `estado_anterior` ANTES de
+    sobreescribir `estatus_cobro`; si el anterior era `cobrada` y el nuevo ya no,
+    invoca `FacturaClienteService.revertir_cobro` — mismo mecanismo de handoff (misma
+    sesión, sin `commit` propio) que la cascada hacia adelante.
+  - `FacturaClienteService.revertir_cobro` (nuevo, gemelo de `marcar_cobrada`): NO pasa
+    por `_validar_transicion`/`TRANSICIONES` (`cobrada: set()` la marca terminal A
+    PROPÓSITO para el camino hacia adelante — excepción deliberada para el camino hacia
+    atrás, igual que ya hace `revertir_facturacion`). El estado anterior (`timbrada` vs
+    `entregada`) se infiere de `fecha_entrega_factura` (nunca se borra una vez
+    capturada). Llama `OrdenClienteService.revertir_cobro` por cada orden de la factura.
+  - `OrdenClienteService.revertir_cobro` (nuevo, gemelo de `marcar_cobrada`): si está
+    `cobrada`, vuelve a `facturada`; no valida nada por su cuenta (el punto de entrada
+    único ya lo hizo).
+  - `comisiones_comprometidas_de_orden` (nuevo, función de módulo en
+    `factura_cliente.py`, importa `factura_agencia`/`factura_vendedor`/
+    `factura_afiliado` de forma perezosa — evita invertir la dirección de dependencia
+    F1→F2): el reverso exacto de `_validar_cobradas_antes_de_autorizar` (ADR-264) — para
+    una orden, regresa qué comisiones (`agencia`/`vendedor`/`afiliado`) ya pasaron de
+    `recibida`. `PagoClienteService.cancelar` la llama por cada orden distinta que el
+    pago toca, ANTES de escribir cualquier fila (todo-o-nada sobre el grupo completo);
+    si cualquiera regresa un bloqueo, `ConflictError` (409) con el detalle de qué orden y
+    qué comisión(es).
+  - `PagoCliente.motivo_cancelacion` (columna nueva, `Unicode(255)` nullable — migración
+    `5782aa74d8d8`). `PagoClienteCancelarRequest` (`motivo: str`, `min_length=3`) es el
+    nuevo body de `POST /pagos/{id}/cancelar`; se persiste en TODAS las filas del grupo
+    cancelado. Expuesto en `PagoClienteRead`/`PagoGrupoDetalleRead`.
+  - Hallazgo y fix de paso (bug preexistente, no relacionado, descubierto al generar la
+    migración): `backend/migrations/env.py` no importaba `factura_vendedor` en su lista
+    de modelos de F2 — `requisicion.py` (que sí tiene FK a `factura_vendedor_id`) se
+    procesaba antes de que esa tabla existiera en el registro de SQLAlchemy, y
+    `alembic revision --autogenerate` tronaba con `NoReferencedTableError` para
+    CUALQUIER migración nueva, sin importar de qué módulo fuera. Se agregó el import
+    faltante.
+- **Cambio — frontend** (`frontend/src/modules/cobranza/pagoCliente/pages/
+  PagosClientePage.tsx`, `frontend/src/shared/ui/ConfirmDialog.tsx`): `ConfirmDialog`
+  gana `children`/`confirmDisabled` opcionales (retrocompatible, ningún uso existente se
+  rompe) — "Cancelación de Pago" ahora incluye un `<textarea>` de motivo obligatorio
+  (botón de confirmar deshabilitado hasta que tenga texto) y actualiza el mensaje de
+  advertencia (ya no amenaza con rechazar por "COBRADA en su totalidad", ahora explica la
+  regla real). El detalle del pago muestra "Motivo de cancelación" si el pago ya está
+  cancelado. `pagoClienteApi.cancelar`/`useCancelarPago` mandan `motivo`; esta mutación
+  ahora también invalida `K_FACTURACION_CLIENTES`/`K_ORDENES` (antes solo invalidaba su
+  propio módulo, correcto cuando la cancelación nunca tocaba F1/F2 — ya no es el caso).
+- **Pruebas:** `backend/app/tests/test_f3_02_cobranza_escritura.py` — 2 pruebas
+  reescritas (antes esperaban 409 "ciego", ahora verifican la reversa completa en los 3
+  niveles, incluida la variante `timbrada` vs `entregada` según `fecha_entrega_factura`)
+  + 4 nuevas: bloqueo por comisión de agencia ya autorizada, rechazo por motivo vacío o
+  ausente (422), pago "extra" sobre una ya cobrada que SÍ se permite cancelar (no cruza
+  el umbral hacia abajo, la factura se queda cobrada igual), y pago múltiple con una
+  sola de las N órdenes comprometida que rechaza TODO el grupo (todo-o-nada). Frontend:
+  `PagosClientePage.test.tsx` actualizado (interacción con el textarea de motivo, nueva
+  firma de `cancelarMutate`, aserciones del motivo mostrado).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
+  limpio. `mypy` sin errores NUEVOS (los preexistentes de este archivo —desde antes de
+  esta ronda— no cambian de naturaleza, solo se repite 1 vez más el mismo problema de
+  anotación ya conocido, el método `list()` de la clase tapando al builtin). Frontend:
+  suite de `cobranza`/`shared/ui` 100% verde (96 pruebas), `tsc --noEmit`/`eslint`
+  limpios. Migración verificada con viaje redondo `downgrade`/`upgrade` sobre la BD de
+  desarrollo.

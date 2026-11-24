@@ -1313,11 +1313,12 @@ class OrdenClienteService(
         recibe dos veces por error de captura y se corrige).
 
         A diferencia de `marcar_facturada`/`revertir_facturacion`, esta transición
-        **no tiene reversa**: una vez aquí, la OC queda terminal (`FROZEN_STATES_OC`).
-        Borrar un `PagoCliente` que haría retroceder el cobro de una `CobranzaFactura`
-        ya `cobrada` se RECHAZA en el propio F3 (mismo principio que ADR-047: deshacer
-        un cobro real exige una nota de crédito que el sistema no maneja), así que esta
-        cascada nunca necesita deshacerse desde aquí.
+        **no se revierte desde aquí mismo**: tiene su gemelo hacia atrás,
+        `revertir_cobro` (ADR-286), pero ese vive del lado de F3
+        (`PagoClienteService.cancelar`), que ya validó ANTES de llamarlo que ninguna
+        comisión (agencia/vendedor/afiliado) se haya comprometido basándose en este
+        estado — este método no vuelve a validar nada, confía en ese punto de entrada
+        único.
         """
         obj = self._get_or_404(orden_id)
         if obj.estatus_orden == EstatusOrden.COBRADA.value:
@@ -1328,6 +1329,27 @@ class OrdenClienteService(
                 detalles={"orden_id": str(orden_id), "estatus_orden": obj.estatus_orden},
             )
         obj.estatus_orden = EstatusOrden.COBRADA.value
+
+    def revertir_cobro(self, orden_id: uuid.UUID) -> None:
+        """`cobrada → facturada`. Gemelo hacia atrás de `marcar_cobrada` (ADR-286) — la
+        DISPARA F3 (`PagoClienteService.cancelar`, vía
+        `FacturaClienteService.revertir_cobro`) al cancelar el pago que había completado
+        el cobro de la `FacturaCliente` ligada.
+
+        Mismo contrato que `revertir_facturacion`: **no hace `commit`** (el llamador la
+        invoca con la misma sesión, antes de su propio commit) y **no valida nada por su
+        cuenta** — quien llama a este método (la cascada completa, desde
+        `PagoClienteService.cancelar`) ya confirmó, ANTES de tocar cualquier fila, que
+        ninguna `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado` se autorizó o pagó
+        basándose en que esta orden estaba `cobrada` (eso sí sería un hecho consumado
+        imposible de deshacer limpiamente). Si ese punto de entrada cambiara y llamara
+        aquí sin validar, este método avanzaría la reversa igual — por diseño es "tonto",
+        igual que su gemelo.
+        """
+        obj = self._get_or_404(orden_id)
+        if obj.estatus_orden != EstatusOrden.COBRADA.value:
+            return  # nunca llegó a cobrada (o ya se revirtió): nada que hacer
+        obj.estatus_orden = EstatusOrden.FACTURADA.value
 
 
 # ── Dependencia + router ──────────────────────────────────────────────────────

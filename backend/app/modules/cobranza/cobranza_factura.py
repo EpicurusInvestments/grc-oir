@@ -43,16 +43,19 @@ Cuando `estatus_cobro` llega a `cobrada`, este servicio invoca
 transacción, disparada desde `recalcular_tras_pago()`. Es la cascada que F2 dejó anticipada desde
 que `EstadoFacturacion.COBRADA` entró al enum con el comentario "F3 hará avanzar".
 
-**La cascada NO tiene reversa.** `PagoClienteService.cancelar` (ADR-271, "Cancelación de
-Pago") RECHAZA con 409 si CUALQUIERA de las facturas que toca el pago ya está `cobrada`
-— sin excepción, sin importar si ese pago en particular era "extra" o no (regla del
-usuario, más simple que intentar calcular si el pago era o no necesario para completar
-el cobro). Así, `recalcular_tras_pago` NUNCA necesita sacar una `CobranzaFactura` de
-`cobrada` hacia atrás desde aquí, y esta cascada nunca necesita reversa hacia
-`FacturaCliente`/`OrdenCliente` — mismo principio que ADR-047 (deshacer un cobro real
-exige una nota de crédito que el sistema no maneja). Cancelar un pago que NUNCA llegó a
-completar el cobro (la `CobranzaFactura` seguía `pendiente`/`cobro_parcial`) sí se
-permite y recalcula con normalidad — puede bajar de `cobro_parcial` a `pendiente`.
+**La cascada SÍ tiene reversa (ADR-286, reemplaza la regla "ciega" de ADR-271).**
+`PagoClienteService.cancelar` puede deshacer una `CobranzaFactura` que ya estaba
+`cobrada`: `recalcular_tras_pago` detecta que el estado ANTERIOR era `cobrada` y el
+NUEVO ya no lo es, y llama `FacturaClienteService.revertir_cobro` (que a su vez llama
+`OrdenClienteService.revertir_cobro` para cada orden) — misma transacción, mismo
+mecanismo de handoff que la cascada hacia adelante. Lo único que SÍ bloquea la
+cancelación, validado ANTES de tocar cualquier fila: que alguna de las órdenes
+involucradas ya tenga una `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado`
+autorizada o pagada con base en que estaba `cobrada` (`comisiones_comprometidas_de_orden`
+en `factura_cliente.py`) — eso sí es un compromiso tomado que ya no se puede deshacer
+limpiamente. Cancelar un pago que NUNCA llegó a completar el cobro (la
+`CobranzaFactura` seguía `pendiente`/`cobro_parcial`) se permite igual, sin pasar por
+ninguna de estas validaciones (no hay nada que revertir aguas arriba).
 
 ADR-271 también cancela TODO el pago "global" de una sola vez: todas las filas de
 `PagoCliente` que comparten `pago_multiple_id` (o la única fila si es un pago
@@ -243,6 +246,9 @@ class PagoCliente(Base):
     # pago en realidad se registró/concilió en otro sistema (p.ej. OIR) — no cambia
     # ningún cálculo ni ninguna otra parte del flujo de cobranza.
     pagado_en_sistema_externo: Mapped[bool] = mapped_column(default=False)
+    # ADR-286 (petición del usuario): motivo obligatorio al CANCELAR un pago (antes no
+    # se capturaba nada) — nullable solo porque un pago nunca cancelado no lo tiene.
+    motivo_cancelacion: Mapped[str | None] = mapped_column(Unicode(255), default=None)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -342,6 +348,8 @@ class PagoClienteRead(BaseModel):
     cuenta_contable_id: uuid.UUID | None = None
     pago_multiple_id: uuid.UUID | None = None
     pagado_en_sistema_externo: bool = False
+    # ADR-286: motivo capturado al cancelar — `None` si nunca se canceló.
+    motivo_cancelacion: str | None = None
     created_by: uuid.UUID
     created_at: datetime
 
@@ -362,6 +370,15 @@ class PagoClienteCreate(BaseModel):
     cuenta_contable_id: uuid.UUID
     # ADR-256 (petición del usuario, "NEW FEATURE")
     pagado_en_sistema_externo: bool = False
+
+
+class PagoClienteCancelarRequest(BaseModel):
+    """ADR-286 (petición del usuario): motivo obligatorio al cancelar un pago — antes el
+    endpoint no recibía body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    motivo: str = Field(min_length=3, max_length=255)
 
 
 class PagoAsignarFacturaRequest(BaseModel):
@@ -485,6 +502,8 @@ class PagoGrupoDetalleRead(BaseModel):
     aplicaciones: list[PagoGrupoAplicacionRead]
     total_pago: Decimal
     estatus_pago: EstatusPago
+    #: ADR-286: motivo capturado al cancelar — `None` si el pago sigue vigente.
+    motivo_cancelacion: str | None = None
 
 
 # ── Repositorios ──────────────────────────────────────────────────────────────
@@ -765,6 +784,7 @@ class CobranzaFacturaService(
         if nuevo == cobranza.estatus_cobro:
             return  # sin cambio: nada que recalcular ni que disparar de nuevo
 
+        estado_anterior = cobranza.estatus_cobro
         cobranza.estatus_cobro = nuevo
         if nuevo == EstatusCobro.COBRADA.value:
             cobranza.fecha_cobro = date.today()
@@ -778,11 +798,25 @@ class CobranzaFacturaService(
                 FacturaClienteRepository(self._repo.db, FacturaCliente)
             ).marcar_cobrada(cobranza.factura_id)
         else:
-            # Se sale de `cobrada` (o nunca se llegó): sin fecha de cobro. Si el estado
-            # ANTERIOR era `cobrada`, `PagoClienteService.eliminar` ya rechazó el borrado
-            # que hubiera causado esto — este `else` solo se alcanza en la transición
-            # pendiente↔cobro_parcial, que nunca tuvo `fecha_cobro` que limpiar.
+            # Se sale de `cobrada` (o nunca se llegó): sin fecha de cobro.
             cobranza.fecha_cobro = None
+            # ADR-286 (petición del usuario): si el estado ANTERIOR era `cobrada`, hay
+            # que deshacer también la cascada hacia F2/F1 que `marcar_cobrada` ya había
+            # disparado — `PagoClienteService.cancelar` ya validó, ANTES de llegar aquí,
+            # que ninguna comisión (agencia/vendedor/afiliado) se comprometió con base en
+            # ese estado, así que revertir es seguro. Si el anterior NO era `cobrada`
+            # (transición pendiente↔cobro_parcial), no hay nada que revertir aguas
+            # arriba: nunca se disparó `marcar_cobrada`.
+            if estado_anterior == EstatusCobro.COBRADA.value:
+                from app.modules.facturacion.factura_cliente import (
+                    FacturaCliente,
+                    FacturaClienteRepository,
+                    FacturaClienteService,
+                )
+
+                FacturaClienteService(
+                    FacturaClienteRepository(self._repo.db, FacturaCliente)
+                ).revertir_cobro(cobranza.factura_id)
 
 
 def get_cobranza_factura_service(db: Session = Depends(get_db)) -> CobranzaFacturaService:
@@ -1202,18 +1236,27 @@ class PagoClienteService:
             aplicaciones=aplicaciones,
             total_pago=total_pago,
             estatus_pago=grupo[0].estatus_pago,
+            motivo_cancelacion=grupo[0].motivo_cancelacion,
         )
 
-    def cancelar(self, pago_id: uuid.UUID, usuario: CurrentUser) -> None:
+    def cancelar(self, pago_id: uuid.UUID, usuario: CurrentUser, motivo: str) -> None:
         """ADR-271 (petición del usuario, "Cancelación de Pago"): cancela TODO el pago
         global de una sola vez (ver `_resolver_grupo`) — NO borra las filas, las marca
         `estatus_pago = CANCELADO` (`importe_cobrado` ya las excluye de la suma).
 
-        Regla del usuario (más simple y más segura que intentar calcular si el pago era
-        "necesario" para completar el cobro, como sí hace `eliminar()` con el pago sin
-        asignar): si CUALQUIERA de las facturas que toca este pago YA está `cobrada`, se
-        RECHAZA con 409 — sin excepción. Así nunca hace falta construir una reversa hacia
-        `FacturaCliente`/`OrdenCliente` (ver docstring del módulo)."""
+        ADR-286 (petición del usuario, reemplaza la regla "ciega" de ADR-271): cancelar
+        SÍ puede deshacer una factura ya `cobrada` — la cascada completa
+        `CobranzaFactura → FacturaCliente → OrdenCliente` se revierte vía
+        `CobranzaFacturaService.recalcular_tras_pago` (que detecta la transición hacia
+        atrás y llama `FacturaClienteService.revertir_cobro`). Lo único que SÍ bloquea,
+        y se valida ANTES de tocar cualquier fila (todo-o-nada sobre el grupo completo):
+        que alguna de las órdenes que este pago toca ya tenga una comisión de
+        agencia/vendedor/afiliado autorizada o pagada con base en que estaba `cobrada`
+        — eso sí es un compromiso tomado que ya no se puede deshacer limpiamente.
+        """
+        if not motivo.strip():
+            raise DomainError("El motivo de cancelación no puede estar vacío.")
+
         db = self._repo.db
         grupo = self._resolver_grupo(pago_id)
 
@@ -1222,25 +1265,51 @@ class PagoClienteService:
                 "Este pago ya está cancelado.", detalles={"pago_cliente_id": str(pago_id)}
             )
 
+        from app.modules.facturacion.factura_cliente import (
+            FacturaClienteOrden,
+            comisiones_comprometidas_de_orden,
+        )
+
         servicio_cobranza = CobranzaFacturaService(CobranzaFacturaRepository(db, CobranzaFactura))
         cobranzas: dict[uuid.UUID, CobranzaFactura] = {}
         for p in grupo:
             if p.cobranza_id is None:
                 continue
-            cobranza = cobranzas.setdefault(p.cobranza_id, self._get_cobranza_or_404(p.cobranza_id))
-            if cobranza.estatus_cobro == EstatusCobro.COBRADA.value:
-                raise ConflictError(
-                    "No se puede cancelar: una de las facturas de este pago ya está "
-                    "COBRADA en su totalidad. Deshacer un cobro completado requiere una "
-                    "nota de crédito que el sistema no maneja.",
-                    detalles={
-                        "pago_cliente_id": str(pago_id),
-                        "cobranza_id": str(p.cobranza_id),
-                    },
+            cobranzas.setdefault(p.cobranza_id, self._get_cobranza_or_404(p.cobranza_id))
+
+        ordenes_ids = set(
+            db.scalars(
+                select(FacturaClienteOrden.orden_id).where(
+                    FacturaClienteOrden.factura_id.in_(
+                        c.factura_id for c in cobranzas.values()
+                    )
                 )
+            ).all()
+        )
+        bloqueos: dict[uuid.UUID, list[str]] = {
+            orden_id: comisiones
+            for orden_id in ordenes_ids
+            if (comisiones := comisiones_comprometidas_de_orden(db, orden_id))
+        }
+        if bloqueos:
+            detalle = "; ".join(
+                f"{orden_id} ({', '.join(c)})" for orden_id, c in bloqueos.items()
+            )
+            raise ConflictError(
+                "No se puede cancelar: ya se autorizó o pagó una comisión "
+                f"(agencia/vendedor/afiliado) con base en que la orden ya estaba "
+                f"cobrada. Órdenes comprometidas: {detalle}.",
+                detalles={
+                    "pago_cliente_id": str(pago_id),
+                    "ordenes_comprometidas": {
+                        str(k): v for k, v in bloqueos.items()
+                    },
+                },
+            )
 
         for p in grupo:
             p.estatus_pago = EstatusPago.CANCELADO.value
+            p.motivo_cancelacion = motivo
         db.flush()
         for cobranza in cobranzas.values():
             servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
@@ -1391,11 +1460,13 @@ def detalle_pago_agrupado(
 @router_pagos_cliente_por_id.post("/{pago_id}/cancelar", status_code=204)
 def cancelar_pago_cliente(
     pago_id: uuid.UUID,
+    payload: PagoClienteCancelarRequest,
     usuario: CurrentUser = Depends(requiere_permiso("cobranza:editar")),
     svc: PagoClienteService = Depends(get_pago_cliente_service),
 ) -> None:
-    """ADR-271: cancela TODO el pago global (ver `PagoClienteService.cancelar`)."""
-    svc.cancelar(pago_id, usuario)
+    """ADR-271/286: cancela TODO el pago global (ver `PagoClienteService.cancelar`),
+    con motivo obligatorio."""
+    svc.cancelar(pago_id, usuario, payload.motivo)
 
 
 @router_pagos_cliente_por_id.get("/no-asignados", response_model=Page[PagoClienteRead])

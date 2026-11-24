@@ -223,6 +223,8 @@ export interface PagoGrupoDetalle {
   aplicaciones: PagoGrupoAplicacion[];
   total_pago: string;
   estatus_pago: EstatusPago;
+  // ADR-286: motivo capturado al cancelar — `null` si el pago sigue vigente.
+  motivo_cancelacion: string | null;
 }
 
 // ── Requisicion ───────────────────────────────────────────────────────────────
