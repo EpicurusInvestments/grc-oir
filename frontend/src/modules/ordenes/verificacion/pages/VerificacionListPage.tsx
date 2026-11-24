@@ -1,16 +1,22 @@
 /** Pantalla "Verificaciones": lista + panel de detalle sobre una vista DERIVADA — no hay
  * alta ni edición porque no es una entidad capturable. Cada fila proyecta una OI que llegó
  * a 2.3 (reales conciliados). Ver `VerificacionDerivada` en types.ts para el porqué.
+ *
+ * ADR-285 (petición del usuario, con captura): la tabla pagina contra el backend
+ * (`useVerificacionesPagina`) en vez de derivar sobre el arreglo completo de OE del
+ * sistema (`state.ordenesEstacion` vía `cargarEstadoReal`) — misma razón que
+ * "Órdenes de Transmisión". La fila seleccionada usa `useOrdenEstacionSeleccionada`
+ * (ya trae días + verificaciones completos), igual que esa pantalla.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { CatalogToolbar, DetailEmpty, ListDetailLayout } from "@/shared/ui";
+import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { fmtFecha, fmtFolio } from "../../format";
+import { useIncidenciasDeLaOC, useOrdenEstacionSeleccionada, useVerificacionesPagina } from "../../hooks";
 import { findAfiliado, findEstacion } from "../../state/catalogosCache";
-import { useOrdenes } from "../../state/OrdenesContext";
-import { verificacionesDerivadas } from "../../state/selectors";
+import { verificacionDerivada } from "../../state/selectors";
 import { VerificacionDetailPanel } from "../components/VerificacionDetailPanel";
 
 type Filtro = "todas" | "con_incidencias" | "sin_incidencias";
@@ -27,36 +33,39 @@ interface VerificacionListPageProps {
 }
 
 export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: VerificacionListPageProps) {
-  const { state } = useOrdenes();
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(oeIdPreseleccionada ?? null);
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(20);
 
-  const todas = useMemo(() => verificacionesDerivadas(state.ordenesEstacion), [state.ordenesEstacion]);
+  const filtros = {
+    page,
+    size,
+    q: search || undefined,
+    tiene_incidencias: filtro === "todas" ? undefined : filtro === "con_incidencias",
+  };
+  const lista = useVerificacionesPagina(filtros);
+  const ordenesEstacion = lista.data?.items ?? [];
+  const items = ordenesEstacion.map(verificacionDerivada);
+  const total = lista.data?.total ?? 0;
 
-  const items = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const filtradas = todas.filter((v) => {
-      const incDeV = state.incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
-      if (filtro === "con_incidencias" && incDeV.length === 0) return false;
-      if (filtro === "sin_incidencias" && incDeV.length > 0) return false;
-      if (q) {
-        const oe = state.ordenesEstacion.find((o) => o.id === v.ordenEstacionId);
-        const estacion = oe ? findEstacion(oe.estacion_id) : undefined;
-        const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
-        const haystack = `${v.folioOrdenInterna} ${estacion?.nombre_estacion ?? ""} ${afiliado?.nombre_afiliado ?? ""}`.toLowerCase();
-        return haystack.includes(q);
-      }
-      return true;
-    });
-    // Más reciente primero: por cuándo la OI llegó a 2.3 (reales conciliados), no por la
-    // fecha de transmisión que muestra la columna "Fecha" — así una verificación recién
-    // dada de alta siempre aparece al principio.
-    return [...filtradas].sort((a, b) => b.actualizadaEn.localeCompare(a.actualizadaEn));
-  }, [todas, state.incidencias, state.ordenesEstacion, filtro, search]);
+  const seleccionadaQuery = useOrdenEstacionSeleccionada(selectedId);
+  const selectedOE = seleccionadaQuery.data ?? null;
+  const selected = selectedOE ? verificacionDerivada(selectedOE) : null;
+  const incidenciasQuery = useIncidenciasDeLaOC(ordenesEstacion);
+  const incidencias = incidenciasQuery.data ?? [];
+  // La OE seleccionada puede no estar en la página actual (p.ej. preselección desde otra
+  // pantalla) — sus incidencias se piden aparte, igual que `OrdenEstacionListPage.tsx`.
+  const incidenciasSeleccionadaQuery = useIncidenciasDeLaOC(selectedOE ? [selectedOE] : undefined);
+  const incidenciasSeleccionada = incidenciasSeleccionadaQuery.data ?? [];
 
-  const selected = selectedId ? (todas.find((v) => v.ordenEstacionId === selectedId) ?? null) : null;
-  const selectedOE = selected ? state.ordenesEstacion.find((o) => o.id === selected.ordenEstacionId) : undefined;
+  useEffect(() => {
+    if (oeIdPreseleccionada && selectedOE?.id === oeIdPreseleccionada && search === "") {
+      setSearch(selectedOE.folio_orden_interna);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOE]);
 
   return (
     <>
@@ -72,7 +81,10 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
 
       <CatalogToolbar
         search={search}
-        onSearch={setSearch}
+        onSearch={(v) => {
+          setSearch(v);
+          setPage(1);
+        }}
         searchPlaceholder="Buscar folio, estación, afiliado…"
         filterLabel="Incidencias"
         filters={FILTROS}
@@ -80,12 +92,14 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
         onFilter={(k) => {
           setFiltro(k as Filtro);
           setSelectedId(null);
+          setPage(1);
         }}
-        count={`${items.length} de ${todas.length}`}
+        count={`${items.length} de ${total}`}
       />
 
       <ListDetailLayout
         list={
+          <>
           <table className="cat-table">
             <thead>
               <tr>
@@ -109,10 +123,10 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
             </thead>
             <tbody>
               {items.map((v) => {
-                const oe = state.ordenesEstacion.find((o) => o.id === v.ordenEstacionId);
+                const oe = ordenesEstacion.find((o) => o.id === v.ordenEstacionId);
                 const estacion = oe ? findEstacion(oe.estacion_id) : undefined;
                 const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
-                const incDeV = state.incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
+                const incDeV = incidencias.filter((i) => i.orden_interna_id === v.ordenEstacionId);
                 return (
                   <tr key={v.ordenEstacionId} className={selectedId === v.ordenEstacionId ? "sel" : ""} onClick={() => setSelectedId(v.ordenEstacionId)}>
                     <td className="td-mono td-center">{fmtFolio(v.folioOrdenInterna)}</td>
@@ -130,7 +144,21 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
                   </tr>
                 );
               })}
-              {items.length === 0 && (
+              {lista.isLoading && (
+                <tr>
+                  <td colSpan={8} className="state-msg">
+                    Cargando verificaciones…
+                  </td>
+                </tr>
+              )}
+              {lista.isError && (
+                <tr>
+                  <td colSpan={8} className="state-msg error">
+                    No se pudieron cargar las verificaciones.
+                  </td>
+                </tr>
+              )}
+              {!lista.isLoading && !lista.isError && items.length === 0 && (
                 <tr>
                   <td colSpan={8} className="state-msg">
                     No hay verificaciones para los filtros seleccionados.
@@ -139,13 +167,26 @@ export function VerificacionListPage({ oeIdPreseleccionada, onVerOE }: Verificac
               )}
             </tbody>
           </table>
+          {total > 0 && (
+            <Paginator
+              page={page}
+              size={size}
+              total={total}
+              onChange={(np, ns) => {
+                setPage(np);
+                setSize(ns);
+              }}
+            />
+          )}
+          </>
         }
         detail={
           selected ? (
             <VerificacionDetailPanel
+              key={selected.ordenEstacionId}
               verificacion={selected}
-              oe={selectedOE}
-              incidencias={state.incidencias.filter((i) => i.orden_interna_id === selected.ordenEstacionId)}
+              oe={selectedOE ?? undefined}
+              incidencias={incidenciasSeleccionada}
               onVerOE={() => onVerOE(selected.ordenEstacionId)}
             />
           ) : (

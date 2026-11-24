@@ -54,6 +54,7 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     Unicode,
+    func,
     or_,
     select,
 )
@@ -382,6 +383,11 @@ class OrdenClienteRead(BaseModel):
     cierre_sin_odc_cerrada: bool
     cierre_sin_carta_conciliacion: bool
     fecha_cierre: date | None = None
+    #: ADR-285 (petición del usuario): cuántas `OrdenEstacion` tiene esta orden (columna
+    #: "OT" de la lista) — se resuelve en el servicio, en lote por página, NUNCA trayendo
+    #: las OE completas solo para contarlas (mismo patrón que `ordenes_asignadas` en
+    #: `factura_afiliado.py`).
+    oe_count: int = 0
 
     # Montos/porcentajes como STRING para preservar precisión Decimal (ADR-015 E-4).
     @field_serializer(
@@ -411,6 +417,16 @@ class OrdenClienteListParams(ListParams):
     agencia_id: uuid.UUID | None = None
     vendedor_principal_id: uuid.UUID | None = None
     contrato_id: uuid.UUID | None = None
+    # ADR-285 (petición del usuario, con captura): paginación real de "Órdenes de
+    # Servicio" — antes el frontend traía el 100% y calculaba esta bandeja ("Listas para
+    # cerrar") filtrando en memoria. No es un filtro de una sola columna: exige
+    # `estatus_orden` en gestión de estaciones Y que TODAS sus OrdenEstacion ya estén
+    # `cerrada` (mismo criterio que `todasReconciliadas()` del frontend).
+    listas_para_cerrar: bool | None = None
+    # ADR-285: pill "Activas" de la propia pantalla — excluye los estatus ya archivados
+    # (mismo criterio que `ESTADOS_INACTIVOS` del frontend, que colapsaba esto en
+    # memoria sobre el arreglo completo).
+    activas: bool | None = None
 
 
 # ── Schemas de escritura (Tanda 5) ────────────────────────────────────────────────
@@ -556,20 +572,60 @@ class OrdenClienteRepository(BaseRepository[OrdenCliente]):
         # OrdenCliente no tiene (usa estatus_orden, no baja lógica) — ver OrdenClienteListParams.
         q = (getattr(params, "q", None) or "").strip()
         if q:
+            # ADR-285: se agrega el nombre del anunciante (antes el frontend lo buscaba
+            # en memoria sobre el arreglo completo) — LEFT JOIN, 1:1 desde OrdenCliente,
+            # sin riesgo de duplicar filas.
             patron = f"%{q}%"
-            stmt = stmt.where(
+            stmt = stmt.outerjoin(
+                Anunciante, Anunciante.anunciante_id == OrdenCliente.anunciante_id
+            ).where(
                 or_(
                     OrdenCliente.folio_orden.ilike(patron),
                     OrdenCliente.numero_orden_cliente.ilike(patron),
+                    Anunciante.nombre_comercial.ilike(patron),
                 )
             )
         estatus = getattr(params, "estatus_orden", None)
         if estatus is not None:
             stmt = stmt.where(OrdenCliente.estatus_orden == EstatusOrden(estatus).value)
+        if getattr(params, "activas", None):
+            stmt = stmt.where(
+                OrdenCliente.estatus_orden.not_in(
+                    (
+                        EstatusOrden.FACTURADA.value,
+                        EstatusOrden.COBRADA.value,
+                        EstatusOrden.CANCELADA.value,
+                    )
+                )
+            )
         for campo in ("anunciante_id", "agencia_id", "vendedor_principal_id", "contrato_id"):
             valor = getattr(params, campo, None)
             if valor is not None:
                 stmt = stmt.where(getattr(OrdenCliente, campo) == valor)
+        listas_para_cerrar = getattr(params, "listas_para_cerrar", None)
+        if listas_para_cerrar:
+            from app.modules.ordenes.orden_estacion import EstatusOrdenEstacion, OrdenEstacion
+
+            existe_oe = (
+                select(OrdenEstacion.orden_estacion_id)
+                .where(OrdenEstacion.orden_id == OrdenCliente.orden_id)
+                .exists()
+            )
+            existe_oe_sin_cerrar = (
+                select(OrdenEstacion.orden_estacion_id)
+                .where(
+                    OrdenEstacion.orden_id == OrdenCliente.orden_id,
+                    OrdenEstacion.estatus != EstatusOrdenEstacion.CERRADA.value,
+                )
+                .exists()
+            )
+            stmt = stmt.where(
+                OrdenCliente.estatus_orden.in_(
+                    (EstatusOrden.EN_TRANSMISION.value, EstatusOrden.EN_VERIFICACION.value)
+                ),
+                existe_oe,
+                ~existe_oe_sin_cerrar,
+            )
         return stmt
 
 
@@ -597,6 +653,34 @@ class OrdenClienteService(
     def __init__(self, repo: OrdenClienteRepository) -> None:
         super().__init__(repo)
         self._repo = repo
+
+    def _conteo_oes(self, ordenes: list[OrdenClienteRead]) -> dict[uuid.UUID, int]:
+        """Cuántas `OrdenEstacion` tiene cada orden de una página/lectura, en UNA
+        consulta — mismo patrón por lote que `_conteo_asignaciones` en
+        `factura_afiliado.py`: evita N+1 contra `orden_estacion` por cada fila."""
+        from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+        ids = {o.orden_id for o in ordenes}
+        if not ids:
+            return {}
+        filas = self._repo.db.execute(
+            select(OrdenEstacion.orden_id, func.count(OrdenEstacion.orden_estacion_id))
+            .where(OrdenEstacion.orden_id.in_(ids))
+            .group_by(OrdenEstacion.orden_id)
+        ).all()
+        return {fila[0]: fila[1] for fila in filas}
+
+    def list(self, params: ListParams) -> Page[OrdenClienteRead]:
+        pagina = super().list(params)
+        conteos = self._conteo_oes(pagina.items)
+        for o in pagina.items:
+            o.oe_count = conteos.get(o.orden_id, 0)
+        return pagina
+
+    def get(self, id_: Any) -> OrdenClienteRead:
+        leida = super().get(id_)
+        leida.oe_count = self._conteo_oes([leida]).get(leida.orden_id, 0)
+        return leida
 
     def historial_comisiones(self, orden_id: uuid.UUID) -> Sequence[audit.LogCambioParametroRead]:
         """Historial de cambios a parámetros sensibles de la OC, más reciente primero —
@@ -1256,7 +1340,11 @@ def get_orden_cliente_service(db: Session = Depends(get_db)) -> OrdenClienteServ
         # ordenar como TEXTO deja de equivaler a ordenar por antigüedad en cuanto
         # conviven folios con y sin ceros a la izquierda. `created_at` es monótono con
         # el consecutivo y no depende del formato del folio.
-        default_order_by=[OrdenCliente.created_at, OrdenCliente.folio_orden],
+        # ADR-285: DESCENDENTE — más reciente primero. Antes esto lo resolvía un
+        # `.sort()` adicional en el frontend (`OrdenClienteListPage.tsx`) sobre el
+        # arreglo completo ya cargado; al pasar a paginación real contra el backend, el
+        # orden natural de la consulta tiene que ser el mismo que el usuario ya veía.
+        default_order_by=[OrdenCliente.created_at.desc(), OrdenCliente.folio_orden],
     )
     return OrdenClienteService(repo)
 
@@ -1268,12 +1356,24 @@ router_clientes = APIRouter(prefix="/clientes", tags=["ordenes:clientes"])
 def listar_ordenes_cliente(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    q: str | None = Query(None, description="Búsqueda por folio o número de orden del cliente"),
+    q: str | None = Query(
+        None, description="Búsqueda por folio, número de orden del cliente o nombre del anunciante"
+    ),
     estatus_orden: EstatusOrden | None = Query(None, description="Filtro por estatus_orden"),
     anunciante_id: uuid.UUID | None = Query(None),
     agencia_id: uuid.UUID | None = Query(None),
     vendedor_principal_id: uuid.UUID | None = Query(None),
     contrato_id: uuid.UUID | None = Query(None),
+    listas_para_cerrar: bool | None = Query(
+        None,
+        description=(
+            "Filtra las órdenes en gestión de estaciones con TODAS sus OrdenEstacion "
+            "ya 'cerrada' (bandeja 'Listas para cerrar')"
+        ),
+    ),
+    activas: bool | None = Query(
+        None, description="Excluye 'facturada'/'cobrada'/'cancelada' (pill 'Activas')"
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
     svc: OrdenClienteService = Depends(get_orden_cliente_service),
 ) -> Page[OrdenClienteRead]:
@@ -1287,6 +1387,8 @@ def listar_ordenes_cliente(
             agencia_id=agencia_id,
             vendedor_principal_id=vendedor_principal_id,
             contrato_id=contrato_id,
+            listas_para_cerrar=listas_para_cerrar,
+            activas=activas,
         )
     )
 

@@ -708,10 +708,16 @@ lógica) — usan sus propias máquinas de estado (`estatus_orden`, `estatus`).
 ### Lectura (Tanda 3)
 
 **`GET /ordenes/clientes`** (`ordenes:leer`) — lista paginada de `OrdenCliente`.
-Filtros: `?q` (folio/número de orden), `?estatus_orden`, `?anunciante_id`, `?agencia_id`,
-`?vendedor_principal_id`, `?contrato_id`. Campos: los 36 de la spec BD v2 + 3 extensiones
-aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstring de
-`app/modules/ordenes/orden_cliente.py`. Montos/% como **string** (ADR-015).
+Filtros: `?q` (folio/número de orden/**anunciante**, ADR-285), `?estatus_orden`,
+`?anunciante_id`, `?agencia_id`, `?vendedor_principal_id`, `?contrato_id`,
+`?listas_para_cerrar` (ADR-285: bandeja "listas para cerrar" del sidebar — todas sus OE
+`cerrada`, al menos una OE), `?activas` (ADR-285: excluye `facturada`/`cobrada`/
+`cancelada`). Orden por defecto: `created_at` **descendente** (ADR-285 — antes
+ascendente, lo compensaba el frontend con su propio `.sort()`, ya quitado). Campos: los
+36 de la spec BD v2 + 4 extensiones aditivas (comisiones snapshot ADR-029, campos de
+cierre ADR-034, `oe_count` ADR-285 — conteo de OE hijas, resuelto en lote por página) —
+ver docstring de `app/modules/ordenes/orden_cliente.py`. Montos/% como **string**
+(ADR-015).
 - **`GET /ordenes/clientes/{id}`** — uno (404 si no existe).
 - **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a parámetros
   sensibles de la OC (más reciente primero; mismo mecanismo `LogCambioParametro` que los
@@ -722,9 +728,12 @@ aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstri
   el mismo endpoint/respuesta.
 
 **`GET /ordenes/estaciones`** (`ordenes:leer`) — lista paginada de `OrdenEstacion`.
-Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de OrdenCliente),
-`?estacion_id`, `?plaza_id`, `?anunciante_id`, `?estatus`. `estatus` es un ciclo de vida
-**propio e independiente** del de la OC (ver ADR-030).
+Filtros: `?q` (folio/**estación/afiliado/OC de origen**, ADR-285), `?orden_id` (OE de una
+OC — lo usa el panel de detalle de OrdenCliente), `?estacion_id`, `?plaza_id`,
+`?anunciante_id`, `?estatus`, `?tiene_incidencias` (ADR-285: pills "Con incidencias"/"Sin
+incidencias" de Verificaciones). `estatus` es un ciclo de vida **propio e independiente**
+del de la OC (ver ADR-030). Orden por defecto: `created_at` **descendente** (ADR-285,
+mismo fix que OrdenCliente).
 - **`GET /ordenes/estaciones/{id}`** — uno (404 si no existe).
 - **`GET /ordenes/estaciones/{id}/dias`** — periodo de transmisión día a día
   (`OrdenEstacionDia`, ADR-030: `spots_solicitados`/`asignados`/`programados`), ordenado

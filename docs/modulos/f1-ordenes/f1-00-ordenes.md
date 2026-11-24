@@ -1540,6 +1540,34 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   spot" en `OrdenEstacionForm.tsx`, panel "Cálculos en vivo" expandido con "Spots
   bonificables"/"Spots facturables". Ver ADR-068 para la fórmula completa. Verificado:
   3 pruebas nuevas de backend + 7 de frontend, suites completas en verde.
+- **ADR-285 (petición del usuario, con captura): paginación real contra el backend en
+  "Órdenes de Servicio"/"Órdenes de Transmisión"/"Verificaciones", quita el preload N+1
+  de raíz (`cargarEstadoReal.ts`):** la causa raíz de "Lentitud en paginación" no era el
+  backend (`BaseRepository.list()` ya hacía `LIMIT`/`OFFSET` real) sino que el frontend
+  precargaba el sistema completo al entrar al módulo (~40 requests: historial de
+  comisiones por OC + días/verificaciones por OE) hacia un `useReducer` global, y las
+  listas paginaban ese arreglo ya completo en memoria con `.slice()`. Backend: nuevos
+  filtros `listas_para_cerrar`/`activas` (OrdenCliente) y `tiene_incidencias`
+  (OrdenEstacion) para conteos ligeros de sidebar (`page:1,size:1` + `.total`); `oe_count`
+  en `OrdenClienteRead` (resuelto en lote, sin N+1); `q` extendido a más columnas. Bug
+  real corregido de paso: `default_order_by` de ambas entidades estaba ascendente (el
+  frontend lo compensaba con su propio `.sort()`, que esta ronda le quita) — ahora
+  `created_at.desc()` explícito en el backend. Frontend: `hooks.ts` (nuevo) reemplaza
+  `OrdenesContext` para todo lo de solo lectura de estas 3 pantallas con TanStack Query
+  acotado (una página real para la tabla, la fila seleccionada siempre completa vía
+  `refrescarOrdenCliente`/`refrescarOrdenEstacion`, OE/incidencias/historial acotados a
+  una OC/OE, conteos de sidebar ligeros). "Verificaciones" reutiliza
+  `verificacionDerivada()`/`diaVerificacion()` (`selectors.ts`) SIN CAMBIOS, solo cambia
+  de dónde vienen los datos. El escrito (altas, "Clonar", "Guardar", avanzar a reales)
+  sigue intacto en `OrdenesContext.tsx` — fuera de alcance, esta ronda es solo de
+  lectura. `cargarEstadoReal.ts` deja de pedir historial de comisiones y
+  días/verificaciones por entidad; conserva las 2 listas base completas (baratas, sin
+  período/verificaciones) para el OC-picker de `OrdenEstacionForm` e
+  `IncidenciaListPage` (no migrados esta ronda). Ver ADR-285 en `arquitectura.md` para
+  el detalle completo. Verificado: backend 100% verde (10 pruebas nuevas); frontend
+  541/553 verde (las 12 fallas restantes son de `auth`/`seguridad`, preexistentes y no
+  relacionadas, confirmadas con `git stash`); manual con `curl` contra datos reales de
+  dev (paginación, filtros y orden descendente correctos).
 
 ## Pendientes / dudas
 

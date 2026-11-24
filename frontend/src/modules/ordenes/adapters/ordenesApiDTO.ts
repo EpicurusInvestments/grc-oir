@@ -60,6 +60,9 @@ export interface OrdenClienteApiDTO {
   cierre_sin_odc_cerrada: boolean;
   cierre_sin_carta_conciliacion: boolean;
   fecha_cierre: string | null;
+  /** ADR-285: cuántas OrdenEstacion tiene — resuelto en lote por el backend, nunca
+   *  trayendo las OE completas solo para contarlas. */
+  oe_count: number;
 }
 
 export interface OrdenEstacionApiDTO {

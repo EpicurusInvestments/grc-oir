@@ -11591,3 +11591,83 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 - **Verificado:** `tsc --noEmit`/`eslint` limpios; suite completa del módulo `cobranza`
   (`vitest run src/modules/cobranza`) 100% verde, 68 pruebas. Sin cambios de backend —
   nada que correr en `pytest`.
+
+### ADR-285 — "Órdenes de Servicio"/"Órdenes de Transmisión"/"Verificaciones": paginación real contra el backend, quita el preload N+1 de raíz
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura).
+- **Disparador:** *"tenemos un gran problema en la pantalla de Ordenes de Servicio se
+  esta volviendo demasiado lenta para cargar la información de los registros en la
+  lista: Lentitud en paginación a ordenes de servicio y ordenes de estación / Se trae el
+  100% de los registros a pesar de tener paginación y se satura"*. La causa raíz NO era
+  que el backend no soportara paginación real (`BaseRepository.list()` ya hacía
+  `LIMIT`/`OFFSET` de verdad) — era que `cargarEstadoReal.ts` precargaba el sistema
+  COMPLETO una sola vez al entrar al módulo (por cada `OrdenCliente`, su historial de
+  comisiones; por cada `OrdenEstacion`, sus días y verificaciones — ~40 requests en
+  paralelo con los volúmenes de siembra) hacia un `useReducer` global
+  (`OrdenesContext`), y las pantallas de lista hacían pseudo-paginación con `.slice()`
+  sobre ese arreglo ya completo en memoria. Se confirmó el alcance con el usuario en 3
+  rondas de preguntas: (1) las 2 pantallas de lista, (2) TODAS las bandejas del sidebar
+  (no solo esas 2), (3) también quitar el preload de raíz, no solo parchar las 2 listas.
+- **Cambio — backend** (`backend/app/modules/ordenes/orden_cliente.py`,
+  `orden_estacion.py`): nuevos filtros de `ListParams` —
+  `OrdenCliente.listas_para_cerrar`/`activas`, `OrdenEstacion.tiene_incidencias` — para
+  que las bandejas del sidebar cuenten con una consulta ligera (`page:1,size:1` + leer
+  solo `.total`, mismo patrón que `useConteosFacturacion`) en vez de derivar el conteo de
+  un arreglo ya cargado. `OrdenClienteRead` expone `oe_count` (resuelto en lote por
+  página, sin N+1, mismo patrón que `FacturaAfiliadoService._conteo_asignaciones()`) para
+  que la tabla de "Órdenes de Servicio" no necesite las OE completas de cada fila. `q` se
+  extendió a más columnas (anunciante; estación/afiliado/OC de origen en OE). **Bug real
+  encontrado y corregido de paso:** el `default_order_by` de ambas entidades estaba
+  ASCENDENTE — el frontend lo compensaba con su propio `.sort()` (más reciente primero),
+  que esta ronda le quita; sin este fix el orden visible se habría invertido en
+  silencio. Ahora `created_at.desc()` en ambas.
+- **Cambio — frontend, capa de datos** (`frontend/src/modules/ordenes/hooks.ts`, nuevo):
+  reemplaza la dependencia de `OrdenesContext` para TODO lo de solo lectura de estas 3
+  pantallas, con hooks de TanStack Query acotados a lo que cada pantalla necesita:
+  `useOrdenesClientePagina`/`useOrdenesEstacionPagina` (una página real para la tabla),
+  `useOrdenClienteSeleccionada`/`useOrdenEstacionSeleccionada` (la fila seleccionada,
+  completa, vía `refrescarOrdenCliente`/`refrescarOrdenEstacion` — independiente de en
+  qué página esté), `useOesDeLaOC`/`useIncidenciasDeLaOC`/`useHistorialComisionesOC`
+  (acotados a una OC/OE, nunca el arreglo completo), `useConteosOrdenes` (las bandejas
+  del sidebar, un query ligero por bandeja) y `useVerificacionesPagina` (como
+  `useOrdenesEstacionPagina`, pero también trae verificaciones por fila — más caro, pero
+  acotado a la página). `adapters/ordenesApi.ts` ganó las llamadas de una sola página
+  (`paginaOrdenesClienteApi`/`paginaOrdenesEstacionApi`/`paginaIncidenciasApi`/
+  `oesDeLaOCApi`) sin tocar las de `fetchAllPages` existentes (`cargarEstadoReal.ts` las
+  sigue usando para lo que NO se migró esta ronda).
+- **Cambio — pantallas:** `OrdenClienteListPage.tsx`/`OrdenEstacionListPage.tsx`/
+  `VerificacionListPage.tsx` reescritas para paginar/buscar/filtrar contra el backend en
+  vez de derivar sobre `state.ordenesCliente`/`state.ordenesEstacion`/`state.incidencias`
+  completos; `OrdenesExplorerPage.tsx` usa `useConteosOrdenes()` para las bandejas.
+  "Verificaciones" sigue reutilizando `verificacionDerivada()`/`diaVerificacion()`
+  (`state/selectors.ts`) SIN CAMBIOS — solo cambia de dónde vienen los datos que
+  alimentan al selector (antes el arreglo completo, ahora la página actual); el
+  reordenado por `updated_at` (cuándo la OI llegó a 2.3, no por `created_at`) se quedó
+  como un `.sort()` sobre la página ya traída (~20 filas), no sobre el sistema completo.
+  El escrito (altas, "Clonar", "Guardar", avanzar a reales) sigue intacto en
+  `OrdenesContext.tsx` — fuera de alcance de esta ronda, que es solo de lectura.
+  `OrdenEstacionForm.tsx`: el balance de spots "ya asignados por otras OE de la misma OC"
+  pasó de leer `state.ordenesEstacion` completo a `useOesDeLaOC(oc.id)`, acotado.
+- **Cambio — causa raíz** (`frontend/src/modules/ordenes/adapters/cargarEstadoReal.ts`):
+  se quitan los 2 fetches N+1 (historial de comisiones por OC, días+verificaciones por
+  OE) — las 2 listas base completas (OC/OE, sin período/verificaciones) se conservan
+  porque siguen siendo baratas (2 requests) y las necesitan el OC-picker de
+  `OrdenEstacionForm` e `IncidenciaListPage` (ninguno de los dos migrado esta ronda; ninguno
+  necesita período/verificaciones, solo folio/estación/id).
+- **Pruebas:** `backend/app/tests/test_f1_03_ordenes_lectura.py` — 10 pruebas nuevas
+  (`oe_count`, `q` extendido en ambas entidades, `listas_para_cerrar`, `activas`,
+  `tiene_incidencias`, orden descendente por `created_at` en OC y en OE). Frontend:
+  `OrdenClienteListPage.test.tsx`/`OrdenEstacionListPage.test.tsx`/
+  `VerificacionListPage.test.tsx`/`OrdenEstacionForm.test.tsx` reescritos para mockear
+  `adapters/ordenesApi.ts` (con filtrado `q`/`estatus` simulado, mismo criterio que el
+  backend real) en vez de precargar `OrdenesProvider.initialState` con el arreglo
+  completo; las pruebas de orden "más reciente primero" que ya probaba el frontend se
+  dieron de baja (esa responsabilidad es ahora 100% del backend, cubierta ahí).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`, confirmada 2
+  veces — una corrida intermedia tuvo 1 falla intermitente preexistente y no relacionada,
+  confirmada con `git stash`). `tsc --noEmit`/`eslint` limpios. Suite completa de
+  frontend: 541/553 verde — las 12 fallas restantes son de `auth`/`seguridad`/
+  `apiClient` (no tocados en esta ronda), confirmadas preexistentes con `git stash`.
+  Manual: servidores de desarrollo reiniciados, `curl` contra `/api/v1/ordenes/clientes`
+  y `/api/v1/ordenes/estaciones` con `page`/`size`/`listas_para_cerrar`/
+  `tiene_incidencias` reales — paginación, filtros y orden descendente correctos.

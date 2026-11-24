@@ -1,13 +1,23 @@
 /** Pantalla "Órdenes de Transmisión": lista + panel de detalle, con filtro por sub-estado y
  * buscador. El alta (Tanda 3) abre a pantalla completa, igual que en Órdenes de Servicio.
+ *
+ * ADR-285 (petición del usuario, con captura): la tabla y su paginación pegan al
+ * backend de verdad (`useOrdenesEstacionPagina`) — antes traían el 100% de las OE (vía
+ * `OrdenesContext`/`cargarEstadoReal`) y paginaban/filtraban un arreglo completo en el
+ * cliente. La fila seleccionada (detalle, editar, "Capturar reales", "Clonar") usa
+ * `useOrdenEstacionSeleccionada`, que siempre trae el objeto COMPLETO (días +
+ * verificaciones) sin importar en qué página de la tabla esté. `state.ordenesCliente`
+ * (para resolver "OC de origen") sigue viniendo del contexto global — esa lista no se
+ * tocó, la siguen necesitando los combos de `OrdenEstacionForm`.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { fmtFecha, fmtFolio, fmtMonto } from "../../format";
+import { useIncidenciasDeLaOC, useOrdenEstacionSeleccionada, useOrdenesEstacionPagina } from "../../hooks";
 import { findAfiliado, findEstacion, findPlaza } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
 import { oiImporte, oiPeriodoTexto, oiTotalSpots } from "../../state/selectors";
@@ -47,12 +57,9 @@ export function OrdenEstacionListPage({
   // Al llegar con una OI preseleccionada (p.ej. "Ver orden interna →" desde Verificaciones
   // o Incidencias), el buscador arranca filtrado por su folio: así la tabla muestra SOLO
   // esa fila en vez de las 12 (o las que haya) — antes solo se resaltaba en el detalle,
-  // sin filtrar la lista.
-  const [search, setSearch] = useState(() => {
-    if (!oeIdPreseleccionada) return "";
-    const oe = state.ordenesEstacion.find((o) => o.id === oeIdPreseleccionada);
-    return oe?.folio_orden_interna ?? "";
-  });
+  // sin filtrar la lista. ADR-285: la OE preseleccionada ya no está disponible
+  // sincrónicamente (se pide al backend) — se completa en cuanto resuelve.
+  const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(oeIdPreseleccionada ?? null);
   const [modo, setModo] = useState<Modo>(ocIdParaNueva ? "new" : "view");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -81,30 +88,30 @@ export function OrdenEstacionListPage({
   // Cambia en cada "Sí, generar otra" para forzar que `<OrdenEstacionForm>` se remonte en
   // blanco (si se reusara la misma key, se quedaría con los datos de la OE anterior).
   const [intentoNuevo, setIntentoNuevo] = useState(0);
-  // Paginación SOLO de la tabla (petición del usuario) — el listado completo sigue
-  // viviendo en memoria, aquí solo se corta lo que se renderiza.
+  // Paginación real contra el backend (ADR-285): ya no se trae el 100% de las OE.
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
 
-  const items = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const filtrados = state.ordenesEstacion.filter((oe) => {
-      if (filtro !== "todas" && oe.estatus !== filtro) return false;
-      if (q) {
-        const estacion = findEstacion(oe.estacion_id);
-        const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
-        const oc = state.ordenesCliente.find((o) => o.id === oe.orden_id);
-        const haystack = `${oe.folio_orden_interna} ${estacion?.nombre_estacion ?? ""} ${afiliado?.nombre_afiliado ?? ""} ${oc?.folio_orden ?? ""}`.toLowerCase();
-        return haystack.includes(q);
-      }
-      return true;
-    });
-    // Más reciente primero: para que una OI recién dada de alta aparezca al principio.
-    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  }, [state.ordenesEstacion, state.ordenesCliente, filtro, search]);
-  const itemsPagina = useMemo(() => items.slice((page - 1) * size, page * size), [items, page, size]);
+  const filtros = {
+    page,
+    size,
+    q: search || undefined,
+    estatus: filtro === "todas" ? undefined : filtro,
+  };
+  const lista = useOrdenesEstacionPagina(filtros);
+  const items = lista.data?.items ?? [];
+  const total = lista.data?.total ?? 0;
 
-  const selected = selectedId ? (state.ordenesEstacion.find((o) => o.id === selectedId) ?? null) : null;
+  const seleccionadaQuery = useOrdenEstacionSeleccionada(selectedId);
+  const selected = seleccionadaQuery.data ?? null;
+  const incidenciasQuery = useIncidenciasDeLaOC(selected ? [selected] : undefined);
+
+  useEffect(() => {
+    if (oeIdPreseleccionada && selected?.id === oeIdPreseleccionada && search === "") {
+      setSearch(selected.folio_orden_interna);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   const onGuardar = async (ocId: string, input: OrdenEstacionInput) => {
     setSubmitError(null);
@@ -277,7 +284,7 @@ export function OrdenEstacionListPage({
           setSelectedId(null);
           setPage(1);
         }}
-        count={`${items.length} de ${state.ordenesEstacion.length}`}
+        count={`${items.length} de ${total}`}
       />
 
       <ListDetailLayout
@@ -312,7 +319,7 @@ export function OrdenEstacionListPage({
               </tr>
             </thead>
             <tbody>
-              {itemsPagina.map((oe) => {
+              {items.map((oe) => {
                 const estacion = findEstacion(oe.estacion_id);
                 const afiliado = estacion ? findAfiliado(estacion.afiliado_id) : undefined;
                 const plaza = findPlaza(oe.plaza_id);
@@ -360,7 +367,21 @@ export function OrdenEstacionListPage({
                   </tr>
                 );
               })}
-              {items.length === 0 && (
+              {lista.isLoading && (
+                <tr>
+                  <td colSpan={11} className="state-msg">
+                    Cargando órdenes de transmisión…
+                  </td>
+                </tr>
+              )}
+              {lista.isError && (
+                <tr>
+                  <td colSpan={11} className="state-msg error">
+                    No se pudieron cargar las órdenes de transmisión.
+                  </td>
+                </tr>
+              )}
+              {!lista.isLoading && !lista.isError && items.length === 0 && (
                 <tr>
                   <td colSpan={11} className="state-msg">
                     No hay Órdenes de Transmisión para los filtros seleccionados.
@@ -369,11 +390,11 @@ export function OrdenEstacionListPage({
               )}
             </tbody>
           </table>
-          {items.length > 0 && (
+          {total > 0 && (
             <Paginator
               page={page}
               size={size}
-              total={items.length}
+              total={total}
               onChange={(np, ns) => {
                 setPage(np);
                 setSize(ns);
@@ -394,7 +415,7 @@ export function OrdenEstacionListPage({
               key={selected.id}
               oe={selected}
               oc={state.ordenesCliente.find((o) => o.id === selected.orden_id)}
-              incidencias={state.incidencias}
+              incidencias={incidenciasQuery.data ?? []}
               onVerOC={() => onVerOC(selected.orden_id)}
               onEditar={() => {
                 setSubmitError(null);
