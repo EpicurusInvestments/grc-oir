@@ -14,6 +14,11 @@
  * se reintenta), es una limitación aceptada: no se agregó un campo nuevo a
  * `FacturaAfiliadoRead`/`FacturaAgenciaRead`/`FacturaVendedorRead` para esto porque
  * Facturación no debe conocer a Cobranza (mismo criterio de capas que el backend).
+ *
+ * ADR-283 (petición del usuario, con captura): el backend genera esta requisición
+ * directo en "autorizada" (la factura de origen ya pasó por Dirección, re-autorizar
+ * sería redundante) — el aviso de éxito lo dice explícitamente para que quede claro que
+ * ya no falta ese paso en "Requisiciones de pago", solo "Marcar pagada".
  */
 
 import { useState } from "react";
@@ -57,7 +62,8 @@ export function RequisicionInlineForm({
   if (generada) {
     return (
       <div className="state-msg success" style={{ textAlign: "left", margin: 0 }}>
-        Requisición <span className="mono">{generada}</span> generada.
+        Requisición <span className="mono">{generada}</span> generada y autorizada — solo
+        falta marcarla como pagada en Requisiciones de pago.
       </div>
     );
   }

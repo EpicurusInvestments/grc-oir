@@ -136,19 +136,36 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
     if (filtro === "vencidas") items = items.filter((c) => c.vencida);
     const qq = q.trim().toLowerCase();
     if (qq) {
+      // ADR-284 (petición del usuario): la búsqueda cubre TODAS las columnas de la
+      // tabla sin excepción — cada campo se compara contra el crudo Y, cuando la
+      // columna lo muestra formateado (fechas, moneda, estado), también contra el
+      // texto formateado, para que funcione sin importar cómo lo teclee el usuario.
       items = items.filter((c) => {
         const an = anuncianteMap.get(c.anunciante_id);
-        return (
-          (c.numero_factura ?? "").toLowerCase().includes(qq) ||
-          (an?.nombre_comercial ?? "").toLowerCase().includes(qq) ||
-          // ADR-281 (petición del usuario): también se busca por "Fecha de pago"/"Fecha
-          // de aplicación" — contra el ISO crudo Y el formato que se ve en la columna
-          // ("dd-mmm-aa"), para que funcione sin importar cómo lo teclee el usuario.
-          (c.fecha_pago ?? "").toLowerCase().includes(qq) ||
-          fmtFecha(c.fecha_pago).toLowerCase().includes(qq) ||
-          (c.fecha_deposito ?? "").toLowerCase().includes(qq) ||
-          fmtFecha(c.fecha_deposito).toLowerCase().includes(qq)
-        );
+        const ag = c.agencia_id ? agenciaMap.get(c.agencia_id) : undefined;
+        const total = Number(c.importe_cobrado) + Number(c.importe_pendiente_cobro);
+        const campos = [
+          c.numero_factura,
+          an?.nombre_comercial,
+          ag?.nombre_agencia,
+          String(c.dias_credito),
+          c.fecha_estimada_cobro,
+          fmtFecha(c.fecha_estimada_cobro),
+          c.vencida ? "Vencida" : null,
+          c.fecha_pago,
+          fmtFecha(c.fecha_pago),
+          c.fecha_deposito,
+          fmtFecha(c.fecha_deposito),
+          String(total),
+          fmtMoneda(String(total)),
+          c.importe_cobrado,
+          fmtMoneda(c.importe_cobrado),
+          c.importe_pendiente_cobro,
+          fmtMoneda(c.importe_pendiente_cobro),
+          ESTATUS_COBRO_LABEL[c.estatus_cobro],
+          c.ultimo_numero_pago,
+        ];
+        return campos.some((valor) => (valor ?? "").toString().toLowerCase().includes(qq));
       });
     }
   }
@@ -675,7 +692,7 @@ export function CobranzaFacturasPage({ filtroInicial }: Props) {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar factura, anunciante, fecha de pago o de aplicación…"
+        searchPlaceholder="Buscar por cualquier campo de la tabla…"
         filterLabel="Estado"
         filters={FILTROS}
         activeFilter={filtro}

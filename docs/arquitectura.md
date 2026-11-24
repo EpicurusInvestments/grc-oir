@@ -11521,3 +11521,73 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   autorización directa sin paso intermedio, generación de su Requisicion con folio
   `RQ-2026-11-1`, rechazo 409 al reintentar sobre la misma factura, y búsqueda por el
   folio de la factura de origen.
+
+### ADR-283 — Cobranza: la Requisicion nace ya "autorizada" si viene de una factura de proveedor
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con capturas,
+  siguiendo directo al flujo que dejó andando ADR-282).
+- **Disparador:** al generar una Requisicion desde el bloque embebido de Facturación
+  (`pago_afiliado`/`pago_agencia`/`comision_vendedor`, ADR-282) y pasar a "Requisiciones
+  de pago", el usuario notó que la fila seguía naciendo en `pendiente`, exigiendo que
+  Dirección le diera clic a "Autorizar →" otra vez — redundante, porque la factura de
+  origen (`FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`) YA tuvo que estar
+  `autorizada` para poder generar la requisición en primer lugar
+  (`RequisicionService._validar_factura_disponible`, ADR-282). Pidió explícitamente
+  quitar ese paso y que la requisición pase directo al siguiente estatus: "Marcar
+  pagada".
+- **Cambio:** en `RequisicionService.create()` (`backend/app/modules/cobranza/
+  requisicion.py`), antes de construir el objeto, se calcula `tiene_factura_origen`
+  (si trae `factura_afiliado_id`/`factura_agencia_id`/`factura_vendedor_id`) y se fija
+  `estatus_requisicion = "autorizada"` directo cuando es así (antes el campo se dejaba
+  en su default de modelo, siempre `"pendiente"`). `comision_agencia` (el único tipo sin
+  factura de origen — nada la autorizó antes) es la única excepción: sigue naciendo en
+  `pendiente` y recorriendo el canal de autorización normal de Dirección, igual que
+  siempre.
+- **Alcance deliberadamente acotado:** no se tocó la máquina de estados (`TRANSICIONES`)
+  ni los endpoints `/estatus`/`/autorizar` — autorizar una requisición que ya está
+  `autorizada` sigue siendo un no-op idempotente, como ya lo era. En el frontend no hizo
+  falta tocar ningún componente: el botón "Autorizar →" de `RequisicionesPage.tsx` ya
+  dependía de `estatus_requisicion === "pendiente"`, así que deja de aparecer para estos
+  3 tipos como consecuencia directa de dónde arranca el estatus, no por un cambio de UI.
+- **Pruebas:** `backend/app/tests/test_f3_03_requisiciones_pagos.py` — nuevas
+  `test_pago_afiliado_nace_autorizada_sin_pasar_por_pendiente`,
+  `test_pago_agencia_nace_autorizada_sin_pasar_por_pendiente`,
+  `test_comision_agencia_sigue_naciendo_pendiente`; se actualizó
+  `test_alta_comision_vendedor_ya_no_requiere_orden_ni_calcula_porcentaje` (esperaba
+  `"pendiente"`, ahora `"autorizada"`); se refactorizó el helper interno
+  `_crear_requisicion_simple()` (usado por 6 pruebas de la máquina de estados genérica)
+  para usar `comision_agencia` en vez de `pago_agencia` — es el único tipo que sigue
+  naciendo en `pendiente`, necesario para seguir probando el flujo completo
+  `pendiente → autorizada → pagada`/`cancelada` desde cero.
+- **Verificado:** backend — suite de Requisicion 32/32 verde, `ruff` limpio. Frontend —
+  `tsc --noEmit`/`eslint` limpios (sin pruebas nuevas de frontend: el cambio es 100%
+  backend, el frontend ya reaccionaba correctamente al estatus inicial).
+
+### ADR-284 — Cobranza de facturas: la búsqueda cubre TODAS las columnas de la tabla
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura).
+- **Disparador:** la búsqueda de "Cobranza de facturas" (ADR-281) solo cubría
+  factura/anunciante/fecha de pago/fecha de aplicación. El usuario pidió que cubriera
+  "todos los campos de la tabla sin excepción": también Agencia, Días cr., Fecha
+  estimada, Total, Cobrado, Pendiente, Estado y Parcialidad.
+- **Cambio:** `frontend/src/modules/cobranza/cobranzaFactura/pages/
+  CobranzaFacturasPage.tsx` — el filtro client-side (recordatorio: esta lista NO tiene
+  `q` en el backend, se amplía a 100 filas y se filtra en el cliente mientras se busca,
+  limitación ya documentada desde antes de ADR-281) ahora arma un arreglo con los 12
+  campos visibles de cada fila —incluyendo, para los campos formateados (fechas, moneda,
+  estado), tanto el valor crudo como el formateado que se ve en pantalla— y compara el
+  texto buscado contra CUALQUIERA de ellos (`Array.some`). Se agregó también "Vencida"
+  como término buscable (el badge que aparece junto a la fecha estimada cuando aplica).
+  Se actualizó el placeholder del buscador a "Buscar por cualquier campo de la tabla…".
+  El orden (fecha estimada, luego fecha de pago del último pago, ADR-281) no se tocó —
+  sigue vigente, se verificó que el `default_order_by` del backend no cambió.
+- **Pruebas:** `frontend/src/modules/cobranza/__tests__/CobranzaFacturasPage.test.tsx`
+  — nuevo bloque `describe("ADR-284: ...")` con 2 pruebas: una busca por agencia, días
+  de crédito, fecha estimada (formato "dd-mmm-aa") y parcialidad; la otra busca por el
+  estado ("Pendiente") y por un monto de fila (Cobrado), usando montos deliberadamente
+  distintos entre los 2 renglones de prueba para que la búsqueda por monto identifique
+  una fila sin ambigüedad. Se corrigió además el placeholder esperado en la prueba ya
+  existente de ADR-281 (cambió de texto).
+- **Verificado:** `tsc --noEmit`/`eslint` limpios; suite completa del módulo `cobranza`
+  (`vitest run src/modules/cobranza`) 100% verde, 68 pruebas. Sin cambios de backend —
+  nada que correr en `pytest`.
