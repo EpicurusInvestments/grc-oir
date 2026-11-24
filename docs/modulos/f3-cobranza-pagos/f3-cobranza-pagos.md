@@ -149,6 +149,15 @@ aunque sea de una sola factura; el formulario y el endpoint individuales siguen
 existiendo, solo se ocultó el botón. Detalle completo en `docs/arquitectura.md`
 (ADR-281).
 
+**ADR-284 (petición del usuario, con captura) — la búsqueda cubre TODAS las columnas:**
+la búsqueda de esta lista (sigue 100% client-side, ver arriba) antes solo comparaba
+contra factura/anunciante/fecha de pago/fecha de aplicación — ahora compara contra las
+12 columnas visibles de la tabla sin excepción: también Agencia, Días cr., Fecha
+estimada (cruda + "dd-mmm-aa"), Total, Cobrado, Pendiente, Estado (etiqueta legible) y
+Parcialidad, más el término "Vencida" cuando aplica el badge. El orden
+(`fecha_estimada_cobro` + fecha del último pago, ADR-281) no cambió. Detalle completo en
+`docs/arquitectura.md` (ADR-284).
+
 ### PagoCliente (10 campos spec + 5 campos nuevos ADR-225)
 PK `pago_cliente_id`. FK `CobranzaFactura` (N:1, **NULLABLE desde ADR-229** — ver abajo).
 Captura manual por **CxC**. `metodo_pago_clave` (mismo ajuste que arriba — texto, no FK).

@@ -11562,3 +11562,32 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 - **Verificado:** backend — suite de Requisicion 32/32 verde, `ruff` limpio. Frontend —
   `tsc --noEmit`/`eslint` limpios (sin pruebas nuevas de frontend: el cambio es 100%
   backend, el frontend ya reaccionaba correctamente al estatus inicial).
+
+### ADR-284 — Cobranza de facturas: la búsqueda cubre TODAS las columnas de la tabla
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura).
+- **Disparador:** la búsqueda de "Cobranza de facturas" (ADR-281) solo cubría
+  factura/anunciante/fecha de pago/fecha de aplicación. El usuario pidió que cubriera
+  "todos los campos de la tabla sin excepción": también Agencia, Días cr., Fecha
+  estimada, Total, Cobrado, Pendiente, Estado y Parcialidad.
+- **Cambio:** `frontend/src/modules/cobranza/cobranzaFactura/pages/
+  CobranzaFacturasPage.tsx` — el filtro client-side (recordatorio: esta lista NO tiene
+  `q` en el backend, se amplía a 100 filas y se filtra en el cliente mientras se busca,
+  limitación ya documentada desde antes de ADR-281) ahora arma un arreglo con los 12
+  campos visibles de cada fila —incluyendo, para los campos formateados (fechas, moneda,
+  estado), tanto el valor crudo como el formateado que se ve en pantalla— y compara el
+  texto buscado contra CUALQUIERA de ellos (`Array.some`). Se agregó también "Vencida"
+  como término buscable (el badge que aparece junto a la fecha estimada cuando aplica).
+  Se actualizó el placeholder del buscador a "Buscar por cualquier campo de la tabla…".
+  El orden (fecha estimada, luego fecha de pago del último pago, ADR-281) no se tocó —
+  sigue vigente, se verificó que el `default_order_by` del backend no cambió.
+- **Pruebas:** `frontend/src/modules/cobranza/__tests__/CobranzaFacturasPage.test.tsx`
+  — nuevo bloque `describe("ADR-284: ...")` con 2 pruebas: una busca por agencia, días
+  de crédito, fecha estimada (formato "dd-mmm-aa") y parcialidad; la otra busca por el
+  estado ("Pendiente") y por un monto de fila (Cobrado), usando montos deliberadamente
+  distintos entre los 2 renglones de prueba para que la búsqueda por monto identifique
+  una fila sin ambigüedad. Se corrigió además el placeholder esperado en la prueba ya
+  existente de ADR-281 (cambió de texto).
+- **Verificado:** `tsc --noEmit`/`eslint` limpios; suite completa del módulo `cobranza`
+  (`vitest run src/modules/cobranza`) 100% verde, 68 pruebas. Sin cambios de backend —
+  nada que correr en `pytest`.

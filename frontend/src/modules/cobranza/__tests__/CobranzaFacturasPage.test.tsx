@@ -162,10 +162,98 @@ describe("CobranzaFacturasPage", () => {
     // Sin pago: las 2 columnas nuevas muestran "—", sin tronar.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
 
-    const buscador = screen.getByPlaceholderText(/fecha de pago o de aplicación/);
+    const buscador = screen.getByPlaceholderText(/cualquier campo de la tabla/);
     fireEvent.change(buscador, { target: { value: "05-mar-26" } });
     await waitFor(() => expect(screen.getByText("A-9000")).toBeInTheDocument());
     expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
+  });
+
+  // ADR-284 (petición del usuario): la búsqueda ahora cubre TODAS las columnas de la
+  // tabla, no solo factura/anunciante/fechas de pago.
+  describe("ADR-284: la búsqueda cubre todas las columnas de la tabla", () => {
+    it("busca por agencia, días de crédito, fecha estimada, estado y parcialidad", async () => {
+      vi.mocked(agenciasInfo).mockResolvedValueOnce([
+        {
+          agencia_id: "ag-1",
+          nombre_agencia: "Agencia Prisma",
+          rfc_agencia: "APR900101AB1",
+          porcentaje_comision_agencia_default: "10.00",
+        },
+      ]);
+      const conAgencia: CobranzaFactura = {
+        ...base,
+        cobranza_id: "cb-ag",
+        factura_id: "f-ag",
+        numero_factura: "A-7000",
+        agencia_id: "ag-1",
+        dias_credito: 45,
+        fecha_estimada_cobro: "2026-05-20",
+        ultimo_numero_pago: "2 de 3",
+      };
+      listMock.mockResolvedValue({ items: [base, conAgencia], total: 2, page: 1, size: 20, pages: 1 });
+      getMock.mockResolvedValue(base);
+      pagosListMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const { unmount } = render(
+        <MemoryRouter>
+          <QueryClientProvider client={qc}>
+            <CobranzaFacturasPage />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      await screen.findByText("A-7000");
+      const buscador = screen.getByPlaceholderText(/cualquier campo de la tabla/);
+
+      fireEvent.change(buscador, { target: { value: "Agencia Prisma" } });
+      await waitFor(() => expect(screen.getByText("A-7000")).toBeInTheDocument());
+      expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
+
+      fireEvent.change(buscador, { target: { value: "20-may-26" } });
+      await waitFor(() => expect(screen.getByText("A-7000")).toBeInTheDocument());
+      expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
+
+      fireEvent.change(buscador, { target: { value: "2 de 3" } });
+      await waitFor(() => expect(screen.getByText("A-7000")).toBeInTheDocument());
+      expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
+      unmount();
+    });
+
+    it("busca por estado ('Pendiente') y por los montos de la fila (total, cobrado, pendiente)", async () => {
+      const cobrada: CobranzaFactura = {
+        ...base,
+        cobranza_id: "cb-cobrada",
+        factura_id: "f-cobrada",
+        numero_factura: "A-8000",
+        estatus_cobro: "cobrada",
+        // Montos DISTINTOS a los de `base` (1,183,200.00/0.00) para que la búsqueda por
+        // monto identifique esta fila sin ambigüedad.
+        importe_cobrado: "7500.00",
+        importe_pendiente_cobro: "0.00",
+      };
+      listMock.mockResolvedValue({ items: [base, cobrada], total: 2, page: 1, size: 20, pages: 1 });
+      getMock.mockResolvedValue(base);
+      pagosListMock.mockResolvedValue({ items: [], total: 0, page: 1, size: 100, pages: 0 });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={qc}>
+            <CobranzaFacturasPage />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      await screen.findByText("A-8000");
+      const buscador = screen.getByPlaceholderText(/cualquier campo de la tabla/);
+
+      // "Pendiente" es el estado de `base` (A-001245) — con la factura "cobrada"
+      // (A-8000) fuera del resultado.
+      fireEvent.change(buscador, { target: { value: "Pendiente" } });
+      await waitFor(() => expect(screen.getByText("A-001245")).toBeInTheDocument());
+      expect(screen.queryByText("A-8000")).not.toBeInTheDocument();
+
+      fireEvent.change(buscador, { target: { value: "7,500" } });
+      await waitFor(() => expect(screen.getByText("A-8000")).toBeInTheDocument());
+      expect(screen.queryByText("A-001245")).not.toBeInTheDocument();
+    });
   });
 
   it("lista las cobranzas con su total y estado legible", async () => {
