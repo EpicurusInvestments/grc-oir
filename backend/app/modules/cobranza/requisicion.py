@@ -10,6 +10,14 @@ pero no se autoriza a sí mismo. Mismo canal dedicado que ya usan `FacturaAfilia
 dentro del servicio — `/estatus` (el canal operativo, `pagos:editar`) rechaza con 403 si
 alguien intenta pedir `autorizada` por ahí.
 
+ADR-283 (petición del usuario, con captura): `pago_afiliado`/`pago_agencia`/
+`comision_vendedor` nacen DIRECTO en `autorizada` (ver `create()`) — ya no pasan por
+`pendiente` — porque su factura de origen ya tuvo que pasar por la autorización de
+Dirección antes de poder generar la requisición (`_validar_factura_disponible` exige
+`autorizada`); pedirle a Dirección que autorice otra vez la requisición sería redundante.
+`comision_agencia` (sin factura de origen) es la única excepción: sigue naciendo en
+`pendiente` y pasando por el canal de autorización normal.
+
 Cuatro FKs según `tipo_requisicion` (spec): `afiliado_id`+`factura_afiliado_id`
 (pago_afiliado), `agencia_id`+`factura_agencia_id` (pago_agencia),
 `vendedor_comision_id`+`factura_vendedor_id` (comision_vendedor — ver excepción abajo),
@@ -705,11 +713,30 @@ class RequisicionService(
                 data.factura_vendedor_id,
             )
 
+        # ADR-283 (petición del usuario, con captura): una requisición que viene de una
+        # factura de proveedor (pago_afiliado/pago_agencia/comision_vendedor) ya pasó por
+        # la autorización de Dirección EN LA FACTURA (`_validar_factura_disponible` arriba
+        # exige que esté `autorizada`) — pedirle a Dirección que la autorice OTRA VEZ aquí
+        # es un paso redundante. Nace directo en `autorizada`, solo falta "Marcar pagada".
+        # `comision_agencia` no tiene factura de origen (nada la autorizó antes): sigue
+        # naciendo en `pendiente`, como siempre.
+        tiene_factura_origen = (
+            data.factura_afiliado_id is not None
+            or data.factura_agencia_id is not None
+            or data.factura_vendedor_id is not None
+        )
+        estatus_inicial = (
+            EstatusRequisicion.AUTORIZADA.value
+            if tiene_factura_origen
+            else EstatusRequisicion.PENDIENTE.value
+        )
+
         obj = Requisicion(
             requisicion_id=uuid4(),
             numero_requisicion=self._siguiente_numero_requisicion(date.today()),
             numero_oc_sap=data.numero_oc_sap,
             tipo_requisicion=tipo.value,
+            estatus_requisicion=estatus_inicial,
             factura_afiliado_id=data.factura_afiliado_id,
             factura_agencia_id=data.factura_agencia_id,
             factura_vendedor_id=data.factura_vendedor_id,

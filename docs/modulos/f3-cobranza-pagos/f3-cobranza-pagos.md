@@ -374,7 +374,11 @@ llevar `CHECK >= 0` en ese campo).
 **Autorización**: el paso `pendiente→autorizada` requiere **Dirección o Admin** (mismo
 canal dedicado del ADR-046 — permiso de router en `pagos:leer`, chequeo de área real
 dentro del servicio) — CxP captura pero no se autoriza a sí mismo. Extensión directa del
-patrón ya aprobado en F2.
+patrón ya aprobado en F2. **ADR-283:** `pago_afiliado`/`pago_agencia`/`comision_vendedor`
+ya NO nacen en `pendiente` — nacen directo en `autorizada` (ver más abajo), así que para
+estos 3 tipos el único paso de la máquina de estados que de verdad se recorre en la
+práctica es `autorizada → pagada`/`cancelada`. `comision_agencia` es la única excepción:
+sigue naciendo en `pendiente` y recorriendo la máquina completa.
 **Efecto colateral al pagar (ADR-216):** al llegar a `pagada`, la Requisicion cierra
 también (`.transicionar(..., "pagada", ...)`) la `FacturaAfiliado`/`FacturaAgencia`/
 `FacturaVendedor` que tenga enlazada por FK, siempre (sin verificar si existen otras
@@ -428,6 +432,20 @@ y reubicación del alta:**
   esta pantalla) se simplificó: ya no tiene selector de "Tipo de requisición" ni los
   bloques de los otros 3 tipos, solo Agencia + Orden de cliente + % Comisión + Monto +
   OC SAP + Observaciones.
+
+**ADR-283 (petición del usuario, con captura) — la requisición nace ya autorizada si
+viene de una factura:** antes, generar la Requisicion desde el bloque embebido de
+Facturación (ADR-282) dejaba la nueva fila en `pendiente`, obligando a Dirección a
+"Autorizar →" de nuevo en "Requisiciones de pago" — redundante, porque la
+`FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor` de origen YA tuvo que estar
+`autorizada` para poder generarla (`_validar_factura_disponible`, ADR-282). Ahora
+`RequisicionService.create()` calcula `tiene_factura_origen` (si trae
+`factura_afiliado_id`/`factura_agencia_id`/`factura_vendedor_id`) y arranca el registro
+directo en `autorizada` cuando es así — en la pantalla, el botón "Autorizar →" ya no
+aparece para estos 3 tipos, solo "Cancelar"/"Marcar pagada →". `comision_agencia` (sin
+factura de origen, nada la autorizó antes) sigue naciendo en `pendiente` y pasando por
+el canal de autorización normal — única excepción. No cambió la máquina de estados ni
+los endpoints `/estatus`/`/autorizar`, solo el estatus INICIAL del alta.
 
 **Badge "Orden de servicio" del detalle (ADR-218, actualizado en ADR-219):** junto al
 estado/tipo, mismo patrón que el badge de orden en Facturas de Cliente (ADR-064) —

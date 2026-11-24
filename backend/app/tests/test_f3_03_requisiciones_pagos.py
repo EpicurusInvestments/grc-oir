@@ -298,7 +298,8 @@ def test_alta_comision_vendedor_ya_no_requiere_orden_ni_calcula_porcentaje(
     # None. `porcentaje_comision_vendedor` sigue sugiriéndose del catálogo del
     # vendedor (comportamiento silencioso preexistente, ya no se muestra en la UI).
     assert body["requisicion_comision_vendedor"] is None
-    assert body["estatus_requisicion"] == "pendiente"
+    # ADR-283: nace directo en "autorizada" — su FacturaVendedor ya está autorizada.
+    assert body["estatus_requisicion"] == "autorizada"
 
 
 def test_alta_comision_vendedor_rechaza_sin_vendedor_ni_factura_vendedor(
@@ -388,15 +389,35 @@ def test_alta_pago_agencia_requiere_agencia_id_y_factura_agencia_id(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Requisicion — máquina de estados + canal dedicado de autorización (ADR-046)
+# ADR-283 (petición del usuario, con captura): la requisición que viene de una factura
+# de proveedor ya autorizada nace directo en "autorizada" — ya no hace falta volver a
+# autorizarla desde Requisiciones de pago, solo falta "Marcar pagada". "Comisión
+# agencia" (sin factura de origen) es la única excepción, sigue naciendo "pendiente".
 # ══════════════════════════════════════════════════════════════════════════════
-def _crear_requisicion_simple(
-    client: TestClient, db: Session, cat: dict[str, uuid.UUID], numero: str
-) -> str:
-    """Petición del usuario: `factura_agencia_id` ya no es opcional en `pago_agencia`,
-    así que esta requisición "simple" (solo para probar la máquina de estados, no le
-    importa la factura) necesita su propia orden+factura desechable."""
-    orden_id = _orden(db, cat, f"OC-{numero}", Decimal("50000.00"))
+def test_pago_afiliado_nace_autorizada_sin_pasar_por_pendiente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = _factura_afiliado(db, cat, Decimal("5000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "5000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["estatus_requisicion"] == "autorizada"
+
+
+def test_pago_agencia_nace_autorizada_sin_pasar_por_pendiente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-AUT-AG", Decimal("50000.00"))
     factura_id = _factura_agencia(db, cat, orden_id, Decimal("1000.00"))
     db.commit()
 
@@ -406,6 +427,56 @@ def _crear_requisicion_simple(
             "tipo_requisicion": "pago_agencia",
             "agencia_id": str(cat["agencia_id"]),
             "factura_agencia_id": str(factura_id),
+            "monto_requisicion": "1000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["estatus_requisicion"] == "autorizada"
+
+
+def test_comision_agencia_sigue_naciendo_pendiente(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """`comision_agencia` no tiene factura de origen — nadie la autorizó antes, así que
+    sigue necesitando el canal de autorización normal de Requisiciones de pago."""
+    orden_id = _orden(db, cat, "OC-AUT-CA", Decimal("50000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "comision_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
+            "monto_requisicion": "1000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["estatus_requisicion"] == "pendiente"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Requisicion — máquina de estados + canal dedicado de autorización (ADR-046)
+# ══════════════════════════════════════════════════════════════════════════════
+def _crear_requisicion_simple(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], numero: str
+) -> str:
+    """Tipo `comision_agencia` (sin factura de origen): es el ÚNICO tipo que sigue
+    naciendo en `pendiente` (ADR-283) — los otros 3 (pago_afiliado/pago_agencia/
+    comision_vendedor) ahora nacen directo en `autorizada` porque su factura de origen
+    ya pasó por Dirección, así que ya no sirven para probar la máquina de estados desde
+    `pendiente` con este helper genérico."""
+    orden_id = _orden(db, cat, f"OC-{numero}", Decimal("50000.00"))
+    db.commit()
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "comision_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "orden_id": str(orden_id),
             "monto_requisicion": "1000.00",
         },
         headers=_hdr("cxp"),

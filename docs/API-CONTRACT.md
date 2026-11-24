@@ -1432,7 +1432,12 @@ handoff, nunca por un endpoint propio de alta:
   cualquier estatus) la tenga ya ligada (**409 `conflicto`** si sí) — antes esto solo lo
   filtraban los combos `facturas-*-disponibles` del alta clásica; ahora se exige también
   en el servicio porque el alta embebida en cada pantalla de Factura (F2, ver la ficha de
-  ese módulo) ya no pasa por esos combos.
+  ese módulo) ya no pasa por esos combos. **ADR-283:** el estatus inicial depende del
+  tipo — `pago_afiliado`/`pago_agencia`/`comision_vendedor` (con factura de origen, ya
+  validada `autorizada` arriba) nacen directo en **`autorizada`**, no en `pendiente`
+  (la autorización de Dirección ya ocurrió al autorizar esa factura en Facturación,
+  volver a pedirla aquí sería redundante); `comision_agencia` (sin factura de origen)
+  es la única excepción y sigue naciendo en `pendiente`.
   Hereda `razon_social_afiliada` del catálogo. Sugiere `porcentaje_comision_vendedor`/
   `porcentaje_comision_agencia_req` desde el catálogo (`Vendedor`/`Agencia`) si se omiten,
   y calcula `requisicion_comision_vendedor`/`requisicion_comision_agencia` sobre

@@ -11521,3 +11521,44 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   autorización directa sin paso intermedio, generación de su Requisicion con folio
   `RQ-2026-11-1`, rechazo 409 al reintentar sobre la misma factura, y búsqueda por el
   folio de la factura de origen.
+
+### ADR-283 — Cobranza: la Requisicion nace ya "autorizada" si viene de una factura de proveedor
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con capturas,
+  siguiendo directo al flujo que dejó andando ADR-282).
+- **Disparador:** al generar una Requisicion desde el bloque embebido de Facturación
+  (`pago_afiliado`/`pago_agencia`/`comision_vendedor`, ADR-282) y pasar a "Requisiciones
+  de pago", el usuario notó que la fila seguía naciendo en `pendiente`, exigiendo que
+  Dirección le diera clic a "Autorizar →" otra vez — redundante, porque la factura de
+  origen (`FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`) YA tuvo que estar
+  `autorizada` para poder generar la requisición en primer lugar
+  (`RequisicionService._validar_factura_disponible`, ADR-282). Pidió explícitamente
+  quitar ese paso y que la requisición pase directo al siguiente estatus: "Marcar
+  pagada".
+- **Cambio:** en `RequisicionService.create()` (`backend/app/modules/cobranza/
+  requisicion.py`), antes de construir el objeto, se calcula `tiene_factura_origen`
+  (si trae `factura_afiliado_id`/`factura_agencia_id`/`factura_vendedor_id`) y se fija
+  `estatus_requisicion = "autorizada"` directo cuando es así (antes el campo se dejaba
+  en su default de modelo, siempre `"pendiente"`). `comision_agencia` (el único tipo sin
+  factura de origen — nada la autorizó antes) es la única excepción: sigue naciendo en
+  `pendiente` y recorriendo el canal de autorización normal de Dirección, igual que
+  siempre.
+- **Alcance deliberadamente acotado:** no se tocó la máquina de estados (`TRANSICIONES`)
+  ni los endpoints `/estatus`/`/autorizar` — autorizar una requisición que ya está
+  `autorizada` sigue siendo un no-op idempotente, como ya lo era. En el frontend no hizo
+  falta tocar ningún componente: el botón "Autorizar →" de `RequisicionesPage.tsx` ya
+  dependía de `estatus_requisicion === "pendiente"`, así que deja de aparecer para estos
+  3 tipos como consecuencia directa de dónde arranca el estatus, no por un cambio de UI.
+- **Pruebas:** `backend/app/tests/test_f3_03_requisiciones_pagos.py` — nuevas
+  `test_pago_afiliado_nace_autorizada_sin_pasar_por_pendiente`,
+  `test_pago_agencia_nace_autorizada_sin_pasar_por_pendiente`,
+  `test_comision_agencia_sigue_naciendo_pendiente`; se actualizó
+  `test_alta_comision_vendedor_ya_no_requiere_orden_ni_calcula_porcentaje` (esperaba
+  `"pendiente"`, ahora `"autorizada"`); se refactorizó el helper interno
+  `_crear_requisicion_simple()` (usado por 6 pruebas de la máquina de estados genérica)
+  para usar `comision_agencia` en vez de `pago_agencia` — es el único tipo que sigue
+  naciendo en `pendiente`, necesario para seguir probando el flujo completo
+  `pendiente → autorizada → pagada`/`cancelada` desde cero.
+- **Verificado:** backend — suite de Requisicion 32/32 verde, `ruff` limpio. Frontend —
+  `tsc --noEmit`/`eslint` limpios (sin pruebas nuevas de frontend: el cambio es 100%
+  backend, el frontend ya reaccionaba correctamente al estatus inicial).
