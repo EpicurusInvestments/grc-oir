@@ -285,6 +285,37 @@ describe("Fix: OI preseleccionada filtra la tabla (no solo resalta la fila)", ()
   });
 });
 
+describe("Fix (ADR-288): el filtro de sub-estado (pills 2.1/2.2/2.3 y 'Pendientes de asignar'/'Pendientes de verificar' del sidebar) manda al backend su vocabulario (spec), no el v5 de la pantalla", () => {
+  it("al arrancar con un filtroInicial v5 (p.ej. 'Pendientes de asignar'), el backend recibe 'asignada', no 'asignada_afiliado'", async () => {
+    const oc = registrarOC(makeOC({ id: "oc-1" }));
+    const { dto } = parOE({ id: "oe-asig", folio_orden_interna: "OE-2026-0080A", orden_id: oc.id, estatus: "asignada_afiliado" });
+    mockPaginaOE([dto]);
+
+    render(
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage filtroInicial="asignada_afiliado" onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
+    );
+
+    await waitFor(() =>
+      expect(paginaOEMock).toHaveBeenCalledWith(expect.objectContaining({ estatus: "asignada" })),
+    );
+    expect(await screen.findByText("1 de 1")).toBeInTheDocument();
+  });
+
+  it("al elegir la pill '2.2 Programados', el backend recibe 'en_transmision', no 'programados_conciliados'", async () => {
+    const { tabla } = renderPage();
+    fireEvent.click(screen.getByText("2.2 Programados"));
+
+    await waitFor(() =>
+      expect(paginaOEMock).toHaveBeenCalledWith(expect.objectContaining({ estatus: "en_transmision" })),
+    );
+    expect(tabla).toBeInTheDocument();
+  });
+});
+
 // ADR-285 (petición del usuario, con captura): el orden "más reciente primero" ya NO lo
 // decide el frontend (se quitó su propio `.sort()` sobre `state.ordenesEstacion`): lo
 // decide el `default_order_by` del backend — cubierto por

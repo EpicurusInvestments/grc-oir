@@ -281,7 +281,7 @@ no ofrece manera de llegar a él.
 **Precondición:** `OE-2025-0044A` y `OE-2025-0044B` en 2.1.
 **Pasos:** Clic en "Pendientes de asignar".
 **Resultado esperado:** Filtro de "Órdenes internas" en "2.1 Asignadas"; el contador del
-sidebar coincide con la cantidad listada. Chip "Filtro activo" removible.
+sidebar coincide con la cantidad listada.
 **Estado:** ⬜ Pendiente
 
 ### CP-23 · Pendientes de verificar
