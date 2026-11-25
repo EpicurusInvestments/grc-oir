@@ -261,15 +261,33 @@ def _payload_nc(
     }
 
 
-def _crear_nc(client: TestClient, cat: dict[str, uuid.UUID], origen_id: str, **kwargs: object):
+def _crear_nc(  # type: ignore[no-untyped-def]
+    client: TestClient,
+    cat: dict[str, uuid.UUID],
+    origen_id: str,
+    *,
+    numero_factura: str = "NC-2026-03-0001",
+    monto: str = "2000.00",
+    motivo: str = "descuento",
+    ordenes_ids: list[str] | None = None,
+    facturas_relacionadas_ids: list[str] | None = None,
+):
     return client.post(
         "/api/v1/facturacion/clientes",
-        json=_payload_nc(cat, origen_id, **kwargs),
+        json=_payload_nc(
+            cat,
+            origen_id,
+            numero_factura=numero_factura,
+            monto=monto,
+            motivo=motivo,
+            ordenes_ids=ordenes_ids,
+            facturas_relacionadas_ids=facturas_relacionadas_ids,
+        ),
         headers=_hdr("facturacion"),
     )
 
 
-def _timbrar_nc(
+def _timbrar_nc(  # type: ignore[no-untyped-def]
     client: TestClient,
     nc_id: str,
     *,
