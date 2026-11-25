@@ -214,11 +214,15 @@ export function OrdenClienteDetailPanel({
             <div className="fv">{categoria ? categoria.nombre_categoria : "—"}</div>
           </div>
         </div>
-        <div className="fl">Marca / Producto</div>
+        {/* Fix (petición del usuario, mismo bug que OrdenClienteListPage.tsx): decían
+            "Marca / Producto" y "Campaña" pero desplegaban otra cosa — `oc.producto` es
+            texto libre de "Campaña" (así lo llama `OrdenClienteForm.tsx`), y el rango de
+            fechas de abajo es el PERIODO de esa campaña, no un nombre. */}
+        <div className="fl">Marca / Campaña</div>
         <div className="fv">
           {marca ? marca.nombre_marca : "—"} <span style={{ color: "var(--text3)" }}>· {oc.producto}</span>
         </div>
-        <div className="fl">Campaña</div>
+        <div className="fl">Periodo</div>
         <div className="fv mono">{fmtRangoFechas(oc.fecha_inicio_campania, oc.fecha_fin_campania)}</div>
 
         <div className="sec">Condiciones especiales</div>
