@@ -18,9 +18,12 @@ ClaveUnidad,ACT,Actividad,,false
 ClaveUnidad,H87,Pieza,,false
 UsoCFDI,G03,Gastos en general,,true
 UsoCFDI,G01,Adquisición de mercancías,,false
+UsoCFDI,G02,"Devoluciones, descuentos o bonificaciones",,true
 UsoCFDI,P01,Por definir,,false
 UsoCFDI,S01,Sin efectos fiscales,,false
 UsoCFDI,CP01,Pagos,,false
+TipoRelacion,01,Nota de crédito de los documentos relacionados,,true
+TipoRelacion,03,Devolución de mercancía sobre facturas o traslados previos,,false
 FormaPago,99,Por definir,,true
 FormaPago,01,Efectivo,,false
 FormaPago,02,Cheque nominativo,,false

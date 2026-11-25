@@ -70,6 +70,8 @@ const base: FacturaCliente = {
   clave_unidad: null,
   moneda_sat: null,
   tipo_comprobante: null,
+  motivo_nota_credito: null,
+  tipo_relacion_sat: null,
   info_cuenta_pago: null,
   layout_factura: null,
   estado_facturacion: "preparada",
@@ -598,5 +600,108 @@ describe("FacturasClientePage", () => {
     await abrirDetalle({ ...base, ordenes: [] });
     expect(screen.getAllByText("Órdenes relacionadas").length).toBeGreaterThan(0);
     expect(screen.getByText("Sin órdenes asociadas.")).toBeInTheDocument();
+  });
+});
+
+// Notas de Crédito (petición del usuario, con captura): `FacturaCliente` con
+// `tipo_comprobante === "E"` — sin órdenes propias, montos negativos, botón nuevo en el
+// detalle condicionado a "Facturado en sistema externo".
+describe("Notas de Crédito", () => {
+  const notaCredito: FacturaCliente = {
+    ...base,
+    factura_id: "nc-1",
+    numero_factura: "NC-2026-11-0071",
+    tipo_comprobante: "E",
+    motivo_nota_credito: "descuento",
+    subtotal_factura: "-500.00",
+    iva_factura: "-80.00",
+    total_factura: "-580.00",
+    ordenes: [],
+    facturas_relacionadas_ids: ["f-1"],
+  };
+
+  it('el filtro "Notas de crédito" muestra solo las facturas con tipo_comprobante "E"', async () => {
+    listMock.mockResolvedValue({
+      items: [base, notaCredito],
+      total: 2,
+      page: 1,
+      size: 20,
+      pages: 1,
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <FacturasClientePage onIrAListasParaFacturar={vi.fn()} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("A-1041")).toBeInTheDocument();
+    expect(screen.getByText("NC-2026-11-0071")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Notas de crédito"));
+
+    expect(screen.queryByText("A-1041")).not.toBeInTheDocument();
+    expect(screen.getByText("NC-2026-11-0071")).toBeInTheDocument();
+  });
+
+  it("el total negativo se muestra con el signo después del símbolo de moneda", async () => {
+    renderCon(notaCredito);
+    expect(await screen.findByText("$-580.00")).toBeInTheDocument();
+  });
+
+  it('el detalle de una Nota de Crédito muestra "Factura de origen" y el Motivo, no "Órdenes relacionadas"', async () => {
+    renderCon(notaCredito);
+    (await screen.findByText("NC-2026-11-0071")).click();
+
+    expect(await screen.findByText("Factura de origen")).toBeInTheDocument();
+    expect(screen.getByText("Descuento")).toBeInTheDocument();
+    // "Órdenes relacionadas" sigue siendo el encabezado de la columna de la TABLA
+    // (ADR-278, siempre presente) — lo que no debe aparecer es la SECCIÓN del detalle,
+    // así que debe quedar un solo match, no dos.
+    expect(screen.getAllByText("Órdenes relacionadas").length).toBe(1);
+  });
+
+  it('"+ Nota de crédito" aparece en una factura timbrada normal', async () => {
+    renderCon({ ...base, estado_facturacion: "timbrada" });
+    (await screen.findByText("A-1041")).click();
+    expect(await screen.findByText("+ Nota de crédito")).toBeInTheDocument();
+  });
+
+  it('"+ Nota de crédito" NO aparece si la factura está "Facturado en sistema externo"', async () => {
+    renderCon({ ...base, estado_facturacion: "timbrada", facturado_en_sistema_externo: true });
+    (await screen.findByText("A-1041")).click();
+    await waitFor(() => expect(screen.getByText("Agencia Uno SA de CV")).toBeInTheDocument());
+    expect(screen.queryByText("+ Nota de crédito")).not.toBeInTheDocument();
+  });
+
+  it('"+ Nota de crédito" NO aparece sobre otra Nota de Crédito (no se acredita una NC)', async () => {
+    renderCon(notaCredito);
+    (await screen.findByText("NC-2026-11-0071")).click();
+    await waitFor(() => expect(screen.getByText("Factura de origen")).toBeInTheDocument());
+    expect(screen.queryByText("+ Nota de crédito")).not.toBeInTheDocument();
+  });
+
+  it('"+ Nota de crédito" NO aparece antes de timbrar (estado "preparada")', async () => {
+    renderCon({ ...base, estado_facturacion: "preparada" });
+    (await screen.findByText("A-1041")).click();
+    await waitFor(() =>
+      expect(screen.getByText("Marcar enviada a timbrado →")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("+ Nota de crédito")).not.toBeInTheDocument();
+  });
+
+  it('clic en "+ Nota de crédito" abre el alta con la factura de origen fija, y "Cancelar" regresa al detalle', async () => {
+    renderCon({ ...base, estado_facturacion: "timbrada" });
+    (await screen.findByText("A-1041")).click();
+    fireEvent.click(await screen.findByText("+ Nota de crédito"));
+
+    expect(await screen.findByText("Factura de origen")).toBeInTheDocument();
+    expect(screen.getAllByText("A-1041").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByText("Factura de origen")).not.toBeInTheDocument();
+    expect(screen.getByText("Marcar entregada →")).toBeInTheDocument();
   });
 });

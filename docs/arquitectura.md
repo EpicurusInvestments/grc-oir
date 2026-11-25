@@ -11756,3 +11756,135 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   suite de `cobranza`/`shared/ui` 100% verde (96 pruebas), `tsc --noEmit`/`eslint`
   limpios. Migración verificada con viaje redondo `downgrade`/`upgrade` sobre la BD de
   desarrollo.
+
+### ADR-287 — Facturación: Notas de Crédito (captura + aplicación en Cobranza; timbrado sigue siendo manual)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura, 2
+  rondas de preguntas antes de implementar).
+- **Disparador:** el usuario pidió agregar Notas de Crédito a "Facturas al cliente", con
+  especificación concreta: botón en el detalle de una factura ya timbrada (solo si NO
+  está "Facturado en sistema externo"); se lista como una factura más, con signo
+  negativo; filtro nuevo en las pills; folio `NC-AAAA-MM-folio` capturado a mano; motivo
+  de una lista fija (Devolución total/parcial, Descuento, Bonificación); método de pago
+  siempre `PUE`; forma de pago heredada de la factura de origen; la factura de origen se
+  marca pagada (total o parcial) y la NC cuenta como la parcialidad #1. Confirmado
+  explícitamente: el timbrado sigue siendo 100% MANUAL esta ronda — no se toca el
+  archivo plano del PAC (`adapter_pac_v40.py`) ni el webservice EGRID.
+- **Decisión de diseño clave: NO se creó una entidad nueva.** `FacturaCliente` ya tenía
+  `tipo_comprobante` (catálogo I/E/P, capturado pero muerto hacia el PAC desde que
+  existe) y `FacturaClienteRelacionada` (N:N, ADR-062) — una NC es, simplemente, una
+  `FacturaCliente` con `tipo_comprobante == "E"`, sin órdenes propias, relacionada con
+  EXACTAMENTE 1 factura (su origen). Y, para el efecto en Cobranza: en vez de una tabla
+  "NotaCreditoFactura" con su propia suma (lo que contemplaba un plan anterior), la NC se
+  aplica como un **`PagoCliente` SINTÉTICO** más — columna nueva
+  `PagoCliente.factura_egreso_id` (FK a la NC, `UNIQUE`) que lo identifica. Con esto:
+  - `CobranzaFacturaService.importe_cobrado()`/`recalcular_tras_pago()` (parcial, total,
+    cascada a `cobrada`) se reutilizan SIN TOCARLOS — ya suman `monto_aplicado` de
+    cualquier `PagoCliente` `pagado`, sin importar su origen.
+  - La NC ya aparece sola en "Pagos recibidos", con trazabilidad completa.
+  - Cancelar la NC reutiliza COMPLETO ADR-286 (`PagoClienteService.cancelar`): valida
+    comisiones comprometidas, revierte la cascada si hacía falta, motivo obligatorio.
+- **Cambios — backend** (`backend/app/modules/facturacion/factura_cliente.py`,
+  `backend/app/modules/cobranza/cobranza_factura.py`,
+  `backend/app/modules/catalogos/constantes_sistema.py`):
+  - `MotivoNotaCredito(StrEnum)` (4 valores fijos en código, CHECK a juego) +
+    `motivo_nota_credito`/`tipo_relacion_sat` (columnas nuevas, nullables).
+    `NUMERO_FACTURA_REGEX` acepta también `NC-AAAA-MM-folio`, sin tocar el patrón
+    `FMEX|FSOIR` existente; validación cruzada (prefijo↔tipo_comprobante) vive en un
+    `model_validator` de `FacturaClienteCreate` (`_valida_nota_credito`), no en la regex.
+  - `FacturaClienteCreate.ordenes_ids` pasa de `Field(min_length=1)` a
+    `default_factory=list` — con `tipo_comprobante == "E"` debe venir VACÍA (se valida en
+    el mismo `model_validator`, junto con "exactamente 1 `facturas_relacionadas_ids`",
+    motivo obligatorio y de la lista fija, y folio con el prefijo correcto). Campo nuevo
+    `monto_nota_credito` (magnitud POSITIVA, UX natural — "cuánto se acredita"): nunca es
+    columna, el servicio lo niega antes de persistir.
+  - `FacturaClienteService._crear_nota_credito()` (nuevo método privado, `create()`
+    dispatcha a él si `tipo_comprobante == "E"` en vez de enredar un `if` más en el
+    método ya largo de siempre): receptor/empresa/anunciante/forma de pago heredados de
+    la factura de origen (nunca de una orden — no hay orden); `metodo_pago_clave` fijo
+    `PUE` ignorando el payload; período (`fecha_inicio/fin_transmision`, columnas NOT
+    NULL) fijo a `fecha_factura` — valor inerte, el frontend nunca lo muestra para una
+    NC.
+  - CHECK constraints de `subtotal_factura`/`iva_factura`/`total_factura` (antes `>= 0`
+    sin excepción) pasan a condicionales por `tipo_comprobante`
+    (`CASE WHEN tipo_comprobante = 'E' THEN x <= 0 ELSE x >= 0 END`) — único cambio de
+    esquema no aditivo de esta ronda, migrado con batch mode en SQLite (ver más abajo).
+  - `FacturaClienteService.timbrar()`: si `tipo_comprobante == "E"`, en vez de
+    `CobranzaFacturaService.crear_para_factura` (que le crearía su propia
+    `CobranzaFactura`), resuelve la `CobranzaFactura` de la factura de origen y llama
+    `PagoClienteService.aplicar_nota_credito(cobranza_id, monto=abs(total_factura),
+    factura_egreso_id, forma_pago_clave=<heredada>, fecha_pago=fecha_timbrado,
+    referencia=numero_factura, usuario)` — inserta el `PagoCliente` sintético
+    (`metodo_pago_clave="PUE"`, `numero_pago="1"` FIJO — la NC siempre cuenta como la
+    primera parcialidad, nunca se calcula con `_info_pagos`) y llama
+    `recalcular_tras_pago` exactamente como cualquier pago nuevo.
+  - `FacturaClienteService.cancelar()`: si `tipo_comprobante == "E"`, en vez de
+    `eliminar_o_rechazar` (que no encuentra nada — la NC nunca tuvo su propia
+    `CobranzaFactura` — y no hace nada) llama
+    `PagoClienteService.revertir_nota_credito(factura_egreso_id, usuario,
+    numero_factura)`, que busca el `PagoCliente` por `factura_egreso_id` y reutiliza
+    `_cancelar_sin_commit` (ver siguiente punto). No-op si la NC nunca se timbró.
+  - **Refactor necesario para la composición atómica:** `PagoClienteService.cancelar()`
+    (ADR-286) hacía su propio `commit()` — componerlo dentro de la transacción de
+    `FacturaClienteService.cancelar()` la habría cortado a la mitad. Se separó en
+    `cancelar()` (público, hace `commit`, lo sigue usando el router tal cual) +
+    `_cancelar_sin_commit()` (toda la lógica, sin el commit final) — `revertir_nota_credito`
+    llama a la segunda.
+  - `archivo_plano()`: rechaza con 409 si `tipo_comprobante not in (None, "I")` — el
+    archivo plano del PAC solo sabe armar el layout de Ingreso (`adapter_pac_v40.py`
+    sigue fijando `"33"` a mano, sin leer `tipo_comprobante`); se permite `None` para no
+    romper facturas viejas que nunca capturaron el campo.
+  - Catálogos (datos, sin migración de esquema): `UsoCFDI,G02` agregado; grupo nuevo
+    `TipoRelacion` (`01`/`03`) — requirió agregar `TIPO_RELACION_SAT` al enum
+    `GrupoConstante` (`constantes_sistema.py`), que SÍ necesitó migración (su CHECK
+    `grupo IN (...)` es parte del esquema).
+  - Migración (`d44def894ea8`): 2 columnas aditivas en `factura_cliente`, 1 columna +
+    FK + UNIQUE en `pago_cliente`, y 2 CHECK constraints reescritos (`factura_cliente`
+    montos, `constantes_sistema` grupo) — Alembic autogenerate NO detecta cambios de
+    CONTENIDO en un CHECK ya existente, así que esas 2 partes se completaron a mano, con
+    batch mode condicional por dialecto (SQLite) igual que el resto de migraciones de
+    este proyecto.
+- **Cambios — frontend:** `frontend/src/modules/facturacion/types.ts` (`esNotaCredito()`,
+  `MotivoNotaCredito`/`MOTIVOS_NOTA_CREDITO`, campos nuevos). `format.ts`: mismo fix de
+  negativos que ya tenía `cobranza/format.ts` (`Math.abs` + signo reinsertado tras el
+  `$`) — duplicado a propósito, F2 no importa de F3. `FacturasClientePage.tsx`: pill
+  "Notas de crédito" (filtro en cliente, mismo patrón que `pendientes_timbrar`); botón
+  "+ Nota de crédito" condicionado a `timbrada && !facturado_en_sistema_externo &&
+  !esNotaCredito`; detalle de una NC oculta "Órdenes relacionadas" y muestra
+  "Motivo" en su lugar (la sección "Facturas relacionadas" ya existente se reutiliza
+  TAL CUAL para "Factura de origen", solo cambia el título condicionalmente); "Archivo
+  plano" oculto para cualquier `tipo_comprobante` que no sea `"I"`/`null`.
+  **Decisión de alcance propia (no pedida explícitamente, simplificación deliberada):**
+  se descartó un botón "+ Nueva nota de crédito" suelto en el header — la especificación
+  del usuario ("al momento de seleccionar la factura") ya cubre el único punto de
+  entrada real, y lanzarlo siempre con un origen ya conocido evita necesitar un
+  buscador de "factura de origen" en el formulario.
+  **`NotaCreditoForm.tsx` (componente nuevo, NO una variante de `FacturaClienteForm.tsx`):**
+  al leer `FacturaClienteForm.tsx` se confirmó que está construido enteramente alrededor
+  de una o varias `OrdenCliente` (`orden_id` obligatorio en su schema, subtotal/período
+  derivados de ahí) — no tiene ningún "picker de órdenes" que ocultar, es la pantalla
+  bandeja (`ListasParaFacturarPage.tsx`) la que elige la orden ANTES de montar el
+  formulario. Retrofittear esa suposición para un caso sin orden era más invasivo que
+  construir un formulario chico dedicado, así que se optó por eso: factura de origen
+  fija (no editable, siempre llega del botón del detalle), monto positivo con negación
+  en el backend, motivo de la lista fija, método de pago bloqueado en `PUE`, forma de
+  pago heredada de solo lectura.
+- **Pruebas:** `backend/app/tests/test_f2_04_notas_credito.py` (nuevo, 14 pruebas):
+  validaciones de alta (ordenes_ids no vacío, facturas_relacionadas_ids ≠ 1, sin motivo,
+  motivo fuera de lista, folio sin prefijo NC, monto ≤ 0, origen inexistente), herencia
+  de receptor/empresa/forma de pago + negación de montos, archivo plano rechazado,
+  timbrar aplica el pago sintético sin crear `CobranzaFactura` propia (parcial Y
+  cascada completa a `cobrada`), cancelar revierte (con y sin haber timbrado antes).
+  Frontend: `NotaCreditoForm.test.tsx` (nuevo, 3 pruebas: payload correcto, factura de
+  origen fija, cancelar) + nuevo describe `"Notas de Crédito"` en
+  `FacturasClientePage.test.tsx` (8 pruebas: filtro, negativo con signo, detalle
+  condicional, visibilidad del botón en sus 4 variantes, flujo completo de alta).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
+  limpio. `mypy` sin errores nuevos (los 15 preexistentes en los 3 archivos tocados no
+  cambian de naturaleza). Frontend: suite completa 552/564 verde — las 12 fallas
+  restantes son las mismas de `auth`/`seguridad`/`apiClient` ya confirmadas preexistentes
+  en ADR-285/286, no relacionadas. `tsc --noEmit`/`eslint` limpios. Migración verificada
+  con viaje redondo `downgrade`/`upgrade` sobre la BD de desarrollo; catálogos nuevos
+  (`UsoCFDI/G02`, `TipoRelacion/01,03`) insertados a mano en la BD real de dev para
+  poder probar manualmente (el CSV de referencia ya había divergido de los datos reales
+  de esa BD en sesiones anteriores).

@@ -5,7 +5,7 @@
 
 import type { CatalogoBase, ListParams } from "@/shared/types";
 
-/** Los 9 grupos SAT/timbrador + `MotivoCambio` (ADR-178, el único NO fiscal — catálogo de
+/** Los grupos SAT/timbrador + `MotivoCambio` (ADR-178, el único NO fiscal — catálogo de
  * motivos reutilizable por otras pantallas, p.ej. el "Motivo del cambio" de Tarifa), en el
  * orden de la pantalla aprobada. */
 export const GRUPOS = [
@@ -19,6 +19,8 @@ export const GRUPOS = [
   "MetodoPago",
   "MonedaSAT",
   "MotivoCambio",
+  // Notas de Crédito (petición del usuario, con captura): clave c_TipoRelacion del SAT.
+  "TipoRelacion",
 ] as const;
 
 export type GrupoConstante = (typeof GRUPOS)[number];
@@ -35,6 +37,7 @@ export const GRUPO_LABEL: Record<GrupoConstante, string> = {
   MetodoPago: "Método de pago SAT",
   MonedaSAT: "Moneda",
   MotivoCambio: "Motivos de cambio",
+  TipoRelacion: "Tipo de relación CFDI (Notas de Crédito)",
 };
 
 /** Descripción del grupo (banner al filtrar por un grupo). */
@@ -52,6 +55,8 @@ export const GRUPO_DESC: Record<GrupoConstante, string> = {
   MonedaSAT: "Catálogo SAT c_Moneda. MXN es el default.",
   MotivoCambio:
     'Motivos de cambio reutilizables por otras pantallas (p.ej. el "Motivo del cambio" de Tarifa). La Clave agrupa varias Descripciones de una misma pantalla/sección — no es única: se le agrega un sufijo numérico automático.',
+  TipoRelacion:
+    'Catálogo SAT c_TipoRelacion — cómo se relaciona una Nota de Crédito con su factura de origen (p.ej. "01" nota de crédito de los documentos relacionados, "03" devolución de mercancía).',
 };
 
 export interface ConstanteSistema extends CatalogoBase {

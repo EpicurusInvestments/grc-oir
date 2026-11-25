@@ -249,6 +249,20 @@ class PagoCliente(Base):
     # ADR-286 (petición del usuario): motivo obligatorio al CANCELAR un pago (antes no
     # se capturaba nada) — nullable solo porque un pago nunca cancelado no lo tiene.
     motivo_cancelacion: Mapped[str | None] = mapped_column(Unicode(255), default=None)
+    # Notas de Crédito (petición del usuario, con captura): marca que este `PagoCliente`
+    # es SINTÉTICO — lo creó `aplicar_nota_credito` al timbrar una Nota de Crédito, no un
+    # pago bancario real. `UNIQUE`: una NC se aplica una sola vez (nunca dos pagos
+    # sintéticos de la misma NC). `NULL` en cualquier pago normal.
+    factura_egreso_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_cliente.factura_id",
+            name="fk_pago_cliente_factura_egreso",
+            ondelete="NO ACTION",
+        ),
+        unique=True,
+        default=None,
+    )
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -350,6 +364,9 @@ class PagoClienteRead(BaseModel):
     pagado_en_sistema_externo: bool = False
     # ADR-286: motivo capturado al cancelar — `None` si nunca se canceló.
     motivo_cancelacion: str | None = None
+    #: Notas de Crédito: `None` en cualquier pago real; si viene lleno, esta fila es
+    #: SINTÉTICA — la aplicó `aplicar_nota_credito` al timbrar esa Nota de Crédito.
+    factura_egreso_id: uuid.UUID | None = None
     created_by: uuid.UUID
     created_at: datetime
 
@@ -491,6 +508,9 @@ class PagoGrupoAplicacionRead(BaseModel):
     #: El pendiente real que se le acreditó a ESTA factura (sin el `ajuste`, que no
     #: toca la factura — ver `CobranzaFacturaService.importe_cobrado`).
     monto_aplicado: Decimal
+    #: Notas de Crédito: `None` en una aplicación real; si viene lleno, esta fila es la
+    #: Nota de Crédito que generó este renglón sintético.
+    factura_egreso_id: uuid.UUID | None = None
 
 
 class PagoGrupoDetalleRead(BaseModel):
@@ -1227,6 +1247,7 @@ class PagoClienteService:
                     numero_factura=numero_factura,
                     numero_pago=p.numero_pago,
                     monto_aplicado=p.monto_aplicado,
+                    factura_egreso_id=p.factura_egreso_id,
                 )
             )
         total_pago = sum(
@@ -1253,7 +1274,16 @@ class PagoClienteService:
         que alguna de las órdenes que este pago toca ya tenga una comisión de
         agencia/vendedor/afiliado autorizada o pagada con base en que estaba `cobrada`
         — eso sí es un compromiso tomado que ya no se puede deshacer limpiamente.
+
+        Punto de entrada del ROUTER (hace `commit`). Notas de Crédito (petición del
+        usuario) reutilizan toda esta lógica vía `_cancelar_sin_commit`, pero DESDE
+        `FacturaClienteService.cancelar` — que ya tiene su propia transacción y necesita
+        controlar el `commit` ella misma (ver `revertir_nota_credito` abajo).
         """
+        self._cancelar_sin_commit(pago_id, usuario, motivo)
+        self._repo.db.commit()
+
+    def _cancelar_sin_commit(self, pago_id: uuid.UUID, usuario: CurrentUser, motivo: str) -> None:
         if not motivo.strip():
             raise DomainError("El motivo de cancelación no puede estar vacío.")
 
@@ -1313,7 +1343,70 @@ class PagoClienteService:
         db.flush()
         for cobranza in cobranzas.values():
             servicio_cobranza.recalcular_tras_pago(cobranza, usuario)
-        db.commit()
+
+    def aplicar_nota_credito(
+        self,
+        cobranza_id: uuid.UUID,
+        monto: Decimal,
+        factura_egreso_id: uuid.UUID,
+        forma_pago_clave: str | None,
+        fecha_pago: date,
+        referencia: str,
+        usuario: CurrentUser,
+    ) -> None:
+        """Notas de Crédito (petición del usuario, con captura): aplica una NC ya
+        timbrada como un `PagoCliente` SINTÉTICO más sobre la `CobranzaFactura` de la
+        factura de ORIGEN — reutiliza TAL CUAL `recalcular_tras_pago` (parcial/total/
+        cascada a `cobrada`), sin tocar `importe_cobrado()` ni ningún otro cálculo.
+
+        `metodo_pago_clave` siempre `PUE` y `numero_pago` siempre `"1"` (la NC cuenta
+        como la PRIMERA parcialidad, pedido explícito del usuario — nunca se calcula
+        con `_info_pagos`, a propósito). Llamado desde `FacturaClienteService.timbrar`,
+        misma sesión, **sin `commit` propio** (mismo contrato que `crear_para_factura`).
+        """
+        from app.modules.usuarios.lookup import resolver_usuario_id
+
+        db = self._repo.db
+        cobranza = self._get_cobranza_or_404(cobranza_id)
+        pago = PagoCliente(
+            pago_cliente_id=uuid4(),
+            cobranza_id=cobranza_id,
+            fecha_pago_cliente=fecha_pago,
+            monto_aplicado=monto,
+            metodo_pago_clave="PUE",
+            forma_pago_clave=forma_pago_clave,
+            numero_pago="1",
+            referencia_pago=referencia,
+            factura_egreso_id=factura_egreso_id,
+            created_by=resolver_usuario_id(db, usuario.username),
+        )
+        db.add(pago)
+        db.flush()  # el recálculo suma por SELECT: el pago debe existir ya en la sesión
+
+        CobranzaFacturaService(CobranzaFacturaRepository(db, CobranzaFactura)).recalcular_tras_pago(
+            cobranza, usuario
+        )
+
+    def revertir_nota_credito(
+        self, factura_egreso_id: uuid.UUID, usuario: CurrentUser, numero_factura: str
+    ) -> None:
+        """Notas de Crédito: al cancelar la NC (`FacturaClienteService.cancelar`), deshace
+        el `PagoCliente` sintético que `aplicar_nota_credito` le había aplicado a la
+        factura de origen — reutiliza COMPLETO `_cancelar_sin_commit` (ADR-286: valida
+        comisiones comprometidas, revierte la cascada si hacía falta). No-op si la NC
+        nunca llegó a timbrarse (nunca se aplicó nada) o si ya estaba revertida
+        (idempotente, mismo criterio que el resto de las transiciones de este módulo).
+        Sin `commit` propio: el llamador (`FacturaClienteService.cancelar`) controla la
+        transacción completa.
+        """
+        pago = self._repo.db.scalar(
+            select(PagoCliente).where(PagoCliente.factura_egreso_id == factura_egreso_id)
+        )
+        if pago is None or pago.estatus_pago == EstatusPago.CANCELADO.value:
+            return
+        self._cancelar_sin_commit(
+            pago.pago_cliente_id, usuario, f"Nota de crédito {numero_factura} cancelada."
+        )
 
 
 def get_pago_cliente_service(db: Session = Depends(get_db)) -> PagoClienteService:

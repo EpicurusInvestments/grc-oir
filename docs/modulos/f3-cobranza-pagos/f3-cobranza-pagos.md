@@ -344,6 +344,22 @@ Resumen del cambio (detalle técnico completo en `arquitectura.md`):
 - `POST /pagos/{id}/cancelar` ahora exige body `{"motivo": "..."}` (`min_length=3`).
 - `PagoGrupoDetalleRead`/`PagoClienteRead` exponen `motivo_cancelacion`.
 
+**ADR-287 (F2, petición del usuario, con captura) — Notas de Crédito aplicadas como
+`PagoCliente` sintético; ver la entrada completa en `arquitectura.md` y en
+`docs/modulos/f2-facturacion/f2-facturacion.md`:** una Nota de Crédito
+(`FacturaCliente.tipo_comprobante == "E"`) NO es una entidad de F3 ni tiene su propia
+`CobranzaFactura` — al timbrarse, `PagoClienteService.aplicar_nota_credito` inserta un
+`PagoCliente` más sobre la `CobranzaFactura` de la factura que acredita, marcado con la
+columna nueva `factura_egreso_id` (FK a la NC, `UNIQUE` — se aplica una sola vez).
+`metodo_pago_clave` siempre `PUE`, `numero_pago` siempre `"1"` (la NC cuenta como la
+primera parcialidad, nunca se calcula con `_info_pagos`), `referencia_pago` = el folio
+de la NC (para identificarla sola en "Pagos recibidos"). `importe_cobrado()`/
+`recalcular_tras_pago()` no se tocaron: ya suman cualquier `PagoCliente` `pagado`, sin
+importar su origen. Cancelar la NC (`PagoClienteService.revertir_nota_credito`) reutiliza
+completo ADR-286 (`_cancelar_sin_commit` — la versión pública `cancelar()` se separó del
+`commit` para poder componerse dentro de la transacción de
+`FacturaClienteService.cancelar`).
+
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
 factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M

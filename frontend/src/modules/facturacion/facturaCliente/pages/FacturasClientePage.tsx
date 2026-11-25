@@ -21,15 +21,19 @@ import { useNavigate } from "react-router-dom";
 import { ApiRequestError } from "@/shared/lib/apiClient";
 import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
+import { NotaCreditoForm } from "../components/NotaCreditoForm";
 import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
 import { adjuntosFacturacionApi, facturaClienteApi } from "../../api";
 import { badgeEstadoFactura, fmtFecha, fmtFolio, fmtMoneda, oGuion } from "../../format";
 import { useFacturasCliente, useFacturasDelAnunciante, useOrdenesPorFacturar } from "../../hooks";
 import {
   ESTADO_FACTURACION_LABEL,
+  esNotaCredito,
   FLUJO_FACTURACION,
+  MOTIVOS_NOTA_CREDITO,
   type EstadoFacturacion,
   type FacturaCliente,
+  type FacturaClienteCreate,
   type TimbrarInput,
 } from "../../types";
 
@@ -40,7 +44,13 @@ const MOSTRAR_BOTON_VER_EN_COBRANZA = false;
 
 /** Filtros de la pantalla aprobada, más «Entregadas» (pedido del equipo): sigue sin haber
  *  uno por cada estado — «Pendientes timbrar» agrupa `preparada` y `enviada_a_timbrado`. */
-type Filtro = "todas" | "pendientes_timbrar" | "timbradas" | "entregadas" | "cobradas";
+type Filtro =
+  | "todas"
+  | "pendientes_timbrar"
+  | "timbradas"
+  | "entregadas"
+  | "cobradas"
+  | "notas_credito";
 
 const FILTROS: { key: Filtro; label: string }[] = [
   { key: "todas", label: "Todas" },
@@ -48,6 +58,10 @@ const FILTROS: { key: Filtro; label: string }[] = [
   { key: "timbradas", label: "Timbradas" },
   { key: "entregadas", label: "Entregadas" },
   { key: "cobradas", label: "Cobradas" },
+  // Notas de Crédito (petición del usuario, con captura): filtra por `tipo_comprobante`,
+  // no por `estado_facturacion` — mismo criterio de "resolver en cliente" que
+  // `pendientes_timbrar` (ver `items` más abajo), una NC puede estar en cualquier estado.
+  { key: "notas_credito", label: "Notas de crédito" },
 ];
 
 /** Filtros que el BACKEND resuelve por estado. `pendientes_timbrar` no está aquí: agrupa
@@ -100,7 +114,7 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [selected, setSelected] = useState<FacturaCliente | null>(null);
-  const [modo, setModo] = useState<"view" | "timbrar">("view");
+  const [modo, setModo] = useState<"view" | "timbrar" | "nota_credito">("view");
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [faltantes, setFaltantes] = useState<string[] | null>(null);
 
@@ -112,7 +126,7 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
     q: q || undefined,
     estado_facturacion: ESTADO_POR_FILTRO[filtro],
   };
-  const { list, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
+  const { list, crear, enviarATimbrado, timbrar, entregar, cancelar } = useFacturasCliente(filtros);
   // Solo para saber si queda algo por facturar y así habilitar/inhabilitar el botón del
   // header — la bandeja en sí vive en «Listas para facturar» (ADR pendiente de numerar).
   const porFacturar = useOrdenesPorFacturar({ page: 1, size: 1 });
@@ -196,6 +210,16 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
     }
   };
 
+  const onCrearNotaCredito = async (data: FacturaClienteCreate) => {
+    setErrorAccion(null);
+    try {
+      await crear.mutateAsync(data);
+      setModo("view");
+    } catch (e) {
+      setErrorAccion(mensajeDeError(e));
+    }
+  };
+
   // ── panel de detalle ────────────────────────────────────────────────────────
   let detail;
   if (modo === "timbrar" && selected) {
@@ -205,6 +229,19 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
         submitting={timbrar.isPending}
         submitError={errorAccion}
         onConfirm={onTimbrar}
+        onCancel={() => {
+          setModo("view");
+          setErrorAccion(null);
+        }}
+      />
+    );
+  } else if (modo === "nota_credito" && selected) {
+    detail = (
+      <NotaCreditoForm
+        origen={selected}
+        submitting={crear.isPending}
+        submitError={errorAccion}
+        onSubmit={onCrearNotaCredito}
         onCancel={() => {
           setModo("view");
           setErrorAccion(null);
@@ -264,42 +301,57 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
             </div>
           </div>
 
-          {/* Órdenes relacionadas: de dónde sale el monto de arriba. Se muestra SIEMPRE,
-              también con una sola orden — una sección que aparece y desaparece obliga a
-              recordar por qué, y con una orden la respuesta sigue siendo útil. */}
-          <div className="sec">
-            Órdenes relacionadas <FieldTag origin="derivado" />
-          </div>
-          {selected.ordenes.length === 0 ? (
-            <div className="fv muted" style={{ fontSize: 12 }}>
-              Sin órdenes asociadas.
-            </div>
+          {/* Notas de Crédito (petición del usuario): no facturan órdenes — "Órdenes
+              relacionadas"/período no aplican, se muestra el motivo en su lugar. */}
+          {esNotaCredito(selected) ? (
+            <>
+              <div className="sec">Nota de crédito</div>
+              <div className="fl">Motivo</div>
+              <div className="fv">
+                {MOTIVOS_NOTA_CREDITO.find((m) => m.value === selected.motivo_nota_credito)
+                  ?.label ?? oGuion(selected.motivo_nota_credito)}
+              </div>
+            </>
           ) : (
-            <div className="ordenes-rel">
-              {selected.ordenes.map((o) => (
-                <div key={o.orden_id} className="ordenes-rel-row">
-                  <div className="ordenes-rel-top">
-                    <span className="mono" style={{ fontWeight: 600 }}>
-                      {o.folio_orden}
-                    </span>
-                    <span className="mono">{fmtMoneda(o.subtotal)}</span>
-                  </div>
-                  <div className="ordenes-rel-sub">
-                    <span className="mono">{o.numero_orden_cliente}</span>
-                    {" · "}
-                    <span className="mono">
-                      {fmtFecha(o.fecha_inicio_campania)} → {fmtFecha(o.fecha_fin_campania)}
-                    </span>
-                  </div>
+            <>
+              {/* Órdenes relacionadas: de dónde sale el monto de arriba. Se muestra SIEMPRE,
+                  también con una sola orden — una sección que aparece y desaparece obliga a
+                  recordar por qué, y con una orden la respuesta sigue siendo útil. */}
+              <div className="sec">
+                Órdenes relacionadas <FieldTag origin="derivado" />
+              </div>
+              {selected.ordenes.length === 0 ? (
+                <div className="fv muted" style={{ fontSize: 12 }}>
+                  Sin órdenes asociadas.
                 </div>
-              ))}
-              {selected.ordenes.length > 1 && (
-                <div className="ordenes-rel-total">
-                  {selected.ordenes.length} órdenes · suma de subtotales{" "}
-                  <span className="mono">{fmtMoneda(selected.subtotal_factura)}</span>
+              ) : (
+                <div className="ordenes-rel">
+                  {selected.ordenes.map((o) => (
+                    <div key={o.orden_id} className="ordenes-rel-row">
+                      <div className="ordenes-rel-top">
+                        <span className="mono" style={{ fontWeight: 600 }}>
+                          {o.folio_orden}
+                        </span>
+                        <span className="mono">{fmtMoneda(o.subtotal)}</span>
+                      </div>
+                      <div className="ordenes-rel-sub">
+                        <span className="mono">{o.numero_orden_cliente}</span>
+                        {" · "}
+                        <span className="mono">
+                          {fmtFecha(o.fecha_inicio_campania)} → {fmtFecha(o.fecha_fin_campania)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {selected.ordenes.length > 1 && (
+                    <div className="ordenes-rel-total">
+                      {selected.ordenes.length} órdenes · suma de subtotales{" "}
+                      <span className="mono">{fmtMoneda(selected.subtotal_factura)}</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
 
           <div className="sec">Identificación</div>
@@ -318,7 +370,9 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
 
           {selected.facturas_relacionadas_ids.length > 0 && (
             <>
-              <div className="sec">Facturas relacionadas</div>
+              <div className="sec">
+                {esNotaCredito(selected) ? "Factura de origen" : "Facturas relacionadas"}
+              </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 11 }}>
                 {selected.facturas_relacionadas_ids.map((id) => {
                   const relacionada = facturasDelAnunciante.data?.items.find(
@@ -533,7 +587,11 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               </div>
             ))}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {estado !== "cancelada" && (
+            {/* Notas de Crédito (y cualquier otro tipo que no sea "I"): el archivo plano
+                del PAC todavía no sabe armar ese layout (fuera de alcance esta ronda) —
+                el backend ya lo rechaza con 409, aquí se oculta de entrada. */}
+            {estado !== "cancelada" &&
+              (selected.tipo_comprobante == null || selected.tipo_comprobante === "I") && (
               <button
                 type="button"
                 className="btn btn-sm"
@@ -541,6 +599,19 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                 title="Genera el archivo en el layout del PAC (V40)"
               >
                 <i className="pi pi-download" aria-hidden="true" /> Archivo plano
+              </button>
+            )}
+            {timbrada && !selected.facturado_en_sistema_externo && !esNotaCredito(selected) && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  setErrorAccion(null);
+                  setModo("nota_credito");
+                }}
+                title="Genera una Nota de Crédito que acredita esta factura."
+              >
+                + Nota de crédito
               </button>
             )}
             {estado === "preparada" && (
@@ -612,11 +683,13 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
   }
 
   // ── lista ───────────────────────────────────────────────────────────────────
-  const items = (list.data?.items ?? []).filter((f) =>
-    filtro === "pendientes_timbrar"
-      ? ["preparada", "enviada_a_timbrado"].includes(f.estado_facturacion)
-      : true,
-  );
+  const items = (list.data?.items ?? []).filter((f) => {
+    if (filtro === "pendientes_timbrar") {
+      return ["preparada", "enviada_a_timbrado"].includes(f.estado_facturacion);
+    }
+    if (filtro === "notas_credito") return esNotaCredito(f);
+    return true;
+  });
   const listNode = (
     <>
       <table className="cat-table">

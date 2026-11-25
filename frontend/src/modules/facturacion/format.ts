@@ -9,7 +9,14 @@
 /** Formatea un monto decimal en string (p.ej. "11600.00") como moneda MXN, siempre a 2
  * decimales SIN redondear (p.ej. "1234.567" → $1,234.56, no $1,234.57) — se corta el
  * STRING antes de convertir a número, así que no depende de ningún redondeo de
- * `toLocaleString` ni de precisión de punto flotante. */
+ * `toLocaleString` ni de precisión de punto flotante.
+ *
+ * Notas de Crédito (petición del usuario): `total_factura`/`subtotal_factura`/
+ * `iva_factura` pueden venir NEGATIVOS — mismo fix ya establecido en
+ * `cobranza/format.ts` para `ajuste` (`Intl` antepone el signo de "menos" al símbolo de
+ * moneda, "-$1,234.56"; aquí se arma el texto sobre el valor absoluto y se inserta el
+ * "-" DESPUÉS del "$", "$-1,234.56"). No se importa de `cobranza` a propósito (ver
+ * docstring de arriba del archivo) — se duplica la función pequeña, no se comparte. */
 export function fmtMoneda(valor: string | null | undefined): string {
   if (valor == null || valor === "") return "—";
   let v = valor;
@@ -17,12 +24,13 @@ export function fmtMoneda(valor: string | null | undefined): string {
   if (idxPunto !== -1) v = v.slice(0, idxPunto + 3);
   const n = Number(v);
   if (Number.isNaN(n)) return "—";
-  return n.toLocaleString("es-MX", {
+  const texto = Math.abs(n).toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return n < 0 ? texto.replace("$", "$-") : texto;
 }
 
 export function fmtPorcentaje(valor: string | null | undefined): string {
