@@ -8,6 +8,12 @@
  * es clickeable (`<label>` envolviendo un `<input type="file">` oculto) — mismo look que
  * "Cargar XML del CFDI"/"Cargar PDF de la factura" del prototipo aprobado, pero con
  * subida real en vez de una caja decorativa sin función (ADR-051).
+ *
+ * Fix (petición del usuario, ADR nuevo): prop opcional `onArchivoXmlLeido` — al elegir
+ * un XML, lee el CFDI (`cfdiApi.leer`, EN PARALELO a la subida normal, independiente de
+ * ella) para precargar Subtotal/IVA en las facturas de Agencia/Vendedor/Afiliado. Usada
+ * por esos 3 formularios; los demás usos de este componente (p.ej.
+ * `RegistrarTimbradoForm.tsx`) simplemente no la pasan y siguen igual que siempre.
  */
 
 import { useRef, useState } from "react";
@@ -16,7 +22,9 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 
 import {
   adjuntosFacturacionApi,
+  cfdiApi,
   nombreDeAdjuntoFacturacionRef,
+  type LecturaCfdi,
   type TipoAdjuntoFacturacion,
 } from "../../api";
 import { ADJUNTO_FACTURACION_MAX_BYTES } from "../../constants";
@@ -45,6 +53,12 @@ interface AdjuntoFacturaInputProps {
   value: string | null | undefined;
   onChange: (ref: string) => void;
   disabled?: boolean;
+  /** Fix (petición del usuario): al elegir un XML (nunca un PDF), lee el CFDI y
+   *  precarga Subtotal/IVA en el formulario — quedan editables después. Independiente
+   *  de la subida normal (no la bloquea ni depende de ella); `null` si no se pudo leer
+   *  (el usuario sigue pudiendo capturar a mano). Opcional: sin ella, el campo se
+   *  comporta exactamente como antes. */
+  onArchivoXmlLeido?: (resultado: LecturaCfdi | null) => void;
 }
 
 export function AdjuntoFacturaInput({
@@ -53,6 +67,7 @@ export function AdjuntoFacturaInput({
   value,
   onChange,
   disabled,
+  onArchivoXmlLeido,
 }: AdjuntoFacturaInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -86,6 +101,18 @@ export function AdjuntoFacturaInput({
       setError(`El archivo excede el tamaño máximo permitido (${Math.round(ADJUNTO_FACTURACION_MAX_BYTES / 1024 / 1024)} MB).`);
       if (inputRef.current) inputRef.current.value = "";
       return;
+    }
+
+    // Fix (petición del usuario): si es un XML y el llamador quiere precargar
+    // Subtotal/IVA, se lanza la lectura EN PARALELO a la subida — son independientes,
+    // una no depende de la otra ni la bloquea. Un fallo aquí nunca debe tumbar la
+    // subida normal del archivo: se traga el error y se avisa `null` (sigue pudiéndose
+    // capturar a mano).
+    if (!esPdf && onArchivoXmlLeido) {
+      cfdiApi
+        .leer(archivo)
+        .then((r) => onArchivoXmlLeido(r.ok ? r : null))
+        .catch(() => onArchivoXmlLeido(null));
     }
 
     setSubiendo(true);

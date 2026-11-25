@@ -24,7 +24,6 @@
 import { useState } from "react";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { FieldTag } from "@/shared/ui";
 
 import { useCrearRequisicionDesdeFactura } from "../hooks";
 import type { TipoRequisicionDesdeFactura } from "../types";
@@ -101,9 +100,7 @@ export function RequisicionInlineForm({
           />
         </div>
         <div>
-          <div className="fl fl-required">
-            Monto de la requisición <FieldTag origin="catalogo" text="Sugerido, editable" />
-          </div>
+          <div className="fl fl-required">Monto de la requisición</div>
           <input className="fi" inputMode="decimal" value={monto} onChange={(e) => setMonto(e.target.value)} />
         </div>
       </div>

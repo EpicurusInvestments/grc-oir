@@ -204,7 +204,9 @@ afecta por igual a `FacturaAgencia`/`FacturaVendedor`, que comparten el mismo en
 detalle muestra un bloque "Generar requisición de pago"
 (`RequisicionInlineForm.tsx`, compartido por las 3 pantallas de este grupo) que da de
 alta la `Requisicion` de F3 sin salir de esta pantalla — ver la ficha de F3 para el
-detalle del endpoint y la validación de elegibilidad.
+detalle del endpoint y la validación de elegibilidad. **ADR-291 (fix de UI):** se quitó
+el letrero "Sugerido, editable" de "Monto de la requisición" — desalineaba esa fila
+contra "Número de OC (SAP)".
 
 **`ordenes_asignadas` (ADR-084, no es columna de la tabla):** cuántas `OrdenEstacion`
 tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre
@@ -452,6 +454,19 @@ desbordaba el `.dropzone` (scroll horizontal) — el truncado por CSS no alcanza
 del grid de 2 columnas. `AdjuntoFacturaInput.tsx` ahora trunca a un largo FIJO (5 letras
 + "..." + extensión, p. ej. "factu...xml"), con el nombre completo en un `title` nativo
 (tooltip). Afecta a los 4 tipos de factura (mismo componente compartido).
+
+**ADR-290 (petición del usuario): lectura de CFDI al cargar el XML, precarga
+Subtotal/IVA editables en Agencia/Vendedor/Afiliado.** `AdjuntoFacturaInput.tsx` gana
+una prop opcional `onArchivoXmlLeido` — solo para el slot de XML, llama al endpoint
+NUEVO `POST /facturacion/cfdi/leer` (independiente del almacenamiento, no depende de
+que el adjunto ya se haya subido) en paralelo a la subida normal. El parser vive en
+`backend/app/integrations/facturas_proveedor/parser.py` (capa de integración, patrón
+anti-corrupción). Para Agencia/Vendedor esto además revierte PARCIALMENTE ADR-239/240:
+Subtotal/IVA dejan de ser 100% calculados — ahora se pueden precargar/capturar
+manualmente (el cálculo de comisión se sigue mostrando como referencia), y se quitó el
+CHECK de la base que forzaba IVA = Subtotal × 16% exacto. Ver ADR-290 en
+`arquitectura.md` para el detalle completo (incluye nota de la corrección de
+`alembic_version` de `dev_ordenes.db`, sin pérdida de datos).
 
 ## RBAC (confirmado en sesión)
 

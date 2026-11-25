@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.facturacion.adjuntos import router as adjuntos_router
+from app.modules.facturacion.cfdi import router_cfdi
 from app.modules.facturacion.costo_adicional import router_costos
 from app.modules.facturacion.factura_afiliado import router_afiliados
 from app.modules.facturacion.factura_agencia import router_agencias
@@ -31,3 +32,4 @@ router.include_router(router_agencias)
 router.include_router(router_vendedores)
 router.include_router(router_costos)
 router.include_router(adjuntos_router)
+router.include_router(router_cfdi)
