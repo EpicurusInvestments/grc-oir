@@ -11846,3 +11846,36 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   existente lo ejercitaba).
 - **Verificado:** `tsc --noEmit`/`eslint` limpios (sin errores nuevos). Suite de
   `ordenes` 100% verde (299/299, incluye las 2 nuevas).
+
+### ADR-289 — Fix: encabezados de "Órdenes de Servicio" mal rotulados ("Producto / Marca" mostraba Marca/Campaña; "Campaña" mostraba el Periodo)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con captura de
+  pantalla y análisis propio correcto).
+- **Disparador:** el usuario notó que, en la tabla de "Órdenes de Servicio", la columna
+  rotulada "PRODUCTO / MARCA" en realidad despliega Marca y Campaña, y la columna
+  rotulada "CAMPAÑA" en realidad despliega el Periodo (rango de fechas). El mismo
+  problema ya existía en el panel de detalle ("Marca / Producto" / "Campaña").
+- **Causa raíz:** no es un bug de datos — es un rótulo que quedó desactualizado.
+  `OrdenCliente.producto` (texto libre) hace tiempo dejó de significar "producto" y pasó
+  a ser la **descripción de la campaña** — el propio formulario
+  (`OrdenClienteForm.tsx:799`) ya lo rotula "Campaña" con placeholder "Descripción de la
+  campaña anunciada", y los comentarios de `types.ts:70/198` ya lo documentaban así —
+  pero el encabezado de la tabla y la etiqueta del panel de detalle nunca se
+  actualizaron y seguían diciendo "Producto". De forma similar, `fecha_inicio_campania`/
+  `fecha_fin_campania` son el **periodo** de la campaña (mismo concepto que ya se rotula
+  "Periodo" en "Órdenes de Transmisión", `OrdenEstacionListPage.tsx`) — la spec no tiene
+  un campo de "nombre de campaña" separado de ese periodo; llamarlo "Campaña" a secas
+  hacía parecer que faltaba un nombre que, de hecho, nunca existió.
+- **Cambio** (solo rótulos, mismos datos/mismos campos de siempre):
+  - `OrdenClienteListPage.tsx`: encabezados `"Producto / Marca"` → `"Marca / Campaña"`,
+    `"Campaña"` → `"Periodo"`.
+  - `OrdenClienteDetailPanel.tsx`: etiquetas `"Marca / Producto"` → `"Marca / Campaña"`,
+    `"Campaña"` → `"Periodo"`.
+- **No se tocó base de datos ni backend:** el fix es 100% de texto de UI; los campos
+  (`producto`, `fecha_inicio_campania`, `fecha_fin_campania`) no cambiaron de nombre ni
+  de tipo.
+- **Pruebas:** ninguna prueba existente asertaba el texto viejo de estos rótulos
+  (confirmado con grep antes del cambio) — sin pruebas nuevas dedicadas, es un cambio de
+  copy sin lógica que ejercitar.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios. Suite de `ordenes` 100% verde
+  (299/299, sin cambios de conteo — ningún test dependía de estos textos).

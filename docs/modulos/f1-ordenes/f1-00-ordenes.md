@@ -1587,6 +1587,13 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   Servicio" (vistas "Listas para cerrar"/"Listas para facturar", petición del usuario) —
   la pill ya resaltada en el toolbar comunica lo mismo sin tecnicismos. No se tocó base
   de datos. Ver ADR-288 en `arquitectura.md`.
+- **ADR-289 (fix, reporte del usuario): encabezados mal rotulados en "Órdenes de
+  Servicio".** "PRODUCTO / MARCA" desplegaba Marca/Campaña y "CAMPAÑA" desplegaba el
+  Periodo — no es bug de datos, es un rótulo desactualizado: `oc.producto` hace tiempo
+  significa "Campaña" (así lo llama el propio formulario), y el rango de fechas de
+  campaña ES el Periodo (no hay un "nombre de campaña" separado en la spec). Se corrigen
+  los textos en `OrdenClienteListPage.tsx`/`OrdenClienteDetailPanel.tsx`: "Marca /
+  Campaña" y "Periodo". No se tocó base de datos. Ver ADR-289 en `arquitectura.md`.
 
 ## Pendientes / dudas
 

@@ -231,8 +231,13 @@ export function OrdenClienteListPage({
                 <th className="td-center" style={{ width: "9%" }}>Fecha</th>
                 <th style={{ width: "15%" }}>Anunciante</th>
                 <th style={{ width: "13%" }}>Agencia / Vendedor</th>
-                <th style={{ width: "13%" }}>Producto / Marca</th>
-                <th className="td-center" style={{ width: "11%" }}>Campaña</th>
+                {/* Fix (petición del usuario): decían "Producto / Marca" y "Campaña" pero
+                    desplegaban otra cosa — `oc.producto` es texto libre de "Campaña" (así lo
+                    llama el propio formulario, `OrdenClienteForm.tsx`: "Descripción de la
+                    campaña anunciada"), y esta columna de fechas es el PERIODO de esa
+                    campaña, no un nombre. Mismos datos de siempre, solo se corrige el rótulo. */}
+                <th style={{ width: "13%" }}>Marca / Campaña</th>
+                <th className="td-center" style={{ width: "11%" }}>Periodo</th>
                 <th className="td-center" style={{ width: "9%" }}>
                   Total
                 </th>
