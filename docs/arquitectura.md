@@ -11797,3 +11797,52 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   antes de este cambio). Pendiente de confirmar manualmente contra el backend real: editar
   una Orden de Servicio y una de Transmisión y ver el cambio reflejado en la tabla sin
   salir de la pantalla.
+
+### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de
+  pantalla).
+- **Disparador:** en "Órdenes de Transmisión", las vistas operativas del sidebar
+  "Pendientes de asignar" y "Pendientes de verificar" (y, al probarlo, también las pills
+  "2.1 Asignadas"/"2.2 Programados" del toolbar) mostraban la tabla vacía con
+  "No se pudieron cargar las órdenes de transmisión." El usuario también pidió quitar el
+  letrero ámbar "🔎 Filtro activo: ..." de "Órdenes de Servicio" (vistas "Listas para
+  cerrar"/"Listas para facturar") por describir el filtro en términos técnicos que no le
+  hacían sentido ("2.3 (reales conciliados)", "estado 3").
+- **Causa raíz (bug de carga):** `OrdenEstacion.estatus` existe en DOS vocabularios
+  distintos en el frontend — el real del backend (`EstatusOrdenEstacion`, spec:
+  `borrador`/`asignada`/`en_transmision`/`en_revision`/`cerrada`/`cancelada`,
+  `backend/app/modules/ordenes/orden_estacion.py:171`) y el "v5" que usa esta pantalla
+  para pintar (`EstadoOI`: `asignada_afiliado`/`programados_conciliados`/
+  `reales_conciliados`, traducido por `estatusOEDesdeApi` en
+  `frontend/src/modules/ordenes/adapters/vocabulario.ts`). `OrdenEstacionListPage.tsx`
+  mandaba el valor v5 de la pill (`filtro`) **tal cual** como query param `estatus` al
+  endpoint real (`GET /ordenes/estaciones`), que lo valida contra el enum spec y rechaza
+  cualquier otro valor con 422 — eso disparaba `lista.isError`. La pill "Todas" (sin
+  filtro) y "2.3 Reales"/Verificaciones no se veían afectadas: "Todas" no manda
+  `estatus`, y `useVerificacionesPagina` ya fuerza el valor spec correcto (`"cerrada"`)
+  a mano, sin pasar por `filtro`. Los conteos del sidebar (`useConteosOrdenes`) tampoco
+  se veían afectados — ya usaban los valores spec correctos de forma literal
+  (`"asignada"`/`"en_transmision"`), por eso los contadores sí mostraban el número
+  correcto aunque la tabla no cargara. No había ninguna prueba que ejercitara
+  `filtroInicial` con un valor distinto de `"todas"` — por eso ADR-285 no lo atrapó.
+- **Cambio (bug de carga):** se agrega `estatusOEHaciaApi` en `vocabulario.ts` — inverso
+  documentado de `estatusOEDesdeApi` para los 3 valores que `EstadoOI` puede tomar (no
+  hace falta más: la pantalla no tiene pill para `borrador`/`en_revision`/`cancelada`).
+  `OrdenEstacionListPage.tsx` lo usa al armar `filtros.estatus` en vez de mandar `filtro`
+  crudo.
+- **Cambio (letrero):** se quita por completo el bloque del letrero "Filtro activo"
+  (JSX, `FILTRO_DESCRIPCION`, `filtroDescripcion`) y la prop `onQuitarFiltroInicial` (ya
+  sin uso) de `OrdenClienteListPage.tsx`/`OrdenesExplorerPage.tsx`. La pill ya activa en
+  el `CatalogToolbar` (p.ej. "Listas para cerrar" resaltada en verde) sigue comunicando
+  qué filtro está aplicado, y el usuario puede quitarlo con la pill "Todas" — no hacía
+  falta un segundo control para lo mismo.
+- **No se tocó base de datos ni backend:** el fix es 100% frontend (un mapeo de
+  vocabulario y un letrero de UI); no hay migración ni cambio de esquema.
+- **Pruebas:** 2 nuevas en `OrdenEstacionListPage.test.tsx` — con `filtroInicial`
+  `"asignada_afiliado"` el mock de `paginaOrdenesEstacionApi` recibe `estatus: "asignada"`
+  (no `"asignada_afiliado"`); al hacer clic en la pill "2.2 Programados" recibe
+  `estatus: "en_transmision"`. Sin pruebas nuevas por el letrero quitado (ninguna prueba
+  existente lo ejercitaba).
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (sin errores nuevos). Suite de
+  `ordenes` 100% verde (299/299, incluye las 2 nuevas).

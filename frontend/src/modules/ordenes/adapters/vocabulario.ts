@@ -67,6 +67,22 @@ export function estatusOEDesdeApi(estatusSpec: string): EstadoOI {
   return MAPA_ESTATUS_OE[estatusSpec] ?? "asignada_afiliado";
 }
 
+/** Inverso de `estatusOEDesdeApi`, para cuando la pantalla de lista necesita mandar el
+ * filtro de sub-estado (2.1/2.2/2.3, vocabulario v5) de vuelta al backend como `estatus`
+ * (vocabulario spec) — el backend valida ese query param contra `EstatusOrdenEstacion`
+ * (spec, 6 valores) y rechaza cualquier valor v5 (`asignada_afiliado`, etc.) con 422.
+ * Solo cubre los 3 valores que `EstadoOI` puede tomar (no hace falta más: `borrador`/
+ * `en_revision`/`cancelada` no tienen pill propia en la pantalla). */
+const MAPA_ESTATUS_OE_HACIA_API: Record<EstadoOI, string> = {
+  asignada_afiliado: "asignada",
+  programados_conciliados: "en_transmision",
+  reales_conciliados: "cerrada",
+};
+
+export function estatusOEHaciaApi(estadoOI: EstadoOI): string {
+  return MAPA_ESTATUS_OE_HACIA_API[estadoOI];
+}
+
 /** `Incidencia.tipo_incidencia` (spec, 5 valores) → v5 (`bonificacion`/`descuento`, 2
  * valores). Inverso exacto del `MAPEO_TIPO_INCIDENCIA` del backend para `faltante`/
  * `excedente` (las 2 únicas que la generación automática puede producir hoy). Los otros 3

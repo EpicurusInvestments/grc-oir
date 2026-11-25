@@ -97,7 +97,6 @@ function OrdenesExplorerContent() {
         key={`${nav.filtroOC ?? "sin_filtro"}-${nav.ocSeleccionada ?? ""}`}
         filtroInicial={nav.filtroOC}
         ocIdPreseleccionada={nav.ocSeleccionada}
-        onQuitarFiltroInicial={() => setNav({ view: "orden_cliente" })}
         onSeleccionarOE={(oeId) => setNav({ view: "orden_estacion", oeSeleccionada: oeId })}
         onAsignarEstaciones={(ocId) => setNav({ view: "orden_estacion", ocParaNuevaOE: ocId })}
       />
