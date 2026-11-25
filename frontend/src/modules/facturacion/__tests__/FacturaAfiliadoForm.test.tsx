@@ -17,6 +17,7 @@ import type { OrdenEstacionFacturableAfiliado } from "../types";
 
 const subirMock = vi.fn();
 const ordenesFacturablesMock = vi.fn();
+const leerCfdiMock = vi.fn();
 
 vi.mock("../hooks", () => ({
   useAfiliados: () => ({
@@ -34,6 +35,9 @@ vi.mock("../api", () => ({
   adjuntosFacturacionApi: {
     subir: (...args: unknown[]) => subirMock(...args),
     ver: vi.fn(),
+  },
+  cfdiApi: {
+    leer: (...args: unknown[]) => leerCfdiMock(...args),
   },
   nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
 }));
@@ -343,5 +347,29 @@ describe("FacturaAfiliadoForm — Asignación a órdenes estación", () => {
     // completo) — el ref completo sigue en el `title` del tooltip.
     const texto = await screen.findByText("factu...pdf");
     expect(texto).toHaveAttribute("title", "facturacion/proveedor/afiliado/pdf/abc_factura.pdf");
+  });
+
+  it("fix: cargar el XML precarga Subtotal/IVA (ya eran editables, siguen siéndolo)", async () => {
+    leerCfdiMock.mockResolvedValue({
+      ok: true,
+      motivo: null,
+      subtotal: "957.00",
+      iva: "150.00",
+      total: "1107.00",
+      rfc_emisor: "PBA260101XX1",
+      folio: "0071",
+    });
+    const { container } = render(<FacturaAfiliadoForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+    const xml = new File(["<cfdi/>"], "factura.xml", { type: "application/xml" });
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const inputXml = Array.from(inputs).find((i) => i.getAttribute("accept") === ".xml")!;
+    fireEvent.change(inputXml, { target: { files: [xml] } });
+
+    expect(await screen.findByDisplayValue("957.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("150.00")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("150.00"), { target: { value: "153.12" } });
+    expect(screen.getByDisplayValue("153.12")).toBeInTheDocument();
   });
 });

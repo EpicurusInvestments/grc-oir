@@ -6,10 +6,14 @@
  * reemplaza por el patrón "Buscar y agregar" multi-selección, para acumular VARIAS
  * órdenes en una sola factura.
  *
- * Subtotal/IVA/Total se CALCULAN (suma de la comisión de cada orden elegida, más IVA a
- * la tasa central). Cada orden usa SU PROPIO % ya pactado
+ * Subtotal/IVA/Total se CALCULAN por default (suma de la comisión de cada orden
+ * elegida, más IVA a la tasa central). Cada orden usa SU PROPIO % ya pactado
  * (`porcentaje_comision_vendedor_snap` de esa orden, o si no el default del catálogo
  * del vendedor) — ya no hay un solo campo "% de comisión" para toda la factura.
+ *
+ * Fix (petición del usuario, ADR nuevo): Subtotal/IVA ahora SON editables — mismo
+ * criterio que `FacturaAgenciaForm.tsx` (ver su docstring para el detalle completo de
+ * `tocado`/precarga desde XML).
  *
  * La edición hace todo lo que hace el alta: el vendedor se puede reasignar y esta misma
  * sección edita qué órdenes tiene asignadas.
@@ -30,11 +34,28 @@ import { fmtMoneda, fmtPorcentaje } from "../../format";
 import { useOrdenesFacturablesVendedor, useVendedores } from "../../hooks";
 import type { FacturaVendedorCreate, FacturaVendedorOrden, FacturaVendedorUpdate } from "../../types";
 
-const schema = z.object({
-  vendedor_id: z.string().min(1, "Selecciona el vendedor."),
-  folio_factura_vendedor: z.string().trim().max(50).optional(),
-  fecha_factura_vendedor: z.string().min(1, "La fecha es obligatoria."),
-});
+const montoOpcional = z
+  .string()
+  .optional()
+  .refine((v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0), "Debe ser un monto válido.");
+
+const schema = z
+  .object({
+    vendedor_id: z.string().min(1, "Selecciona el vendedor."),
+    folio_factura_vendedor: z.string().trim().max(50).optional(),
+    fecha_factura_vendedor: z.string().min(1, "La fecha es obligatoria."),
+    monto_factura_vendedor: montoOpcional,
+    iva_factura_vendedor: montoOpcional,
+  })
+  .superRefine((v, ctx) => {
+    if (!!v.monto_factura_vendedor !== !!v.iva_factura_vendedor) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Si capturas Subtotal o IVA manual, captura ambos.",
+        path: ["iva_factura_vendedor"],
+      });
+    }
+  });
 
 type Valores = z.infer<typeof schema>;
 
@@ -87,11 +108,19 @@ export function FacturaVendedorForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues ?? { fecha_factura_vendedor: hoy() },
   });
+
+  // Fix (petición del usuario): ver docstring de `FacturaAgenciaForm.tsx` — mismo
+  // criterio exacto, solo cambian los nombres de campo.
+  const tocado = useRef(isEdit);
+  const marcarTocado = () => {
+    tocado.current = true;
+  };
 
   const [ordenesSeleccionadas, setOrdenesSeleccionadas] = useState<OrdenSeleccionada[]>(() =>
     (ordenesIniciales ?? []).map((o) => ({
@@ -153,12 +182,24 @@ export function FacturaVendedorForm({
 
   const comisionTotal = ordenesSeleccionadas.reduce((s, o) => s + Number(o.comision), 0);
   const ivaPreview = comisionTotal * 0.16;
-  const totalPreview = comisionTotal + ivaPreview;
+
+  useEffect(() => {
+    if (tocado.current) return;
+    setValue("monto_factura_vendedor", comisionTotal.toFixed(2));
+    setValue("iva_factura_vendedor", ivaPreview.toFixed(2));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comisionTotal, ivaPreview]);
+
+  const montoCapturado = watch("monto_factura_vendedor");
+  const ivaCapturado = watch("iva_factura_vendedor");
+  const totalPreview = (Number(montoCapturado) || 0) + (Number(ivaCapturado) || 0);
 
   const onValid = (v: Valores) => {
     const ordenesIds = ordenesSeleccionadas.map((o) => o.orden_id);
     const payload = {
       ...v,
+      monto_factura_vendedor: v.monto_factura_vendedor || undefined,
+      iva_factura_vendedor: v.iva_factura_vendedor || undefined,
       archivo_pdf_path: archivoPdfPath,
       archivo_xml_path: archivoXmlPath,
       ordenes_ids: ordenesIds,
@@ -214,33 +255,42 @@ export function FacturaVendedorForm({
 
           <div className="r2">
             <div>
-              <div className="fl">
-                Subtotal <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(String(comisionTotal))}
-              </div>
+              <div className="fl">Subtotal</div>
+              <input
+                className="fi"
+                inputMode="decimal"
+                {...register("monto_factura_vendedor", { onChange: marcarTocado })}
+              />
+              {errors.monto_factura_vendedor && (
+                <div className="fe">{errors.monto_factura_vendedor.message}</div>
+              )}
             </div>
             <div>
-              <div className="fl">
-                IVA <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(String(ivaPreview))}
-              </div>
+              <div className="fl">IVA</div>
+              <input
+                className="fi"
+                inputMode="decimal"
+                {...register("iva_factura_vendedor", { onChange: marcarTocado })}
+              />
+              {errors.iva_factura_vendedor && (
+                <div className="fe">{errors.iva_factura_vendedor.message}</div>
+              )}
             </div>
           </div>
+          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
+            Comisión calculada: {fmtMoneda(String(comisionTotal))} (IVA {fmtMoneda(String(ivaPreview))}) — suma
+            de la comisión de cada orden elegida abajo (cada una con su propio %), más IVA. Se precarga aquí,
+            editable; también se puede precargar desde el XML de la factura.
+          </div>
+
           <div className="fl">
             Total <FieldTag origin="calculado" />
           </div>
           <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
             {fmtMoneda(String(totalPreview))}
           </div>
-          <div className="derivado-hint" style={{ marginTop: 6, marginBottom: 10, display: "block" }}>
-            Suma de la comisión de cada orden elegida abajo (cada una con su propio %), más IVA.
-          </div>
 
-          <div className="r2">
+          <div className="r2" style={{ marginTop: 10 }}>
             <div>
               <div className="fl">Archivo PDF</div>
               <AdjuntoFacturaInput
@@ -257,6 +307,12 @@ export function FacturaVendedorForm({
                 placeholder="Cargar XML de la factura"
                 value={archivoXmlPath}
                 onChange={setArchivoXmlPath}
+                onArchivoXmlLeido={(r) => {
+                  if (!r) return;
+                  marcarTocado();
+                  if (r.subtotal != null) setValue("monto_factura_vendedor", r.subtotal);
+                  if (r.iva != null) setValue("iva_factura_vendedor", r.iva);
+                }}
               />
             </div>
           </div>

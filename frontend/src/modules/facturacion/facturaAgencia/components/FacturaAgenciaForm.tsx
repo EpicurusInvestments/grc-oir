@@ -4,12 +4,23 @@
  * "Buscar y agregar" multi-selección que `FacturaAfiliadoForm`, para acumular VARIAS
  * órdenes en una sola factura.
  *
- * Subtotal/IVA/Total dejan de capturarse a mano (petición del usuario: "no se captura
- * Subtotal manual, se vuelve un campo calculado") — se CALCULAN como la suma de la
- * comisión de cada orden elegida, más IVA a la tasa central. Cada orden usa SU PROPIO %
- * ya pactado (`porcentaje_comision_agencia_snap` de esa orden, o si no el default del
- * catálogo de la agencia) — por eso ya no hay un solo campo "% de comisión" editable
- * para toda la factura: el % se ve, de solo lectura, en cada fila agregada.
+ * Subtotal/IVA/Total se CALCULAN por default como la suma de la comisión de cada orden
+ * elegida, más IVA a la tasa central — mismo criterio del ADR-239/240 original. Cada
+ * orden usa SU PROPIO % ya pactado (`porcentaje_comision_agencia_snap` de esa orden, o
+ * si no el default del catálogo de la agencia) — por eso no hay un solo campo "% de
+ * comisión" editable para toda la factura: el % se ve, de solo lectura, en cada fila
+ * agregada.
+ *
+ * Fix (petición del usuario, ADR nuevo): Subtotal/IVA ahora SON editables — se
+ * precargan con el cálculo en vivo (como antes) MIENTRAS el usuario no los haya tocado
+ * a mano ni cargado un XML (`tocado`, mismo criterio que la bandera "sobrescrito" de
+ * `OrdenClienteForm.tsx` para % de comisión); en cuanto el usuario toca cualquiera de
+ * los 2, o carga un XML del CFDI (`onArchivoXmlLeido`), dejan de seguir el cálculo en
+ * vivo — el valor capturado/precargado GANA al guardar. Al EDITAR una factura ya
+ * guardada, arrancan "tocados" desde el montaje: el valor ya persistido manda, no se
+ * reemplaza solo porque cambien las órdenes elegidas (mismo criterio que
+ * `FacturaAfiliadoForm`, que nunca auto-llena desde las órdenes). La comisión calculada
+ * se sigue mostrando como referencia de todos modos.
  *
  * La edición hace todo lo que hace el alta (mismo criterio que ADR-087 en
  * FacturaAfiliado): la agencia se puede reasignar y esta misma sección edita qué
@@ -31,11 +42,28 @@ import { fmtMoneda, fmtPorcentaje } from "../../format";
 import { useAgencias, useOrdenesFacturablesAgencia } from "../../hooks";
 import type { FacturaAgenciaCreate, FacturaAgenciaOrden, FacturaAgenciaUpdate } from "../../types";
 
-const schema = z.object({
-  agencia_id: z.string().min(1, "Selecciona la agencia."),
-  folio_factura_agencia: z.string().trim().max(50).optional(),
-  fecha_factura_agencia: z.string().min(1, "La fecha es obligatoria."),
-});
+const montoOpcional = z
+  .string()
+  .optional()
+  .refine((v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0), "Debe ser un monto válido.");
+
+const schema = z
+  .object({
+    agencia_id: z.string().min(1, "Selecciona la agencia."),
+    folio_factura_agencia: z.string().trim().max(50).optional(),
+    fecha_factura_agencia: z.string().min(1, "La fecha es obligatoria."),
+    monto_factura_agencia: montoOpcional,
+    iva_factura_agencia: montoOpcional,
+  })
+  .superRefine((v, ctx) => {
+    if (!!v.monto_factura_agencia !== !!v.iva_factura_agencia) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Si capturas Subtotal o IVA manual, captura ambos.",
+        path: ["iva_factura_agencia"],
+      });
+    }
+  });
 
 type Valores = z.infer<typeof schema>;
 
@@ -90,11 +118,22 @@ export function FacturaAgenciaForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues ?? { fecha_factura_agencia: hoy() },
   });
+
+  // Fix (petición del usuario): mientras `tocado` sea `false`, Subtotal/IVA siguen el
+  // cálculo en vivo de las órdenes elegidas (comportamiento de siempre); en cuanto el
+  // usuario edita cualquiera de los 2 a mano, o carga un XML, se congela (ver abajo). Al
+  // EDITAR arranca en `true` desde el montaje: el valor ya guardado manda, igual que
+  // `FacturaAfiliadoForm` nunca auto-llena desde las órdenes elegidas.
+  const tocado = useRef(isEdit);
+  const marcarTocado = () => {
+    tocado.current = true;
+  };
 
   const [ordenesSeleccionadas, setOrdenesSeleccionadas] = useState<OrdenSeleccionada[]>(() =>
     (ordenesIniciales ?? []).map((o) => ({
@@ -155,12 +194,26 @@ export function FacturaAgenciaForm({
 
   const comisionTotal = ordenesSeleccionadas.reduce((s, o) => s + Number(o.comision), 0);
   const ivaPreview = comisionTotal * 0.16;
-  const totalPreview = comisionTotal + ivaPreview;
+
+  // Mientras no esté `tocado`, Subtotal/IVA siguen el cálculo en vivo — mismo valor que
+  // antes se mostraba de solo lectura, ahora precargado en un campo editable.
+  useEffect(() => {
+    if (tocado.current) return;
+    setValue("monto_factura_agencia", comisionTotal.toFixed(2));
+    setValue("iva_factura_agencia", ivaPreview.toFixed(2));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comisionTotal, ivaPreview]);
+
+  const montoCapturado = watch("monto_factura_agencia");
+  const ivaCapturado = watch("iva_factura_agencia");
+  const totalPreview = (Number(montoCapturado) || 0) + (Number(ivaCapturado) || 0);
 
   const onValid = (v: Valores) => {
     const ordenesIds = ordenesSeleccionadas.map((o) => o.orden_id);
     const payload = {
       ...v,
+      monto_factura_agencia: v.monto_factura_agencia || undefined,
+      iva_factura_agencia: v.iva_factura_agencia || undefined,
       archivo_pdf_path: archivoPdfPath,
       archivo_xml_path: archivoXmlPath,
       ordenes_ids: ordenesIds,
@@ -216,33 +269,40 @@ export function FacturaAgenciaForm({
 
           <div className="r2">
             <div>
-              <div className="fl">
-                Subtotal <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(String(comisionTotal))}
-              </div>
+              <div className="fl">Subtotal</div>
+              <input
+                className="fi"
+                inputMode="decimal"
+                {...register("monto_factura_agencia", { onChange: marcarTocado })}
+              />
+              {errors.monto_factura_agencia && (
+                <div className="fe">{errors.monto_factura_agencia.message}</div>
+              )}
             </div>
             <div>
-              <div className="fl">
-                IVA <FieldTag origin="calculado" />
-              </div>
-              <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {fmtMoneda(String(ivaPreview))}
-              </div>
+              <div className="fl">IVA</div>
+              <input
+                className="fi"
+                inputMode="decimal"
+                {...register("iva_factura_agencia", { onChange: marcarTocado })}
+              />
+              {errors.iva_factura_agencia && <div className="fe">{errors.iva_factura_agencia.message}</div>}
             </div>
           </div>
+          <div className="derivado-hint" style={{ marginTop: -6, marginBottom: 10, display: "block" }}>
+            Comisión calculada: {fmtMoneda(String(comisionTotal))} (IVA {fmtMoneda(String(ivaPreview))}) — suma
+            de la comisión de cada orden elegida abajo (cada una con su propio %), más IVA. Se precarga aquí,
+            editable; también se puede precargar desde el XML de la factura.
+          </div>
+
           <div className="fl">
             Total <FieldTag origin="calculado" />
           </div>
           <div className="fv mono" style={{ fontSize: 16, fontWeight: 600 }}>
             {fmtMoneda(String(totalPreview))}
           </div>
-          <div className="derivado-hint" style={{ marginTop: 6, marginBottom: 10, display: "block" }}>
-            Suma de la comisión de cada orden elegida abajo (cada una con su propio %), más IVA.
-          </div>
 
-          <div className="r2">
+          <div className="r2" style={{ marginTop: 10 }}>
             <div>
               <div className="fl">Archivo PDF</div>
               <AdjuntoFacturaInput
@@ -259,6 +319,12 @@ export function FacturaAgenciaForm({
                 placeholder="Cargar XML de la factura"
                 value={archivoXmlPath}
                 onChange={setArchivoXmlPath}
+                onArchivoXmlLeido={(r) => {
+                  if (!r) return;
+                  marcarTocado();
+                  if (r.subtotal != null) setValue("monto_factura_agencia", r.subtotal);
+                  if (r.iva != null) setValue("iva_factura_agencia", r.iva);
+                }}
               />
             </div>
           </div>

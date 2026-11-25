@@ -1302,16 +1302,28 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   (reconcilian contra la factura real del afiliado, posibles retenciones).
   En agencia (ADR-239, SUSTITUYE ADR-079) y vendedor (ADR-240, SUSTITUYE ADR-082,
   mismo día y mismo patrón), `ordenes_ids: UUID[]` (mínimo 1) reemplaza al antiguo
-  `orden_id` único: `monto_*`/`iva_*`/`total_*`/`comision_*` se CALCULAN como la suma de
-  `OrdenCliente.total * porcentaje_comision_snap / 100` de cada orden elegida (cada una
-  con su propio `%`, el de la orden o si no el default del catálogo Agencia/Vendedor),
-  más IVA a la tasa central — ya no se aceptan como entrada. **400** si `ordenes_ids`
+  `orden_id` único: `monto_*`/`iva_*`/`total_*`/`comision_*` se CALCULAN **por
+  default** como la suma de `OrdenCliente.total * porcentaje_comision_snap / 100` de
+  cada orden elegida (cada una con su propio `%`, el de la orden o si no el default
+  del catálogo Agencia/Vendedor), más IVA a la tasa central. **400** si `ordenes_ids`
   viene vacío, repite el mismo id, o alguno no existe.
+  **Fix (ADR-290, petición del usuario):** `monto_factura_agencia`/
+  `iva_factura_agencia` (y sus equivalentes de vendedor) ahora son **opcionales** en el
+  payload — si se mandan los 2 (p. ej. precargados desde el XML del proveedor vía
+  `POST /facturacion/cfdi/leer`, ver abajo, o a mano), GANAN sobre el cálculo; si se
+  manda solo uno, **422**. `total_*` siempre se deriva de ellos (`monto + iva`), nunca
+  se acepta del cliente. Ya NO hay un CHECK de base que fuerce `IVA = Subtotal × 16%`
+  exacto en estas 2 entidades (se quitó, un XML real puede traer redondeos/
+  retenciones) — quedan igual que `FacturaAfiliado`, donde `monto_factura_afiliado`/
+  `iva_factura_afiliado` siempre fueron **Manual** (reconcilian contra la factura real
+  del afiliado, posibles retenciones).
 - **`PUT .../{id}`** (`costos:editar`) — **409** si ya está `autorizada` o `pagada`.
   En afiliado recalcula el total si cambian sus insumos. En agencia/vendedor,
   `ordenes_ids` reconcilia EXACTAMENTE como pide la lista (agrega, quita, deja intacto
   lo que sigue — mismo criterio que `ordenes_estacion_ids` de Afiliado) y recalcula
-  monto/iva/total/comisión contra el nuevo conjunto.
+  monto/iva/total/comisión contra el nuevo conjunto, salvo que el mismo payload mande
+  `monto_*`/`iva_*` explícitos (ADR-290) — en ese caso esos valores ganan, incluso si
+  `ordenes_ids` también cambió en la misma petición.
 - **`POST .../{id}/estatus`** (`costos:editar`) — transiciones **operativas** de CxP:
   `recibida → recibida` (idempotente — es el "Devolver a capturista" del frontend, ya no
   cambia nada de estado desde ADR-282) y `autorizada → pagada`. Pedir `autorizada` por
@@ -1344,6 +1356,14 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   (el CFDI), que F1 no acepta. La `ref` se guarda en la entidad por su propio endpoint.
 - **`GET /facturacion/adjuntos?ref=...`** (`costos:leer`) — descarga. Solo sirve objetos
   de los prefijos de facturación: una `ref` de `contratos/` u `ordenes/` da 404.
+- **`POST /facturacion/cfdi/leer`** (`costos:editar`, ADR-290, petición del usuario) —
+  multipart `archivo` (el XML recién elegido, sin pasar primero por `/adjuntos`: lee
+  directo, independiente de si ya se subió o no). Lee el CFDI y responde **SIEMPRE
+  200** con `{ok, subtotal?, iva?, total?, rfc_emisor?, folio?, motivo?}` — un XML
+  malformado o que no sea CFDI da `ok: false` con `motivo` legible, nunca un error
+  HTTP (el usuario siempre puede seguir capturando Subtotal/IVA a mano). El frontend
+  usa esto para precargar `monto_*`/`iva_*` en Agencia/Vendedor/Afiliado al cargar el
+  XML (ver arriba) — endpoint de solo LECTURA, no guarda nada.
 
 ## Cobranza y Pagos (F3)
 

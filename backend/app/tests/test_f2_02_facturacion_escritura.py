@@ -1766,6 +1766,94 @@ def test_alta_factura_agencia_trae_agencia_y_conteo_de_ordenes_denormalizados(
     assert en_lista["ordenes_asignadas"] == 1
 
 
+def test_alta_factura_agencia_con_monto_iva_explicitos_los_persiste_sin_el_16_por_ciento(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Fix (petición del usuario): Subtotal/IVA ahora se pueden precargar/capturar
+    manual (p.ej. desde el XML del proveedor) — ganan sobre el cálculo de comisión, y
+    ya NO tienen que cuadrar con el 16% exacto (se quitó `ck_factura_agencia_iva_tasa`:
+    un XML real puede traer redondeos/retenciones)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-XML-1")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+            "monto_factura_agencia": "957.00",
+            "iva_factura_agencia": "150.00",  # NO es 16% exacto de 957.00 (153.12)
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["monto_factura_agencia"] == "957.00"
+    assert body["iva_factura_agencia"] == "150.00"
+    assert body["total_factura_agencia"] == "1107.00"
+    assert body["comision_agencia"] == "957.00"
+
+
+def test_alta_factura_agencia_sin_override_sigue_calculando_como_antes(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """No regresión: si no se manda `monto_factura_agencia`/`iva_factura_agencia`, el
+    comportamiento es EXACTAMENTE el de siempre (cálculo de comisión + IVA al 16%)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-SINXML")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    # OrdenCliente.total por default de `_orden()` = 11600.00 · 10% (default del catálogo) = 1160.00
+    iva_esperado = (Decimal("1160.00") * Decimal("0.16")).quantize(Decimal("0.01"))
+    assert r.json()["iva_factura_agencia"] == str(iva_esperado)
+
+
+def test_alta_factura_agencia_monto_sin_iva_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Todo o nada: no se acepta un override a medias (dejaría IVA calculado sobre un
+    Subtotal que ya no es el calculado, una mezcla sin sentido)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-AG-XML-2")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+            "monto_factura_agencia": "957.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_editar_factura_agencia_cambia_solo_monto_iva_sin_tocar_ordenes(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Editar Subtotal/IVA (p.ej. tras cargar el XML) sin tocar `ordenes_ids` persiste
+    el override sin recalcular desde las órdenes."""
+    fid = _crear_factura_agencia_simple(client, db, cat, folio="OC-AG-XML-EDIT")
+    r = client.put(
+        f"/api/v1/facturacion/agencias/{fid}",
+        json={"monto_factura_agencia": "500.00", "iva_factura_agencia": "70.00"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["monto_factura_agencia"] == "500.00"
+    assert body["iva_factura_agencia"] == "70.00"
+    assert body["total_factura_agencia"] == "570.00"
+
+
 def test_alta_rechaza_factura_de_agencia_sin_ninguna_orden(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
@@ -2332,6 +2420,67 @@ def test_alta_factura_vendedor_trae_vendedor_y_conteo_de_ordenes_denormalizados(
     )
     assert en_lista["vendedor"] == "Vendedor Uno"
     assert en_lista["ordenes_asignadas"] == 1
+
+
+def test_alta_factura_vendedor_con_monto_iva_explicitos_los_persiste_sin_el_16_por_ciento(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo fix que en FacturaAgencia (petición del usuario): Subtotal/IVA se pueden
+    precargar/capturar manual (XML del proveedor) y ganan sobre el cálculo — ya no
+    tienen que cuadrar con el 16% exacto (se quitó `ck_factura_vendedor_iva_tasa`)."""
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-XML-1")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+            "monto_factura_vendedor": "957.00",
+            "iva_factura_vendedor": "150.00",  # NO es 16% exacto de 957.00
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["monto_factura_vendedor"] == "957.00"
+    assert body["iva_factura_vendedor"] == "150.00"
+    assert body["total_factura_vendedor"] == "1107.00"
+    assert body["comision_vendedor"] == "957.00"
+
+
+def test_alta_factura_vendedor_monto_sin_iva_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "orden_cerrada", "OC-VEND-XML-2")
+    db.commit()
+    r = client.post(
+        "/api/v1/facturacion/vendedores",
+        json={
+            "vendedor_id": str(cat["vendedor_id"]),
+            "fecha_factura_vendedor": "2026-03-03",
+            "ordenes_ids": [str(orden_id)],
+            "iva_factura_vendedor": "150.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_editar_factura_vendedor_cambia_solo_monto_iva_sin_tocar_ordenes(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    fid = _crear_factura_vendedor_simple(client, db, cat, folio="OC-VEND-XML-EDIT")
+    r = client.put(
+        f"/api/v1/facturacion/vendedores/{fid}",
+        json={"monto_factura_vendedor": "500.00", "iva_factura_vendedor": "70.00"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["monto_factura_vendedor"] == "500.00"
+    assert body["iva_factura_vendedor"] == "70.00"
+    assert body["total_factura_vendedor"] == "570.00"
 
 
 def test_alta_rechaza_factura_de_vendedor_sin_ninguna_orden(

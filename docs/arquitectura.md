@@ -11879,3 +11879,92 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   copy sin lógica que ejercitar.
 - **Verificado:** `tsc --noEmit`/`eslint` limpios. Suite de `ordenes` 100% verde
   (299/299, sin cambios de conteo — ningún test dependía de estos textos).
+
+### ADR-290 — Facturación: carga de XML (CFDI) en Agencia/Vendedor/Afiliado precarga Subtotal/IVA, editables; se quita el CHECK de IVA=16% exacto
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (petición del usuario, con XML de prueba
+  propio). Rama `fix/facturacion-correcciones-f2`.
+- **Disparador:** el usuario pidió que, al cargar el XML de una factura de Agencia,
+  Vendedor o Afiliado, el sistema lo lea y precargue Subtotal/IVA — quedando
+  **editables** después, igual que ya funcionaba en `FacturaAfiliado`. Confirmado por
+  investigación: "Cargar XML" en los 3 formularios solo subía el archivo a
+  almacenamiento (`AdjuntoFacturaInput.tsx` → `adjuntosFacturacionApi.subir`); ningún
+  punto del sistema leía su contenido.
+- **Estado previo de Agencia/Vendedor (ADR-239/240):** Subtotal/IVA/Total eran **100%
+  calculados** (suma de la comisión de cada orden elegida × su propio %, IVA a la tasa
+  central) — decisión deliberada ("no se captura Subtotal manual, se vuelve un campo
+  calculado"), reforzada con un CHECK en la base
+  (`ck_factura_agencia_iva_tasa`/`ck_factura_vendedor_iva_tasa`:
+  `ROUND(iva,2) = ROUND(monto*0.16,2)`). Esta ronda la REVIERTE PARCIALMENTE: el
+  cálculo sigue existiendo como **default y referencia visible**, pero ahora se puede
+  **capturar/precargar manualmente** (confirmado con el usuario, con 4 preguntas antes
+  de programar: sí quitar el CHECK de 16%, sí mantener la comisión calculada como
+  referencia, sí XML sintético para pruebas — no datos reales de un tercero —, RFC
+  contra catálogo fuera de esta ronda).
+- **Nuevo integration (skill `integraciones-externas`):**
+  `backend/app/integrations/facturas_proveedor/parser.py` — `parsear_cfdi(bytes) ->
+  ResultadoLecturaCfdi` (dataclass `ok/motivo/subtotal/iva/total/rfc_emisor/folio`),
+  stdlib `xml.etree.ElementTree`, soporta namespace CFDI 3.3 y 4.0. El IVA se lee de
+  `Comprobante/Impuestos/@TotalImpuestosTrasladados` (no se suman `Traslado` por
+  concepto a mano: un CFDI puede traer otros impuestos como IEPS mezclados). Un XML
+  malformado o que no sea CFDI nunca lanza excepción — regresa `ok=False` con `motivo`
+  legible (el usuario siempre puede seguir capturando a mano).
+- **Endpoint nuevo:** `POST /facturacion/cfdi/leer` (`backend/app/modules/facturacion/
+  cfdi.py`) — multipart `archivo`, permiso `costos:editar`. SEPARADO del router
+  genérico de adjuntos (`adjuntos.py`/`build_adjuntos_router`, compartido entre
+  ordenes/facturación/cobranza — no se le acopla lógica de un solo módulo) y también
+  independiente del almacenamiento: lee el archivo directo, sin depender de que ya se
+  haya subido. Responde SIEMPRE 200 (`{ok, subtotal?, iva?, total?, rfc_emisor?,
+  motivo?}`) — nunca bloquea la carga del archivo.
+- **`factura_agencia.py`/`factura_vendedor.py` (mismo cambio en ambos):** `Create`/
+  `Update` ganan `monto_factura_*`/`iva_factura_*` opcionales (`model_validator`: ambos
+  o ninguno). Si vienen explícitos, GANAN sobre el cálculo de comisión
+  (`_totales_o_override`); si no, cae al cálculo de siempre (compatibilidad hacia
+  atrás total — nadie que no mande los campos nuevos nota el cambio).
+- **Migración:** `d9e1f3a5b7c9` quita `ck_factura_agencia_iva_tasa`/
+  `ck_factura_vendedor_iva_tasa` (SQLite vía `batch_alter_table`, SQL Server directo).
+  `ck_..._total_suma` (`total = monto + iva`) se conserva en ambas tablas: sigue siendo
+  válido venga el IVA de donde venga. **Nota de bitácora:** al aplicar esta migración
+  se encontró que `dev_ordenes.db` tenía su `alembic_version` apuntando a una revisión
+  de OTRA rama (`feature/NotasDeCredito`, trabajada antes en el mismo checkout) que no
+  existe en esta rama — confirmado que el esquema real ya traía esas columnas
+  adicionales de forma inofensiva (aditivas, no referenciadas por los modelos de esta
+  rama); se corrigió con `alembic stamp --purge` al `down_revision` correcto de esta
+  rama y luego `upgrade head`, SIN perder ningún dato (confirmado antes/después:
+  mismas 1,122 OrdenCliente, mismas OE de prueba recién creadas).
+- **Frontend:** `AdjuntoFacturaInput.tsx` gana prop opcional `onArchivoXmlLeido` —
+  SOLO para el slot de XML (`!esPdf`), llama `cfdiApi.leer(archivo)` EN PARALELO a la
+  subida normal (independiente, un fallo no la tumba). `FacturaAfiliadoForm.tsx`: ya
+  tenía Subtotal/IVA editables, solo se conecta el `setValue` tras la lectura.
+  `FacturaAgenciaForm.tsx`/`FacturaVendedorForm.tsx`: Subtotal/IVA pasan de `<div>`
+  calculado de solo lectura a `<input>` registrado en RHF; se precargan con el cálculo
+  en vivo de comisión MIENTRAS el usuario no los haya tocado a mano ni cargado un XML
+  (bandera `tocado`, mismo criterio que la bandera "sobrescrito" de
+  `OrdenClienteForm.tsx` para % de comisión); al EDITAR arrancan "tocados" desde el
+  montaje (el valor ya guardado manda, no se recalcula solo porque cambien las
+  órdenes — mismo criterio que `FacturaAfiliadoForm`). La comisión calculada se sigue
+  mostrando como texto de referencia junto al campo.
+- **XML de prueba:** `docs/referencias/cfdi_ejemplo_prueba.xml` — CFDI 4.0 **sintético**
+  (RFC/razón social/folio inventados, sin relación con ningún contribuyente real),
+  Subtotal $957.00 / IVA $153.12 / Total $1,110.12, para probar el parser y la carga
+  en pantalla sin exponer datos reales de nadie.
+- **Pruebas:** backend — `test_facturas_proveedor_cfdi.py` (parser puro + endpoint,
+  8 pruebas, incluye XML malformado/no-CFDI/sin impuestos/permiso); 8 nuevas en
+  `test_f2_02_facturacion_escritura.py` (override persiste sin el 16% exacto, ambos o
+  ninguno se rechaza con 422, editar solo Subtotal/IVA sin tocar órdenes, no-regresión
+  sin override). Frontend — nuevas en `AdjuntoFacturaInput.test.tsx` (5, cubre
+  `onArchivoXmlLeido` en sus variantes) y en los 3 `*Form.test.tsx` (carga de XML
+  precarga y sigue editable); las pruebas existentes de Agencia/Vendedor que asumían
+  Subtotal como texto de solo lectura se migraron a `getByDisplayValue` (ya no
+  `getByText`, el campo ahora es un input).
+- **Verificado:** backend `pytest app/tests` completo 100% verde; `ruff` limpio en los
+  archivos tocados (mypy limpio en los 2 archivos nuevos; los `error: ... Service.list
+  is not valid as a type` en `factura_agencia.py`/`factura_vendedor.py` son
+  preexistentes, confirmados con `git stash` antes de este cambio — no son
+  regresión). Frontend `tsc --noEmit`/`eslint` limpios; suite de `facturacion` 100%
+  verde (133/133). Manual: `curl` contra el backend real con el XML de prueba — `{"ok":
+  true, "subtotal": "957.00", "iva": "153.12", ...}`.
+- **Fuera de alcance de esta ronda (confirmado con el usuario):** validar el RFC del
+  emisor del XML contra el catálogo de Agencia/Afiliado/Vendedor (el parser ya lo
+  extrae, para cuando se aborde); lectura/autofill desde el PDF (el usuario pidió
+  explícitamente "solo es con la carga del xml no del pdf").

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CFDI 4.0 DE EJEMPLO — SINTÉTICO, NO ES UNA FACTURA REAL.
+  Construido para probar la lectura de Subtotal/IVA/Total al cargar el XML en las
+  pantallas de Facturas de Agencia/Vendedor/Afiliado (GRC-OIR). RFC, razón social,
+  folio y Sello/Certificado son datos inventados sin relación con ningún contribuyente
+  real — no usar para nada fuera de pruebas de este sistema.
+-->
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd"
+    Version="4.0"
+    Folio="0071"
+    Serie="A"
+    Fecha="2026-11-24T12:00:00"
+    FormaPago="99"
+    NoCertificado="00000000000000000000"
+    Certificado="EJEMPLO_DE_PRUEBA_SIN_VALOR_FISCAL=="
+    SubTotal="957.00"
+    Moneda="MXN"
+    Total="1110.12"
+    TipoDeComprobante="I"
+    Exportacion="01"
+    MetodoPago="PUE"
+    LugarExpedicion="06600"
+    Sello="EJEMPLO_DE_PRUEBA_SIN_VALOR_FISCAL==">
+  <cfdi:Emisor Rfc="PBA260101XX1" Nombre="PRUEBA AGENCIA DE PUBLICIDAD SA DE CV" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="GRC010101XX2" Nombre="GRUPO RADIO CENTRO SAB DE CV" DomicilioFiscalReceptor="06600" RegimenFiscalReceptor="601" UsoCFDI="G03"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="84111506" Cantidad="1" ClaveUnidad="E48" Descripcion="Comision por servicios de agencia de publicidad" ValorUnitario="957.00" Importe="957.00" ObjetoImp="02">
+      <cfdi:Impuestos>
+        <cfdi:Traslados>
+          <cfdi:Traslado Base="957.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="153.12"/>
+        </cfdi:Traslados>
+      </cfdi:Impuestos>
+    </cfdi:Concepto>
+  </cfdi:Conceptos>
+  <cfdi:Impuestos TotalImpuestosTrasladados="153.12">
+    <cfdi:Traslados>
+      <cfdi:Traslado Base="957.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="153.12"/>
+    </cfdi:Traslados>
+  </cfdi:Impuestos>
+  <cfdi:Complemento>
+    <!-- Timbre de ejemplo, sin valor fiscal -->
+    <tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital"
+        Version="1.1"
+        UUID="00000000-0000-0000-0000-000000000000"
+        FechaTimbrado="2026-11-24T12:00:10"
+        RfcProvCertif="EJE010101XX3"
+        SelloCFD="EJEMPLO_DE_PRUEBA_SIN_VALOR_FISCAL=="
+        NoCertificadoSAT="00000000000000000000"
+        SelloSAT="EJEMPLO_DE_PRUEBA_SIN_VALOR_FISCAL=="/>
+  </cfdi:Complemento>
+</cfdi:Comprobante>
