@@ -1198,7 +1198,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   (lista): una sola orden es el flujo de siempre; varias son **facturación
   múltiple** (ADR-064). Los ids repetidos se deduplican. Obligatoria (mínimo 1) cuando
   `tipo_comprobante` es `"I"` (o se omite); debe venir **vacía** cuando es `"E"` (Nota de
-  crédito — ADR-287, ver más abajo), validado con un `model_validator` cruzado, no con
+  crédito — ADR-288, ver más abajo), validado con un `model_validator` cruzado, no con
   un mínimo estático de `Field`.
 
   Rechaza con **400 `error_dominio`**: si alguna orden no existe; si alguna no está en
@@ -1220,7 +1220,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   presentes como escalares de la **primera** orden (por folio), que es el identificador
   corto que usan la tabla y el encabezado del panel.
 
-  **Notas de crédito (`tipo_comprobante = "E"`, ADR-287, petición del usuario, con
+  **Notas de crédito (`tipo_comprobante = "E"`, ADR-288, petición del usuario, con
   captura):** no se modeló como entidad nueva — es una `FacturaCliente` más, con el
   monto en negativo. Con `tipo_comprobante = "E"` el payload exige: `ordenes_ids` vacía;
   **exactamente 1** id en `facturas_relacionadas_ids` (la factura de origen, reutilizando
@@ -1254,7 +1254,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   factura al **layout real del PAC (V40)** vía el puerto `TimbradoExportPort`. Texto plano
   con CRLF, codificado según `TIMBRADO_ENCODING` (hoy `cp1252`). **409** si la factura está
   cancelada. **409** también si `tipo_comprobante` no es `"I"` ni `null` (p.ej. una Nota de
-  crédito, `"E"` — ADR-287): el layout de Egreso no está implementado todavía, el
+  crédito, `"E"` — ADR-288): el layout de Egreso no está implementado todavía, el
   timbrado de esos documentos sigue siendo 100% manual. `null` se deja pasar por
   compatibilidad con facturas capturadas antes de que este campo se usara de verdad.
 
@@ -1284,7 +1284,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   listándose con estado `cancelada`, y la orden puede recibir una factura nueva porque el
   1:1 es un índice único FILTRADO que excluye las canceladas.
 
-  Si la factura es una **Nota de crédito** (`tipo_comprobante = "E"`, ADR-287) y ya
+  Si la factura es una **Nota de crédito** (`tipo_comprobante = "E"`, ADR-288) y ya
   estaba timbrada, este endpoint no toca ninguna `OrdenCliente` (una NC no tiene
   órdenes): en su lugar revierte el `PagoCliente` sintético que la NC había aplicado
   sobre la `CobranzaFactura` de la factura de origen, reusando íntegro
@@ -1435,7 +1435,7 @@ handoff, nunca por un endpoint propio de alta:
   criterio que la excepción de "OC ya cobrada" de ADR-047); si `importe_cobrado = 0`, se
   elimina y la cancelación continúa.
 
-  **Excepción — Notas de crédito (`tipo_comprobante = "E"`, ADR-287):** no son 1:1 con
+  **Excepción — Notas de crédito (`tipo_comprobante = "E"`, ADR-288):** no son 1:1 con
   una `CobranzaFactura` propia (no facturan órdenes, no hay `OrdenCliente` que
   promover). Al timbrarse, en vez de crear una `CobranzaFactura` nueva se inserta un
   `PagoCliente` sintético (`factura_egreso_id` apuntando a la NC) sobre la

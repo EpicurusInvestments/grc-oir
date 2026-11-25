@@ -29,8 +29,10 @@ import {
 } from "./adapters/ordenesApi";
 import type { Incidencia, OrdenCliente, OrdenEstacion } from "./types";
 
-const K_OC = "ordenes:clientes";
-const K_OE = "ordenes:estaciones";
+/** Exportadas para que `OrdenesContext` (los 6 métodos de escritura) pueda invalidar
+ *  las listas paginadas tras guardar — ver ADR-287. */
+export const K_OC = "ordenes:clientes";
+export const K_OE = "ordenes:estaciones";
 
 export interface PaginaOC {
   items: OrdenCliente[];

@@ -9,8 +9,16 @@
  * `REEMPLAZAR_HISTORIAL_OC`) para reflejar en el estado local lo que el backend ya calculó
  * y persistió — el reducer nunca recalcula nada, solo inserta/reemplaza el objeto que ya
  * llegó armado desde `adapters/refrescar.ts`.
+ *
+ * ADR-287 (fix): este `state` ya NO es lo que leen las tablas de "Órdenes de Servicio"/
+ * "Órdenes de Transmisión" desde ADR-285 (esas listas usan `useOrdenesClientePagina`/
+ * `useOrdenesEstacionPagina`, queries de TanStack Query aparte). Por eso cada método de
+ * escritura, además de despachar, invalida `[K_OC]`/`[K_OE]` — si no, la tabla se quedaba
+ * con datos viejos tras guardar (solo se veían al salir de la pantalla y volver a entrar,
+ * que es lo que remonta y refetchea la query).
  */
 
+import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from "react";
 
 import {
@@ -25,6 +33,7 @@ import {
   listarIncidenciasDeOEApi,
 } from "../adapters/escrituraApi";
 import { incidenciaFromApi } from "../adapters/fromApi";
+import { K_OC, K_OE } from "../hooks";
 import { listarHistorialComisionesApi } from "../adapters/ordenesApi";
 import { refrescarOrdenCliente, refrescarOrdenEstacion } from "../adapters/refrescar";
 import { FROZEN_STATES } from "../constants";
@@ -172,6 +181,7 @@ export function OrdenesProvider({
   initialState: OrdenesState;
 }) {
   const [state, dispatch] = useReducer(reducer, undefined, () => initialState);
+  const qc = useQueryClient();
 
   const value = useMemo<OrdenesContextValue>(
     () => ({
@@ -180,6 +190,7 @@ export function OrdenesProvider({
         const dto = await crearOrdenClienteApi(ordenClienteCreateToApi(input, opts?.motivoComision));
         const oc = await refrescarOrdenCliente(dto.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        await qc.invalidateQueries({ queryKey: [K_OC] });
         return oc;
       },
       actualizarOC: async (id, patch, opts) => {
@@ -215,6 +226,7 @@ export function OrdenesProvider({
           const historial = await listarHistorialComisionesApi(id);
           dispatch({ type: "REEMPLAZAR_HISTORIAL_OC", ordenId: id, historial: historial as HistorialComision[] });
         }
+        await qc.invalidateQueries({ queryKey: [K_OC] });
       },
       crearOE: async (ocId, input) => {
         const dto = await crearOrdenEstacionApi(ordenEstacionCreateToApi(ocId, input));
@@ -224,12 +236,17 @@ export function OrdenesProvider({
         ]);
         dispatch({ type: "REEMPLAZAR_OE", oe });
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: [K_OE] }),
+          qc.invalidateQueries({ queryKey: [K_OC] }),
+        ]);
         return oe;
       },
       actualizarOE: async (oeId, input) => {
         await actualizarOrdenEstacionApi(oeId, ordenEstacionUpdateToApi(input));
         const oe = await refrescarOrdenEstacion(oeId);
         dispatch({ type: "REEMPLAZAR_OE", oe });
+        await qc.invalidateQueries({ queryKey: [K_OE] });
         return oe;
       },
       avanzarAReales: async (oeId, input) => {
@@ -243,6 +260,10 @@ export function OrdenesProvider({
         dispatch({ type: "AGREGAR_INCIDENCIAS", incidencias: incidenciasNuevas });
         const oc = await refrescarOrdenCliente(oe.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: [K_OE] }),
+          qc.invalidateQueries({ queryKey: [K_OC] }),
+        ]);
         return incidenciasNuevas;
       },
       cancelarDia: async (oeId, diaId, motivo) => {
@@ -255,14 +276,19 @@ export function OrdenesProvider({
         dispatch({ type: "AGREGAR_INCIDENCIAS", incidencias: incidenciasDto.map(incidenciaFromApi) });
         const oc = await refrescarOrdenCliente(oe.orden_id);
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: [K_OE] }),
+          qc.invalidateQueries({ queryKey: [K_OC] }),
+        ]);
       },
       cerrarOC: async (ocId, input) => {
         await cerrarOrdenClienteApi(ocId, cerrarToApi(input));
         const oc = await refrescarOrdenCliente(ocId);
         dispatch({ type: "REEMPLAZAR_OC", oc });
+        await qc.invalidateQueries({ queryKey: [K_OC] });
       },
     }),
-    [state],
+    [state, qc],
   );
 
   return <OrdenesContext.Provider value={value}>{children}</OrdenesContext.Provider>;

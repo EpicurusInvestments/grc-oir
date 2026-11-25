@@ -11757,7 +11757,48 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   limpios. Migración verificada con viaje redondo `downgrade`/`upgrade` sobre la BD de
   desarrollo.
 
-### ADR-287 — Facturación: Notas de Crédito (captura + aplicación en Cobranza; timbrado sigue siendo manual)
+### ADR-287 — Fix: las tablas de "Órdenes de Servicio"/"Órdenes de Transmisión" no se refrescaban tras guardar una edición (cabo suelto de ADR-285)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (reporte del usuario).
+- **Disparador:** el usuario reportó que, tras editar una `OrdenCliente` o una
+  `OrdenEstacion` desde el panel de detalle y darle **Guardar**, la tabla de la lista se
+  quedaba con los datos viejos — el cambio solo aparecía si se salía de la pantalla
+  (Servicio/Transmisión) y se volvía a entrar.
+- **Causa raíz:** ADR-285 migró la LECTURA de estas dos tablas a TanStack Query
+  (`useOrdenesClientePagina`/`useOrdenesEstacionPagina`, `frontend/src/modules/ordenes/
+  hooks.ts`), pero dejó intactos los 6 métodos de escritura de `OrdenesContext.tsx`
+  (`crearOC`/`actualizarOC`/`crearOE`/`actualizarOE`/`avanzarAReales`/`cancelarDia`/
+  `cerrarOC`), que siguen viviendo en un `useReducer` aparte. Tras guardar, esos métodos
+  solo despachaban `REEMPLAZAR_OC`/`REEMPLAZAR_OE` sobre el `state` del reducer — un
+  arreglo que, desde ADR-285, **ninguna tabla lee**. Ni un solo
+  `queryClient.invalidateQueries` existía en todo el módulo `ordenes` (confirmado por
+  grep). Al salir y volver a entrar, el componente se desmonta/remonta y la query arranca
+  de cero contra el backend, por eso ahí sí se veía el dato correcto — era la única señal
+  de que el problema era de invalidación, no del cálculo en sí.
+- **Cambio** (`frontend/src/modules/ordenes/hooks.ts`,
+  `frontend/src/modules/ordenes/state/OrdenesContext.tsx`): se exportan las query keys
+  `K_OC`/`K_OE` (antes privadas del módulo) y cada uno de los 6 métodos de escritura
+  invalida, tras su(s) `dispatch`, la(s) query key(s) que corresponde según qué entidad
+  tocó (`K_OC` para los que afectan una `OrdenCliente`, `K_OE` para una `OrdenEstacion`,
+  ambas para los que afectan las dos — p.ej. `crearOE`/`avanzarAReales`/`cancelarDia`,
+  que también recalculan el balance de la OC padre). Se invalida por **prefijo**
+  (`queryKey: [K_OC]`), no por key completa, para cubrir cualquier combinación de
+  filtros/página sin enumerarla — mismo patrón ya usado en ADR-286 para
+  `K_FACTURACION_CLIENTES`/`K_ORDENES` desde el módulo `cobranza`.
+- **Pruebas:** `IncidenciaListPage.test.tsx` renderizaba `OrdenesProvider` sin
+  `QueryClientProvider` (no hacía falta antes de este fix) — ahora `OrdenesProvider` usa
+  `useQueryClient()` internamente, así que se le agregó el wrapper (mismo patrón que ya
+  usan `OrdenClienteListPage.test.tsx`/`OrdenEstacionListPage.test.tsx`). Sin pruebas
+  nuevas dedicadas: el fix es de invalidación de caché, no de lógica de negocio
+  observable por unit test sin un backend real de por medio.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (sin errores nuevos). Suite de
+  `ordenes` 100% verde (297/297). Suite completa de frontend sin regresiones (541/553,
+  mismos 12 fallos preexistentes de `auth`/`seguridad`/`apiClient`, confirmados desde
+  antes de este cambio). Pendiente de confirmar manualmente contra el backend real: editar
+  una Orden de Servicio y una de Transmisión y ver el cambio reflejado en la tabla sin
+  salir de la pantalla.
+
+### ADR-288 — Facturación: Notas de Crédito (captura + aplicación en Cobranza; timbrado sigue siendo manual)
 
 - **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura, 2
   rondas de preguntas antes de implementar).

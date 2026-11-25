@@ -1568,6 +1568,14 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   541/553 verde (las 12 fallas restantes son de `auth`/`seguridad`, preexistentes y no
   relacionadas, confirmadas con `git stash`); manual con `curl` contra datos reales de
   dev (paginación, filtros y orden descendente correctos).
+- **ADR-287 (fix, reporte del usuario): las tablas de "Órdenes de Servicio"/"Órdenes de
+  Transmisión" no se refrescaban tras guardar una edición.** Cabo suelto de ADR-285: la
+  LECTURA de las 2 tablas se migró a TanStack Query, pero los 6 métodos de escritura de
+  `OrdenesContext.tsx` (`crearOC`/`actualizarOC`/`crearOE`/`actualizarOE`/
+  `avanzarAReales`/`cancelarDia`/`cerrarOC`) seguían sin invalidar esas queries — solo
+  actualizaban su propio `useReducer`, que la tabla ya no lee. Se exportan `K_OC`/`K_OE`
+  desde `hooks.ts` y cada método invalida (por prefijo) la(s) query key(s) que
+  corresponde tras guardar. Ver ADR-287 en `arquitectura.md` para el detalle completo.
 
 ## Pendientes / dudas
 

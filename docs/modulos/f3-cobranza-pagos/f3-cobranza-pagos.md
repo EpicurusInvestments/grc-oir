@@ -344,7 +344,7 @@ Resumen del cambio (detalle técnico completo en `arquitectura.md`):
 - `POST /pagos/{id}/cancelar` ahora exige body `{"motivo": "..."}` (`min_length=3`).
 - `PagoGrupoDetalleRead`/`PagoClienteRead` exponen `motivo_cancelacion`.
 
-**ADR-287 (F2, petición del usuario, con captura) — Notas de Crédito aplicadas como
+**ADR-288 (F2, petición del usuario, con captura) — Notas de Crédito aplicadas como
 `PagoCliente` sintético; ver la entrada completa en `arquitectura.md` y en
 `docs/modulos/f2-facturacion/f2-facturacion.md`:** una Nota de Crédito
 (`FacturaCliente.tipo_comprobante == "E"`) NO es una entidad de F3 ni tiene su propia

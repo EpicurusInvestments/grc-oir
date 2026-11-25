@@ -1056,11 +1056,11 @@ en F1) — no el propio CxP que capturó el registro.
   confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
   cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
 
-## Notas de Crédito (ADR-287, petición del usuario, con captura)
+## Notas de Crédito (ADR-288, petición del usuario, con captura)
 
 `FacturaCliente` con `tipo_comprobante == "E"` — reutiliza la entidad existente, no se
 creó ninguna tabla nueva (ni para la NC en sí, ni para su efecto en Cobranza). Detalle
-técnico completo en `docs/arquitectura.md` (ADR-287); resumen operativo:
+técnico completo en `docs/arquitectura.md` (ADR-288); resumen operativo:
 
 - **Alta:** botón "+ Nota de crédito" en el detalle de una factura YA TIMBRADA (no
   marcada "Facturado en sistema externo"). Sin órdenes propias — receptor, empresa
