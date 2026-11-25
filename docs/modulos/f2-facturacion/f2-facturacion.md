@@ -204,7 +204,9 @@ afecta por igual a `FacturaAgencia`/`FacturaVendedor`, que comparten el mismo en
 detalle muestra un bloque "Generar requisición de pago"
 (`RequisicionInlineForm.tsx`, compartido por las 3 pantallas de este grupo) que da de
 alta la `Requisicion` de F3 sin salir de esta pantalla — ver la ficha de F3 para el
-detalle del endpoint y la validación de elegibilidad.
+detalle del endpoint y la validación de elegibilidad. **ADR-291 (fix de UI):** se quitó
+el letrero "Sugerido, editable" de "Monto de la requisición" — desalineaba esa fila
+contra "Número de OC (SAP)".
 
 **`ordenes_asignadas` (ADR-084, no es columna de la tabla):** cuántas `OrdenEstacion`
 tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre

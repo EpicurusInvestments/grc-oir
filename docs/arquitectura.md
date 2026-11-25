@@ -11968,3 +11968,21 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   emisor del XML contra el catálogo de Agencia/Afiliado/Vendedor (el parser ya lo
   extrae, para cuando se aborde); lectura/autofill desde el PDF (el usuario pidió
   explícitamente "solo es con la carga del xml no del pdf").
+
+### ADR-291 — Fix de UI: quita el letrero "Sugerido, editable" de "Monto de la requisición" (desalineaba el bloque "Generar requisición de pago")
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con captura).
+- **Disparador:** en el detalle de una factura autorizada (Agencia/Vendedor/Afiliado —
+  las 3 comparten `RequisicionInlineForm.tsx`, ADR-282), el campo "Monto de la
+  requisición" llevaba `<FieldTag origin="catalogo" text="Sugerido, editable" />` — un
+  texto largo dentro de un componente pensado para etiquetas de una palabra
+  ("Catálogo", "Calculado"). El texto se envolvía en 2 líneas ("SUGERIDO," / "EDITABLE"),
+  lo que empujaba el input hacia abajo y lo desalineaba contra "Número de OC (SAP)" en
+  la misma fila de 2 columnas (`.r2`).
+- **Cambio:** se quita el `<FieldTag>` por completo — el título queda en un solo
+  renglón ("Monto de la requisición") y los 2 inputs de la fila vuelven a alinearse
+  (mismo criterio en los 3 formularios, al ser un único componente compartido).
+- **No se tocó base de datos ni backend:** es un cambio de UI puro.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios. Suite de `FacturasAgenciaPage`/
+  `FacturasVendedorPage`/`FacturasAfiliadoPage` 100% verde (30/30) — ninguna prueba
+  dependía de ese texto.
