@@ -18,7 +18,8 @@ import { OrdenesProvider } from "../state/OrdenesContext";
 import { anunciantes, estaciones, tarifas } from "../state/catalogosCache";
 import type { OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
-import { makeOC, makeOE } from "./fixtures";
+import { makeOC, makeOE, makeOEDTO, makeDiaDTO } from "./fixtures";
+import type { OrdenEstacionApiDTO, OrdenEstacionDiaApiDTO } from "../adapters/ordenesApiDTO";
 import {
   listarAudiosOrdenEstacionApi,
   listarHistorialTarifaOrdenEstacionApi,
@@ -55,6 +56,52 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => {
     listarHistorialTarifaOrdenEstacionApi: vi.fn().mockResolvedValue([]),
   };
 });
+
+// ADR-285 (petición del usuario, con captura): el balance "OE ya existentes de la misma
+// OC" ya no viene de `state.ordenesEstacion` (`useOrdenes()`) — el formulario lo pide
+// acotado a la OC vía `useOesDeLaOC` (hooks.ts), que pega a `oesDeLaOCApi` +
+// `listarDiasOrdenEstacionApi`. `renderForm` (abajo) puebla `oesDeLaOCMock` con las
+// mismas `oesPrevias`/`oe` que antes iban directo a `OrdenesProvider`, convertidas a la
+// forma DTO que de verdad manda el backend — las pruebas de este archivo no cambian.
+let oesDeLaOCMock: OrdenEstacion[] = [];
+
+function oeADTO(oe: OrdenEstacion): OrdenEstacionApiDTO {
+  return makeOEDTO({
+    orden_estacion_id: oe.id,
+    folio_orden_estacion: oe.folio_orden_interna,
+    orden_id: oe.orden_id,
+    estacion_id: oe.estacion_id,
+    plaza_id: oe.plaza_id,
+  });
+}
+
+function diaADTO(row: OrdenEstacion["periodo_transmision"][number], ordenEstacionId: string): OrdenEstacionDiaApiDTO {
+  return makeDiaDTO({
+    orden_estacion_dia_id: row.orden_estacion_dia_id,
+    orden_estacion_id: ordenEstacionId,
+    fecha_transmision: row.fecha,
+    hora_inicio: `${row.hora_inicio}:00`,
+    hora_fin: `${row.hora_termino}:00`,
+    spots_solicitados: row.spots_diarios,
+    spots_asignados: row.spots_diarios,
+    cancelada: row.cancelada ?? false,
+  });
+}
+
+vi.mock("../adapters/ordenesApi", () => ({
+  oesDeLaOCApi: vi.fn(async (ordenId: string) =>
+    oesDeLaOCMock.filter((o) => o.orden_id === ordenId).map(oeADTO),
+  ),
+  listarDiasOrdenEstacionApi: vi.fn(async (ordenEstacionId: string) => {
+    const oe = oesDeLaOCMock.find((o) => o.id === ordenEstacionId);
+    return oe ? oe.periodo_transmision.map((row) => diaADTO(row, ordenEstacionId)) : [];
+  }),
+  paginaOrdenesEstacionApi: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }),
+  paginaOrdenesClienteApi: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }),
+  listarVerificacionesApi: vi.fn().mockResolvedValue([]),
+  listarHistorialComisionesApi: vi.fn().mockResolvedValue([]),
+  paginaIncidenciasApi: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }),
+}));
 
 // ADR-169: "Producto"/"Duración" se llenan desde el catálogo "Producto Duración" — mock
 // del catálogo (sin pegarle a la red real desde jsdom), con 2 productos: uno con
@@ -138,6 +185,7 @@ function renderForm(
   const oe = opts.oe ? makeOE({ ...opts.oe, orden_id: oc.id }) : undefined;
   const clonarDesde = opts.clonarDesde ? makeOE({ ...opts.clonarDesde, orden_id: oc.id }) : undefined;
   const ordenesEstacion = oe ? [...oesPrevias, oe] : oesPrevias;
+  oesDeLaOCMock = ordenesEstacion;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={qc}>
@@ -462,8 +510,9 @@ describe("Balance de spots en vivo — 1.2", () => {
       oesPrevias: [{ periodo_transmision: [{ fecha: "2025-06-01", hora_inicio: "07:00", hora_termino: "08:00", spots_diarios: 50 }] }],
     });
 
-    // Sin agregar nada en ESTA OI todavía, ya refleja los 50 de la OE previa.
-    expect(screen.getByText("faltan 70 spots por asignar")).toBeInTheDocument();
+    // Sin agregar nada en ESTA OI todavía, ya refleja los 50 de la OE previa — ADR-285:
+    // ahora llega vía `useOesDeLaOC` (async), así que hay que esperar a que resuelva.
+    await waitFor(() => expect(screen.getByText("faltan 70 spots por asignar")).toBeInTheDocument());
 
     await agregarDia(container, 70);
     expect(screen.getByText("✓ 100% asignado")).toBeInTheDocument();

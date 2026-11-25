@@ -7,18 +7,19 @@
  * (filtros hacia Órdenes de Transmisión/de Servicio), así que se listan directamente.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { currentUser } from "@/shared/lib/currentUser";
 import type { SidebarGroup } from "@/shared/ui";
 import { ExplorerLayout } from "@/shared/ui";
 
 import { cargarEstadoReal } from "../adapters/cargarEstadoReal";
+import { useConteosOrdenes } from "../hooks";
 import { IncidenciaListPage } from "../incidencia/pages/IncidenciaListPage";
 import { OrdenClienteListPage } from "../ordenCliente/pages/OrdenClienteListPage";
 import { OrdenEstacionListPage, type FiltroOI } from "../ordenEstacion/pages/OrdenEstacionListPage";
-import { OrdenesProvider, useOrdenes, type OrdenesState } from "../state/OrdenesContext";
-import { calcularContadores, type FiltroOrdenCliente } from "../state/selectors";
+import { OrdenesProvider, type OrdenesState } from "../state/OrdenesContext";
+import type { FiltroOrdenCliente } from "../state/selectors";
 import { VerificacionListPage } from "../verificacion/pages/VerificacionListPage";
 
 const FASE_LABEL = "ÓRDENES";
@@ -39,13 +40,11 @@ interface Nav {
 }
 
 function OrdenesExplorerContent() {
-  const { state } = useOrdenes();
   const [nav, setNav] = useState<Nav>({ view: "orden_cliente" });
 
-  const counts = useMemo(
-    () => calcularContadores(state.ordenesCliente, state.ordenesEstacion, state.incidencias.length),
-    [state.ordenesCliente, state.ordenesEstacion, state.incidencias.length],
-  );
+  // ADR-285: conteos del sidebar resueltos con consultas ligeras contra el backend
+  // (antes se calculaban filtrando el arreglo completo ya precargado en memoria).
+  const counts = useConteosOrdenes();
 
   const groups: SidebarGroup[] = [
     {

@@ -101,6 +101,7 @@ export function ordenClienteFromApi(dto: OrdenClienteApiDTO): OrdenCliente {
     created_at: dto.created_at.slice(0, 10),
     fecha_cierre: dto.fecha_cierre,
     updated_at: dto.updated_at ? dto.updated_at.slice(0, 10) : null,
+    oe_count: dto.oe_count,
   };
 }
 

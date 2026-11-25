@@ -799,6 +799,12 @@ class OrdenEstacionListParams(ListParams):
     plaza_id: uuid.UUID | None = None
     anunciante_id: uuid.UUID | None = None
     estatus: EstatusOrdenEstacion | None = None
+    # ADR-285 (petición del usuario, con captura): paginación real de "Órdenes de
+    # Transmisión"/"Verificaciones" — antes el frontend traía el 100% y filtraba en
+    # memoria. `tiene_incidencias` es el filtro que le faltaba al backend para que la
+    # pantalla de Verificaciones (pills "Con incidencias"/"Sin incidencias") deje de
+    # necesitar el arreglo completo.
+    tiene_incidencias: bool | None = None
 
 
 # ── Schemas de escritura (Tanda 5) ────────────────────────────────────────────────
@@ -993,10 +999,26 @@ class OrdenEstacionRepository(BaseRepository[OrdenEstacion]):
         # que OrdenEstacion no tiene (usa `estatus`, ciclo de vida propio — ver docstring).
         q = (getattr(params, "q", None) or "").strip()
         if q:
+            # ADR-285: antes solo comparaba folio/número de la propia OE — el frontend
+            # también buscaba por nombre de estación, nombre de afiliado y folio de la
+            # OC de origen, pero lo hacía en memoria sobre el arreglo completo. Se arma
+            # con LEFT JOIN (1:N desde OrdenEstacion, sin riesgo de duplicar filas:
+            # Estacion/Afiliado/OrdenCliente son cada una N:1 desde aquí).
+            from app.modules.catalogos.afiliado import Afiliado
+            from app.modules.ordenes.orden_cliente import OrdenCliente
+
             patron = f"%{q}%"
-            stmt = stmt.where(
-                OrdenEstacion.folio_orden_estacion.ilike(patron)
-                | OrdenEstacion.numero_orden_estacion.ilike(patron)
+            stmt = (
+                stmt.outerjoin(Estacion, Estacion.estacion_id == OrdenEstacion.estacion_id)
+                .outerjoin(Afiliado, Afiliado.afiliado_id == Estacion.afiliado_id)
+                .outerjoin(OrdenCliente, OrdenCliente.orden_id == OrdenEstacion.orden_id)
+                .where(
+                    OrdenEstacion.folio_orden_estacion.ilike(patron)
+                    | OrdenEstacion.numero_orden_estacion.ilike(patron)
+                    | Estacion.nombre_estacion.ilike(patron)
+                    | Afiliado.nombre_afiliado.ilike(patron)
+                    | OrdenCliente.folio_orden.ilike(patron)
+                )
             )
         estatus = getattr(params, "estatus", None)
         if estatus is not None:
@@ -1005,6 +1027,16 @@ class OrdenEstacionRepository(BaseRepository[OrdenEstacion]):
             valor = getattr(params, campo, None)
             if valor is not None:
                 stmt = stmt.where(getattr(OrdenEstacion, campo) == valor)
+        tiene_incidencias = getattr(params, "tiene_incidencias", None)
+        if tiene_incidencias is not None:
+            from app.modules.ordenes.incidencia import Incidencia
+
+            existe = (
+                select(Incidencia.incidencia_id)
+                .where(Incidencia.orden_estacion_id == OrdenEstacion.orden_estacion_id)
+                .exists()
+            )
+            stmt = stmt.where(existe if tiene_incidencias else ~existe)
         return stmt
 
     def listar_dias(self, orden_estacion_id: uuid.UUID) -> Sequence[OrdenEstacionDia]:
@@ -2642,7 +2674,9 @@ def get_orden_estacion_service(db: Session = Depends(get_db)) -> OrdenEstacionSe
         search_columns=[OrdenEstacion.folio_orden_estacion],
         # ADR-275: mismo motivo que en OrdenCliente — ordenar por folio como texto se
         # rompe en cuanto conviven folios con y sin ceros a la izquierda.
-        default_order_by=[OrdenEstacion.created_at, OrdenEstacion.folio_orden_estacion],
+        # ADR-285: DESCENDENTE — más reciente primero, mismo motivo que en OrdenCliente
+        # (antes lo resolvía un `.sort()` adicional en `OrdenEstacionListPage.tsx`).
+        default_order_by=[OrdenEstacion.created_at.desc(), OrdenEstacion.folio_orden_estacion],
     )
     return OrdenEstacionService(repo)
 
@@ -2654,12 +2688,21 @@ router_estaciones = APIRouter(prefix="/estaciones", tags=["ordenes:estaciones"])
 def listar_ordenes_estacion(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    q: str | None = Query(None, description="Búsqueda por folio o número de orden de estación"),
+    q: str | None = Query(
+        None,
+        description=(
+            "Búsqueda por folio/número de la OE, nombre de estación, nombre de "
+            "afiliado o folio de la OrdenCliente de origen"
+        ),
+    ),
     orden_id: uuid.UUID | None = Query(None, description="Acota a las OE de una OrdenCliente"),
     estacion_id: uuid.UUID | None = Query(None),
     plaza_id: uuid.UUID | None = Query(None),
     anunciante_id: uuid.UUID | None = Query(None),
     estatus: EstatusOrdenEstacion | None = Query(None, description="Filtro por estatus"),
+    tiene_incidencias: bool | None = Query(
+        None, description="Filtra por si la OE tiene (o no) alguna Incidencia registrada"
+    ),
     usuario: CurrentUser = Depends(requiere_permiso("ordenes:leer")),
     svc: OrdenEstacionService = Depends(get_orden_estacion_service),
 ) -> Page[OrdenEstacionRead]:
@@ -2673,6 +2716,7 @@ def listar_ordenes_estacion(
             plaza_id=plaza_id,
             anunciante_id=anunciante_id,
             estatus=estatus,
+            tiene_incidencias=tiene_incidencias,
         )
     )
 

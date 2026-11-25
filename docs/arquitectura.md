@@ -11591,3 +11591,209 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 - **Verificado:** `tsc --noEmit`/`eslint` limpios; suite completa del módulo `cobranza`
   (`vitest run src/modules/cobranza`) 100% verde, 68 pruebas. Sin cambios de backend —
   nada que correr en `pytest`.
+
+### ADR-285 — "Órdenes de Servicio"/"Órdenes de Transmisión"/"Verificaciones": paginación real contra el backend, quita el preload N+1 de raíz
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura).
+- **Disparador:** *"tenemos un gran problema en la pantalla de Ordenes de Servicio se
+  esta volviendo demasiado lenta para cargar la información de los registros en la
+  lista: Lentitud en paginación a ordenes de servicio y ordenes de estación / Se trae el
+  100% de los registros a pesar de tener paginación y se satura"*. La causa raíz NO era
+  que el backend no soportara paginación real (`BaseRepository.list()` ya hacía
+  `LIMIT`/`OFFSET` de verdad) — era que `cargarEstadoReal.ts` precargaba el sistema
+  COMPLETO una sola vez al entrar al módulo (por cada `OrdenCliente`, su historial de
+  comisiones; por cada `OrdenEstacion`, sus días y verificaciones — ~40 requests en
+  paralelo con los volúmenes de siembra) hacia un `useReducer` global
+  (`OrdenesContext`), y las pantallas de lista hacían pseudo-paginación con `.slice()`
+  sobre ese arreglo ya completo en memoria. Se confirmó el alcance con el usuario en 3
+  rondas de preguntas: (1) las 2 pantallas de lista, (2) TODAS las bandejas del sidebar
+  (no solo esas 2), (3) también quitar el preload de raíz, no solo parchar las 2 listas.
+- **Cambio — backend** (`backend/app/modules/ordenes/orden_cliente.py`,
+  `orden_estacion.py`): nuevos filtros de `ListParams` —
+  `OrdenCliente.listas_para_cerrar`/`activas`, `OrdenEstacion.tiene_incidencias` — para
+  que las bandejas del sidebar cuenten con una consulta ligera (`page:1,size:1` + leer
+  solo `.total`, mismo patrón que `useConteosFacturacion`) en vez de derivar el conteo de
+  un arreglo ya cargado. `OrdenClienteRead` expone `oe_count` (resuelto en lote por
+  página, sin N+1, mismo patrón que `FacturaAfiliadoService._conteo_asignaciones()`) para
+  que la tabla de "Órdenes de Servicio" no necesite las OE completas de cada fila. `q` se
+  extendió a más columnas (anunciante; estación/afiliado/OC de origen en OE). **Bug real
+  encontrado y corregido de paso:** el `default_order_by` de ambas entidades estaba
+  ASCENDENTE — el frontend lo compensaba con su propio `.sort()` (más reciente primero),
+  que esta ronda le quita; sin este fix el orden visible se habría invertido en
+  silencio. Ahora `created_at.desc()` en ambas.
+- **Cambio — frontend, capa de datos** (`frontend/src/modules/ordenes/hooks.ts`, nuevo):
+  reemplaza la dependencia de `OrdenesContext` para TODO lo de solo lectura de estas 3
+  pantallas, con hooks de TanStack Query acotados a lo que cada pantalla necesita:
+  `useOrdenesClientePagina`/`useOrdenesEstacionPagina` (una página real para la tabla),
+  `useOrdenClienteSeleccionada`/`useOrdenEstacionSeleccionada` (la fila seleccionada,
+  completa, vía `refrescarOrdenCliente`/`refrescarOrdenEstacion` — independiente de en
+  qué página esté), `useOesDeLaOC`/`useIncidenciasDeLaOC`/`useHistorialComisionesOC`
+  (acotados a una OC/OE, nunca el arreglo completo), `useConteosOrdenes` (las bandejas
+  del sidebar, un query ligero por bandeja) y `useVerificacionesPagina` (como
+  `useOrdenesEstacionPagina`, pero también trae verificaciones por fila — más caro, pero
+  acotado a la página). `adapters/ordenesApi.ts` ganó las llamadas de una sola página
+  (`paginaOrdenesClienteApi`/`paginaOrdenesEstacionApi`/`paginaIncidenciasApi`/
+  `oesDeLaOCApi`) sin tocar las de `fetchAllPages` existentes (`cargarEstadoReal.ts` las
+  sigue usando para lo que NO se migró esta ronda).
+- **Cambio — pantallas:** `OrdenClienteListPage.tsx`/`OrdenEstacionListPage.tsx`/
+  `VerificacionListPage.tsx` reescritas para paginar/buscar/filtrar contra el backend en
+  vez de derivar sobre `state.ordenesCliente`/`state.ordenesEstacion`/`state.incidencias`
+  completos; `OrdenesExplorerPage.tsx` usa `useConteosOrdenes()` para las bandejas.
+  "Verificaciones" sigue reutilizando `verificacionDerivada()`/`diaVerificacion()`
+  (`state/selectors.ts`) SIN CAMBIOS — solo cambia de dónde vienen los datos que
+  alimentan al selector (antes el arreglo completo, ahora la página actual); el
+  reordenado por `updated_at` (cuándo la OI llegó a 2.3, no por `created_at`) se quedó
+  como un `.sort()` sobre la página ya traída (~20 filas), no sobre el sistema completo.
+  El escrito (altas, "Clonar", "Guardar", avanzar a reales) sigue intacto en
+  `OrdenesContext.tsx` — fuera de alcance de esta ronda, que es solo de lectura.
+  `OrdenEstacionForm.tsx`: el balance de spots "ya asignados por otras OE de la misma OC"
+  pasó de leer `state.ordenesEstacion` completo a `useOesDeLaOC(oc.id)`, acotado.
+- **Cambio — causa raíz** (`frontend/src/modules/ordenes/adapters/cargarEstadoReal.ts`):
+  se quitan los 2 fetches N+1 (historial de comisiones por OC, días+verificaciones por
+  OE) — las 2 listas base completas (OC/OE, sin período/verificaciones) se conservan
+  porque siguen siendo baratas (2 requests) y las necesitan el OC-picker de
+  `OrdenEstacionForm` e `IncidenciaListPage` (ninguno de los dos migrado esta ronda; ninguno
+  necesita período/verificaciones, solo folio/estación/id).
+- **Pruebas:** `backend/app/tests/test_f1_03_ordenes_lectura.py` — 10 pruebas nuevas
+  (`oe_count`, `q` extendido en ambas entidades, `listas_para_cerrar`, `activas`,
+  `tiene_incidencias`, orden descendente por `created_at` en OC y en OE). Frontend:
+  `OrdenClienteListPage.test.tsx`/`OrdenEstacionListPage.test.tsx`/
+  `VerificacionListPage.test.tsx`/`OrdenEstacionForm.test.tsx` reescritos para mockear
+  `adapters/ordenesApi.ts` (con filtrado `q`/`estatus` simulado, mismo criterio que el
+  backend real) en vez de precargar `OrdenesProvider.initialState` con el arreglo
+  completo; las pruebas de orden "más reciente primero" que ya probaba el frontend se
+  dieron de baja (esa responsabilidad es ahora 100% del backend, cubierta ahí).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`, confirmada 2
+  veces — una corrida intermedia tuvo 1 falla intermitente preexistente y no relacionada,
+  confirmada con `git stash`). `tsc --noEmit`/`eslint` limpios. Suite completa de
+  frontend: 541/553 verde — las 12 fallas restantes son de `auth`/`seguridad`/
+  `apiClient` (no tocados en esta ronda), confirmadas preexistentes con `git stash`.
+  Manual: servidores de desarrollo reiniciados, `curl` contra `/api/v1/ordenes/clientes`
+  y `/api/v1/ordenes/estaciones` con `page`/`size`/`listas_para_cerrar`/
+  `tiene_incidencias` reales — paginación, filtros y orden descendente correctos.
+
+### ADR-286 — Cobranza: cancelar un pago SÍ puede deshacer una orden/factura ya "cobrada", con motivo obligatorio (reemplaza el candado ciego de ADR-271)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura e
+  investigación de 2 agentes antes de implementar).
+- **Disparador:** en "Pagos recibidos", cancelar un pago fallaba con *"requiere una nota
+  de crédito que el sistema no maneja"* cuando alguna factura que ese pago tocó ya
+  llegó a `cobrada`. El usuario lo reportó como "falla en pagos múltiples"; la
+  investigación (lectura completa de `PagoClienteService.cancelar`, líneas 1226-1240 de
+  entonces) confirmó que la regla de **ADR-271** bloqueaba igual para 1 o N facturas —
+  un pago múltiple solo tiene más probabilidad de tocar alguna ya cobrada, al tocar más
+  facturas por operación. Preguntado explícitamente, el usuario confirmó que quiere la
+  **reversa completa** (deshacer aunque implique "des-cobrar"), más **motivo
+  obligatorio** al cancelar (no existía: el endpoint no recibía body).
+- **Por qué es seguro revertir "cobrada":** se investigó a fondo (lectura de
+  `factura_agencia.py`/`factura_vendedor.py`/`factura_afiliado.py`) que
+  `OrdenCliente.estatus_orden == "cobrada"` es solo un **gate de lectura** —
+  `_validar_cobradas_antes_de_autorizar` (ADR-264) lo exige ANTES de poder `autorizar()`
+  una `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado`, pero NADA se dispara
+  automáticamente cuando la orden llega a `cobrada`. Revertirla no deja nada huérfano,
+  **salvo** que ya se haya autorizado/pagado una de esas 3 facturas de comisión con base
+  en ese estado — ahí sí es un compromiso tomado que ya no se puede deshacer limpiamente,
+  y es lo único que bloquea.
+- **Cambio — la cascada ahora SÍ tiene reversa** (`backend/app/modules/cobranza/
+  cobranza_factura.py`, `backend/app/modules/facturacion/factura_cliente.py`,
+  `backend/app/modules/ordenes/orden_cliente.py`):
+  - `CobranzaFacturaService.recalcular_tras_pago`: captura `estado_anterior` ANTES de
+    sobreescribir `estatus_cobro`; si el anterior era `cobrada` y el nuevo ya no,
+    invoca `FacturaClienteService.revertir_cobro` — mismo mecanismo de handoff (misma
+    sesión, sin `commit` propio) que la cascada hacia adelante.
+  - `FacturaClienteService.revertir_cobro` (nuevo, gemelo de `marcar_cobrada`): NO pasa
+    por `_validar_transicion`/`TRANSICIONES` (`cobrada: set()` la marca terminal A
+    PROPÓSITO para el camino hacia adelante — excepción deliberada para el camino hacia
+    atrás, igual que ya hace `revertir_facturacion`). El estado anterior (`timbrada` vs
+    `entregada`) se infiere de `fecha_entrega_factura` (nunca se borra una vez
+    capturada). Llama `OrdenClienteService.revertir_cobro` por cada orden de la factura.
+  - `OrdenClienteService.revertir_cobro` (nuevo, gemelo de `marcar_cobrada`): si está
+    `cobrada`, vuelve a `facturada`; no valida nada por su cuenta (el punto de entrada
+    único ya lo hizo).
+  - `comisiones_comprometidas_de_orden` (nuevo, función de módulo en
+    `factura_cliente.py`, importa `factura_agencia`/`factura_vendedor`/
+    `factura_afiliado` de forma perezosa — evita invertir la dirección de dependencia
+    F1→F2): el reverso exacto de `_validar_cobradas_antes_de_autorizar` (ADR-264) — para
+    una orden, regresa qué comisiones (`agencia`/`vendedor`/`afiliado`) ya pasaron de
+    `recibida`. `PagoClienteService.cancelar` la llama por cada orden distinta que el
+    pago toca, ANTES de escribir cualquier fila (todo-o-nada sobre el grupo completo);
+    si cualquiera regresa un bloqueo, `ConflictError` (409) con el detalle de qué orden y
+    qué comisión(es).
+  - `PagoCliente.motivo_cancelacion` (columna nueva, `Unicode(255)` nullable — migración
+    `5782aa74d8d8`). `PagoClienteCancelarRequest` (`motivo: str`, `min_length=3`) es el
+    nuevo body de `POST /pagos/{id}/cancelar`; se persiste en TODAS las filas del grupo
+    cancelado. Expuesto en `PagoClienteRead`/`PagoGrupoDetalleRead`.
+  - Hallazgo y fix de paso (bug preexistente, no relacionado, descubierto al generar la
+    migración): `backend/migrations/env.py` no importaba `factura_vendedor` en su lista
+    de modelos de F2 — `requisicion.py` (que sí tiene FK a `factura_vendedor_id`) se
+    procesaba antes de que esa tabla existiera en el registro de SQLAlchemy, y
+    `alembic revision --autogenerate` tronaba con `NoReferencedTableError` para
+    CUALQUIER migración nueva, sin importar de qué módulo fuera. Se agregó el import
+    faltante.
+- **Cambio — frontend** (`frontend/src/modules/cobranza/pagoCliente/pages/
+  PagosClientePage.tsx`, `frontend/src/shared/ui/ConfirmDialog.tsx`): `ConfirmDialog`
+  gana `children`/`confirmDisabled` opcionales (retrocompatible, ningún uso existente se
+  rompe) — "Cancelación de Pago" ahora incluye un `<textarea>` de motivo obligatorio
+  (botón de confirmar deshabilitado hasta que tenga texto) y actualiza el mensaje de
+  advertencia (ya no amenaza con rechazar por "COBRADA en su totalidad", ahora explica la
+  regla real). El detalle del pago muestra "Motivo de cancelación" si el pago ya está
+  cancelado. `pagoClienteApi.cancelar`/`useCancelarPago` mandan `motivo`; esta mutación
+  ahora también invalida `K_FACTURACION_CLIENTES`/`K_ORDENES` (antes solo invalidaba su
+  propio módulo, correcto cuando la cancelación nunca tocaba F1/F2 — ya no es el caso).
+- **Pruebas:** `backend/app/tests/test_f3_02_cobranza_escritura.py` — 2 pruebas
+  reescritas (antes esperaban 409 "ciego", ahora verifican la reversa completa en los 3
+  niveles, incluida la variante `timbrada` vs `entregada` según `fecha_entrega_factura`)
+  + 4 nuevas: bloqueo por comisión de agencia ya autorizada, rechazo por motivo vacío o
+  ausente (422), pago "extra" sobre una ya cobrada que SÍ se permite cancelar (no cruza
+  el umbral hacia abajo, la factura se queda cobrada igual), y pago múltiple con una
+  sola de las N órdenes comprometida que rechaza TODO el grupo (todo-o-nada). Frontend:
+  `PagosClientePage.test.tsx` actualizado (interacción con el textarea de motivo, nueva
+  firma de `cancelarMutate`, aserciones del motivo mostrado).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
+  limpio. `mypy` sin errores NUEVOS (los preexistentes de este archivo —desde antes de
+  esta ronda— no cambian de naturaleza, solo se repite 1 vez más el mismo problema de
+  anotación ya conocido, el método `list()` de la clase tapando al builtin). Frontend:
+  suite de `cobranza`/`shared/ui` 100% verde (96 pruebas), `tsc --noEmit`/`eslint`
+  limpios. Migración verificada con viaje redondo `downgrade`/`upgrade` sobre la BD de
+  desarrollo.
+
+### ADR-287 — Fix: las tablas de "Órdenes de Servicio"/"Órdenes de Transmisión" no se refrescaban tras guardar una edición (cabo suelto de ADR-285)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-24 (reporte del usuario).
+- **Disparador:** el usuario reportó que, tras editar una `OrdenCliente` o una
+  `OrdenEstacion` desde el panel de detalle y darle **Guardar**, la tabla de la lista se
+  quedaba con los datos viejos — el cambio solo aparecía si se salía de la pantalla
+  (Servicio/Transmisión) y se volvía a entrar.
+- **Causa raíz:** ADR-285 migró la LECTURA de estas dos tablas a TanStack Query
+  (`useOrdenesClientePagina`/`useOrdenesEstacionPagina`, `frontend/src/modules/ordenes/
+  hooks.ts`), pero dejó intactos los 6 métodos de escritura de `OrdenesContext.tsx`
+  (`crearOC`/`actualizarOC`/`crearOE`/`actualizarOE`/`avanzarAReales`/`cancelarDia`/
+  `cerrarOC`), que siguen viviendo en un `useReducer` aparte. Tras guardar, esos métodos
+  solo despachaban `REEMPLAZAR_OC`/`REEMPLAZAR_OE` sobre el `state` del reducer — un
+  arreglo que, desde ADR-285, **ninguna tabla lee**. Ni un solo
+  `queryClient.invalidateQueries` existía en todo el módulo `ordenes` (confirmado por
+  grep). Al salir y volver a entrar, el componente se desmonta/remonta y la query arranca
+  de cero contra el backend, por eso ahí sí se veía el dato correcto — era la única señal
+  de que el problema era de invalidación, no del cálculo en sí.
+- **Cambio** (`frontend/src/modules/ordenes/hooks.ts`,
+  `frontend/src/modules/ordenes/state/OrdenesContext.tsx`): se exportan las query keys
+  `K_OC`/`K_OE` (antes privadas del módulo) y cada uno de los 6 métodos de escritura
+  invalida, tras su(s) `dispatch`, la(s) query key(s) que corresponde según qué entidad
+  tocó (`K_OC` para los que afectan una `OrdenCliente`, `K_OE` para una `OrdenEstacion`,
+  ambas para los que afectan las dos — p.ej. `crearOE`/`avanzarAReales`/`cancelarDia`,
+  que también recalculan el balance de la OC padre). Se invalida por **prefijo**
+  (`queryKey: [K_OC]`), no por key completa, para cubrir cualquier combinación de
+  filtros/página sin enumerarla — mismo patrón ya usado en ADR-286 para
+  `K_FACTURACION_CLIENTES`/`K_ORDENES` desde el módulo `cobranza`.
+- **Pruebas:** `IncidenciaListPage.test.tsx` renderizaba `OrdenesProvider` sin
+  `QueryClientProvider` (no hacía falta antes de este fix) — ahora `OrdenesProvider` usa
+  `useQueryClient()` internamente, así que se le agregó el wrapper (mismo patrón que ya
+  usan `OrdenClienteListPage.test.tsx`/`OrdenEstacionListPage.test.tsx`). Sin pruebas
+  nuevas dedicadas: el fix es de invalidación de caché, no de lógica de negocio
+  observable por unit test sin un backend real de por medio.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (sin errores nuevos). Suite de
+  `ordenes` 100% verde (297/297). Suite completa de frontend sin regresiones (541/553,
+  mismos 12 fallos preexistentes de `auth`/`seguridad`/`apiClient`, confirmados desde
+  antes de este cambio). Pendiente de confirmar manualmente contra el backend real: editar
+  una Orden de Servicio y una de Transmisión y ver el cambio reflejado en la tabla sin
+  salir de la pantalla.

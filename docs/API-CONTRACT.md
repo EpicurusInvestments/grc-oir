@@ -708,10 +708,16 @@ lógica) — usan sus propias máquinas de estado (`estatus_orden`, `estatus`).
 ### Lectura (Tanda 3)
 
 **`GET /ordenes/clientes`** (`ordenes:leer`) — lista paginada de `OrdenCliente`.
-Filtros: `?q` (folio/número de orden), `?estatus_orden`, `?anunciante_id`, `?agencia_id`,
-`?vendedor_principal_id`, `?contrato_id`. Campos: los 36 de la spec BD v2 + 3 extensiones
-aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstring de
-`app/modules/ordenes/orden_cliente.py`. Montos/% como **string** (ADR-015).
+Filtros: `?q` (folio/número de orden/**anunciante**, ADR-285), `?estatus_orden`,
+`?anunciante_id`, `?agencia_id`, `?vendedor_principal_id`, `?contrato_id`,
+`?listas_para_cerrar` (ADR-285: bandeja "listas para cerrar" del sidebar — todas sus OE
+`cerrada`, al menos una OE), `?activas` (ADR-285: excluye `facturada`/`cobrada`/
+`cancelada`). Orden por defecto: `created_at` **descendente** (ADR-285 — antes
+ascendente, lo compensaba el frontend con su propio `.sort()`, ya quitado). Campos: los
+36 de la spec BD v2 + 4 extensiones aditivas (comisiones snapshot ADR-029, campos de
+cierre ADR-034, `oe_count` ADR-285 — conteo de OE hijas, resuelto en lote por página) —
+ver docstring de `app/modules/ordenes/orden_cliente.py`. Montos/% como **string**
+(ADR-015).
 - **`GET /ordenes/clientes/{id}`** — uno (404 si no existe).
 - **`GET /ordenes/clientes/{id}/historial-comisiones`** — historial de cambios a parámetros
   sensibles de la OC (más reciente primero; mismo mecanismo `LogCambioParametro` que los
@@ -722,9 +728,12 @@ aditivas (comisiones snapshot ADR-029, campos de cierre ADR-034) — ver docstri
   el mismo endpoint/respuesta.
 
 **`GET /ordenes/estaciones`** (`ordenes:leer`) — lista paginada de `OrdenEstacion`.
-Filtros: `?q`, `?orden_id` (OE de una OC — lo usa el panel de detalle de OrdenCliente),
-`?estacion_id`, `?plaza_id`, `?anunciante_id`, `?estatus`. `estatus` es un ciclo de vida
-**propio e independiente** del de la OC (ver ADR-030).
+Filtros: `?q` (folio/**estación/afiliado/OC de origen**, ADR-285), `?orden_id` (OE de una
+OC — lo usa el panel de detalle de OrdenCliente), `?estacion_id`, `?plaza_id`,
+`?anunciante_id`, `?estatus`, `?tiene_incidencias` (ADR-285: pills "Con incidencias"/"Sin
+incidencias" de Verificaciones). `estatus` es un ciclo de vida **propio e independiente**
+del de la OC (ver ADR-030). Orden por defecto: `created_at` **descendente** (ADR-285,
+mismo fix que OrdenCliente).
 - **`GET /ordenes/estaciones/{id}`** — uno (404 si no existe).
 - **`GET /ordenes/estaciones/{id}/dias`** — periodo de transmisión día a día
   (`OrdenEstacionDia`, ADR-030: `spots_solicitados`/`asignados`/`programados`), ordenado
@@ -1402,11 +1411,21 @@ handoff, nunca por un endpoint propio de alta:
 - **`POST /cobranza/facturas/{cobranza_id}/pagos`** (`cobranza:crear`) — alta de un
   `PagoCliente`. Recalcula `estatus_cobro`/`fecha_cobro` del padre en la misma
   transacción; si el pago completa el total, dispara la cascada del handoff (arriba).
-- **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — recalcula el padre
-  tras borrar. **Guardarraíl de una sola vía**: si la `CobranzaFactura` está `cobrada` y
-  borrar este pago la dejaría por debajo de `total_factura`, se rechaza con **409
-  `conflicto`** (no se puede "des-cobrar" una factura ya cerrada en cascada); borrar un
-  pago que deja un **excedente** que sigue cubriendo el total sí se permite.
+- **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — SOLO pagos sin
+  asignar (ADR-035/271): si el pago ya tiene `cobranza_id`, rechaza con **400** (usar
+  `POST .../cancelar`).
+- **`POST /cobranza/pagos/{pago_id}/cancelar`** (`cobranza:editar`, `204`, ADR-271/286)
+  — cancela TODO el pago "global" de una sola vez (todas las filas que comparten
+  `pago_multiple_id`, o la única fila si es individual): baja **lógica**
+  (`estatus_pago='cancelado'`), nunca borra. Body obligatorio `{"motivo": "..."}`
+  (`min_length=3`, **422** si falta o viene vacío) — se persiste en
+  `PagoCliente.motivo_cancelacion`. Recalcula CADA `CobranzaFactura` afectada en la misma
+  transacción; **ADR-286**: SÍ puede deshacer una factura/orden ya `cobrada` (revierte la
+  cascada `CobranzaFactura → FacturaCliente → OrdenCliente`) — se rechaza con **409
+  `conflicto`** solo si alguna orden involucrada ya tiene una `FacturaAgencia`/
+  `FacturaVendedor`/`FacturaAfiliado` autorizada o pagada con base en ese cobro (todo-o-
+  nada: si cualquiera de las N facturas del grupo está comprometida, se rechaza el grupo
+  completo). **409** también si el pago ya estaba `cancelado`.
 
 ### Requisicion
 

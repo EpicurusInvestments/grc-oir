@@ -36,6 +36,8 @@ from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.cobranza.cobranza_factura import CobranzaFactura, EstatusCobro, PagoCliente
 from app.modules.cobranza.router import router as cobranza_router
+from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor
+from app.modules.facturacion.factura_agencia import FacturaAgencia  # noqa: F401 — registra la tabla
 from app.modules.facturacion.factura_cliente import EstadoFacturacion, FacturaCliente
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.orden_cliente import (
@@ -212,6 +214,14 @@ def _pago(monto: str, cat: dict[str, uuid.UUID], fecha: str = "2026-03-05") -> d
         "forma_pago_clave": "99",
         "cuenta_contable_id": str(cat["cuenta_id"]),
     }
+
+
+def _cancelar(client: TestClient, pago_id: str, motivo: str = "Cancelación de prueba."):
+    """ADR-286: el endpoint ahora exige `motivo` en el body — helper compartido para no
+    repetirlo en cada prueba."""
+    return client.post(
+        f"/api/v1/cobranza/pagos/{pago_id}/cancelar", json={"motivo": motivo}, headers=_hdr("cxc")
+    )
 
 
 def _crear_y_timbrar_factura(
@@ -465,9 +475,7 @@ def test_cancelar_un_pago_que_no_completo_el_cobro_recalcula_sin_problema(
         headers=_hdr("cxc"),
     ).json()
 
-    r = client.post(
-        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar", headers=_hdr("cxc")
-    )
+    r = _cancelar(client, pago["pago_cliente_id"], motivo="Pago duplicado por error de captura.")
     assert r.status_code == 204, r.text
 
     cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc")).json()
@@ -475,18 +483,22 @@ def test_cancelar_un_pago_que_no_completo_el_cobro_recalcula_sin_problema(
     assert Decimal(cobranza["importe_cobrado"]) == Decimal("0.00")
 
     # ADR-271: baja LÓGICA — la fila sigue existiendo, solo cambia su estatus.
+    # ADR-286: el motivo capturado se persiste.
     db.expire_all()
     pago_id = uuid.UUID(pago["pago_cliente_id"])
     fila = db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).one()
     assert fila.estatus_pago == "cancelado"
+    assert fila.motivo_cancelacion == "Pago duplicado por error de captura."
 
 
-def test_cancelar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
+def test_cancelar_un_pago_que_completo_el_cobro_revierte_la_cascada_completa(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """El guardarraíl de la cascada sin reversa: una vez `cobrada`, no se puede
-    "des-cobrar" cancelando el pago que la completó — regla SIMPLE del usuario (ADR-271):
-    si la factura ya está `cobrada`, el pago ya no se puede cancelar, sin excepción."""
+    """ADR-286 (petición del usuario, reemplaza la regla "ciega" de ADR-271): cancelar
+    SÍ puede deshacer un cobro ya completado — la cascada
+    `CobranzaFactura → FacturaCliente → OrdenCliente` se revierte en los 3 niveles,
+    mientras ninguna comisión (agencia/vendedor/afiliado) se haya comprometido con base
+    en ese estado (ver prueba de bloqueo más abajo)."""
     factura_id, _, orden_id = _crear_y_timbrar_factura(client, db, cat)
     cobranza_id = _cobranza_id(db, factura_id)
 
@@ -495,32 +507,141 @@ def test_cancelar_un_pago_que_desharia_un_cobro_completo_se_rechaza(
         json=_pago("11600.00", cat),
         headers=_hdr("cxc"),
     ).json()
+    # Confirma que de verdad se completó la cascada antes de revertirla.
+    db.expire_all()
+    cobranza_antes = db.get(CobranzaFactura, uuid.UUID(pago["cobranza_id"]))
+    assert cobranza_antes.estatus_cobro == EstatusCobro.COBRADA.value
+    factura_antes = db.get(FacturaCliente, uuid.UUID(factura_id))
+    assert factura_antes.estado_facturacion == EstadoFacturacion.COBRADA.value
+    assert db.get(OrdenCliente, orden_id).estatus_orden == EstatusOrden.COBRADA.value
 
-    r = client.post(
-        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar", headers=_hdr("cxc")
-    )
-    assert r.status_code == 409, r.text
+    r = _cancelar(client, pago["pago_cliente_id"], motivo="Pago aplicado por error a esta factura.")
+    assert r.status_code == 204, r.text
 
-    # Nada retrocedió: la cascada sigue firme en los 3 niveles, y el pago sigue 'pagado'.
     db.expire_all()
     cobranza = db.get(CobranzaFactura, uuid.UUID(pago["cobranza_id"]))
-    assert cobranza.estatus_cobro == EstatusCobro.COBRADA.value
+    assert cobranza.estatus_cobro == EstatusCobro.PENDIENTE.value
+    assert cobranza.fecha_cobro is None
     factura = db.get(FacturaCliente, uuid.UUID(factura_id))
-    assert factura.estado_facturacion == EstadoFacturacion.COBRADA.value
+    # Nunca se "entregó" en esta prueba — vuelve a `timbrada` (`fecha_entrega_factura`
+    # nunca se llenó), no a `entregada`.
+    assert factura.estado_facturacion == EstadoFacturacion.TIMBRADA.value
     orden = db.get(OrdenCliente, orden_id)
-    assert orden.estatus_orden == EstatusOrden.COBRADA.value
+    assert orden.estatus_orden == EstatusOrden.FACTURADA.value
+    pago_id = uuid.UUID(pago["pago_cliente_id"])
+    fila = db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).one()
+    assert fila.estatus_pago == "cancelado"
+    assert fila.motivo_cancelacion == "Pago aplicado por error a esta factura."
+
+
+def test_cancelar_un_pago_que_completo_el_cobro_revierte_a_entregada_si_ya_se_entrego(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-286: el estado anterior a `cobrada` (`timbrada` vs `entregada`) se infiere de
+    `fecha_entrega_factura` — si la factura SÍ se entregó antes de cobrarse, la reversa
+    debe aterrizar en `entregada`, no en `timbrada`."""
+    factura_id, _, orden_id = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/entregar",
+        json={"fecha_entrega_factura": "2026-03-10"},
+        headers=_hdr("facturacion"),
+    )
+
+    pago = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("11600.00", cat),
+        headers=_hdr("cxc"),
+    ).json()
+    db.expire_all()
+    factura_antes = db.get(FacturaCliente, uuid.UUID(factura_id))
+    assert factura_antes.estado_facturacion == EstadoFacturacion.COBRADA.value
+
+    r = _cancelar(client, pago["pago_cliente_id"])
+    assert r.status_code == 204, r.text
+
+    db.expire_all()
+    factura = db.get(FacturaCliente, uuid.UUID(factura_id))
+    assert factura.estado_facturacion == EstadoFacturacion.ENTREGADA.value
+    orden = db.get(OrdenCliente, orden_id)
+    assert orden.estatus_orden == EstatusOrden.FACTURADA.value
+
+
+def test_cancelar_se_rechaza_si_ya_se_autorizo_una_comision_de_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-286: lo único que sí bloquea la reversa — si ya se autorizó (o pagó) una
+    comisión de agencia/vendedor/afiliado con base en que la orden estaba `cobrada`, ese
+    es un compromiso tomado que ya no se puede deshacer limpiamente."""
+    factura_id, _, orden_id = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    pago = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("11600.00", cat),
+        headers=_hdr("cxc"),
+    ).json()
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_id).estatus_orden == EstatusOrden.COBRADA.value
+
+    fa = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-04-01",
+            "ordenes_ids": [str(orden_id)],
+        },
+        headers=_hdr("cxp"),
+    ).json()
+    r_autorizar = client.post(
+        f"/api/v1/facturacion/agencias/{fa['factura_agencia_id']}/autorizar",
+        headers=_hdr("direccion"),
+    )
+    assert r_autorizar.status_code == 200, r_autorizar.text
+    assert r_autorizar.json()["estatus_factura_agencia"] == EstatusFacturaProveedor.AUTORIZADA.value
+
+    r = _cancelar(client, pago["pago_cliente_id"])
+    assert r.status_code == 409, r.text
+    assert "agencia" in r.json()["error"]["mensaje"].lower()
+
+    # Nada retrocedió: la cascada sigue firme, y el pago sigue 'pagado'.
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_id).estatus_orden == EstatusOrden.COBRADA.value
     pago_id = uuid.UUID(pago["pago_cliente_id"])
     fila = db.query(PagoCliente).filter(PagoCliente.pago_cliente_id == pago_id).one()
     assert fila.estatus_pago == "pagado"
 
 
-def test_cancelar_un_pago_extra_sobre_una_ya_cobrada_tambien_se_rechaza(
+def test_cancelar_sin_motivo_se_rechaza(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
-    """ADR-271 (petición del usuario, más simple y segura que el criterio anterior de
-    `eliminar()`): el guardarraíl ahora es un candado CIEGO — si la factura ya está
-    `cobrada`, el pago no se puede cancelar aunque fuera "de más" y la factura seguiría
-    cobrada de todas formas sin él."""
+    factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)
+    cobranza_id = _cobranza_id(db, factura_id)
+    pago = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza_id}/pagos",
+        json=_pago("3000.00", cat),
+        headers=_hdr("cxc"),
+    ).json()
+
+    r = client.post(
+        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar",
+        json={"motivo": ""},
+        headers=_hdr("cxc"),
+    )
+    assert r.status_code == 422, r.text
+
+    r_sin_body = client.post(
+        f"/api/v1/cobranza/pagos/{pago['pago_cliente_id']}/cancelar", headers=_hdr("cxc")
+    )
+    assert r_sin_body.status_code == 422, r_sin_body.text
+
+
+def test_cancelar_un_pago_extra_sobre_una_ya_cobrada_se_permite_sin_afectar_el_estatus(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia de ADR-271 (candado ciego), ADR-286 solo bloquea por comisiones
+    comprometidas — un pago "de más" sobre una factura ya cobrada SÍ se puede cancelar,
+    y como el resto de los pagos vivos sigue cubriendo el total, la factura se queda
+    `cobrada` igual (la reversa de la cascada nunca se dispara)."""
     factura_id, _, _ = _crear_y_timbrar_factura(client, db, cat)  # total 11600.00
     cobranza_id = _cobranza_id(db, factura_id)
 
@@ -535,9 +656,8 @@ def test_cancelar_un_pago_extra_sobre_una_ya_cobrada_tambien_se_rechaza(
         headers=_hdr("cxc"),
     ).json()
 
-    pago_extra_id = pago_extra["pago_cliente_id"]
-    r = client.post(f"/api/v1/cobranza/pagos/{pago_extra_id}/cancelar", headers=_hdr("cxc"))
-    assert r.status_code == 409, r.text
+    r = _cancelar(client, pago_extra["pago_cliente_id"])
+    assert r.status_code == 204, r.text
 
     cobranza = client.get(f"/api/v1/cobranza/facturas/{cobranza_id}", headers=_hdr("cxc")).json()
     assert cobranza["estatus_cobro"] == "cobrada"
@@ -555,9 +675,9 @@ def test_cancelar_un_pago_ya_cancelado_se_rechaza(
     ).json()
     pago_id = pago["pago_cliente_id"]
 
-    r1 = client.post(f"/api/v1/cobranza/pagos/{pago_id}/cancelar", headers=_hdr("cxc"))
+    r1 = _cancelar(client, pago_id)
     assert r1.status_code == 204, r1.text
-    r2 = client.post(f"/api/v1/cobranza/pagos/{pago_id}/cancelar", headers=_hdr("cxc"))
+    r2 = _cancelar(client, pago_id)
     assert r2.status_code == 409, r2.text
 
 
@@ -597,7 +717,7 @@ def test_cancelar_un_pago_multiple_cancela_todo_el_grupo_junto(
     huerfano_obj.pago_multiple_id = pago_multiple_id
     db.commit()
 
-    r = client.post(f"/api/v1/cobranza/pagos/{cualquier_id}/cancelar", headers=_hdr("cxc"))
+    r = _cancelar(client, cualquier_id)
     assert r.status_code == 204, r.text
 
     db.expire_all()
@@ -609,6 +729,63 @@ def test_cancelar_un_pago_multiple_cancela_todo_el_grupo_junto(
     c2 = client.get(f"/api/v1/cobranza/facturas/{cobranza_2}", headers=_hdr("cxc")).json()
     assert c1["estatus_cobro"] == "pendiente"
     assert c2["estatus_cobro"] == "pendiente"
+
+
+def test_cancelar_un_pago_multiple_se_rechaza_todo_el_grupo_si_una_sola_orden_esta_comprometida(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-286: todo-o-nada sobre el grupo completo (mismo criterio que ya aplicaba
+    ADR-271 con su candado ciego) — si SOLO UNA de las N facturas que este pago múltiple
+    completó ya tiene una comisión comprometida, se rechaza TODO el grupo, ninguna fila
+    se cancela a medias."""
+    factura_1, _, orden_1 = _crear_y_timbrar_factura(client, db, cat, "FMEX-2300")  # 11600.00
+    factura_2, _, orden_2 = _crear_y_timbrar_factura(client, db, cat, "FMEX-2301")  # 11600.00
+    cobranza_1 = _cobranza_id(db, factura_1)
+    cobranza_2 = _cobranza_id(db, factura_2)
+
+    payload = _pago_multiple(
+        cat,
+        [
+            {"cobranza_id": cobranza_1, "monto_aplicado": "11600.00"},
+            {"cobranza_id": cobranza_2, "monto_aplicado": "11600.00"},
+        ],
+    )
+    payload["monto_total_pago"] = "23200.00"
+    creados = client.post(
+        "/api/v1/cobranza/pagos/multiples", json=payload, headers=_hdr("cxc")
+    ).json()
+    cualquier_id = creados[0]["pago_cliente_id"]
+    db.expire_all()
+    assert db.get(OrdenCliente, orden_1).estatus_orden == EstatusOrden.COBRADA.value
+    assert db.get(OrdenCliente, orden_2).estatus_orden == EstatusOrden.COBRADA.value
+
+    # Comisión comprometida SOLO sobre la orden_1 — la orden_2 sigue libre.
+    fa = client.post(
+        "/api/v1/facturacion/agencias",
+        json={
+            "agencia_id": str(cat["agencia_id"]),
+            "fecha_factura_agencia": "2026-04-01",
+            "ordenes_ids": [str(orden_1)],
+        },
+        headers=_hdr("cxp"),
+    ).json()
+    client.post(
+        f"/api/v1/facturacion/agencias/{fa['factura_agencia_id']}/autorizar",
+        headers=_hdr("direccion"),
+    )
+
+    r = _cancelar(client, cualquier_id)
+    assert r.status_code == 409, r.text
+
+    # Ninguna fila del grupo se canceló — ni siquiera la de la orden_2, libre de compromiso.
+    db.expire_all()
+    pago_multiple_id = uuid.UUID(creados[0]["pago_multiple_id"])
+    filas = db.query(PagoCliente).filter(PagoCliente.pago_multiple_id == pago_multiple_id).all()
+    assert all(f.estatus_pago == "pagado" for f in filas)
+    c1_final = db.get(CobranzaFactura, uuid.UUID(cobranza_1))
+    c2_final = db.get(CobranzaFactura, uuid.UUID(cobranza_2))
+    assert c1_final.estatus_cobro == EstatusCobro.COBRADA.value
+    assert c2_final.estatus_cobro == EstatusCobro.COBRADA.value
 
 
 # ══════════════════════════════════════════════════════════════════════════════

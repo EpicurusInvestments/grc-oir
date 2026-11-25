@@ -116,10 +116,12 @@ export const pagoClienteApi = {
     return data;
   },
   /** Cancela TODO el pago global (todas las filas que comparten `pago_multiple_id`, o
-   *  la única fila si es individual) — RECHAZA con 409 si alguna factura que toca ya
-   *  está `cobrada`. Baja lógica: las filas se quedan, con `estatus_pago='cancelado'`. */
-  async cancelar(pagoId: string): Promise<void> {
-    await apiClient.post(`${BASE}/pagos/${pagoId}/cancelar`);
+   *  la única fila si es individual) — baja lógica, las filas se quedan con
+   *  `estatus_pago='cancelado'`. ADR-286 (petición del usuario): motivo obligatorio;
+   *  SÍ puede deshacer una factura ya `cobrada` — RECHAZA con 409 solo si ya se
+   *  autorizó/pagó una comisión (agencia/vendedor/afiliado) con base en ese estado. */
+  async cancelar(pagoId: string, motivo: string): Promise<void> {
+    await apiClient.post(`${BASE}/pagos/${pagoId}/cancelar`, { motivo });
   },
   /** ADR-225: un `PagoCliente` por cada factura seleccionada, mismo `pago_multiple_id`. */
   async crearMultiple(payload: PagoMultipleCreate) {

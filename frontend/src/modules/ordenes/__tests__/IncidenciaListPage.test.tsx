@@ -3,6 +3,7 @@
  * sigue mostrando en la columna "Fecha" tal cual, sin cambios).
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,11 +17,14 @@ describe("Fix: Incidencias ordena por alta (created_at), más reciente primero",
     const oe = makeOE({ id: "oe-1", orden_id: oc.id, estatus: "reales_conciliados" });
     const vieja = makeIncidencia({ id: "inc-vieja", orden_interna_id: oe.id, fecha_transmision: "2025-06-10", created_at: "2026-01-01" });
     const nueva = makeIncidencia({ id: "inc-nueva", orden_interna_id: oe.id, fecha_transmision: "2025-06-01", created_at: "2026-06-15" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     const utils = render(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [oe], incidencias: [vieja, nueva], historialComisiones: [] }}>
-        <IncidenciaListPage onVerOE={vi.fn()} onVerVerificacion={vi.fn()} />
-      </OrdenesProvider>,
+      <QueryClientProvider client={qc}>
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [oe], incidencias: [vieja, nueva], historialComisiones: [] }}>
+          <IncidenciaListPage onVerOE={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>
+      </QueryClientProvider>,
     );
     const tabla = utils.container.querySelector("table") as HTMLTableElement;
 

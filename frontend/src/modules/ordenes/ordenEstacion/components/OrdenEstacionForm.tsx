@@ -74,6 +74,7 @@ import { PeriodoTransmisionGrid, problemasDeFila } from "../../components/Period
 import { SpotBalanceBar } from "../../components/SpotBalanceBar";
 import { AUDIO_ORDEN_MAX_BYTES, EXTENSIONES_PELIGROSAS_FORMATO_REAL } from "../../constants";
 import { descripcionEstacion, fmtFolio, fmtMonto, fmtPct } from "../../format";
+import { useOesDeLaOC } from "../../hooks";
 import {
   esActivo,
   findAfiliado,
@@ -84,7 +85,7 @@ import {
   tarifaReferencia,
 } from "../../state/catalogosCache";
 import { useOrdenes } from "../../state/OrdenesContext";
-import { oesDeOC, oiTotalSpots, type BalanceSpotsOC } from "../../state/selectors";
+import { oiTotalSpots, type BalanceSpotsOC } from "../../state/selectors";
 import type {
   OrdenCliente,
   OrdenEstacion,
@@ -522,13 +523,16 @@ export function OrdenEstacionForm({ ocIdFijo, oe, clonarDesde, submitting, submi
     if ((Number(precioSpot) || 0) !== tarifaSugerida.tarifa_neta) setTarifaEsUltimoCampoTocado(true);
   }, [clonarDesde, tarifaSugerida, precioSpot]);
 
-  // Al editar, la propia OE ya está en `state.ordenesEstacion` con su periodo VIEJO — sin
-  // excluirla aquí, el balance en vivo la contaría dos veces (una vez como "ya asignado",
-  // otra vez como `totalEstaOI` con el periodo nuevo que se está editando). Mismo criterio
-  // que usa el backend real (`hermanas_ids` excluye la propia OE al validar el balance).
+  // Al editar, la propia OE ya está entre las OE hermanas de la OC con su periodo VIEJO —
+  // sin excluirla aquí, el balance en vivo la contaría dos veces (una vez como "ya
+  // asignado", otra vez como `totalEstaOI` con el periodo nuevo que se está editando).
+  // Mismo criterio que usa el backend real (`hermanas_ids` excluye la propia OE al
+  // validar el balance). ADR-285: ya no viene de `state.ordenesEstacion` (el arreglo
+  // completo del sistema) — se pide acotado a esta OC (`useOesDeLaOC`).
+  const oesDeLaOCQuery = useOesDeLaOC(oc?.id);
   const otrasOEDeLaOC = useMemo(
-    () => (oc ? oesDeOC(state.ordenesEstacion, oc.id).filter((o) => o.id !== oe?.id) : []),
-    [oc, state.ordenesEstacion, oe?.id],
+    () => (oesDeLaOCQuery.data ?? []).filter((o) => o.id !== oe?.id),
+    [oesDeLaOCQuery.data, oe?.id],
   );
   // ADR-104: un día cancelado libera su cupo — no cuenta para el balance ni el importe,
   // mismo criterio que `oiTotalSpots` (selectors.ts) para las OE hermanas de abajo.

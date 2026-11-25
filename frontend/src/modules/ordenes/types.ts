@@ -95,6 +95,9 @@ export interface OrdenCliente {
   created_at: string;
   fecha_cierre?: string | null;
   updated_at?: string | null;
+  /** ADR-285: cuántas OrdenEstacion tiene — resuelto en lote por el backend (columna
+   *  "OT" de la lista), nunca trayendo las OE completas solo para contarlas. */
+  oe_count: number;
 }
 
 /** Un audio de "Material a Transmitir" (ADR-103). `orden === 0` es el DEFAULT que usa
@@ -301,6 +304,7 @@ export type OrdenClienteInput = Omit<
   | "odc_cerrada_ref"
   | "carta_conciliacion_ref"
   | "documentos_cierre_faltantes"
+  | "oe_count"
 > & {
   /** ADR-180: transitorio (no persiste como campo propio) — requerido SOLO si
    * `fecha_inicio_campania`/`fecha_fin_campania` de verdad cambiaron respecto al valor

@@ -1,18 +1,27 @@
 /** Fix: llegar a "Órdenes internas" con una OI preseleccionada (p.ej. "Ver orden interna →"
  * desde Verificaciones o Incidencias) debe filtrar la tabla a esa sola fila, no solo
  * resaltarla entre todas — el buscador arranca con su folio.
+ *
+ * ADR-285 (petición del usuario, con captura): la tabla ahora pagina/busca contra el
+ * backend (`paginaOrdenesEstacionApi`) en vez de traer el 100% de las OE — se mockea esa
+ * llamada (filtrando por `q`/`estatus`, mismo criterio que el backend real) en vez de
+ * precargar `OrdenesProvider` con el arreglo completo. La fila SELECCIONADA (detalle,
+ * "Clonar" vía doble clic de fila, PDF…) se resuelve con `refrescarOrdenEstacion`
+ * (`useOrdenEstacionSeleccionada`), mockeada contra un registro chico que cada test puebla
+ * con las OE que de verdad usa — igual que `refrescarOrdenCliente` para "OC de origen".
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OrdenEstacionListPage } from "../ordenEstacion/pages/OrdenEstacionListPage";
 import { OrdenesProvider } from "../state/OrdenesContext";
 import { estaciones } from "../state/catalogosCache";
+import type { EstadoOI, OrdenCliente, OrdenEstacion } from "../types";
 import { fieldByLabelText } from "./domHelpers";
-import { makeOC, makeOE, makeRow } from "./fixtures";
+import { makeOC, makeOE, makeOEDTO, makeRow } from "./fixtures";
 
 // ADR-169: "Producto"/"Duración" (alta de OrdenEstacion) se llenan desde el catálogo
 // "Producto Duración" vía react-query — mock del catálogo (sin pegarle a la red real).
@@ -31,11 +40,60 @@ vi.mock("@/modules/catalogos/duracionSpot/api", () => ({
 }));
 
 /** Envuelve con el `QueryClientProvider` que ahora necesita `OrdenEstacionForm` (ADR-169)
- *  para leer el catálogo "Producto Duración" — una instancia nueva por test. */
+ *  para leer el catálogo "Producto Duración", Y la tabla/detalle de esta pantalla
+ *  (ADR-285) — una instancia nueva por test. */
 function conQueryClient(children: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
+
+// ADR-285: registro chico que alimenta los mocks de `refrescarOrdenEstacion`/
+// `refrescarOrdenCliente` de abajo — cada test/`renderPage()` registra ahí las OE/OC que
+// la pantalla va a necesitar resolver (selección de fila, "OC de origen"), ANTES de montar.
+const registroOE = new Map<string, OrdenEstacion>();
+const registroOC = new Map<string, OrdenCliente>();
+function registrarOE(oe: OrdenEstacion): OrdenEstacion {
+  registroOE.set(oe.id, oe);
+  return oe;
+}
+function registrarOC(oc: OrdenCliente): OrdenCliente {
+  registroOC.set(oc.id, oc);
+  return oc;
+}
+
+const paginaOEMock = vi.fn();
+const paginaOCMock = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 });
+
+/** Simula el filtro `q`/`estatus` del backend real (mismo criterio que
+ *  `OrdenClienteListPage.test.tsx`) — así las pruebas de "preselección filtra la tabla" y
+ *  de visibilidad de "Clonar" por sub-estado siguen teniendo sentido sin pegarle a la red. */
+function mockPaginaOE(dtos: ReturnType<typeof makeOEDTO>[]) {
+  paginaOEMock.mockImplementation(async (params: { q?: string; estatus?: string }) => {
+    let filtradas = dtos;
+    if (params.q) {
+      const qq = params.q.toLowerCase();
+      filtradas = filtradas.filter((d) => d.folio_orden_estacion.toLowerCase().includes(qq));
+    }
+    if (params.estatus) {
+      filtradas = filtradas.filter((d) => d.estatus === params.estatus);
+    }
+    return { items: filtradas, total: filtradas.length, page: 1, size: 20, pages: 1 };
+  });
+}
+
+beforeEach(() => {
+  mockPaginaOE([]);
+});
+
+vi.mock("../adapters/ordenesApi", () => ({
+  paginaOrdenesEstacionApi: (params: { q?: string; estatus?: string }) => paginaOEMock(params),
+  paginaOrdenesClienteApi: (params: unknown) => paginaOCMock(params),
+  oesDeLaOCApi: vi.fn().mockResolvedValue([]),
+  listarDiasOrdenEstacionApi: vi.fn().mockResolvedValue([]),
+  listarVerificacionesApi: vi.fn().mockResolvedValue([]),
+  listarHistorialComisionesApi: vi.fn().mockResolvedValue([]),
+  paginaIncidenciasApi: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 1, pages: 0 }),
+}));
 
 // ADR-113 (fix): tras "Guardar" en el alta, la pantalla se queda en el mismo formulario
 // (ADR-103, ahora en modo edición de la OE recién creada) — se mockean las llamadas reales
@@ -43,7 +101,8 @@ function conQueryClient(children: ReactNode) {
 // ADR-210: `listarAudiosOrdenEstacionApi` también se mockea — el formulario la llama al
 // CLONAR, para precargar el Material a Transmitir; `[]` por default (ninguna de las
 // pruebas de este archivo necesita que SÍ clone audios, eso ya se cubre en
-// `OrdenEstacionForm.test.tsx`).
+// `OrdenEstacionForm.test.tsx`). ADR-285: `listarIncidenciasDeOEApi` también se mockea —
+// la tabla ahora resuelve la fila seleccionada vía `useIncidenciasDeLaOC`.
 vi.mock("../adapters/escrituraApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../adapters/escrituraApi")>();
   return {
@@ -53,13 +112,21 @@ vi.mock("../adapters/escrituraApi", async (importOriginal) => {
       .fn()
       .mockResolvedValue({ ref: "orden_estacion/audios/abc_uno.mp3", nombre_archivo: "uno.mp3" }),
     listarAudiosOrdenEstacionApi: vi.fn().mockResolvedValue([]),
+    listarIncidenciasDeOEApi: vi.fn().mockResolvedValue([]),
   };
 });
+
+// ADR-285: `refrescarOrdenEstacion`/`refrescarOrdenCliente` ahora alimentan TAMBIÉN la
+// selección de fila de la tabla (`useOrdenEstacionSeleccionada`/`useOrdenClienteSeleccionada`
+// las usan), no solo el flujo de alta — resuelven contra `registroOE`/`registroOC`. El
+// fallback fijo de siempre ("oe-real-post-guardar") sigue cubriendo el flujo de "Guardar"
+// (esa OE nunca se registra a mano, nace de `crearOrdenEstacionApi`).
 vi.mock("../adapters/refrescar", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../adapters/refrescar")>();
   return {
     ...actual,
-    refrescarOrdenEstacion: vi.fn().mockImplementation(async () =>
+    refrescarOrdenEstacion: vi.fn(async (id: string) =>
+      registroOE.get(id) ??
       makeOE({
         id: "oe-real-post-guardar",
         folio_orden_interna: "OE-2026-9999A",
@@ -68,19 +135,47 @@ vi.mock("../adapters/refrescar", async (importOriginal) => {
         ],
       }),
     ),
-    refrescarOrdenCliente: vi.fn().mockImplementation(async (id: string) => makeOC({ id })),
+    refrescarOrdenCliente: vi.fn(async (id: string) => registroOC.get(id) ?? makeOC({ id })),
   };
 });
 
 estaciones.push({ id: "es1", afiliado_id: "af1", plaza_id: "pl2", nombre_estacion: "XEW-AM", frecuencia: "900 AM", tipo_senal: "fm" });
 
+const ESTATUS_OE_V5_A_SPEC: Record<EstadoOI, string> = {
+  asignada_afiliado: "asignada",
+  programados_conciliados: "en_transmision",
+  reales_conciliados: "cerrada",
+};
+
+/** Construye un par OE v5 + DTO que comparten id/folio/orden/estatus — evita escribir dos
+ *  veces los mismos datos al armar las tablas mockeadas de este archivo (una fila de la
+ *  tabla viene del DTO vía `paginaOrdenesEstacionApi`; la fila SELECCIONADA, del v5 vía
+ *  `refrescarOrdenEstacion`, registrado aparte con `registrarOE`). */
+function parOE(overrides: Partial<OrdenEstacion> = {}) {
+  const oe = makeOE(overrides);
+  const dto = makeOEDTO({
+    orden_estacion_id: oe.id,
+    folio_orden_estacion: oe.folio_orden_interna,
+    orden_id: oe.orden_id,
+    estacion_id: oe.estacion_id,
+    plaza_id: oe.plaza_id,
+    estatus: ESTATUS_OE_V5_A_SPEC[oe.estatus],
+    created_at: `${oe.created_at}T00:00:00`,
+  });
+  return { oe, dto };
+}
+
 function renderPage(oeIdPreseleccionada?: string) {
-  const oc = makeOC({ id: "oc-1" });
-  const oe1 = makeOE({ id: "oe-1", folio_orden_interna: "OE-2026-0054A", orden_id: oc.id });
-  const oe2 = makeOE({ id: "oe-2", folio_orden_interna: "OE-2026-0054B", orden_id: oc.id });
+  const oc = registrarOC(makeOC({ id: "oc-1" }));
+  const { oe: oe1, dto: dto1 } = parOE({ id: "oe-1", folio_orden_interna: "OE-2026-0054A", orden_id: oc.id });
+  const { oe: oe2, dto: dto2 } = parOE({ id: "oe-2", folio_orden_interna: "OE-2026-0054B", orden_id: oc.id });
+  registrarOE(oe1);
+  registrarOE(oe2);
+  mockPaginaOE([dto1, dto2]);
+
   const utils = render(
     conQueryClient(
-      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [oe1, oe2], incidencias: [], historialComisiones: [] }}>
+      <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
         <OrdenEstacionListPage oeIdPreseleccionada={oeIdPreseleccionada} onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
       </OrdenesProvider>,
     ),
@@ -90,31 +185,30 @@ function renderPage(oeIdPreseleccionada?: string) {
 }
 
 describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clonar' en la tabla, solo en 2.1", () => {
-  it("el botón '📋 Clonar' solo aparece en renglones en 2.1 'Asignada al afiliado'", () => {
-    const oc = makeOC({ id: "oc-1" });
-    const asignada = makeOE({ id: "oe-asig", folio_orden_interna: "OE-2026-0070A", orden_id: oc.id, estatus: "asignada_afiliado" });
-    const programada = makeOE({ id: "oe-prog", folio_orden_interna: "OE-2026-0071A", orden_id: oc.id, estatus: "programados_conciliados" });
-    const { tabla } = (() => {
-      const utils = render(
-        conQueryClient(
-          <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [asignada, programada], incidencias: [], historialComisiones: [] }}>
-            <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-          </OrdenesProvider>,
-        ),
-      );
-      return { tabla: utils.container.querySelector("table") as HTMLTableElement };
-    })();
+  it("el botón '📋 Clonar' solo aparece en renglones en 2.1 'Asignada al afiliado'", async () => {
+    const oc = registrarOC(makeOC({ id: "oc-1" }));
+    const { dto: dtoAsignada } = parOE({ id: "oe-asig", folio_orden_interna: "OE-2026-0070A", orden_id: oc.id, estatus: "asignada_afiliado" });
+    const { dto: dtoProgramada } = parOE({ id: "oe-prog", folio_orden_interna: "OE-2026-0071A", orden_id: oc.id, estatus: "programados_conciliados" });
+    mockPaginaOE([dtoAsignada, dtoProgramada]);
+    const utils = render(
+      conQueryClient(
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
+          <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
+        </OrdenesProvider>,
+      ),
+    );
+    const tabla = utils.container.querySelector("table") as HTMLTableElement;
 
-    const filaAsignada = within(tabla).getByText("OE-2026-70A").closest("tr") as HTMLElement;
+    const filaAsignada = (await within(tabla).findByText("OE-2026-70A")).closest("tr") as HTMLElement;
     const filaProgramada = within(tabla).getByText("OE-2026-71A").closest("tr") as HTMLElement;
     expect(within(filaAsignada).getByRole("button", { name: "📋 Clonar" })).toBeInTheDocument();
     expect(within(filaProgramada).queryByRole("button", { name: "📋 Clonar" })).toBeNull();
   });
 
-  it("clonar desde la tabla lleva al alta precargada, sin seleccionar la fila (sin activar edición)", () => {
+  it("clonar desde la tabla lleva al alta precargada, sin seleccionar la fila (sin activar edición)", async () => {
     const { tabla, container } = renderPage();
 
-    const filaClonar = within(tabla).getByText("OE-2026-54A").closest("tr") as HTMLElement;
+    const filaClonar = (await within(tabla).findByText("OE-2026-54A")).closest("tr") as HTMLElement;
     fireEvent.click(within(filaClonar).getByRole("button", { name: "📋 Clonar" }));
 
     expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-54A)")).toBeInTheDocument();
@@ -123,19 +217,20 @@ describe("ADR-210 (manera 2, petición del usuario): columna 'Acciones' con 'Clo
     expect(fieldByLabelText<HTMLSelectElement>(container, "Estación")).not.toBeDisabled();
   });
 
-  it("fix: 'Cancelar' tras clonar desde la tabla se queda en 'Órdenes de Transmisión' (no navega a Órdenes de Servicio)", () => {
-    const oc = makeOC({ id: "oc-1" });
-    const asignada = makeOE({ id: "oe-asig", folio_orden_interna: "OE-2026-0070A", orden_id: oc.id, estatus: "asignada_afiliado" });
+  it("fix: 'Cancelar' tras clonar desde la tabla se queda en 'Órdenes de Transmisión' (no navega a Órdenes de Servicio)", async () => {
+    const oc = registrarOC(makeOC({ id: "oc-1" }));
+    const { dto: dtoAsignada } = parOE({ id: "oe-asig", folio_orden_interna: "OE-2026-0070A", orden_id: oc.id, estatus: "asignada_afiliado" });
+    mockPaginaOE([dtoAsignada]);
     const onVerOC = vi.fn();
     const { container } = render(
       conQueryClient(
-        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [asignada], incidencias: [], historialComisiones: [] }}>
+        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [], incidencias: [], historialComisiones: [] }}>
           <OrdenEstacionListPage onVerOC={onVerOC} onVerVerificacion={vi.fn()} />
         </OrdenesProvider>,
       ),
     );
     const tabla = container.querySelector("table") as HTMLTableElement;
-    const fila = within(tabla).getByText("OE-2026-70A").closest("tr") as HTMLElement;
+    const fila = (await within(tabla).findByText("OE-2026-70A")).closest("tr") as HTMLElement;
     fireEvent.click(within(fila).getByRole("button", { name: "📋 Clonar" }));
     expect(screen.getByText("Nueva Orden de Transmisión (clonada de OE-2026-70A)")).toBeInTheDocument();
 
@@ -154,7 +249,7 @@ describe("ADR-139 (corrige un bug real): cambiar de OE seleccionada resetea el p
   it("un diálogo de PDF abierto en la OE anterior no sigue abierto al seleccionar otra OE", async () => {
     const { tabla } = renderPage();
 
-    fireEvent.click(within(tabla).getByText("OE-2026-54A"));
+    fireEvent.click(await within(tabla).findByText("OE-2026-54A"));
     fireEvent.click(await screen.findByText(/PDF #1 · Orden de servicio/));
     expect(screen.getByText("🖨️ Imprimir")).toBeInTheDocument();
 
@@ -167,70 +262,34 @@ describe("ADR-139 (corrige un bug real): cambiar de OE seleccionada resetea el p
 });
 
 describe("Fix: OI preseleccionada filtra la tabla (no solo resalta la fila)", () => {
-  it("sin preselección, se ven todas las OI", () => {
+  it("sin preselección, se ven todas las OI", async () => {
     const { tabla } = renderPage();
-    expect(within(tabla).getByText("OE-2026-54A")).toBeInTheDocument();
+    await waitFor(() => expect(within(tabla).getByText("OE-2026-54A")).toBeInTheDocument());
     expect(within(tabla).getByText("OE-2026-54B")).toBeInTheDocument();
-    expect(screen.getByText("2 de 2")).toBeInTheDocument();
+    expect(await screen.findByText("2 de 2")).toBeInTheDocument();
   });
 
-  it("con una OI preseleccionada, el buscador arranca con su folio y la tabla muestra solo esa fila", () => {
+  it("con una OI preseleccionada, el buscador arranca con su folio y la tabla muestra solo esa fila", async () => {
     const { tabla } = renderPage("oe-2");
 
     // El buscador arranca con el folio CRUDO (sin formatear) — el formateo (ADR-275)
     // es solo de despliegue en la tabla.
     const buscador = screen.getByPlaceholderText("Buscar folio, estación, afiliado, OC de origen…");
-    expect((buscador as HTMLInputElement).value).toBe("OE-2026-0054B");
+    await waitFor(() => expect((buscador as HTMLInputElement).value).toBe("OE-2026-0054B"));
 
-    expect(within(tabla).getByText("OE-2026-54B")).toBeInTheDocument();
+    await waitFor(() => expect(within(tabla).getByText("OE-2026-54B")).toBeInTheDocument());
     expect(within(tabla).queryByText("OE-2026-54A")).toBeNull();
-    expect(screen.getByText("1 de 2")).toBeInTheDocument();
+    // ADR-285: `total` ahora es el total YA FILTRADO por el backend (mismo criterio que
+    // Facturación/Cobranza), no el total general de la tabla sin filtrar.
+    expect(await screen.findByText("1 de 1")).toBeInTheDocument();
   });
 });
 
-describe("Fix: la tabla muestra columna Fecha y ordena de la más reciente a la más antigua", () => {
-  it("una OI dada de alta después aparece primero, sin importar el orden en que llegaron los datos", () => {
-    const oc = makeOC({ id: "oc-1" });
-    const vieja = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0041A", orden_id: oc.id, created_at: "2026-01-01" });
-    const nueva = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0050A", orden_id: oc.id, created_at: "2026-06-15" });
-    const utils = render(
-      conQueryClient(
-        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [vieja, nueva], incidencias: [], historialComisiones: [] }}>
-          <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-        </OrdenesProvider>,
-      ),
-    );
-    const tabla = utils.container.querySelector("table") as HTMLTableElement;
-
-    expect(within(tabla).getByText("Fecha")).toBeInTheDocument();
-    const filas = within(tabla).getAllByRole("row").slice(1); // sin el encabezado
-    expect(within(filas[0]).getByText("OE-2026-50A")).toBeInTheDocument();
-    expect(within(filas[0]).getByText("15-jun-26")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OE-2026-41A")).toBeInTheDocument();
-  });
-
-  it("fix: con dos OI del MISMO día (empate en `created_at`, sin hora), la que va primero en el arreglo queda primero en la tabla", () => {
-    // `created_at` se trunca a solo fecha (sin hora) al leer del backend, así que dos OI
-    // dadas de alta el mismo día EMPATAN en el sort — el orden entre ellas lo decide el
-    // orden ya existente en `state.ordenesEstacion` (sort estable). Por eso el reducer
-    // (`REEMPLAZAR_OE`, OrdenesContext.tsx) agrega las OE nuevas AL FRENTE del arreglo:
-    // así, al desempatar, la recién creada queda primero.
-    const oc = makeOC({ id: "oc-1" });
-    const recienCreada = makeOE({ id: "oe-nueva", folio_orden_interna: "OE-2026-0060A", orden_id: oc.id, created_at: "2026-09-11" });
-    const yaExistia = makeOE({ id: "oe-vieja", folio_orden_interna: "OE-2026-0059A", orden_id: oc.id, created_at: "2026-09-11" });
-    const utils = render(
-      conQueryClient(
-        <OrdenesProvider initialState={{ ordenesCliente: [oc], ordenesEstacion: [recienCreada, yaExistia], incidencias: [], historialComisiones: [] }}>
-          <OrdenEstacionListPage onVerOC={vi.fn()} onVerVerificacion={vi.fn()} />
-        </OrdenesProvider>,
-      ),
-    );
-    const tabla = utils.container.querySelector("table") as HTMLTableElement;
-    const filas = within(tabla).getAllByRole("row").slice(1);
-    expect(within(filas[0]).getByText("OE-2026-60A")).toBeInTheDocument();
-    expect(within(filas[1]).getByText("OE-2026-59A")).toBeInTheDocument();
-  });
-});
+// ADR-285 (petición del usuario, con captura): el orden "más reciente primero" ya NO lo
+// decide el frontend (se quitó su propio `.sort()` sobre `state.ordenesEstacion`): lo
+// decide el `default_order_by` del backend — cubierto por
+// `test_listado_ordena_por_fecha_de_creacion_mas_reciente_primero_oe` en
+// `test_f1_03_ordenes_lectura.py`, no aquí (mismo criterio que `OrdenClienteListPage.test.tsx`).
 
 // Helper compartido por las pruebas de ADR-116 (abajo): llena lo mínimo para poder
 // guardar (Estación/Producto/Duración/Tarifa + un audio + un día con spots).
@@ -334,7 +393,7 @@ describe("ADR-116: tras 'Guardar' en el alta, pregunta si se quiere generar otra
     expect(screen.getByText("Órdenes de Transmisión")).toBeInTheDocument();
     // Aparece en la tabla Y en el panel de detalle (queda seleccionada) — basta con que
     // exista al menos una vez.
-    expect(screen.getAllByText("OE-2026-9999A").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getAllByText("OE-2026-9999A").length).toBeGreaterThan(0));
   });
 
   it("ADR-210: 'Clonar' se queda en el alta, precargada con los datos de la OE recién guardada", async () => {

@@ -2,19 +2,35 @@
  * estado, búsqueda y el filtro activo (chip removible) cuando se llega desde una vista
  * operativa del sidebar ("Listas para cerrar" / "Listas para facturar"). El alta/edición
  * (Tanda 2) se abre a pantalla completa, reemplazando la lista+detalle mientras dura.
+ *
+ * ADR-285 (petición del usuario, con captura): la tabla y su paginación pegan al
+ * backend de verdad (`useOrdenesClientePagina`) — antes traían el 100% de las órdenes
+ * (vía `OrdenesContext`/`cargarEstadoReal`) y paginaban/filtraban un arreglo completo en
+ * el cliente. El panel de detalle de la fila seleccionada pide sus propios datos
+ * (`useOrdenClienteSeleccionada`/`useOesDeLaOC`/`useIncidenciasDeLaOC`/
+ * `useHistorialComisionesOC`), independiente de en qué página esté. Las escrituras
+ * (alta/edición/cierre) siguen viviendo en `OrdenesContext` — fuera de alcance de esta
+ * ronda, solo cambia de dónde se LEE.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CatalogToolbar, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { RootBadge } from "../../components/EstadoBadge";
 import { CierreOCForm } from "../../cierre/components/CierreOCForm";
 import { fmtFecha, fmtFolio, fmtMonto, fmtRangoFechas } from "../../format";
+import {
+  useHistorialComisionesOC,
+  useIncidenciasDeLaOC,
+  useOesDeLaOC,
+  useOrdenClienteSeleccionada,
+  useOrdenesClientePagina,
+} from "../../hooks";
 import { findAgencia, findAnunciante, findVendedor, marcas } from "../../state/catalogosCache";
 import type { CerrarOCInput } from "../../state/OrdenesContext";
 import { useOrdenes } from "../../state/OrdenesContext";
-import { filtrarOrdenesCliente, oesDeOC, totalesOC, type FiltroOrdenCliente } from "../../state/selectors";
+import { totalesOC, type FiltroOrdenCliente } from "../../state/selectors";
 import type { OrdenClienteInput } from "../../types";
 import { OrdenClienteDetailPanel } from "../components/OrdenClienteDetailPanel";
 import { OrdenClienteForm } from "../components/OrdenClienteForm";
@@ -50,37 +66,48 @@ export function OrdenClienteListPage({
   onSeleccionarOE,
   onAsignarEstaciones,
 }: OrdenClienteListPageProps) {
-  const { state, crearOC, actualizarOC, cerrarOC } = useOrdenes();
+  const { crearOC, actualizarOC, cerrarOC } = useOrdenes();
   const [filtro, setFiltro] = useState<FiltroOrdenCliente>(filtroInicial ?? "todas");
   // Al llegar con una OC preseleccionada (p.ej. "Ver OC →" desde el detalle de una orden
   // interna), el buscador arranca filtrado por su folio: así la tabla muestra SOLO esa
   // fila en vez de todas — antes solo se resaltaba en el detalle, sin filtrar la lista
-  // (mismo fix que OrdenEstacionListPage.tsx para "Ver orden interna →").
-  const [search, setSearch] = useState(() => {
-    if (!ocIdPreseleccionada) return "";
-    const oc = state.ordenesCliente.find((o) => o.id === ocIdPreseleccionada);
-    return oc?.folio_orden ?? "";
-  });
+  // (mismo fix que OrdenEstacionListPage.tsx para "Ver orden interna →"). Como la OC ya
+  // no está disponible sincrónicamente (ADR-285: se pide al backend), se completa en
+  // cuanto `useOrdenClienteSeleccionada` resuelve, una sola vez.
+  const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(ocIdPreseleccionada ?? null);
   const [modo, setModo] = useState<Modo>("view");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  // Paginación SOLO de la tabla (petición del usuario) — el listado completo sigue
-  // viviendo en memoria (lo necesitan las bandejas del sidebar), aquí solo se corta lo
-  // que se renderiza.
+  // Paginación real contra el backend (ADR-285): ya no se trae el 100% de las órdenes.
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
 
-  const items = useMemo(() => {
-    const filtrados = filtrarOrdenesCliente(state.ordenesCliente, state.ordenesEstacion, { filtro, search });
-    // Más reciente primero. ADR-275 (petición del usuario): antes se ordenaba
-    // comparando el folio como texto (asumía que más alto como texto = más reciente),
-    // pero eso deja de ser cierto en cuanto conviven folios con y sin ceros a la
-    // izquierda — se ordena por fecha de creación, que es monótona con el consecutivo.
-    return [...filtrados].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  }, [state.ordenesCliente, state.ordenesEstacion, filtro, search]);
-  const itemsPagina = useMemo(() => items.slice((page - 1) * size, page * size), [items, page, size]);
-  const selected = selectedId ? (state.ordenesCliente.find((o) => o.id === selectedId) ?? null) : null;
+  const filtros = {
+    page,
+    size,
+    q: search || undefined,
+    listas_para_cerrar: filtro === "listas_cerrar" ? true : undefined,
+    estatus_orden: filtro === "listas_facturar" ? ("orden_cerrada" as const) : undefined,
+    activas: filtro === "activas" ? true : undefined,
+  };
+  const lista = useOrdenesClientePagina(filtros);
+  const items = lista.data?.items ?? [];
+  const total = lista.data?.total ?? 0;
+
+  const seleccionadaQuery = useOrdenClienteSeleccionada(selectedId);
+  const selected = seleccionadaQuery.data ?? null;
+  const oesQuery = useOesDeLaOC(selected?.id);
+  const oesDeLaOC = oesQuery.data ?? [];
+  const incidenciasQuery = useIncidenciasDeLaOC(oesDeLaOC);
+  const historialQuery = useHistorialComisionesOC(selected?.id);
+
+  useEffect(() => {
+    if (ocIdPreseleccionada && selected?.id === ocIdPreseleccionada && search === "") {
+      setSearch(selected.folio_orden);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   const filtroDescripcion = filtro !== (filtroInicial ?? "todas") ? undefined : FILTRO_DESCRIPCION[filtro];
 
@@ -117,10 +144,8 @@ export function OrdenClienteListPage({
         isEdit={modo === "edit"}
         estatusActual={selected?.estatus_orden}
         defaultValues={modo === "edit" ? selected ?? undefined : undefined}
-        oeCount={modo === "edit" && selected ? oesDeOC(state.ordenesEstacion, selected.id).length : 0}
-        historialComisiones={
-          modo === "edit" && selected ? state.historialComisiones.filter((h) => h.entidad_id === selected.id) : []
-        }
+        oeCount={modo === "edit" && selected ? selected.oe_count : 0}
+        historialComisiones={modo === "edit" ? (historialQuery.data ?? []) : []}
         submitError={submitError}
         submitting={submitting}
         onGuardar={onGuardar}
@@ -148,8 +173,8 @@ export function OrdenClienteListPage({
     return (
       <CierreOCForm
         oc={selected}
-        oesDeLaOC={oesDeOC(state.ordenesEstacion, selected.id)}
-        incidencias={state.incidencias}
+        oesDeLaOC={oesDeLaOC}
+        incidencias={incidenciasQuery.data ?? []}
         submitError={submitError}
         submitting={submitting}
         onConfirmar={onConfirmarCierre}
@@ -222,7 +247,7 @@ export function OrdenClienteListPage({
           setSelectedId(null);
           setPage(1);
         }}
-        count={`${items.length} de ${state.ordenesCliente.length}`}
+        count={`${items.length} de ${total}`}
       />
 
       <ListDetailLayout
@@ -249,13 +274,12 @@ export function OrdenClienteListPage({
               </tr>
             </thead>
             <tbody>
-              {itemsPagina.map((oc) => {
+              {items.map((oc) => {
                 const anunciante = findAnunciante(oc.anunciante_id);
                 const agencia = findAgencia(oc.agencia_id);
                 const vendedor = findVendedor(oc.vendedor_principal_id);
                 const marca = oc.marca_id ? marcas.find((m) => m.id === oc.marca_id) : null;
-                const oeCount = oesDeOC(state.ordenesEstacion, oc.id).length;
-                const { total } = totalesOC(oc);
+                const { total: totalOC } = totalesOC(oc);
                 return (
                   <tr key={oc.id} className={selectedId === oc.id ? "sel" : ""} onClick={() => setSelectedId(oc.id)}>
                     <td className="td-center">
@@ -276,16 +300,30 @@ export function OrdenClienteListPage({
                       {fmtRangoFechas(oc.fecha_inicio_campania, oc.fecha_fin_campania)}
                     </td>
                     <td className="td-center td-mono" style={{ fontWeight: 500 }}>
-                      {fmtMonto(total)}
+                      {fmtMonto(totalOC)}
                     </td>
-                    <td className="td-center td-2">{oeCount}</td>
+                    <td className="td-center td-2">{oc.oe_count}</td>
                     <td className="td-center">
                       <RootBadge estatus={oc.estatus_orden} />
                     </td>
                   </tr>
                 );
               })}
-              {items.length === 0 && (
+              {lista.isLoading && (
+                <tr>
+                  <td colSpan={9} className="state-msg">
+                    Cargando órdenes…
+                  </td>
+                </tr>
+              )}
+              {lista.isError && (
+                <tr>
+                  <td colSpan={9} className="state-msg error">
+                    No se pudieron cargar las órdenes.
+                  </td>
+                </tr>
+              )}
+              {!lista.isLoading && !lista.isError && items.length === 0 && (
                 <tr>
                   <td colSpan={9} className="state-msg">
                     No hay órdenes para los filtros seleccionados.
@@ -294,11 +332,11 @@ export function OrdenClienteListPage({
               )}
             </tbody>
           </table>
-          {items.length > 0 && (
+          {total > 0 && (
             <Paginator
               page={page}
               size={size}
-              total={items.length}
+              total={total}
               onChange={(np, ns) => {
                 setPage(np);
                 setSize(ns);
@@ -311,9 +349,9 @@ export function OrdenClienteListPage({
           selected ? (
             <OrdenClienteDetailPanel
               oc={selected}
-              ordenesEstacion={state.ordenesEstacion}
-              incidencias={state.incidencias}
-              historialComisiones={state.historialComisiones}
+              ordenesEstacion={oesDeLaOC}
+              incidencias={incidenciasQuery.data ?? []}
+              historialComisiones={historialQuery.data ?? []}
               onSeleccionarOE={onSeleccionarOE}
               onEditar={() => {
                 setSubmitError(null);
