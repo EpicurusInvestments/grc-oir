@@ -39,7 +39,7 @@ from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor, FacturaAfiliado
 from app.modules.facturacion.factura_agencia import FacturaAgencia, FacturaAgenciaOrden
 from app.modules.facturacion.factura_cliente import FacturaCliente  # noqa: F401
-from app.modules.facturacion.factura_vendedor import FacturaVendedor
+from app.modules.facturacion.factura_vendedor import FacturaVendedor, FacturaVendedorOrden
 from app.modules.ordenes.orden_cliente import OrdenCliente
 from app.modules.ordenes.orden_estacion import OrdenEstacion  # noqa: F401 — registra la tabla
 from app.modules.usuarios.models import Usuario
@@ -849,6 +849,64 @@ def test_cancelar_requisicion_pagada_vacia_las_ordenes_de_la_factura_agencia(
     assert (
         db.query(FacturaAgenciaOrden)
         .filter(FacturaAgenciaOrden.factura_agencia_id == factura_id)
+        .count()
+        == 0
+    )
+
+
+def test_cancelar_requisicion_pagada_vacia_las_ordenes_de_la_factura_vendedor(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Mismo caso que `..._factura_agencia`, para `FacturaVendedor` — confirma que la
+    reversión aplica a los 3 tipos (ADR-292), no solo a Agencia."""
+    orden_id = _orden(db, cat, "OC-REV-VD", Decimal("100000.00"))
+    factura_id = _factura_vendedor(db, cat, orden_id, Decimal("20000.00"))
+    db.add(
+        FacturaVendedorOrden(
+            id=uuid.uuid4(),
+            factura_vendedor_id=factura_id,
+            orden_id=orden_id,
+            porcentaje_comision_snap=Decimal("20.00"),
+            comision_calculada=Decimal("20000.00"),
+        )
+    )
+    db.commit()
+    assert (
+        db.query(FacturaVendedorOrden)
+        .filter(FacturaVendedorOrden.factura_vendedor_id == factura_id)
+        .count()
+        == 1
+    )
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "comision_vendedor",
+            "vendedor_comision_id": str(cat["vendedor_id"]),
+            "factura_vendedor_id": str(factura_id),
+            "monto_requisicion": "20000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada", "motivo": "Pago a proveedor cancelado."},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert db.get(FacturaVendedor, factura_id).estatus_factura_vendedor == "recibida"
+    assert (
+        db.query(FacturaVendedorOrden)
+        .filter(FacturaVendedorOrden.factura_vendedor_id == factura_id)
         .count()
         == 0
     )
