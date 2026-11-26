@@ -113,7 +113,11 @@ TRANSICIONES: dict[str, set[str]] = {
         EstatusRequisicion.PAGADA.value,
         EstatusRequisicion.CANCELADA.value,
     },
-    EstatusRequisicion.PAGADA.value: set(),  # terminal
+    # Fix (petición del usuario): "Cancelar Pago a Proveedor" — una requisición ya
+    # PAGADA también se puede cancelar (antes terminal). Exige `motivo` (ver
+    # `transicionar()`); revierte en cascada la factura de proveedor relacionada a
+    # `recibida`, vacía de órdenes (`_revertir_factura_relacionada`).
+    EstatusRequisicion.PAGADA.value: {EstatusRequisicion.CANCELADA.value},
     EstatusRequisicion.CANCELADA.value: set(),  # terminal
 }
 
@@ -217,6 +221,10 @@ class Requisicion(Base):
     observaciones_cuentas_por_pagar: Mapped[str | None] = mapped_column(
         texto_largo(), default=None
     )
+    # Fix (petición del usuario): obligatorio al cancelar desde `pagada` ("Cancelar
+    # Pago a Proveedor") — mismo criterio que `PagoCliente.motivo_cancelacion` (ADR-286).
+    # Opcional al cancelar desde `pendiente`/`autorizada` (no cambia ese flujo existente).
+    motivo_cancelacion: Mapped[str | None] = mapped_column(Unicode(255), default=None)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -253,6 +261,7 @@ class RequisicionRead(BaseModel):
     estatus_requisicion: EstatusRequisicion
     fecha_pago_requisicion: date | None = None
     observaciones_cuentas_por_pagar: str | None = None
+    motivo_cancelacion: str | None = None
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
@@ -260,6 +269,11 @@ class RequisicionRead(BaseModel):
     #: — se resuelve en el servicio, en lote por página (columna "Folio" de la pantalla
     #: de consulta). `None` para `comision_agencia` (no tiene factura ligada).
     folio_factura_origen: str | None = None
+    #: Folios de las OrdenCliente/OrdenEstacion relacionadas, separados por coma
+    #: (petición del usuario, columna "Órdenes" de la lista) — se resuelve en el
+    #: servicio, en lote por página, vía las tablas puente de cada tipo de factura (o
+    #: `orden_id` directo para `comision_agencia`). `None` si no se resolvió ninguna.
+    ordenes_folios: str | None = None
 
 
 class RequisicionListParams(ListParams):
@@ -314,6 +328,11 @@ class TransicionRequisicionIn(BaseModel):
     estatus: str
     #: Solo se usa al pasar a `pagada`; se ignora en cualquier otra transición.
     fecha_pago_requisicion: date | None = None
+    #: Fix (petición del usuario): obligatorio al cancelar desde `pagada` ("Cancelar
+    #: Pago a Proveedor") — se valida en el servicio, no aquí (depende del estatus
+    #: ACTUAL de la requisición, que el schema no conoce). Opcional/ignorado en
+    #: cualquier otra transición.
+    motivo: str | None = Field(default=None, max_length=255)
 
 
 # ── Combos "disponibles" del alta (petición del usuario, con captura): una factura ya
@@ -396,12 +415,63 @@ class RequisicionRepository(BaseRepository[Requisicion]):
                 )
                 .exists()
             )
+            # Fix (petición del usuario): la columna "Órdenes" nueva también se puede
+            # buscar — igual criterio EXISTS correlacionado, una vía por tipo (vía las
+            # 3 tablas puente, u `orden_id` directo para `comision_agencia`).
+            from app.modules.facturacion.factura_afiliado import FacturaAfiliadoOrden
+            from app.modules.facturacion.factura_agencia import FacturaAgenciaOrden
+            from app.modules.facturacion.factura_vendedor import FacturaVendedorOrden
+            from app.modules.ordenes.orden_cliente import OrdenCliente
+            from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+            orden_agencia = (
+                select(FacturaAgenciaOrden.factura_agencia_id)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaAgenciaOrden.orden_id)
+                .where(
+                    FacturaAgenciaOrden.factura_agencia_id == Requisicion.factura_agencia_id,
+                    OrdenCliente.folio_orden.ilike(patron),
+                )
+                .exists()
+            )
+            orden_vendedor = (
+                select(FacturaVendedorOrden.factura_vendedor_id)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaVendedorOrden.orden_id)
+                .where(
+                    FacturaVendedorOrden.factura_vendedor_id == Requisicion.factura_vendedor_id,
+                    OrdenCliente.folio_orden.ilike(patron),
+                )
+                .exists()
+            )
+            orden_afiliado = (
+                select(FacturaAfiliadoOrden.factura_afiliado_id)
+                .join(
+                    OrdenEstacion,
+                    OrdenEstacion.orden_estacion_id == FacturaAfiliadoOrden.orden_estacion_id,
+                )
+                .where(
+                    FacturaAfiliadoOrden.factura_afiliado_id == Requisicion.factura_afiliado_id,
+                    OrdenEstacion.folio_orden_estacion.ilike(patron),
+                )
+                .exists()
+            )
+            orden_directa = (
+                select(OrdenCliente.orden_id)
+                .where(
+                    OrdenCliente.orden_id == Requisicion.orden_id,
+                    OrdenCliente.folio_orden.ilike(patron),
+                )
+                .exists()
+            )
             stmt = stmt.where(
                 Requisicion.numero_requisicion.ilike(patron)
                 | Requisicion.numero_oc_sap.ilike(patron)
                 | folio_afiliado
                 | folio_agencia
                 | folio_vendedor
+                | orden_agencia
+                | orden_vendedor
+                | orden_afiliado
+                | orden_directa
             )
         return stmt
 
@@ -479,14 +549,89 @@ class RequisicionService(
             elif item.factura_vendedor_id is not None:
                 item.folio_factura_origen = folios_vd.get(item.factura_vendedor_id)
 
+    def _enriquecer_ordenes(self, items: list[RequisicionRead]) -> None:
+        """Folios de las órdenes relacionadas, separados por coma (petición del
+        usuario, columna "Órdenes" de la lista) — en lote, mismo criterio que
+        `_enriquecer_folios`. Vía las 3 tablas puente (Agencia/Vendedor → `OrdenCliente`
+        directo; Afiliado → `OrdenEstacion`, que ya trae su propio folio) o `orden_id`
+        directo para `comision_agencia`."""
+        from app.modules.facturacion.factura_afiliado import FacturaAfiliadoOrden
+        from app.modules.facturacion.factura_agencia import FacturaAgenciaOrden
+        from app.modules.facturacion.factura_vendedor import FacturaVendedorOrden
+        from app.modules.ordenes.orden_cliente import OrdenCliente
+        from app.modules.ordenes.orden_estacion import OrdenEstacion
+
+        db = self._repo.db
+        folios: dict[uuid.UUID, list[str]] = {i.requisicion_id: [] for i in items}
+
+        ids_ag = {i.requisicion_id: i.factura_agencia_id for i in items if i.factura_agencia_id}
+        if ids_ag:
+            filas = db.execute(
+                select(FacturaAgenciaOrden.factura_agencia_id, OrdenCliente.folio_orden)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaAgenciaOrden.orden_id)
+                .where(FacturaAgenciaOrden.factura_agencia_id.in_(ids_ag.values()))
+            ).all()
+            por_factura: dict[uuid.UUID, list[str]] = {}
+            for fid, folio in filas:
+                por_factura.setdefault(fid, []).append(folio)
+            for req_id, fid in ids_ag.items():
+                folios[req_id] = por_factura.get(fid, [])
+
+        ids_vd = {i.requisicion_id: i.factura_vendedor_id for i in items if i.factura_vendedor_id}
+        if ids_vd:
+            filas = db.execute(
+                select(FacturaVendedorOrden.factura_vendedor_id, OrdenCliente.folio_orden)
+                .join(OrdenCliente, OrdenCliente.orden_id == FacturaVendedorOrden.orden_id)
+                .where(FacturaVendedorOrden.factura_vendedor_id.in_(ids_vd.values()))
+            ).all()
+            por_factura = {}
+            for fid, folio in filas:
+                por_factura.setdefault(fid, []).append(folio)
+            for req_id, fid in ids_vd.items():
+                folios[req_id] = por_factura.get(fid, [])
+
+        ids_af = {i.requisicion_id: i.factura_afiliado_id for i in items if i.factura_afiliado_id}
+        if ids_af:
+            filas = db.execute(
+                select(FacturaAfiliadoOrden.factura_afiliado_id, OrdenEstacion.folio_orden_estacion)
+                .join(
+                    OrdenEstacion,
+                    OrdenEstacion.orden_estacion_id == FacturaAfiliadoOrden.orden_estacion_id,
+                )
+                .where(FacturaAfiliadoOrden.factura_afiliado_id.in_(ids_af.values()))
+            ).all()
+            por_factura = {}
+            for fid, folio in filas:
+                por_factura.setdefault(fid, []).append(folio)
+            for req_id, fid in ids_af.items():
+                folios[req_id] = por_factura.get(fid, [])
+
+        ids_oc = {i.requisicion_id: i.orden_id for i in items if i.orden_id}
+        if ids_oc:
+            filas = db.execute(
+                select(OrdenCliente.orden_id, OrdenCliente.folio_orden).where(
+                    OrdenCliente.orden_id.in_(ids_oc.values())
+                )
+            ).all()
+            folio_por_orden: dict[uuid.UUID, str] = dict(filas)
+            for req_id, oid in ids_oc.items():
+                if oid in folio_por_orden:
+                    folios[req_id] = [folio_por_orden[oid]]
+
+        for item in items:
+            lista = folios.get(item.requisicion_id) or []
+            item.ordenes_folios = ", ".join(lista) if lista else None
+
     def list(self, params: ListParams) -> Page[RequisicionRead]:
         pagina = super().list(params)
         self._enriquecer_folios(pagina.items)
+        self._enriquecer_ordenes(pagina.items)
         return pagina
 
     def get(self, id_: Any) -> RequisicionRead:
         leida = super().get(id_)
         self._enriquecer_folios([leida])
+        self._enriquecer_ordenes([leida])
         return leida
 
     def _pre_update(
@@ -852,13 +997,77 @@ class RequisicionService(
                 "Autorizar va por el canal dedicado POST /{id}/autorizar "
                 "(solo Dirección/Admin), no por el cambio de estatus operativo."
             )
+        if (
+            destino == EstatusRequisicion.CANCELADA.value
+            and obj.estatus_requisicion == EstatusRequisicion.PAGADA.value
+            and not (input_.motivo or "").strip()
+        ):
+            # Fix (petición del usuario): "Cancelar Pago a Proveedor" exige motivo —
+            # cancelar desde pendiente/autorizada sigue sin pedirlo (flujo existente).
+            raise DomainError(
+                "El motivo de cancelación no puede estar vacío al cancelar una "
+                "requisición ya pagada."
+            )
         obj.estatus_requisicion = destino
         if destino == EstatusRequisicion.PAGADA.value:
             obj.fecha_pago_requisicion = input_.fecha_pago_requisicion or date.today()
             self._cerrar_factura_relacionada(obj, usuario)
+        elif destino == EstatusRequisicion.CANCELADA.value:
+            if input_.motivo:
+                obj.motivo_cancelacion = input_.motivo
+            # Fix (petición del usuario): cubre AMBOS orígenes con un solo mecanismo —
+            # el botón "Cancelar" que ya existía para `autorizada` (ganaba la reversa
+            # que le faltaba, gratis) y el nuevo "Cancelar Pago a Proveedor" desde
+            # `pagada`. Revierte la factura de proveedor relacionada (si tiene) a
+            # `recibida` y la vacía de órdenes — ver `_revertir_factura_relacionada`.
+            self._revertir_factura_relacionada(obj)
         self._repo.db.commit()
         self._repo.db.refresh(obj)
         return self._to_read(obj)
+
+    def _revertir_factura_relacionada(self, obj: Requisicion) -> None:
+        """Al cancelar la Requisicion (desde `autorizada` O desde `pagada`): su factura
+        de proveedor relacionada (`pago_afiliado`/`pago_agencia`/`comision_vendedor`;
+        `comision_agencia` no tiene ninguna) vuelve a `recibida` y se vacía de órdenes —
+        petición del usuario, decisión explícita: así ninguna orden puede quedar
+        asignada a la vez a esta factura (reactivada) Y a una factura nueva.
+
+        "Tonta" — no valida nada, reusa el método `revertir_a_recibida` de cada
+        servicio F2 (mismo criterio que `revertir_facturacion`/`revertir_cobro` en
+        F1/F2: la máquina de estados hacia atrás no pasa por `.transicionar()`, que solo
+        conoce transiciones hacia ADELANTE). Sin `commit` propio — misma sesión que
+        `transicionar()`.
+        """
+        if obj.factura_afiliado_id is not None:
+            from app.modules.facturacion.factura_afiliado import (
+                FacturaAfiliado,
+                FacturaAfiliadoRepository,
+                FacturaAfiliadoService,
+            )
+
+            FacturaAfiliadoService(
+                FacturaAfiliadoRepository(self._repo.db, FacturaAfiliado)
+            ).revertir_a_recibida(obj.factura_afiliado_id)
+        elif obj.factura_agencia_id is not None:
+            from app.modules.facturacion.factura_agencia import (
+                FacturaAgencia,
+                FacturaAgenciaRepository,
+                FacturaAgenciaService,
+            )
+
+            FacturaAgenciaService(
+                FacturaAgenciaRepository(self._repo.db, FacturaAgencia)
+            ).revertir_a_recibida(obj.factura_agencia_id)
+        elif obj.factura_vendedor_id is not None:
+            from app.modules.facturacion.factura_vendedor import (
+                FacturaVendedor,
+                FacturaVendedorRepository,
+                FacturaVendedorService,
+            )
+
+            FacturaVendedorService(
+                FacturaVendedorRepository(self._repo.db, FacturaVendedor)
+            ).revertir_a_recibida(obj.factura_vendedor_id)
 
     def _cerrar_factura_relacionada(self, obj: Requisicion, usuario: CurrentUser) -> None:
         """Petición del usuario: al pagar la requisición, su factura de proveedor

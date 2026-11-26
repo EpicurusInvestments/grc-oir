@@ -11,9 +11,12 @@
  *
  * Botón "Cancelación de Pago": cancela TODO el pago de una sola vez (baja lógica,
  * `estatus_pago`, NUNCA borra), con motivo obligatorio, y regresa el saldo pendiente a
- * sus facturas — SÍ puede deshacer una factura ya `cobrada` (ADR-286); se rechaza solo
- * si ya se autorizó/pagó una comisión de agencia/vendedor/afiliado con base en ese
- * cobro (ver `cobranza_factura.py`, `cancelar()`).
+ * sus facturas — SÍ puede deshacer una factura ya `cobrada` (ADR-286). Fix (petición
+ * del usuario): ya NO se rechaza si alguna orden tiene una comisión de agencia/
+ * vendedor/afiliado autorizada o pagada con base en ese cobro — esa Requisicion
+ * `autorizada` se cancela EN CASCADA (revierte su factura de proveedor a `recibida`,
+ * vacía de órdenes); si ya está `pagada`, no se toca (el dinero ya salió) — ver
+ * `cobranza_factura.py`, `cancelar()`.
  *
  * Solo lectura para el ALTA: capturar/asignar un pago sigue viviendo en el detalle de
  * "Cobranza de facturas" (`CobranzaFacturasPage`) o en el flujo de "Pagos no asignados"
@@ -691,8 +694,9 @@ export function PagosClientePage() {
           selected?.tipo === "grupo"
             ? `¿Cancelar este pago de ${fmtMoneda(selected.data.monto_pago)} del ${fmtFecha(selected.data.fecha_pago_cliente)}? ` +
               "Se regresará el saldo pendiente a las facturas que cubría — incluso si alguna " +
-              "ya está COBRADA en su totalidad. Solo se rechaza si ya se autorizó o pagó una " +
-              "comisión de agencia/vendedor/afiliado con base en ese cobro."
+              "ya está COBRADA en su totalidad. Si alguna orden ya tiene una comisión de " +
+              "agencia/vendedor/afiliado AUTORIZADA (no pagada), esa requisición se cancelará " +
+              "también, automáticamente. Las comisiones ya PAGADAS no se tocan."
             : ""
         }
         confirmLabel="Cancelar pago"

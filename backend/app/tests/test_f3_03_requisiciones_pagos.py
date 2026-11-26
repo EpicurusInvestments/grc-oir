@@ -37,7 +37,7 @@ from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.factura_afiliado import EstatusFacturaProveedor, FacturaAfiliado
-from app.modules.facturacion.factura_agencia import FacturaAgencia
+from app.modules.facturacion.factura_agencia import FacturaAgencia, FacturaAgenciaOrden
 from app.modules.facturacion.factura_cliente import FacturaCliente  # noqa: F401
 from app.modules.facturacion.factura_vendedor import FacturaVendedor
 from app.modules.ordenes.orden_cliente import OrdenCliente
@@ -675,6 +675,242 @@ def test_pagar_requisicion_comision_vendedor_con_factura_vendedor_id_cierra_esa_
     assert r.status_code == 200, r.text
     db.expire_all()
     assert db.get(FacturaVendedor, factura_id).estatus_factura_vendedor == "pagada"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fix (petición del usuario): "Cancelar Pago a Proveedor" — una requisición ya PAGADA
+# también se puede cancelar (antes terminal). Exige motivo y revierte la factura de
+# proveedor relacionada a "recibida", vaciándola de órdenes.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_cancelar_requisicion_pagada_sin_motivo_se_rechaza(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = _factura_afiliado(db, cat, Decimal("50000.00"))
+    db.commit()
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "50000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+    client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+
+    r_sin_motivo = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada"},
+        headers=_hdr("cxp"),
+    )
+    assert r_sin_motivo.status_code == 400, r_sin_motivo.text
+
+    r_motivo_vacio = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada", "motivo": "   "},
+        headers=_hdr("cxp"),
+    )
+    assert r_motivo_vacio.status_code == 400, r_motivo_vacio.text
+
+    db.expire_all()
+    assert db.get(FacturaAfiliado, factura_id).estatus_factura_afiliado == "pagada"
+
+
+def test_cancelar_requisicion_pagada_con_motivo_revierte_la_factura_afiliado_a_recibida(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id = _factura_afiliado(db, cat, Decimal("50000.00"))
+    db.commit()
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_afiliado",
+            "afiliado_id": str(cat["afiliado_id"]),
+            "factura_afiliado_id": str(factura_id),
+            "monto_requisicion": "50000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(f"/api/v1/cobranza/requisiciones/{req_id}/autorizar", headers=_hdr("direccion"))
+    client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada", "motivo": "Pago duplicado, se cancela."},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["estatus_requisicion"] == "cancelada"
+    assert r.json()["motivo_cancelacion"] == "Pago duplicado, se cancela."
+
+    db.expire_all()
+    assert db.get(FacturaAfiliado, factura_id).estatus_factura_afiliado == "recibida"
+    # El monto capturado (manual en Afiliado) NO se toca — solo cambia el estatus.
+    assert db.get(FacturaAfiliado, factura_id).monto_factura_afiliado == Decimal("43103.45")
+
+
+def test_cancelar_requisicion_autorizada_tambien_revierte_la_factura_relacionada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """A diferencia del tipo `comision_agencia` (sin factura, ya cubierto por
+    `test_cancelar_desde_pendiente_y_desde_autorizada`), `pago_agencia` SÍ tiene una
+    factura de proveedor que revertir — se cancela desde `autorizada` (sin necesidad de
+    llegar a `pagada`), sin exigir motivo (flujo existente, no cambia)."""
+    orden_id = _orden(db, cat, "OC-REV1", Decimal("100000.00"))
+    factura_id = _factura_agencia(db, cat, orden_id, Decimal("20000.00"))
+    db.commit()
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_id),
+            "monto_requisicion": "20000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    assert r.json()["estatus_requisicion"] == "autorizada"  # ADR-283: nace ahí directo
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert db.get(FacturaAgencia, factura_id).estatus_factura_agencia == "recibida"
+
+
+def test_cancelar_requisicion_pagada_vacia_las_ordenes_de_la_factura_agencia(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Decisión explícita del usuario: al revertir, la factura queda SIN órdenes
+    asignadas (se desvinculan) — para que esas órdenes puedan volver a aparecer en el
+    combo de una factura NUEVA sin riesgo de quedar en 2 facturas vigentes a la vez."""
+    orden_id = _orden(db, cat, "OC-REV2", Decimal("100000.00"))
+    factura_id = _factura_agencia(db, cat, orden_id, Decimal("20000.00"))
+    db.add(
+        FacturaAgenciaOrden(
+            id=uuid.uuid4(),
+            factura_agencia_id=factura_id,
+            orden_id=orden_id,
+            porcentaje_comision_snap=Decimal("20.00"),
+            comision_calculada=Decimal("20000.00"),
+        )
+    )
+    db.commit()
+    assert (
+        db.query(FacturaAgenciaOrden)
+        .filter(FacturaAgenciaOrden.factura_agencia_id == factura_id)
+        .count()
+        == 1
+    )
+
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_id),
+            "monto_requisicion": "20000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+    client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada", "motivo": "Pago a proveedor cancelado."},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert db.get(FacturaAgencia, factura_id).estatus_factura_agencia == "recibida"
+    assert (
+        db.query(FacturaAgenciaOrden)
+        .filter(FacturaAgenciaOrden.factura_agencia_id == factura_id)
+        .count()
+        == 0
+    )
+
+
+def test_cancelar_requisicion_ya_cancelada_es_idempotente_no_vuelve_a_pedir_motivo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    req_id = _crear_requisicion_simple(client, db, cat, "REQ-IDEMP")
+    client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada"},
+        headers=_hdr("cxp"),
+    )
+    r = client.post(
+        f"/api/v1/cobranza/requisiciones/{req_id}/estatus",
+        json={"estatus": "cancelada"},
+        headers=_hdr("cxp"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["estatus_requisicion"] == "cancelada"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fix (petición del usuario): columna "Órdenes" en la lista — folios relacionados,
+# también buscable.
+# ══════════════════════════════════════════════════════════════════════════════
+def test_lista_requisiciones_resuelve_folios_de_ordenes_y_se_puede_buscar_por_ellos(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-ORD-COL1", Decimal("100000.00"))
+    factura_id = _factura_agencia(db, cat, orden_id, Decimal("20000.00"))
+    db.add(
+        FacturaAgenciaOrden(
+            id=uuid.uuid4(),
+            factura_agencia_id=factura_id,
+            orden_id=orden_id,
+            porcentaje_comision_snap=Decimal("20.00"),
+            comision_calculada=Decimal("20000.00"),
+        )
+    )
+    db.commit()
+    r = client.post(
+        "/api/v1/cobranza/requisiciones",
+        json={
+            "tipo_requisicion": "pago_agencia",
+            "agencia_id": str(cat["agencia_id"]),
+            "factura_agencia_id": str(factura_id),
+            "monto_requisicion": "20000.00",
+        },
+        headers=_hdr("cxp"),
+    )
+    req_id = r.json()["requisicion_id"]
+
+    detalle = client.get(f"/api/v1/cobranza/requisiciones/{req_id}", headers=_hdr("cxp")).json()
+    assert detalle["ordenes_folios"] == "OC-ORD-COL1"
+
+    lista = client.get(
+        "/api/v1/cobranza/requisiciones", params={"q": "OC-ORD-COL1"}, headers=_hdr("cxp")
+    ).json()
+    assert any(f["requisicion_id"] == req_id for f in lista["items"])
+    assert lista["items"][0]["ordenes_folios"] == "OC-ORD-COL1"
 
 
 def test_alta_comision_vendedor_rechaza_sin_factura_vendedor(

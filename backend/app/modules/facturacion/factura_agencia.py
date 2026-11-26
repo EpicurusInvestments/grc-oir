@@ -771,6 +771,21 @@ class FacturaAgenciaService(
         self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
 
+    def revertir_a_recibida(self, factura_agencia_id: uuid.UUID) -> None:
+        """Fix (petición del usuario): al cancelar la `Requisicion` (`autorizada` o
+        `pagada`) ligada a esta factura, la factura vuelve a `recibida` y se VACÍA de
+        órdenes asignadas — decisión explícita del usuario para que ninguna orden quede
+        asignada a la vez a esta factura (reactivada, de nuevo editable) Y a una nueva.
+        `monto_factura_agencia`/`iva_factura_agencia`/`comision_agencia` NO se tocan
+        (quedan como registro histórico de lo que se llegó a requisitar).
+
+        "Tonta" — mismo contrato que `FacturaAfiliadoService.revertir_a_recibida` (ver
+        su docstring). Sin `commit` propio."""
+        obj = self._get_or_404(factura_agencia_id)
+        for fila in self._repo.listar_ordenes(factura_agencia_id):
+            self._repo.db.delete(fila)
+        obj.estatus_factura_agencia = EstatusFacturaProveedor.RECIBIDA.value
+
     def _validar_cobradas_antes_de_autorizar(self, factura_agencia_id: uuid.UUID) -> None:
         """ADR-264 (petición del usuario, con captura): no se autoriza el pago a la
         agencia hasta que el CLIENTE ya pagó esa orden — protege el flujo de caja (OIR

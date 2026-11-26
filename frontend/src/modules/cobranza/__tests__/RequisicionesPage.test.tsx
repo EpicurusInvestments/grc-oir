@@ -66,10 +66,12 @@ const base: Requisicion = {
   estatus_requisicion: "pendiente",
   fecha_pago_requisicion: null,
   observaciones_cuentas_por_pagar: null,
+  motivo_cancelacion: null,
   created_by: "u-1",
   created_at: "2026-03-01T10:00:00",
   updated_at: null,
   folio_factura_origen: null,
+  ordenes_folios: null,
 };
 
 function renderCon(r: Requisicion) {

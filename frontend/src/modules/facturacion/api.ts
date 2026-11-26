@@ -78,8 +78,13 @@ export const facturaClienteApi = {
     });
     return data;
   },
-  async cancelar(id: string) {
-    const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`);
+  /** Fix (petición del usuario): motivo obligatorio — antes se cancelaba sin pedir
+   *  nada y se rechazaba con 400 si ya había cobros recibidos; ahora cancela en
+   *  cascada (reusa el mismo mecanismo de "Cancelar pago", ver `cobranza_factura.py`). */
+  async cancelar(id: string, motivo: string) {
+    const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`, {
+      motivo,
+    });
     return data;
   },
   /** Validación EN VIVO del campo «Número de factura» (blur, antes de guardar todo el

@@ -39,12 +39,16 @@ la misma transacción, sin `commit` propio":
   `OrdenClienteService.marcar_facturada()`, invoca también
   `CobranzaFacturaService.crear_para_factura(factura, usuario)` — misma transacción,
   idempotente.
-- **Al cancelar**: `FacturaClienteService.cancelar()` invoca
-  `CobranzaFacturaService.eliminar_o_rechazar()` ANTES de tocar el estado de la factura.
-  Si ya tiene `CobranzaFactura` con `importe_cobrado > 0` (ya se recibió algún pago), la
-  cancelación se **rechaza** con `400 error_dominio` — mismo criterio que la excepción de
-  "OC ya cobrada" de ADR-047. Si `importe_cobrado = 0`, la `CobranzaFactura` se elimina y
-  la cancelación continúa con normalidad.
+- **Al cancelar (ADR-292, sustituye el bloqueo original de este punto):**
+  `FacturaClienteService.cancelar()` invoca `CobranzaFacturaService.
+  eliminar_o_rechazar()` ANTES de tocar el estado de la factura. Si `importe_cobrado =
+  0`, la `CobranzaFactura` se elimina y la cancelación continúa (sin cambio). Si ya
+  tiene `importe_cobrado > 0`, ya NO se rechaza: cancela en cascada TODOS los
+  `PagoCliente` activos de esa `CobranzaFactura` (agrupados por `pago_multiple_id`, vía
+  `PagoClienteService.cancelar`, reusando su propia cascada — ver ADR-292 abajo). Si
+  tras la cascada no queda ninguna fila `PagoCliente`, la `CobranzaFactura` se borra
+  igual que antes; si quedó con filas canceladas, se deja (rastro de auditoría, evita
+  violar la FK de `PagoCliente.cobranza_id`).
 - **Al completarse el cobro (aprobado en E.1, ver ADR-072)**: cuando
   `CobranzaFactura.estatus_cobro` llega a `cobrada` (`importe_cobrado >= total_factura`,
   recalculado al crear o borrar un `PagoCliente`), la cascada sube: `CobranzaFacturaService.
@@ -344,6 +348,48 @@ Resumen del cambio (detalle técnico completo en `arquitectura.md`):
 - `POST /pagos/{id}/cancelar` ahora exige body `{"motivo": "..."}` (`min_length=3`).
 - `PagoGrupoDetalleRead`/`PagoClienteRead` exponen `motivo_cancelacion`.
 
+**ADR-292 (petición del usuario, con capturas, lote grande de bugs) — reemplaza el
+bloqueo de "comisiones comprometidas" de ADR-271/286; ver la entrada completa en
+`arquitectura.md`:** el usuario reportó que cancelar un pago seguía fallando (409) si
+alguna orden ya tenía una comisión de agencia/vendedor/afiliado `autorizada` o
+`pagada`, y que cancelar la FACTURA (no el pago) fallaba con el mensaje de "nota de
+crédito" si ya tenía cobros — mismo espíritu de bloqueo en 2 niveles distintos. Pedido
+explícito: cancelar debe revertir en cascada todo lo que se pueda deshacer, y dejar
+intacto lo que ya es irreversible (dinero que ya salió/entró):
+- `PagoClienteService.cancelar` ya NO rechaza por comisiones comprometidas: por cada
+  orden afectada con una comisión **`autorizada`**, cancela en cascada la `Requisicion`
+  ligada (motivo con el prefijo "Cancelado en cascada al cancelar el pago: ..."); si la
+  comisión ya está **`pagada`**, no se toca.
+  `FacturaClienteService.cancelar()`/`CobranzaFacturaService.eliminar_o_rechazar()` ya
+  NO rechazan por `importe_cobrado > 0`: cancelan en cascada TODOS los `PagoCliente`
+  activos del grupo (motivo con el prefijo "Cancelado en cascada al cancelar la
+  factura: ..."), reusando el punto anterior completo.
+- `Requisicion.TRANSICIONES` deja de tener `pagada` como terminal: ahora admite
+  `pagada → cancelada` (motivo **obligatorio** en ese caso — 422 si falta; desde
+  `pendiente`/`autorizada` sigue opcional). Cualquier cancelación (las 3 vías: directa,
+  en cascada desde un pago, o en cascada desde una factura) revierte la
+  `FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor` ligada a `recibida` y le borra
+  sus filas `FacturaXOrden`/asignaciones (`revertir_a_recibida()`, método "tonto" nuevo
+  en los 3 servicios F2, mismo estilo que `revertir_facturacion`/`revertir_cobro` — sin
+  validar, sin `commit` propio, sin tocar `monto_factura_*`/`iva_factura_*`). Columna
+  nueva `requisicion.motivo_cancelacion`.
+- Gracias a que cancelar siempre vacía `FacturaXOrden`, los combos "Buscar y agregar" de
+  Agencia/Vendedor/Afiliado (F2) no necesitaron ningún cambio: vuelven a ofrecer la
+  orden sin tocar su query.
+- Nuevo botón **"Cancelar Pago a Proveedor"** en `RequisicionesPage.tsx`, visible SOLO
+  si `estatus_requisicion === "pagada"` — mismo patrón de `ConfirmDialog` + motivo
+  obligatorio que ADR-286. El botón **"+ Nueva comisión de agencia"** se quita sin
+  reemplazo (confirmado con el usuario, ya no se usa) junto con `RequisicionForm.tsx`
+  (sin otro consumidor); el backend sigue aceptando el alta de `comision_agencia` por
+  API, solo desapareció el único camino de UI.
+- Nueva columna **"Órdenes"**: `RequisicionRead.ordenes_folios` (folios separados por
+  coma, resueltos en lote por página — `_enriquecer_ordenes()`, mismo patrón que
+  `_enriquecer_folios()`), y `q` ahora también busca por esos folios.
+- El mensaje que mostraba el UUID interno de la orden en vez de su folio queda resuelto
+  por eliminación: pertenecía al bloqueo que este ADR quita por completo.
+- Migración `e2f4a6b8c0d2` (2 columnas `motivo_cancelacion`, factura_cliente y
+  requisicion).
+
 **ADR-225 — "Pago Múltiple para varias facturas" (petición del usuario):** un pago
 recibido puede repartirse entre varias facturas del MISMO anunciante o agencia — cada
 factura seleccionada se registra como su propio `PagoCliente` (no hay tabla puente N:M
@@ -399,7 +445,8 @@ FacturaAfiliado.total_factura_afiliado` (monitoreo de márgenes, puede ser negat
 llevar `CHECK >= 0` en ese campo).
 
 **Máquina de estados real** (con endpoint dedicado, mismo mecanismo de seams que F1/F2):
-`pendiente → autorizada → pagada`, rama a `cancelada` desde `pendiente`/`autorizada`.
+`pendiente → autorizada → pagada`, rama a `cancelada` desde `pendiente`/`autorizada`/
+**`pagada`** (ADR-292: ya no es terminal; motivo obligatorio solo desde `pagada`).
 **Autorización**: el paso `pendiente→autorizada` requiere **Dirección o Admin** (mismo
 canal dedicado del ADR-046 — permiso de router en `pagos:leer`, chequeo de área real
 dentro del servicio) — CxP captura pero no se autoriza a sí mismo. Extensión directa del
@@ -446,21 +493,21 @@ y reubicación del alta:**
   solo trae UNA de las 3 FKs a la vez). En el frontend, la columna que antes se llamaba
   "Origen" (resuelta en el cliente con catálogos `xxxInfo`, con una limitación conocida
   si la factura ya no estaba en ese lote) se renombró a "Folio" y usa directo este campo.
-- **"Requisiciones de pago" pasa a ser CONSULTA, salvo "Comisión agencia":** el botón de
-  alta de `RequisicionesPage.tsx` ahora dice "+ Nueva comisión de agencia" y solo crea
-  ese tipo — es el único sin factura de origen (es un pago sobre una `OrdenCliente`
-  directamente), así que sigue siendo el único que se da de alta aquí. Para los otros 3
-  tipos, el alta vive en su propia pantalla de Factura (F2): `RequisicionInlineForm.tsx`,
+- **"Requisiciones de pago" pasa a ser CONSULTA pura (ADR-292: el botón "+ Nueva comisión
+  de agencia" que creaba `comision_agencia` se quitó sin reemplazo, confirmado con el
+  usuario — ya no se usa ese tipo desde la UI; el backend lo sigue aceptando por API).**
+  Para los 3 tipos con factura de origen, el alta vive en su propia pantalla de Factura
+  (F2): `RequisicionInlineForm.tsx`,
   un componente **del módulo `facturacion`** (no de `cobranza`) — decisión de
   arquitectura: el proyecto ya tenía la dependencia unidireccional `cobranza →
   facturacion` (en ambas capas), así que el componente embebido vive del lado de
   Facturación, con un tipo y una función de API LOCALES y mínimos
   (`RequisicionDesdeFacturaCreate`/`crearRequisicionDesdeFactura()` en
   `facturacion/types.ts`/`api.ts`, que pegan directo a `/cobranza/requisiciones`) en vez
-  de importar nada del módulo `cobranza`. `RequisicionForm.tsx` (el formulario clásico de
-  esta pantalla) se simplificó: ya no tiene selector de "Tipo de requisición" ni los
-  bloques de los otros 3 tipos, solo Agencia + Orden de cliente + % Comisión + Monto +
-  OC SAP + Observaciones.
+  de importar nada del módulo `cobranza`. `RequisicionForm.tsx` (el formulario clásico
+  de alta libre de esta pantalla) se simplificó primero (ya no tenía selector de "Tipo
+  de requisición" ni los bloques de los otros 3 tipos) y luego se **borró por completo**
+  en ADR-292, junto con su botón "+ Nueva comisión de agencia" — ver esa entrada arriba.
 
 **ADR-283 (petición del usuario, con captura) — la requisición nace ya autorizada si
 viene de una factura:** antes, generar la Requisicion desde el bloque embebido de
