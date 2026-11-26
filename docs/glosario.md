@@ -44,18 +44,21 @@
   cambio_horario, cambio_fecha, spot_no_emitido) con su resolución.
 - **Reconciliada** — Marca de una OE validada contra lo solicitado; cuando todas las OE
   de una OC están reconciliadas, la OC puede cerrarse (`orden_cerrada`).
-- **Plaza** — Plaza geográfica de transmisión; se infiere al elegir estación.
+- **Plaza** — Plaza geográfica de transmisión; se selecciona libremente al capturar la
+  Estación (ADR-094 — ya NO se infiere del afiliado: una estación puede estar en una
+  plaza distinta a la de su afiliado).
 - **Estación** — Emisora (FM/AM/TV) operada por un afiliado. `tipo_senal ∈ {fm, am, tv}`.
-  **Hereda la plaza de su afiliado** (ADR-005): no se captura, se deriva. Se administra
-  anidada dentro del afiliado (no tiene pantalla propia).
-- **TarifaPlaza** — Tarifa de referencia por plaza, tipo de señal (fm/am/tv) y duración
-  de spot (20s/30s/60s/mención). Valor sugerido al capturar órdenes.
+  **Plaza y Afiliado son independientes entre sí** (ADR-094/096, revierte el ADR-005
+  original): ambos son FKs obligatorias y capturadas directo en la Estación, ninguna se
+  deriva de la otra. Se administra anidada dentro del afiliado (no tiene pantalla propia).
+- **TarifaPlaza** — Pese al nombre (legado de la spec v2), **ya NO referencia una Plaza**
+  (ADR-094/097: `plaza_id` se reemplazó por `estacion_id`). Tarifa de referencia por
+  **anunciante + estación + duración de spot + producto** (ADR-177 agregó anunciante
+  como primer componente de la llave); `duracion_spot`/`producto` son texto libre
+  elegido del catálogo Producto Duración (F0-06, ADR-166), ya no un enum cerrado. Valor
+  sugerido al capturar órdenes (F1, ADR-102).
 - **Tarifa bruta / Tarifa neta** — La bruta es el precio de lista; la **neta** es un campo
   **Calculado** por el sistema: `bruta * (1 - descuento_pct/100)`. No se captura.
-- **Vigencia (de tarifa)** — Periodo `[vigencia_desde, vigencia_hasta]` en que aplica una
-  tarifa. Una tarifa es **Vigente** si su fin no es anterior a hoy, o **Expirada** si ya
-  venció (derivado de la fecha, no un estado guardado). Dos tarifas activas de la misma
-  combinación (plaza + señal + duración) **no pueden solaparse** en vigencia.
 
 ## Fiscal y finanzas
 
@@ -84,6 +87,16 @@
   `cobrada` (ADR-072).
 - **PagoCliente** (F3) — Un abono de un cliente contra una CobranzaFactura, capturado por
   CxC. Puede haber varios por factura (parcialidades).
+- **Pago sin asignar / huérfano** (F3, ADR-229/230/231) — `PagoCliente` capturado SIN
+  elegir factura todavía (`cobranza_id IS NULL`); se asigna después, de forma total o
+  parcial (el resto se queda en el propio huérfano, más chico). Pill "No asignados" en
+  "Pagos recibidos".
+- **Cascada de reversión al cancelar** (F2/F3, ADR-286/292) — cancelar un `PagoCliente`
+  ya NO está bloqueado por reglas ciegas: SÍ puede deshacer una `CobranzaFactura`/
+  `FacturaCliente`/`OrdenCliente` ya `cobrada` (revierte la cadena hacia atrás), y si
+  alguna orden involucrada tiene una comisión de proveedor **`autorizada`** (no
+  `pagada`), cancela en cascada su `Requisicion` ligada y revierte esa factura de
+  proveedor a `recibida`. Siempre exige `motivo` obligatorio, nunca borra (baja lógica).
 - **Vencida** (F3) — Badge derivado, NO un valor almacenado: `fecha_estimada_cobro` ya
   pasó y la factura no está `cobrada`. Mismo patrón que Vigente/Expirada de TarifaPlaza
   (F0-02).
@@ -170,3 +183,10 @@
 - **Tags de campo** — Etiquetas de UI que indican el origen del dato: Catálogo,
   Heredado, Calculado, Derivado, Audit log, Timbrado.
 - **Cat/Manual** — Origen de campo: se sugiere del catálogo pero permite captura manual.
+- **Domicilio estructurado** (ADR-059/175) — Los 10 campos de dirección (calle, número
+  exterior/interior, colonia, localidad, referencia, municipio, estado, país, código
+  postal) que reemplazan la captura de dirección como texto libre en Agencia,
+  Anunciante y EmpresaFacturadora — mismos grupos que usa el layout del PAC. El código
+  postal autocompleta el resto contra el catálogo SEPOMEX propio sembrado en la BD
+  (`GET /catalogos/codigos-postales/{cp}`), con todos los campos siempre editables a
+  mano.

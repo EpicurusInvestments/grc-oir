@@ -19,8 +19,8 @@ construye primero.
 | # | Módulo (archivo .md) | Entidades que cubre | Por qué juntas |
 |---|---|---|---|
 | 0 | `f0-00-fundamentos-catalogos.md` | (transversal, sin entidad propia) | Base técnica compartida por todos los catálogos: layout del explorador, patrón lista+detalle, toolbar/filtros, badges activo/inactivo, endpoints CRUD genéricos, RBAC de catálogos. Se hace primero para no repetirlo. |
-| 1 | `f0-01-catalogos-operativos.md` | Plaza, Afiliado, Estacion | Núcleo operativo de la transmisión; encadenados (Estacion → Afiliado → Plaza con inferencia automática). Sin dependencias externas. |
-| 2 | `f0-02-tarifas.md` | TarifaPlaza | Depende de Plaza. Incluye campo calculado `tarifa_neta` y vigencias; conviene aislarlo. |
+| 1 | `f0-01-catalogos-operativos.md` | Plaza, Afiliado, Estacion | Núcleo operativo de la transmisión; Estacion referencia Plaza y Afiliado como FKs **independientes** entre sí (selección libre, ADR-094/096 — revierte la inferencia automática original de ADR-005). Sin dependencias externas. |
+| 2 | `f0-02-tarifas.md` | TarifaPlaza | Depende de Estación (ya no de Plaza — ADR-094/097) y, desde ADR-177, de Anunciante. Incluye campo calculado `tarifa_neta`; las vigencias se eliminaron (ADR-097). |
 | 3 | `f0-03-catalogos-comerciales.md` | Agencia, Anunciante, Marca, Contrato | Cadena comercial encadenada (Agencia → Anunciante → Marca/Contrato). Incluye **parámetros sensibles** (% comisión, días de crédito) con permiso por campo + audit log. |
 | 4 | `f0-04-catalogos-facturacion-finanzas.md` | EmpresaFacturadora, Vendedor, Categoria, MetodoPago, CuentaContable, LayoutFactura | Catálogos de apoyo a facturación/finanzas; CRUD simple. Vendedor incluye % comisión (sensible). |
 | 5 | `f0-05-constantes-sistema.md` | (catálogos SAT/timbrador; entidad de configuración) | Pantalla "Constantes del sistema" (solo lectura para operadores): TipoComprobante, Serie, RegimenFiscal, ClaveProdServ, ClaveUnidad, UsoCFDI, FormaPago, MetodoPago, MonedaSAT. Las consume F2. |
@@ -46,8 +46,11 @@ siempre primero.
   es manual y la **carga masiva CSV** se usará cuando exista la lista oficial del SAT. Ver `f0-05`.
 - **Marca:** no tiene pantalla propia; **se gestiona anidada dentro de Anunciante**. Ver `f0-03`.
 - **Paginación:** las listas usan **paginación por página** (no scroll infinito).
-- **Plaza de la estación (Opción A):** la estación **hereda la plaza de su afiliado**;
-  un afiliado opera en una sola plaza por ahora. Ver F0-01 y ADR-005.
+- **Plaza de la estación:** decisión **revertida en 2026-09-20** — ya NO hereda la
+  plaza de su afiliado (eso era la Opción A original, ADR-005). Desde **ADR-094/096**,
+  Plaza y Afiliado son FKs independientes y obligatorias capturadas directo en la
+  Estación (una estación puede estar en una plaza distinta a la de su afiliado). Ver
+  F0-01.
 - **Campo `venta_directa_carmen_aristegui_cdmx`:** se **omite** deliberadamente respecto
   a la spec BD v2. Registrado como desviación en `docs/arquitectura.md` (ADR-006).
 

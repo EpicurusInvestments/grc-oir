@@ -462,7 +462,11 @@ las siguientes tandas).*
 `colonia`, `localidad`, `referencia_domicilio`, `municipio`, `estado`, `pais`,
 `codigo_postal`) — mismo mecanismo de autocompletado por `GET /codigos-postales/{cp}`
 que ya usan Anunciante/EmpresaFacturadora (ADR-059); Agencia no tenía ningún campo de
-domicilio antes.
+domicilio antes. **ADR-065:** `regimen_fiscal` (clave SAT, catálogo `c_RegimenFiscal`,
+sugerida desde `ConstantesSistema` grupo `RegimenFiscal` sin FK formal) — el régimen de
+la agencia cuando actúa como RECEPTOR de la factura (trato vía agencia). Los 11 campos
+(10 de domicilio + `regimen_fiscal`) son nullable y NO son sensibles (solo
+`porcentaje_comision_agencia_default` lo es).
 - **`nombre_agencia` único (case-insensitive):** los nombres se normalizan colapsando
   espacios; la unicidad ignora mayúsculas/minúsculas (la BD `GRC-OIR` usa collation
   `SQL_Latin1_General_CP1_CI_AS`, case-insensitive; el servicio además compara con `LOWER()`
@@ -500,15 +504,30 @@ Ejemplo edición del % sensible (motivo requerido):
 
 **`/catalogos/anunciantes`** — campos: `anunciante_id`, **`agencia_id` (FK NULL = directo)**,
 `nombre_comercial` (req.), `nombre_fiscal` (req., el que va en la factura),
-`rfc_anunciante` (req.), `localizacion`, `referencia_anunciante`,
-**`dias_credito_default` (PARÁMETRO SENSIBLE, entero ≥0)**, `activo`, timestamps.
-**ADR-174: ya no tiene `contacto_*`** (contacto único legado, eliminado por completo —
-el reemplazo es `ContactoAnunciante`, abajo).
+`rfc_anunciante` (req.), `localizacion` (legado, texto libre, se conserva intacto),
+**domicilio ESTRUCTURADO (ADR-059):** `calle`, `numero_exterior`, `numero_interior`,
+`colonia`, `localidad`, `referencia_domicilio`, `municipio`, `estado`, `pais` (default
+`"MEX"`), `codigo_postal` — mismo mecanismo de autocompletado que Agencia/
+EmpresaFacturadora, ver `GET /catalogos/codigos-postales/{cp}` abajo; todos nullable,
+la captura real es 100% con estos campos, `localizacion` coexiste sin migrarse,
+**`regimen_fiscal`** (ADR-065, clave SAT sugerida desde `ConstantesSistema` grupo
+`RegimenFiscal`, sin FK formal — régimen del anunciante como RECEPTOR de una factura
+directa sin agencia), **`uso_cfdi_default`** (ADR-065, ídem, grupo `UsoCFDI` — SOLO
+sugerencia que precarga `FacturaCliente.uso_cfdi` si el receptor es directo; si el
+receptor es la Agencia no hay default, se captura a mano por factura),
+`referencia_anunciante`, **`dias_credito_default` (PARÁMETRO SENSIBLE, entero ≥0)**,
+**`monto_maximo_credito` (PARÁMETRO SENSIBLE, ADR-277, Decimal string nullable — tope de
+crédito; `NULL` o `<=0` no valida nada al capturar una `OrdenCliente`, ver la ficha de
+F1)**, `activo`, timestamps. **ADR-174: ya no tiene `contacto_*`** (contacto único
+legado, eliminado por completo — el reemplazo es `ContactoAnunciante`, abajo).
 - **Vía agencia / Directo:** `agencia_id` NULL ⇒ el anunciante es directo (sin agencia). Si
   se envía, debe existir (→ 404 si no). Filtro de lista **`?relacion=todas|via_agencia|directo`**
   (dimensión independiente de `?activo`).
 - **`dias_credito_default`:** entero ≥0 (CHECK `ck_anunciante_dias_credito`). Es sensible:
   alta y edición pasan por el mecanismo de auditoría (motivo requerido al modificarlo).
+- **`monto_maximo_credito`** (ADR-277): Decimal nullable, viaja como string. También
+  sensible — mismo mecanismo de auditoría (motivo requerido al modificarlo); `NULL` =
+  sin tope capturado (no se inventa un default numérico).
 - **RFC:** mismo formato 12-13 que Agencia/Afiliado (no único).
 - **Derivados (solo lectura):** `agencia_nombre` (`nombre_agencia` de la agencia, o `null`
   si es directo) y `marcas_count` (nº de marcas del anunciante, **todas**). Calculados por
@@ -521,8 +540,8 @@ el reemplazo es `ContactoAnunciante`, abajo).
   una agencia, paginado con los filtros `?page&size&activo&q`. Alimenta la sección
   "Anunciantes representados" del panel de detalle de Agencia.
 - **`GET /catalogos/anunciantes/{id}/historial`** (`catalogos:leer`): historial de auditoría
-  del anunciante (cambios de `dias_credito_default`), más reciente primero. Mismo formato y
-  alcance acotado que el de Agencia (ver ADR-021).
+  del anunciante (cambios de `dias_credito_default` y, ADR-277, `monto_maximo_credito`),
+  más reciente primero. Mismo formato y alcance acotado que el de Agencia (ver ADR-021).
 
 Ejemplo alta directo (sin agencia) con días de crédito:
 ```json
@@ -613,10 +632,27 @@ Catálogos de apoyo (menú "Soporte") sobre el patrón CRUD estándar (escritura
 en F0). `MetodoPago`/`CuentaContable` se difieren a F0-05 y `LayoutFactura` se omite (ADR-022).
 
 **`/catalogos/empresas-facturadoras`** — campos: `empresa_facturadora_id`, `nombre_empresa`
-(req.), `rfc_empresa` (req., **único**), `direccion_empresa` (texto largo, NVARCHAR(MAX)),
+(req.), `rfc_empresa` (req., **único**), `direccion_empresa` (legado, texto largo
+NVARCHAR(MAX), se conserva intacto), **domicilio ESTRUCTURADO (ADR-059):** `calle`,
+`numero_exterior`, `numero_interior`, `colonia`, `localidad`, `referencia_domicilio`,
+`municipio`, `estado`, `pais` (default `"MEX"`), `codigo_postal` — mismo mecanismo de
+autocompletado que Agencia/Anunciante (ver `GET /catalogos/codigos-postales/{cp}`
+abajo), todos nullable, la captura real es 100% con estos campos,
+**`regimen_fiscal`** (ADR-065, clave SAT sugerida desde `ConstantesSistema` grupo
+`RegimenFiscal`, sin FK formal — régimen del EMISOR, se timbra directo de esta columna),
 `activo`, `created_at`, `updated_at`.
 - **RFC** formato MX 12-13 (reutiliza el regex de F0-01); único → RFC repetido = **409
   `conflicto`**. Búsqueda `?q` sobre nombre y RFC.
+
+**`GET /catalogos/codigos-postales/{codigo_postal}`** (`catalogos:leer`, ADR-059) —
+mecanismo TRANSVERSAL de autocompletado de domicilio, compartido por Agencia/Anunciante/
+EmpresaFacturadora. Fuente: catálogo SEPOMEX propio sembrado en la BD (tabla
+`asentamiento_postal`, solo lectura vía API — sin alta/edición/baja, se siembra con
+`backend/scripts/cargar_codigos_postales.py`), NO una API externa en vivo. Devuelve
+`list[{ codigo_postal, asentamiento, tipo_asentamiento, municipio, estado, ciudad, pais
+}]` — **puede haber varias** colonias para un mismo CP (el front las ofrece en un
+selector) o **ninguna** (CP no sembrado/no existente — la captura sigue siendo 100%
+manual, nunca bloquea el formulario). Sin filtros ni paginación.
 
 **`/catalogos/vendedores`** — campos: `vendedor_id`, `nombre_vendedor` (req.),
 `email_vendedor`, **`porcentaje_comision_default` (PARÁMETRO SENSIBLE, string 0–100)**,
@@ -1114,6 +1150,13 @@ aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de c
   `orden_id`, `anunciante_id`, `agencia_id`, `empresa_facturadora_id`,
   `estado_facturacion`. `q` busca en número de factura, razón social y folio fiscal.
 - **`GET /facturacion/clientes/{id}`** (`facturacion:leer`) — 404 si no existe.
+- **`GET /facturacion/clientes/existe-numero-factura`** (`facturacion:leer`) — ruta
+  ESTÁTICA registrada antes que la dinámica `/{id}` (mismo criterio que `/conteos` en
+  ConstantesSistema, F0-05, o FastAPI intentaría parsear el texto como UUID y
+  respondería 422). Query params `numero_factura` (obligatorio) y `excluir_id` opcional
+  (la factura propia, al editar). Responde `{"existe": bool}`; validación EN VIVO del
+  formulario de alta, al perder el foco del campo «Número de factura», antes de
+  intentar guardar todo el formulario.
 - **`GET /facturacion/afiliados`** (`costos:leer`) — facturas recibidas de afiliados.
   Filtros: `afiliado_id`, `estatus_factura_afiliado`. `q` busca en el folio de la emisora
   y la razón social.
@@ -1450,6 +1493,16 @@ handoff, nunca por un endpoint propio de alta:
 - **`POST /cobranza/facturas/{cobranza_id}/pagos`** (`cobranza:crear`) — alta de un
   `PagoCliente`. Recalcula `estatus_cobro`/`fecha_cobro` del padre en la misma
   transacción; si el pago completa el total, dispara la cascada del handoff (arriba).
+- **`GET /cobranza/pagos/no-asignados`** (`cobranza:leer`) — pagos con `cobranza_id
+  IS NULL` (`Page<PagoClienteRead>`). Pill "No asignados" de "Pagos recibidos".
+- **`POST /cobranza/pagos/no-asignados`** (`cobranza:crear`, `201`, ADR-229) — captura
+  un pago recibido SIN elegir factura todavía (`PagoSinAsignarForm.tsx`, sin "Número de
+  pago" ni tope contra pendiente); se asigna después con el endpoint de abajo.
+- **`POST /cobranza/pagos/{pago_id}/asignar`** (`cobranza:editar`, ADR-229/231) — asigna
+  una `CobranzaFactura` (`cobranza_id` + `monto_aplicado`) a un pago capturado sin
+  asignar; solo aplica una vez (un pago ya asignado no se reasigna por aquí).
+  `monto_aplicado` puede ser MENOR al monto total del huérfano — el resto se queda en el
+  propio huérfano (más chico), no se le asigna de más a la factura.
 - **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — SOLO pagos sin
   asignar (ADR-035/271): si el pago ya tiene `cobranza_id`, rechaza con **400** (usar
   `POST .../cancelar`).

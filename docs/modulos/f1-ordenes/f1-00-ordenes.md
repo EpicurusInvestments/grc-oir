@@ -82,12 +82,14 @@ combo de Estación — extraído a `descripcionEstacion()` en `format.ts`) junto
 que antes era lo único que mostraba. Detalle completo en `docs/arquitectura.md`
 (ADR-276).
 
-**Paginación de las listas de OC/OE (sin ADR propio, ajuste menor):** las tablas de
-"Órdenes de Servicio" y "Órdenes de Transmisión" ganaron el componente `Paginator` ya
-usado en catálogos (10/20/50/100 por página) — SOLO corta lo que se renderiza; el
-arreglo completo se sigue trayendo en memoria vía `fetchAllPages`, porque las bandejas
-del sidebar ("Pendientes de asignar/cerrar/facturar") siguen necesitando el conjunto
-completo para sus contadores y filtros.
+**Paginación de las listas de OC/OE:** las tablas de "Órdenes de Servicio",
+"Órdenes de Transmisión" y "Verificaciones" usan el componente `Paginator` ya usado en
+catálogos (10/20/50/100 por página) contra paginación REAL del backend
+(`useOrdenesClientePagina`/`hooks.ts`, TanStack Query) — ya NO se trae el arreglo
+completo en memoria vía `fetchAllPages`. Ver **ADR-285** más abajo para el detalle
+completo del cambio (quitó el preload N+1 de raíz); las bandejas del sidebar
+("Pendientes de asignar/cerrar/facturar") migraron a conteos ligeros de servidor
+(`page:1,size:1` + `.total`) en vez de calcularse sobre el conjunto completo en memoria.
 
 **ADR-238 (bug reportado por el usuario, con captura) — fechas de "Campaña y montos":**
 el calendario de `OrdenClienteForm.tsx` adelantaba un día (bloqueaba elegir "hoy") por

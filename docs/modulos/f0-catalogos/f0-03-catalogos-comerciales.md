@@ -26,7 +26,7 @@ autocompleta al escribir el CP (catálogo `AsentamientoPostal`, SEPOMEX) y siemp
 editable a mano. A diferencia de Anunciante, Agencia no tenía ningún campo de domicilio
 antes (ni uno legado): las 10 columnas son enteramente nuevas.
 
-### Anunciante (13 campos + 10 de domicilio estructurado, ADR-059 — sin contacto legado, ADR-174)
+### Anunciante (14 campos + 10 de domicilio estructurado, ADR-059 — sin contacto legado, ADR-174)
 `anunciante_id` (PK), `agencia_id` (FK NULL — null si trata directo), `nombre_comercial`
 (NOT NULL), `nombre_fiscal` (NOT NULL — el que aparece en la factura), `rfc_anunciante`
 (NOT NULL, 12-13), `localizacion` (legacy, ya no tiene input propio — ver abajo),
@@ -34,7 +34,10 @@ antes (ni uno legado): las 10 columnas son enteramente nuevas.
 sin agencia), `uso_cfdi_default` (desviación aditiva, ADR-065 — SUGIERE el
 `AGREGADOS.UsoCFDI` de una factura directa a este anunciante; lo que se timbra vive en
 `FacturaCliente.uso_cfdi`, editable por factura), `referencia_anunciante`,
-**`dias_credito_default` (INTEGER · PARÁMETRO SENSIBLE)**, `activo`, `created_at`,
+**`dias_credito_default` (INTEGER · PARÁMETRO SENSIBLE)**,
+**`monto_maximo_credito` (DECIMAL(14,2) nullable · PARÁMETRO SENSIBLE, desviación
+aditiva ADR-277 — tope de crédito; `NULL` o `<= 0` no valida nada al capturar una
+`OrdenCliente`, ver `f1-00-ordenes.md`)**, `activo`, `created_at`,
 `updated_at`. **Domicilio estructurado** (desviación aditiva, ADR-059):
 `calle`, `numero_exterior`, `numero_interior`, `colonia`, `localidad`,
 `referencia_domicilio`, `municipio`, `estado`, `pais`, `codigo_postal` — se autocompleta

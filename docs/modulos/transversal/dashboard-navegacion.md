@@ -7,9 +7,10 @@
 
 - **Dashboard (`/`)**: malla responsiva de 6 tarjetas, una por fase, con ilustración,
   código+nombre, descripción de una línea y acento de color por fase. Hoy están **activas
-  F0 (Catálogos), F1 (Órdenes), F2 (Facturación) y F5 (Seguridad)**; las demás se muestran
-  "Próximamente" (atenuadas, no clicables). La fuente única de qué está activa es `enabled`
-  en `phaseRegistry.ts` — esta lista se actualiza cuando ese arreglo cambia.
+  F0 (Catálogos), F1 (Órdenes), F2 (Facturación), F3 (Cobranza y Pagos) y F5
+  (Seguridad)**; solo **F4 (Reportes)** se muestra "Próximamente" (atenuada, no
+  clicable). La fuente única de qué está activa es `enabled` en `phaseRegistry.ts` —
+  esta lista se actualiza cuando ese arreglo cambia.
 - **Navegación global (drawer)**: menú lateral deslizante disponible desde cualquier
   pantalla que use `AppHeader` (hamburguesa arriba a la izquierda). Contiene acceso a
   Inicio y a las 6 fases. Cierra con overlay, tecla Escape y botón de cerrar.
@@ -82,5 +83,6 @@ q82** (principal) + **PNG optimizado** (fallback vía `<picture>`).
 ## Calidad
 
 `tsc --noEmit`, `eslint` y `vitest` en verde; `vite build` empaqueta los assets con hash.
-Prueba: `src/modules/dashboard/__tests__/DashboardPage.test.tsx` (6 tarjetas; solo F0
-navegable; 5 "Próximamente").
+Prueba: `src/modules/dashboard/__tests__/DashboardPage.test.tsx` (6 tarjetas; deriva
+navegables vs. "Próximamente" de `phaseRegistry.enabled` en vivo, sin hardcodear cuántas
+fases están activas — no hay que tocar la prueba cada vez que se activa una fase nueva).
