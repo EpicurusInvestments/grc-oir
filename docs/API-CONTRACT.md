@@ -1240,11 +1240,15 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   timbrada con la orden desincronizada.
 - **`POST /facturacion/clientes/{id}/entregar`** (`facturacion:editar`) — body opcional
   `fecha_entrega_factura` (default: hoy).
-- **`POST /facturacion/clientes/{id}/cancelar`** (`facturacion:editar`) — desde los 4
-  primeros estados. **Revierte el handoff** (ADR-047): si la `OrdenCliente` está en
-  `facturada`, vuelve a `orden_cerrada` en la MISMA transacción y reaparece en la bandeja
-  «Listas para facturar»; si está en `cobrada`, la cancelación se rechaza con **400
-  `error_dominio`** (requeriría una nota de crédito, fuera del alcance de F2); en
+- **`POST /facturacion/clientes/{id}/cancelar`** (`facturacion:editar`) — desde
+  cualquier estado no terminal. Body obligatorio `{"motivo": "..."}` (`min_length=3`,
+  **422** si falta o viene vacío, **ADR-292**) — se persiste en
+  `FacturaCliente.motivo_cancelacion`. **Revierte el handoff** (ADR-047): si la
+  `OrdenCliente` está en `facturada`, vuelve a `orden_cerrada` en la MISMA transacción y
+  reaparece en la bandeja «Listas para facturar»; si está en `cobrada`, **ya NO se
+  rechaza (ADR-292, sustituye el 400 original)** — en vez de eso cancela en cascada
+  TODOS los `PagoCliente` activos de su `CobranzaFactura` (ver "Cancelación" del
+  handoff F2↔F3 más abajo) y la orden termina revertida a `orden_cerrada` igual; en
   cualquier otro estado la orden no se toca. La factura cancelada **no se borra**: sigue
   listándose con estado `cancelada`, y la orden puede recibir una factura nueva porque el
   1:1 es un índice único FILTRADO que excluye las canceladas.
@@ -1327,7 +1331,10 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
 - **`POST .../{id}/estatus`** (`costos:editar`) — transiciones **operativas** de CxP:
   `recibida → recibida` (idempotente — es el "Devolver a capturista" del frontend, ya no
   cambia nada de estado desde ADR-282) y `autorizada → pagada`. Pedir `autorizada` por
-  aquí da **403** y remite al canal dedicado.
+  aquí da **403** y remite al canal dedicado. No hay transición directa de vuelta a
+  `recibida` por este endpoint — eso solo ocurre indirectamente (ADR-292, F3): al
+  cancelar la `Requisicion` ligada a esta factura, `revertir_a_recibida()` la regresa a
+  `recibida` y le borra sus filas `FacturaXOrden`/asignaciones.
 - **`POST .../{id}/autorizar`** (`costos:leer`) — **canal dedicado** para
   `recibida → autorizada` (**ADR-282**: antes era `en_revision → autorizada`, ya no hay
   paso intermedio). El permiso del router es `leer` a propósito, porque Dirección
@@ -1390,9 +1397,14 @@ lectura — nunca una columna ni un valor de este CHECK (mismo patrón que
 Vigente/Expirada de `TarifaPlaza`, F0-02).
 
 `Requisicion.estatus_requisicion`: `pendiente → autorizada → pagada`, rama a `cancelada`
-desde `pendiente`/`autorizada`. **`pendiente → autorizada` exige Dirección o Admin**
-(chequeo explícito en el servicio, no la matriz de módulo — mismo patrón que
-`FacturaAfiliado.autorizar` en F2 y `/ordenes/clientes/{id}/comisiones` en F1).
+desde `pendiente`/`autorizada`/**`pagada`** (ADR-292: `pagada` dejó de ser terminal).
+**`pendiente → autorizada` exige Dirección o Admin** (chequeo explícito en el servicio,
+no la matriz de módulo — mismo patrón que `FacturaAfiliado.autorizar` en F2 y
+`/ordenes/clientes/{id}/comisiones` en F1). Cancelar desde `pagada` exige **`motivo`**
+en el body (**422** si falta o viene vacío); desde `pendiente`/`autorizada` sigue siendo
+opcional, sin cambio. Cualquier cancelación con `factura_afiliado_id`/
+`factura_agencia_id`/`factura_vendedor_id` ligada revierte esa factura de proveedor a
+`recibida` y la vacía de órdenes (ver "Requisicion" más abajo, ADR-292).
 
 `MovimientoBancario` no tiene máquina de estados: solo el booleano `conciliado`, que
 pasa de `false` a `true` una sola vía (botón "Conciliar" del mockup) y es idempotente.
@@ -1405,11 +1417,18 @@ handoff, nunca por un endpoint propio de alta:
 
 - **Creación**: automática cuando `POST /facturacion/clientes/{id}/timbrar` promueve
   `FacturaCliente` a `timbrada` (misma transacción). No hay `POST /cobranza/facturas`.
-- **Cancelación**: `POST /facturacion/clientes/{id}/cancelar` invoca la reversión ANTES
-  de tocar el estado de la factura. Si la `CobranzaFactura` ya tiene
-  `importe_cobrado > 0`, la cancelación se rechaza con **400 `error_dominio`** (mismo
-  criterio que la excepción de "OC ya cobrada" de ADR-047); si `importe_cobrado = 0`, se
-  elimina y la cancelación continúa.
+- **Cancelación (ADR-292, sustituye el 400 original)**: `POST /facturacion/clientes/
+  {id}/cancelar` invoca la reversión ANTES de tocar el estado de la factura. Si la
+  `CobranzaFactura` tiene `importe_cobrado = 0`, se elimina y la cancelación continúa
+  (comportamiento original, sin cambio). Si ya tiene `importe_cobrado > 0`, ya NO se
+  rechaza: cancela en cascada TODOS los `PagoCliente` activos que la componen
+  (agrupados por `pago_multiple_id`, vía `PagoClienteService.cancelar` — mismo
+  `motivo` del body, con el prefijo "Cancelado en cascada al cancelar la factura: ..."),
+  lo que a su vez dispara la reversión `CobranzaFactura → FacturaCliente →
+  OrdenCliente` y, si alguna orden tenía una comisión de proveedor autorizada, la
+  cascada de `Requisicion` (ver "Requisicion" más abajo). Si tras la cascada no queda
+  ninguna fila `PagoCliente` (ni activa ni cancelada), la `CobranzaFactura` se borra
+  igual que antes; si quedó con filas canceladas, se deja (rastro de auditoría).
 - **Cierre del ciclo**: cuando `estatus_cobro` llega a `cobrada`, la cascada sube sola —
   `FacturaCliente.estado_facturacion = cobrada` y `OrdenCliente.estatus_orden = cobrada`
   en TODAS las órdenes de la factura, misma transacción. No hay endpoint para esto: lo
@@ -1434,28 +1453,36 @@ handoff, nunca por un endpoint propio de alta:
 - **`DELETE /cobranza/pagos/{pago_id}`** (`cobranza:editar`, `204`) — SOLO pagos sin
   asignar (ADR-035/271): si el pago ya tiene `cobranza_id`, rechaza con **400** (usar
   `POST .../cancelar`).
-- **`POST /cobranza/pagos/{pago_id}/cancelar`** (`cobranza:editar`, `204`, ADR-271/286)
-  — cancela TODO el pago "global" de una sola vez (todas las filas que comparten
-  `pago_multiple_id`, o la única fila si es individual): baja **lógica**
+- **`POST /cobranza/pagos/{pago_id}/cancelar`** (`cobranza:editar`, `204`,
+  ADR-271/286/292) — cancela TODO el pago "global" de una sola vez (todas las filas que
+  comparten `pago_multiple_id`, o la única fila si es individual): baja **lógica**
   (`estatus_pago='cancelado'`), nunca borra. Body obligatorio `{"motivo": "..."}`
   (`min_length=3`, **422** si falta o viene vacío) — se persiste en
   `PagoCliente.motivo_cancelacion`. Recalcula CADA `CobranzaFactura` afectada en la misma
   transacción; **ADR-286**: SÍ puede deshacer una factura/orden ya `cobrada` (revierte la
-  cascada `CobranzaFactura → FacturaCliente → OrdenCliente`) — se rechaza con **409
-  `conflicto`** solo si alguna orden involucrada ya tiene una `FacturaAgencia`/
-  `FacturaVendedor`/`FacturaAfiliado` autorizada o pagada con base en ese cobro (todo-o-
-  nada: si cualquiera de las N facturas del grupo está comprometida, se rechaza el grupo
-  completo). **409** también si el pago ya estaba `cancelado`.
+  cascada `CobranzaFactura → FacturaCliente → OrdenCliente`). **ADR-292 (sustituye el
+  409 original):** ya NO se rechaza si alguna orden involucrada tiene una
+  `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado` comprometida — en vez de eso,
+  por cada orden afectada con una comisión **`autorizada`**, cancela en cascada la
+  `Requisicion` ligada (motivo con el prefijo "Cancelado en cascada al cancelar el
+  pago: ...", ver "Requisicion" abajo — revierte esa factura de proveedor a `recibida`
+  y la deja vacía de órdenes); si la comisión ya está **`pagada`**, no se toca (dinero
+  que ya salió). **409** solo si el pago ya estaba `cancelado`.
 
 ### Requisicion
 
 - **`GET /cobranza/requisiciones`** (`pagos:leer`) — filtros `tipo_requisicion`,
   `estatus_requisicion`, `afiliado_id`, `agencia_id`, `vendedor_comision_id`. `q` busca en
-  número de requisición, número de OC de SAP, y (**ADR-282**) el folio de la factura de
-  origen (`FacturaAfiliado.factura_emisora`/`FacturaAgencia.folio_factura_agencia`/
-  `FacturaVendedor.folio_factura_vendedor`, vía `EXISTS` correlacionado). La lectura
-  expone **`folio_factura_origen`** (ese mismo folio, resuelto en lote por página en el
-  servicio — `null` para `comision_agencia`, que no tiene factura ligada).
+  número de requisición, número de OC de SAP, el folio de la factura de
+  origen (**ADR-282**: `FacturaAfiliado.factura_emisora`/
+  `FacturaAgencia.folio_factura_agencia`/`FacturaVendedor.folio_factura_vendedor`, vía
+  `EXISTS` correlacionado) y (**ADR-292**) el folio de las órdenes relacionadas
+  (`OrdenCliente.folio_orden`/`OrdenEstacion.folio_orden_estacion`, vía las 3 tablas
+  puente más `orden_id` directo para `comision_agencia`). La lectura expone
+  **`folio_factura_origen`** (ese mismo folio, resuelto en lote por página en el
+  servicio — `null` para `comision_agencia`, que no tiene factura ligada) y
+  (**ADR-292**) **`ordenes_folios`**: folios de las órdenes relacionadas separados por
+  coma, también resueltos en lote (`null` si no hay ninguna).
 - **`GET /cobranza/requisiciones/{id}`** (`pagos:leer`).
 - **`POST /cobranza/requisiciones`** (`pagos:crear`) — alta por CxP. **`numero_requisicion`
   NO se acepta en el payload** (**ADR-282**, `extra="forbid"` → **422** si se manda): es
@@ -1490,8 +1517,13 @@ handoff, nunca por un endpoint propio de alta:
   Dirección lo revise otra vez). Recalcula los campos derivados si cambian sus insumos.
 - **`POST /cobranza/requisiciones/{id}/estatus`** (`pagos:editar`) — canal **operativo**:
   `pendiente → cancelada`, `autorizada → pagada` (body opcional
-  `fecha_pago_requisicion`, default hoy), `autorizada → cancelada`. Pedir `autorizada`
-  por aquí da **403** y remite al canal dedicado.
+  `fecha_pago_requisicion`, default hoy), `autorizada → cancelada`, y (**ADR-292**)
+  `pagada → cancelada` (body `{"motivo": "..."}` obligatorio, **422** si falta — es el
+  botón "Cancelar Pago a Proveedor" del frontend). Cualquier cancelación con una
+  factura de proveedor ligada la revierte a `recibida` y le borra sus filas
+  `FacturaXOrden`/asignaciones (sin tocar `monto_factura_*`/`iva_factura_*`, quedan como
+  registro histórico). Pedir `autorizada` por aquí da **403** y remite al canal
+  dedicado.
 - **`POST /cobranza/requisiciones/{id}/autorizar`** (`pagos:leer`) — **canal dedicado**
   para `pendiente → autorizada` (ADR-046): el permiso del router es `leer` a propósito,
   porque Dirección no tiene `pagos:editar`; la autorización real (**Dirección/Admin**) se

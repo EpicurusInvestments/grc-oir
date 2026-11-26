@@ -4,10 +4,16 @@
  * ADR-282 (petición del usuario, con captura): esta pantalla pasó a ser de CONSULTA
  * para `pago_afiliado`/`pago_agencia`/`comision_vendedor` — su alta se movió al bloque
  * embebido en la pantalla de su propia factura (F2, Facturas de afiliado/agencia/
- * vendedor). Solo `comision_agencia` (sin factura de origen) se sigue creando aquí. La
- * columna "Folio" usa `folio_factura_origen` (resuelto por el backend, en lote, siempre
- * correcto) en vez del catálogo `xxxInfo` del cliente — reemplaza la limitación conocida
- * que tenía antes esa columna.
+ * vendedor). La columna "Folio" usa `folio_factura_origen` (resuelto por el backend, en
+ * lote, siempre correcto) en vez del catálogo `xxxInfo` del cliente — reemplaza la
+ * limitación conocida que tenía antes esa columna.
+ *
+ * Fix (petición del usuario): se quitó el botón "+ Nueva comisión de agencia" — el tipo
+ * `comision_agencia` (único que se daba de alta aquí, sin factura de origen) ya no se
+ * usa; `RequisicionForm.tsx` quedó sin ningún uso y se borró. Nueva columna "Órdenes"
+ * (folios separados por coma, también buscable) y nuevo botón "Cancelar Pago a
+ * Proveedor" (solo para `pagada`, motivo obligatorio) — cancela la Requisicion y
+ * revierte su factura de proveedor a `recibida`, vacía de órdenes.
  *
  * "Comisiones" (tercer filtro de tipo) agrupa `comision_vendedor` + `comision_agencia`:
  * el backend solo filtra por UN `tipo_requisicion` a la vez, así que este pill trae el
@@ -52,7 +58,6 @@ import {
   type EstatusRequisicion,
   type Requisicion,
 } from "../../types";
-import { RequisicionForm } from "../components/RequisicionForm";
 
 type FiltroEstatus = "all" | EstatusRequisicion;
 type FiltroTipo = "all" | "pago_afiliado" | "pago_agencia" | "comisiones";
@@ -87,12 +92,14 @@ export function RequisicionesPage({ filtroInicial }: Props) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [selected, setSelected] = useState<Requisicion | null>(null);
-  const [creando, setCreando] = useState(false);
   const [modo, setModo] = useState<"ver" | "pagar">("ver");
   const [fechaPago, setFechaPago] = useState("");
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [aCancelar, setACancelar] = useState<Requisicion | null>(null);
+  // Fix (petición del usuario): "Cancelar Pago a Proveedor" — solo para `pagada`,
+  // exige motivo (a diferencia de "Cancelar" desde pendiente/autorizada, que no lo pide).
+  const [aCancelarPagoProveedor, setACancelarPagoProveedor] = useState<Requisicion | null>(null);
+  const [motivoCancelacionPago, setMotivoCancelacionPago] = useState("");
 
   const ampliando = filtroTipo === "comisiones";
   const filtros: FiltrosRequisicion = {
@@ -103,7 +110,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
     tipo_requisicion: !ampliando && filtroTipo !== "all" ? filtroTipo : undefined,
   };
 
-  const { list, crear, cambiarEstatus, autorizar } = useRequisiciones(filtros);
+  const { list, cambiarEstatus, autorizar } = useRequisiciones(filtros);
   const agencias = useAgenciasInfo();
   const vendedores = useVendedoresInfo();
   const facturasAfiliado = useFacturasAfiliadoInfo();
@@ -194,7 +201,6 @@ export function RequisicionesPage({ filtroInicial }: Props) {
 
   const seleccionar = (r: Requisicion) => {
     setSelected(r);
-    setCreando(false);
     setModo("ver");
     setErrorAccion(null);
   };
@@ -206,16 +212,6 @@ export function RequisicionesPage({ filtroInicial }: Props) {
       setModo("ver");
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
-    }
-  };
-
-  const onCrear = async (data: Parameters<typeof crear.mutateAsync>[0]) => {
-    setSubmitError(null);
-    try {
-      setSelected(await crear.mutateAsync(data));
-      setCreando(false);
-    } catch (e) {
-      setSubmitError(mensajeDeError(e));
     }
   };
 
@@ -232,6 +228,28 @@ export function RequisicionesPage({ filtroInicial }: Props) {
     }
   };
 
+  // Fix (petición del usuario): "Cancelar Pago a Proveedor" — solo desde `pagada`,
+  // motivo obligatorio (el backend lo exige, 400 si viene vacío). Pasa la factura del
+  // proveedor (Agencia/Vendedor/Afiliado) de vuelta a `recibida`, vacía de órdenes.
+  const confirmarCancelarPagoProveedor = async () => {
+    if (!aCancelarPagoProveedor || !motivoCancelacionPago.trim()) return;
+    setErrorAccion(null);
+    try {
+      const actualizada = await cambiarEstatus.mutateAsync({
+        id: aCancelarPagoProveedor.requisicion_id,
+        estatus: "cancelada",
+        motivo: motivoCancelacionPago.trim(),
+      });
+      setSelected(actualizada);
+      setACancelarPagoProveedor(null);
+      setMotivoCancelacionPago("");
+    } catch (e) {
+      setErrorAccion(mensajeDeError(e));
+      setACancelarPagoProveedor(null);
+      setMotivoCancelacionPago("");
+    }
+  };
+
   const confirmarPago = async () => {
     if (!selected) return;
     await ejecutar(() =>
@@ -244,19 +262,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
   };
 
   let detail;
-  if (creando) {
-    detail = (
-      <RequisicionForm
-        submitting={crear.isPending}
-        submitError={submitError}
-        onSubmit={onCrear}
-        onCancel={() => {
-          setCreando(false);
-          setSubmitError(null);
-        }}
-      />
-    );
-  } else if (selected) {
+  if (selected) {
     // "Pagos vendedor" (comision_vendedor) ya NO calcula/muestra comisión — se
     // simplificó al mismo patrón que pago_agencia (petición del usuario).
     const esComision = selected.tipo_requisicion === "comision_agencia";
@@ -430,9 +436,18 @@ export function RequisicionesPage({ filtroInicial }: Props) {
                 </>
               )}
               {selected.estatus_requisicion === "pagada" && (
-                <button type="button" className="btn btn-sm" disabled style={{ opacity: 0.6 }}>
-                  ✓ Pagada el {fmtFecha(selected.fecha_pago_requisicion)}
-                </button>
+                <>
+                  <button type="button" className="btn btn-sm" disabled style={{ opacity: 0.6 }}>
+                    ✓ Pagada el {fmtFecha(selected.fecha_pago_requisicion)}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => setACancelarPagoProveedor(selected)}
+                  >
+                    Cancelar Pago a Proveedor
+                  </button>
+                </>
               )}
               {selected.estatus_requisicion === "cancelada" && (
                 <button type="button" className="btn btn-sm" disabled style={{ opacity: 0.6 }}>
@@ -472,6 +487,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             <th className="td-center">Tipo</th>
             <th>Beneficiario</th>
             <th className="td-center">Folio</th>
+            <th>Órdenes</th>
             <th className="td-center">Monto</th>
             <th className="td-center">Pago</th>
             <th className="td-center">Estado</th>
@@ -493,6 +509,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
               </td>
               <td className="td-main">{beneficiario(r)}</td>
               <td className="mono td-center" style={{ fontSize: 11 }}>{oGuion(r.folio_factura_origen)}</td>
+              <td className="mono" style={{ fontSize: 11 }}>{oGuion(r.ordenes_folios)}</td>
               <td className="td-center mono">{fmtMoneda(r.monto_requisicion)}</td>
               <td className="mono td-center" style={{ fontSize: 11, color: r.fecha_pago_requisicion ? "var(--green-text)" : "var(--text3)" }}>
                 {fmtFecha(r.fecha_pago_requisicion)}
@@ -535,21 +552,6 @@ export function RequisicionesPage({ filtroInicial }: Props) {
             requisición requiere autorización de Dirección antes de ejecutarse.
           </div>
         </div>
-        {/* ADR-282: el alta de "Pago afiliado"/"Pago agencia"/"Pagos vendedor" se movió
-            a la pantalla de su propia factura (F2) — esta pantalla ya es de consulta
-            para esos 3 tipos. "Comisión agencia" (sin factura de origen) sigue
-            creándose aquí, es la única excepción. */}
-        <button
-          type="button"
-          className="btn btn-phase"
-          onClick={() => {
-            setSelected(null);
-            setCreando(true);
-            setSubmitError(null);
-          }}
-        >
-          <i className="pi pi-plus" aria-hidden="true" /> Nueva comisión de agencia
-        </button>
       </div>
 
       <div className="kpi-strip">
@@ -575,7 +577,7 @@ export function RequisicionesPage({ filtroInicial }: Props) {
           setQ(v);
           setPage(1);
         }}
-        searchPlaceholder="Buscar número, OC SAP o folio de la factura…"
+        searchPlaceholder="Buscar número, OC SAP, folio de la factura o de la orden…"
         filterLabel="Estado"
         filters={FILTROS_ESTATUS}
         activeFilter={filtroEstatus}
@@ -605,6 +607,43 @@ export function RequisicionesPage({ filtroInicial }: Props) {
         onConfirm={() => void confirmarCancelar()}
         onCancel={() => setACancelar(null)}
       />
+
+      {/* Fix (petición del usuario): "Cancelar Pago a Proveedor" — solo para
+          requisiciones ya `pagada`. A diferencia del diálogo de arriba (desde
+          pendiente/autorizada, sin motivo), este SIEMPRE pide motivo — el backend lo
+          exige con 400 si viene vacío. Pasa la factura del proveedor de vuelta a
+          `recibida`, vacía de órdenes. */}
+      <ConfirmDialog
+        visible={!!aCancelarPagoProveedor}
+        title="Cancelar Pago a Proveedor"
+        message={
+          aCancelarPagoProveedor
+            ? `¿Cancelar el pago ya realizado de la requisición ${aCancelarPagoProveedor.numero_requisicion}? ` +
+              "La factura del proveedor (agencia/vendedor/afiliado) regresará a 'recibida' y quedará " +
+              "sin órdenes asignadas — se puede volver a facturar desde cero."
+            : ""
+        }
+        confirmLabel="Cancelar Pago a Proveedor"
+        danger
+        loading={cambiarEstatus.isPending}
+        confirmDisabled={!motivoCancelacionPago.trim()}
+        onConfirm={() => void confirmarCancelarPagoProveedor()}
+        onCancel={() => {
+          setACancelarPagoProveedor(null);
+          setMotivoCancelacionPago("");
+        }}
+      >
+        <label className="fl" style={{ display: "block", marginTop: 10 }}>
+          Motivo de la cancelación *
+        </label>
+        <textarea
+          className="fsel"
+          style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+          value={motivoCancelacionPago}
+          onChange={(e) => setMotivoCancelacionPago(e.target.value)}
+          placeholder="Explica por qué se cancela este pago ya realizado…"
+        />
+      </ConfirmDialog>
     </>
   );
 }

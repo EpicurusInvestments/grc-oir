@@ -92,7 +92,8 @@ export function useFacturasCliente(filtros: FiltrosFacturaCliente) {
   });
 
   const cancelar = useMutation({
-    mutationFn: (id: string) => facturaClienteApi.cancelar(id),
+    mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
+      facturaClienteApi.cancelar(id, motivo),
     // Espejo de `timbrar`: la cancelación puede devolver la OrdenCliente a
     // `orden_cerrada` (ADR-047), así que quedan obsoletas la pantalla de F1 y la bandeja
     // "Listas para facturar", donde esa orden vuelve a aparecer.

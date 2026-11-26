@@ -605,6 +605,11 @@ en F1) — no el propio CxP que capturó el registro.
     cancelar desde `preparada`/`enviada_a_timbrado` (el handoff nunca ocurrió) como desde
     `entregada`, que la redacción inicial de la decisión no mencionaba pero sí requiere
     reversión.
+    **Actualizado en ADR-292 (F3, `docs/arquitectura.md`):** el 400 para `cobrada` deja
+    de alcanzarse en la práctica — cancelar la factura ahora cancela en cascada sus
+    `PagoCliente` (F3), que revierten la orden de `cobrada` hacia abajo ANTES de este
+    punto; el `raise` se quitó de `revertir_facturacion()` por si queda algún camino
+    residual (p. ej. una prueba que fuerza el estado a mano sin pasar por la cascada).
   - **Portabilidad verificada, no supuesta:** SQLite SÍ soporta índices parciales (desde
     3.8) y SQLAlchemy emite el mismo DDL para SQL Server y SQLite, así que no hizo falta
     una validación de unicidad de respaldo en el servicio. Lo que sí se ajustó es el
@@ -1140,7 +1145,8 @@ campo sin uso real.
   RDS. `alembic check` sigue reportando esas 3 operaciones (y solo esas).
 - ~~¿Cancelar una factura timbrada debe revertir la `OrdenCliente`?~~ **RESUELTO** en la
   Tanda 4 (ADR-047): sí revierte, y el 1:1 pasó a índice único filtrado para permitir
-  refacturar. La excepción es una orden ya `cobrada`, que se rechaza con 400 porque
-  requeriría una nota de crédito — eso sí sigue fuera de alcance.
+  refacturar. La excepción histórica era una orden ya `cobrada` (400, requeriría nota de
+  crédito) — **superada en ADR-292 (F3):** ahora cancela en cascada los cobros (F3) y la
+  orden se revierte igual; la nota de crédito real sigue fuera de alcance.
 - **¿Quién dispara `FacturaCliente → cobrada`?** La transición existe en la máquina pero
   en F2 nadie la invoca; es de F3 (Cobranza), igual que `OrdenCliente → cobrada`.
