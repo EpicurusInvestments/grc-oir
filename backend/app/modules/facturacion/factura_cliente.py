@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
@@ -478,6 +479,10 @@ class FacturaCliente(Base):
     # archivo/folio que se carga aquí puede traer un monto distinto, y es justo lo que
     # este campo distingue. No cambia ningún cálculo ni ninguna otra parte del flujo.
     facturado_en_sistema_externo: Mapped[bool] = mapped_column(default=False)
+    # Fix (petición del usuario): "Cancelar factura" ya no se rechaza si la orden
+    # quedó `cobrada` — ahora revierte en cascada (igual que ADR-286 hizo con
+    # "Cancelar pago") y exige motivo, igual que `PagoCliente.motivo_cancelacion`.
+    motivo_cancelacion: Mapped[str | None] = mapped_column(Unicode(255), default=None)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
@@ -624,6 +629,7 @@ class FacturaClienteRead(BaseModel):
     xml_path: str | None = None
     pdf_path: str | None = None
     facturado_en_sistema_externo: bool = False
+    motivo_cancelacion: str | None = None
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime | None = None
@@ -682,19 +688,30 @@ TRANSICIONES: dict[str, set[str]] = {
 }
 
 
-def comisiones_comprometidas_de_orden(db: Session, orden_id: uuid.UUID) -> list[str]:
+@dataclass(frozen=True)
+class ComisionComprometida:
+    """Una `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado` que ya avanzó más allá
+    de `recibida` con base en que esta orden estaba `cobrada` — ver
+    `comisiones_comprometidas_de_orden`."""
+
+    tipo: str  # "agencia" | "vendedor" | "afiliado"
+    factura_id: uuid.UUID
+    estatus: str
+
+
+def comisiones_comprometidas_de_orden(
+    db: Session, orden_id: uuid.UUID
+) -> list[ComisionComprometida]:
     """ADR-286: ¿ya se autorizó o pagó una comisión (agencia/vendedor/afiliado) con base
     en que esta `OrdenCliente` estaba `cobrada`? Es el reverso de la pregunta que ya hace
     `_validar_cobradas_antes_de_autorizar` en cada uno de los 3 módulos (ADR-264: esa
-    valida que SÍ esté cobrada antes de autorizar el pago; esta valida que, si se quiere
-    REVERTIR el cobro, ninguna de esas 3 ya haya avanzado más allá de `recibida` con base
-    en ese hecho — si alguna ya se autorizó/pagó, es un compromiso tomado que ya no se
-    puede deshacer limpiamente, y la reversa del cobro debe rechazarse).
+    valida que SÍ esté cobrada antes de autorizar el pago).
 
-    Usado por `PagoClienteService.cancelar` (cobranza) ANTES de tocar cualquier fila —
-    único punto de entrada de la reversa completa. Regresa una lista de etiquetas
-    humanas ("agencia"/"vendedor"/"afiliado") de las que SÍ están comprometidas; vacía
-    si ninguna lo está (revertir es seguro).
+    Fix (petición del usuario): YA NO es un bloqueo — `PagoClienteService.cancelar`
+    (cobranza) usa esta lista para CANCELAR EN CASCADA la(s) `Requisicion` `autorizada`
+    ligada(s) a esas facturas (las `pagada` no se tocan, el dinero ya salió). Regresa
+    `(tipo, factura_id, estatus)` de cada factura comprometida (antes solo regresaba la
+    etiqueta humana); vacía si ninguna está comprometida.
     """
     from app.modules.facturacion.factura_afiliado import (
         EstatusFacturaProveedor,
@@ -705,10 +722,10 @@ def comisiones_comprometidas_de_orden(db: Session, orden_id: uuid.UUID) -> list[
     from app.modules.facturacion.factura_vendedor import FacturaVendedor, FacturaVendedorOrden
     from app.modules.ordenes.orden_estacion import OrdenEstacion
 
-    comprometidas: list[str] = []
+    comprometidas: list[ComisionComprometida] = []
 
-    agencia = db.scalar(
-        select(FacturaAgencia.factura_agencia_id)
+    agencia = db.execute(
+        select(FacturaAgencia.factura_agencia_id, FacturaAgencia.estatus_factura_agencia)
         .join(
             FacturaAgenciaOrden,
             FacturaAgenciaOrden.factura_agencia_id == FacturaAgencia.factura_agencia_id,
@@ -717,13 +734,13 @@ def comisiones_comprometidas_de_orden(db: Session, orden_id: uuid.UUID) -> list[
             FacturaAgenciaOrden.orden_id == orden_id,
             FacturaAgencia.estatus_factura_agencia != EstatusFacturaProveedor.RECIBIDA.value,
         )
-        .limit(1)
+    ).all()
+    comprometidas.extend(
+        ComisionComprometida("agencia", fid, estatus) for fid, estatus in agencia
     )
-    if agencia is not None:
-        comprometidas.append("agencia")
 
-    vendedor = db.scalar(
-        select(FacturaVendedor.factura_vendedor_id)
+    vendedor = db.execute(
+        select(FacturaVendedor.factura_vendedor_id, FacturaVendedor.estatus_factura_vendedor)
         .join(
             FacturaVendedorOrden,
             FacturaVendedorOrden.factura_vendedor_id == FacturaVendedor.factura_vendedor_id,
@@ -732,13 +749,13 @@ def comisiones_comprometidas_de_orden(db: Session, orden_id: uuid.UUID) -> list[
             FacturaVendedorOrden.orden_id == orden_id,
             FacturaVendedor.estatus_factura_vendedor != EstatusFacturaProveedor.RECIBIDA.value,
         )
-        .limit(1)
+    ).all()
+    comprometidas.extend(
+        ComisionComprometida("vendedor", fid, estatus) for fid, estatus in vendedor
     )
-    if vendedor is not None:
-        comprometidas.append("vendedor")
 
-    afiliado = db.scalar(
-        select(FacturaAfiliado.factura_afiliado_id)
+    afiliado = db.execute(
+        select(FacturaAfiliado.factura_afiliado_id, FacturaAfiliado.estatus_factura_afiliado)
         .join(
             FacturaAfiliadoOrden,
             FacturaAfiliadoOrden.factura_afiliado_id == FacturaAfiliado.factura_afiliado_id,
@@ -751,10 +768,10 @@ def comisiones_comprometidas_de_orden(db: Session, orden_id: uuid.UUID) -> list[
             OrdenEstacion.orden_id == orden_id,
             FacturaAfiliado.estatus_factura_afiliado != EstatusFacturaProveedor.RECIBIDA.value,
         )
-        .limit(1)
+    ).all()
+    comprometidas.extend(
+        ComisionComprometida("afiliado", fid, estatus) for fid, estatus in afiliado
     )
-    if afiliado is not None:
-        comprometidas.append("afiliado")
 
     return comprometidas
 
@@ -859,6 +876,16 @@ class FacturaClienteCreate(BaseModel):
                     "('tipo_comprobante' == 'E')."
                 )
         return self
+
+
+class FacturaClienteCancelarRequest(BaseModel):
+    """Fix (petición del usuario, mismo criterio que `PagoClienteCancelarRequest` de
+    ADR-286): motivo obligatorio al cancelar una factura — antes el endpoint no recibía
+    body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    motivo: str = Field(min_length=3, max_length=255)
 
 
 class FacturaClienteUpdate(BaseModel):
@@ -1916,30 +1943,40 @@ class FacturaClienteService(
         for orden_id in self._ordenes_de_factura(obj.factura_id):
             servicio_oc.revertir_cobro(orden_id)
 
-    def cancelar(self, factura_id: uuid.UUID, usuario: CurrentUser) -> FacturaClienteRead:
+    def cancelar(
+        self, factura_id: uuid.UUID, usuario: CurrentUser, motivo: str
+    ) -> FacturaClienteRead:
         """Cancelación desde los 4 primeros estados, **revirtiendo el handoff** (ADR-047).
 
         Si la OrdenCliente quedó en `facturada`, vuelve a `orden_cerrada` y puede
-        facturarse de nuevo (el índice único es filtrado: ignora las canceladas). Si ya
-        está en `cobrada`, `revertir_facturacion` lanza 400 y la cancelación NO ocurre:
-        deshacer una venta cobrada exige una nota de crédito que el sistema no maneja.
+        facturarse de nuevo (el índice único es filtrado: ignora las canceladas).
+
+        Fix (petición del usuario, mismo criterio que ADR-286 abrió "Cancelar pago"):
+        cancelar la factura YA NO se rechaza si la orden llegó a `cobrada` — la
+        reversa completa (incluida la de los pagos del cliente y, en cascada, las
+        `Requisicion` de proveedor `autorizada`) se dispara ANTES, en
+        `CobranzaFacturaService.eliminar_o_rechazar`, así que para cuando se llega
+        aquí la orden ya bajó de `cobrada`. Exige `motivo` (igual que
+        `PagoCliente.motivo_cancelacion`).
 
         La reversión se invoca ANTES del commit y con la misma sesión, igual que el
         handoff hacia adelante: cancelar la factura y revertir la orden son atómicos.
 
-        F3: si la factura ya tiene `CobranzaFactura` con algún pago recibido
-        (`importe_cobrado > 0`), la cancelación se rechaza con 400 ANTES de tocar nada
-        — mismo criterio que la excepción de "OC ya cobrada". Si no hay pagos, la
-        `CobranzaFactura` se elimina como parte de esta misma transacción.
+        F3 (ADR-292): `CobranzaFacturaService.eliminar_o_rechazar` cancela en cascada
+        cualquier pago recibido (ya no rechaza) y borra la `CobranzaFactura` si queda
+        sin ningún `PagoCliente` (ni activo ni cancelado) que referenciarla.
 
         Notas de Crédito (petición del usuario, `tipo_comprobante == "E"`): nunca tienen
-        su propia `CobranzaFactura` (`eliminar_o_rechazar` no encuentra nada y no hace
-        nada), así que en vez de eso se revierte el `PagoCliente` sintético que
-        `timbrar()` le aplicó a la factura de ORIGEN
-        (`PagoClienteService.revertir_nota_credito`) — reutiliza completo el ADR-286
-        (valida comisiones comprometidas, revierte la cascada si hacía falta). No-op si
-        la NC nunca llegó a timbrarse (nada que revertir).
+        su propia `CobranzaFactura` (`eliminar_o_rechazar` no encontraría nada), así que
+        en vez de eso se revierte el `PagoCliente` sintético que `timbrar()` le aplicó a
+        la factura de ORIGEN (`PagoClienteService.revertir_nota_credito`) — reutiliza
+        completo el mecanismo de ADR-292 (ya no bloquea por comisiones comprometidas,
+        las cancela/revierte en cascada). No-op si la NC nunca llegó a timbrarse (nada
+        que revertir).
         """
+        if not motivo.strip():
+            raise DomainError("El motivo de cancelación no puede estar vacío.")
+
         from app.modules.cobranza.cobranza_factura import (
             CobranzaFactura,
             CobranzaFacturaRepository,
@@ -1961,16 +1998,19 @@ class FacturaClienteService(
             return self._enriquecida(self._to_read(obj))
 
         if obj.tipo_comprobante == "E":
+            # Nota de crédito: no tiene su propia CobranzaFactura, revierte el pago
+            # sintético aplicado sobre la factura de origen (ver docstring arriba).
             PagoClienteService(PagoClienteRepository(db, PagoCliente)).revertir_nota_credito(
                 obj.factura_id, usuario, obj.numero_factura
             )
         else:
-            # ── F3: rechazo o limpieza de la CobranzaFactura, ANTES de tocar nada ──
+            # ── F3: cascada o limpieza de la CobranzaFactura, ANTES de tocar nada más ──
             CobranzaFacturaService(
                 CobranzaFacturaRepository(db, CobranzaFactura)
-            ).eliminar_o_rechazar(obj.factura_id)
+            ).eliminar_o_rechazar(obj.factura_id, usuario, motivo)
 
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
+        obj.motivo_cancelacion = motivo
 
         # ── reversión del handoff, misma transacción ──
         # Si CUALQUIERA de las órdenes está en `cobrada`, `revertir_facturacion` lanza 400
@@ -2155,10 +2195,11 @@ def entregar_factura(
 @router_clientes.post("/{item_id}/cancelar", response_model=FacturaClienteRead)
 def cancelar_factura(
     item_id: uuid.UUID,
+    payload: FacturaClienteCancelarRequest,
     usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
     svc: FacturaClienteService = Depends(get_factura_cliente_service),
 ) -> FacturaClienteRead:
-    return svc.cancelar(item_id, usuario)
+    return svc.cancelar(item_id, usuario, payload.motivo)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -1576,6 +1576,24 @@ Anunciante, Agencia, Contrato, Marca, Categoria, Plaza, Afiliado, Estacion, Usua
   actualizaban su propio `useReducer`, que la tabla ya no lee. Se exportan `K_OC`/`K_OE`
   desde `hooks.ts` y cada método invalida (por prefijo) la(s) query key(s) que
   corresponde tras guardar. Ver ADR-287 en `arquitectura.md` para el detalle completo.
+- **ADR-288 (fix, reporte del usuario): "Pendientes de asignar"/"Pendientes de
+  verificar" (y las pills 2.1/2.2) no cargaban la tabla de "Órdenes de Transmisión".**
+  `OrdenEstacionListPage.tsx` mandaba el valor de filtro en vocabulario v5
+  (`asignada_afiliado`/`programados_conciliados`) tal cual al backend, que solo acepta su
+  propio vocabulario spec (`asignada`/`en_transmision`/`cerrada`) en el query param
+  `estatus` y rechazaba (422) cualquier otro valor. Se agrega `estatusOEHaciaApi`
+  (inverso de `estatusOEDesdeApi`) en `adapters/vocabulario.ts` para traducir antes de
+  llamar al backend. De paso se quitó el letrero "🔎 Filtro activo: ..." de "Órdenes de
+  Servicio" (vistas "Listas para cerrar"/"Listas para facturar", petición del usuario) —
+  la pill ya resaltada en el toolbar comunica lo mismo sin tecnicismos. No se tocó base
+  de datos. Ver ADR-288 en `arquitectura.md`.
+- **ADR-289 (fix, reporte del usuario): encabezados mal rotulados en "Órdenes de
+  Servicio".** "PRODUCTO / MARCA" desplegaba Marca/Campaña y "CAMPAÑA" desplegaba el
+  Periodo — no es bug de datos, es un rótulo desactualizado: `oc.producto` hace tiempo
+  significa "Campaña" (así lo llama el propio formulario), y el rango de fechas de
+  campaña ES el Periodo (no hay un "nombre de campaña" separado en la spec). Se corrigen
+  los textos en `OrdenClienteListPage.tsx`/`OrdenClienteDetailPanel.tsx`: "Marca /
+  Campaña" y "Periodo". No se tocó base de datos. Ver ADR-289 en `arquitectura.md`.
 
 ## Pendientes / dudas
 

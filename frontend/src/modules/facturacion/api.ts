@@ -78,8 +78,13 @@ export const facturaClienteApi = {
     });
     return data;
   },
-  async cancelar(id: string) {
-    const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`);
+  /** Fix (petición del usuario): motivo obligatorio — antes se cancelaba sin pedir
+   *  nada y se rechazaba con 400 si ya había cobros recibidos; ahora cancela en
+   *  cascada (reusa el mismo mecanismo de "Cancelar pago", ver `cobranza_factura.py`). */
+  async cancelar(id: string, motivo: string) {
+    const { data } = await apiClient.post<FacturaCliente>(`${BASE}/clientes/${id}/cancelar`, {
+      motivo,
+    });
     return data;
   },
   /** Validación EN VIVO del campo «Número de factura» (blur, antes de guardar todo el
@@ -148,6 +153,19 @@ export interface AdjuntoFacturacionSubido {
   nombre_archivo: string;
 }
 
+/** Resultado de `POST /facturacion/cfdi/leer` (petición del usuario) — `ok=false` NO es
+ * un error: es "este XML no se pudo leer como CFDI", el formulario sigue permitiendo
+ * capturar Subtotal/IVA a mano. */
+export interface LecturaCfdi {
+  ok: boolean;
+  motivo: string | null;
+  subtotal: string | null;
+  iva: string | null;
+  total: string | null;
+  rfc_emisor: string | null;
+  folio: string | null;
+}
+
 export const adjuntosFacturacionApi = {
   async subir(tipo: TipoAdjuntoFacturacion, archivo: File): Promise<AdjuntoFacturacionSubido> {
     const fd = new FormData();
@@ -195,6 +213,18 @@ export function nombreDeAdjuntoFacturacionRef(ref: string): string {
   const idx = base.indexOf("_");
   return idx >= 0 ? base.slice(idx + 1) : base;
 }
+
+/** Lectura de CFDI (petición del usuario): al cargar el XML de una factura de
+ * Agencia/Vendedor/Afiliado, precarga Subtotal/IVA. Endpoint SEPARADO de `subir()` —
+ * lee el archivo directo, independiente de si ya se subió a almacenamiento. */
+export const cfdiApi = {
+  async leer(archivo: File): Promise<LecturaCfdi> {
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    const { data } = await apiClient.post<LecturaCfdi>(`${BASE}/cfdi/leer`, fd);
+    return data;
+  },
+};
 
 // ── FacturaAfiliado ───────────────────────────────────────────────────────────
 export interface FiltrosFacturaAfiliado extends ListParams {

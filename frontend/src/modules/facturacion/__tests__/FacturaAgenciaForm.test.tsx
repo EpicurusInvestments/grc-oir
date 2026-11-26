@@ -16,6 +16,7 @@ import type { OrdenClienteFacturableAgencia } from "../types";
 
 const ordenesFacturablesMock = vi.fn();
 const subirMock = vi.fn();
+const leerCfdiMock = vi.fn();
 
 vi.mock("../hooks", () => ({
   useAgencias: () => ({
@@ -34,6 +35,9 @@ vi.mock("../api", () => ({
   adjuntosFacturacionApi: {
     subir: (...args: unknown[]) => subirMock(...args),
     ver: vi.fn(),
+  },
+  cfdiApi: {
+    leer: (...args: unknown[]) => leerCfdiMock(...args),
   },
   nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
 }));
@@ -114,8 +118,9 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     agregarOrden("OC-2025-0041");
 
     expect(screen.getByText(/15.00 %/)).toBeInTheDocument();
-    // Aparece en el renglón y en el Subtotal calculado (coincide: es la única elegida).
-    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+    // Aparece en el renglón (texto) y precargado en el Subtotal (input editable, fix).
+    expect(screen.getByText("$177,480.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("177480.00")).toBeInTheDocument();
     // ...y ya no se ofrece de nuevo en el buscador.
     fireEvent.change(screen.getByPlaceholderText("Buscar por folio y agregar…"), { target: { value: "0041" } });
     expect(screen.queryByText("OC-2025-0041 — Grupo Bimbo")).toBeNull();
@@ -128,7 +133,8 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     agregarOrden("OC-2025-0055");
 
     expect(screen.getByText(/10.00 %/)).toBeInTheDocument();
-    expect(screen.getAllByText("$50,000.00").length).toBe(2);
+    expect(screen.getByText("$50,000.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("50000.00")).toBeInTheDocument();
   });
 
   it("Subtotal/IVA/Total acumulan la comisión de cada orden elegida, con su propio %", () => {
@@ -138,11 +144,11 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     agregarOrden("OC-2025-0041");
     agregarOrden("OC-2025-0055");
 
-    // Subtotal = 177,480.00 + 50,000.00 = 227,480.00
-    expect(screen.getByText("$227,480.00")).toBeInTheDocument();
+    // Subtotal = 177,480.00 + 50,000.00 = 227,480.00 — precargado en el input editable (fix).
+    expect(screen.getByDisplayValue("227480.00")).toBeInTheDocument();
     // IVA = 227,480.00 * 16% = 36,396.80
-    expect(screen.getByText("$36,396.80")).toBeInTheDocument();
-    // Total = 227,480.00 + 36,396.80 = 263,876.80
+    expect(screen.getByDisplayValue("36396.80")).toBeInTheDocument();
+    // Total = 227,480.00 + 36,396.80 = 263,876.80 (sigue calculado, de solo lectura)
     expect(screen.getByText("$263,876.80")).toBeInTheDocument();
   });
 
@@ -152,12 +158,13 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     elegirAgencia(container);
     agregarOrden("OC-2025-0041");
     agregarOrden("OC-2025-0055");
-    expect(screen.getByText("$227,480.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("227480.00")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByTitle("Quitar de esta factura")[0]);
 
-    expect(screen.queryByText("$227,480.00")).toBeNull();
-    expect(screen.getAllByText("$50,000.00").length).toBe(2);
+    expect(screen.queryByDisplayValue("227480.00")).toBeNull();
+    expect(screen.getByText("$50,000.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("50000.00")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("Buscar por folio y agregar…"), { target: { value: "0041" } });
     expect(screen.getByText("OC-2025-0041 — Grupo Bimbo")).toBeInTheDocument();
   });
@@ -167,10 +174,12 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     const { container } = render(<FacturaAgenciaForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     elegirAgencia(container, "ag-1");
     agregarOrden("OC-2025-0041");
-    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+    expect(screen.getByText("$177,480.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("177480.00")).toBeInTheDocument();
 
     elegirAgencia(container, "ag-2");
     expect(screen.queryByText("$177,480.00")).toBeNull();
+    expect(screen.queryByDisplayValue("177480.00")).toBeNull();
     expect(screen.getByText("Sin órdenes agregadas todavía.")).toBeInTheDocument();
   });
 
@@ -200,6 +209,10 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
           agencia_id: "ag-1",
           folio_factura_agencia: "OMD-2025-0287",
           fecha_factura_agencia: "2025-06-08",
+          // Fix: en edición, Subtotal/IVA ya NO se recalculan solos — arrancan en lo
+          // ya guardado (aquí, coincide con la comisión de la única OI asignada).
+          monto_factura_agencia: "177480.00",
+          iva_factura_agencia: "28396.80",
         }}
         ordenesIniciales={[
           {
@@ -221,7 +234,8 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
     );
     expect(await screen.findByDisplayValue("OMD México")).toBeEnabled();
     expect(screen.getByText("OC-2025-0041")).toBeInTheDocument();
-    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+    expect(screen.getByText("$177,480.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("177480.00")).toBeInTheDocument();
   });
 
   it("ADR-264: en edición, manda el id de la propia factura para que el combo no excluya sus propias órdenes", async () => {
@@ -290,6 +304,8 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
             agencia_id: "ag-1",
             folio_factura_agencia: "OMD-2025-0287",
             fecha_factura_agencia: "2025-06-08",
+            monto_factura_agencia: "177480.00",
+            iva_factura_agencia: "28396.80",
           }}
           ordenesIniciales={[
             {
@@ -311,12 +327,46 @@ describe("FacturaAgenciaForm — Asignación a órdenes", () => {
       </StrictMode>,
     );
     await screen.findByDisplayValue("OMD México");
-    expect(screen.getAllByText("$177,480.00").length).toBe(2);
+    expect(screen.getByText("$177,480.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("177480.00")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].agencia_id).toBe("ag-1");
     expect(onSubmit.mock.calls[0][0].ordenes_ids).toEqual(["oc-a"]);
+  });
+
+  it("fix: cargar el XML precarga Subtotal/IVA y siguen siendo editables después", async () => {
+    leerCfdiMock.mockResolvedValue({
+      ok: true,
+      motivo: null,
+      subtotal: "957.00",
+      iva: "150.00",
+      total: "1107.00",
+      rfc_emisor: "PBA260101XX1",
+      folio: "0071",
+    });
+    const onSubmit = vi.fn();
+    const { container } = render(<FacturaAgenciaForm onSubmit={onSubmit} onCancel={vi.fn()} />);
+    elegirAgencia(container);
+
+    const xml = new File(["<cfdi/>"], "factura.xml", { type: "application/xml" });
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const inputXml = Array.from(inputs).find((i) => i.getAttribute("accept") === ".xml")!;
+    fireEvent.change(inputXml, { target: { files: [xml] } });
+
+    expect(await screen.findByDisplayValue("957.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("150.00")).toBeInTheDocument();
+
+    // Sigue editable: el usuario corrige el IVA precargado.
+    fireEvent.change(screen.getByDisplayValue("150.00"), { target: { value: "153.12" } });
+    expect(screen.getByDisplayValue("153.12")).toBeInTheDocument();
+
+    fireEvent.change(campoTrasEtiqueta(container, "Fecha de la factura"), { target: { value: "2026-04-10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].monto_factura_agencia).toBe("957.00");
+    expect(onSubmit.mock.calls[0][0].iva_factura_agencia).toBe("153.12");
   });
 
   it("subir el PDF llama a adjuntosFacturacionApi.subir con el tipo correcto y lo incluye al guardar", async () => {

@@ -1,7 +1,10 @@
 /** Pantalla "Órdenes del cliente": lista + panel de detalle (patrón F0), con filtro por
- * estado, búsqueda y el filtro activo (chip removible) cuando se llega desde una vista
- * operativa del sidebar ("Listas para cerrar" / "Listas para facturar"). El alta/edición
- * (Tanda 2) se abre a pantalla completa, reemplazando la lista+detalle mientras dura.
+ * estado y búsqueda. Al llegar desde una vista operativa del sidebar ("Listas para
+ * cerrar" / "Listas para facturar") arranca con esa pill ya activa en el toolbar — sin
+ * letrero aparte (fix, petición del usuario: el aviso "Filtro activo: ..." describía el
+ * filtro en términos técnicos que no le hacían sentido al usuario de negocio; la pill
+ * resaltada en el toolbar ya comunica lo mismo). El alta/edición (Tanda 2) se abre a
+ * pantalla completa, reemplazando la lista+detalle mientras dura.
  *
  * ADR-285 (petición del usuario, con captura): la tabla y su paginación pegan al
  * backend de verdad (`useOrdenesClientePagina`) — antes traían el 100% de las órdenes
@@ -42,11 +45,6 @@ const FILTROS: { key: FiltroOrdenCliente; label: string }[] = [
   { key: "listas_facturar", label: "Listas para facturar" },
 ];
 
-const FILTRO_DESCRIPCION: Partial<Record<FiltroOrdenCliente, string>> = {
-  listas_cerrar: "Solo órdenes cuyas órdenes de transmisión están todas en 2.3 (reales conciliados).",
-  listas_facturar: "Solo órdenes ya cerradas (estado 3).",
-};
-
 type Modo = "view" | "new" | "edit" | "cierre";
 
 interface OrdenClienteListPageProps {
@@ -54,7 +52,6 @@ interface OrdenClienteListPageProps {
   filtroInicial?: FiltroOrdenCliente;
   /** OC con la que arranca seleccionada (llegando desde "Ver OC →" del detalle de una OI). */
   ocIdPreseleccionada?: string;
-  onQuitarFiltroInicial?: () => void;
   onSeleccionarOE: (oeId: string) => void;
   onAsignarEstaciones: (ocId: string) => void;
 }
@@ -62,7 +59,6 @@ interface OrdenClienteListPageProps {
 export function OrdenClienteListPage({
   filtroInicial,
   ocIdPreseleccionada,
-  onQuitarFiltroInicial,
   onSeleccionarOE,
   onAsignarEstaciones,
 }: OrdenClienteListPageProps) {
@@ -108,8 +104,6 @@ export function OrdenClienteListPage({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
-
-  const filtroDescripcion = filtro !== (filtroInicial ?? "todas") ? undefined : FILTRO_DESCRIPCION[filtro];
 
   const onGuardar = async (input: OrdenClienteInput, opts: { motivoComision?: string }) => {
     setSubmitError(null);
@@ -209,29 +203,6 @@ export function OrdenClienteListPage({
         </button>
       </div>
 
-      {filtroDescripcion && (
-        <div
-          style={{
-            background: "var(--amber-bg)",
-            color: "var(--amber-text)",
-            padding: "6px 22px",
-            fontSize: 12,
-            borderBottom: "1px solid var(--amber-border, #FAC775)",
-          }}
-        >
-          🔎 Filtro activo: {filtroDescripcion}{" "}
-          <span
-            style={{ cursor: "pointer", textDecoration: "underline" }}
-            onClick={() => {
-              setFiltro("todas");
-              onQuitarFiltroInicial?.();
-            }}
-          >
-            Quitar filtro
-          </span>
-        </div>
-      )}
-
       <CatalogToolbar
         search={search}
         onSearch={(v) => {
@@ -260,8 +231,13 @@ export function OrdenClienteListPage({
                 <th className="td-center" style={{ width: "9%" }}>Fecha</th>
                 <th style={{ width: "15%" }}>Anunciante</th>
                 <th style={{ width: "13%" }}>Agencia / Vendedor</th>
-                <th style={{ width: "13%" }}>Producto / Marca</th>
-                <th className="td-center" style={{ width: "11%" }}>Campaña</th>
+                {/* Fix (petición del usuario): decían "Producto / Marca" y "Campaña" pero
+                    desplegaban otra cosa — `oc.producto` es texto libre de "Campaña" (así lo
+                    llama el propio formulario, `OrdenClienteForm.tsx`: "Descripción de la
+                    campaña anunciada"), y esta columna de fechas es el PERIODO de esa
+                    campaña, no un nombre. Mismos datos de siempre, solo se corrige el rótulo. */}
+                <th style={{ width: "13%" }}>Marca / Campaña</th>
+                <th className="td-center" style={{ width: "11%" }}>Periodo</th>
                 <th className="td-center" style={{ width: "9%" }}>
                   Total
                 </th>

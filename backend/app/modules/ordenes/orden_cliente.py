@@ -1278,25 +1278,24 @@ class OrdenClienteService(
         llamador la invoca con la misma sesión antes del suyo, así que cancelar la factura
         y revertir la orden son una sola transacción (ADR-047).
 
-        Tres casos, resueltos por el estado de la ORDEN y no por el de la factura:
+        Fix (petición del usuario, mismo criterio que ADR-286): ya NO se rechaza si la
+        orden está `cobrada` — para cuando se llega aquí, `FacturaClienteService.cancelar`
+        ya revirtió el cobro completo ANTES (vía
+        `CobranzaFacturaService.eliminar_o_rechazar`, que cancela en cascada los pagos),
+        así que este caso en la práctica ya no se alcanza. Si por algún camino residual
+        SÍ se alcanzara con `cobrada` todavía puesta, cae al mismo `return` de abajo (no
+        hace nada) en vez de tronar — no es su responsabilidad revertir el cobro, esa
+        vive en F3.
+
         - `facturada` → vuelve a `orden_cerrada`: queda lista para facturarse de nuevo.
-        - `cobrada`   → **se rechaza**. Deshacer una venta ya cobrada exige una nota de
-          crédito real, que no existe todavía (fuera del alcance de F2). Es el único caso
-          en que cancelar la factura falla, y falla ANTES de tocar nada.
-        - cualquier otro → no hace nada. Cubre sin enumerarlas las cancelaciones desde
-          `preparada` y `enviada_a_timbrado`: ahí el handoff nunca llegó a ocurrir (se
-          dispara al TIMBRAR), así que la orden sigue en `orden_cerrada` y no hay qué
-          revertir.
+        - cualquier otro (incluida `cobrada`, caso residual de arriba) → no hace nada.
+          Cubre sin enumerarlas las cancelaciones desde `preparada` y
+          `enviada_a_timbrado`: ahí el handoff nunca llegó a ocurrir (se dispara al
+          TIMBRAR), así que la orden sigue en `orden_cerrada` y no hay qué revertir.
         """
         obj = self._get_or_404(orden_id)
-        if obj.estatus_orden == EstatusOrden.COBRADA.value:
-            raise DomainError(
-                "No se puede cancelar la factura de una orden ya COBRADA: requiere una "
-                "nota de crédito, que el sistema todavía no maneja.",
-                detalles={"orden_id": str(orden_id), "estatus_orden": obj.estatus_orden},
-            )
         if obj.estatus_orden != EstatusOrden.FACTURADA.value:
-            return  # el handoff nunca ocurrió: nada que deshacer
+            return  # el handoff nunca ocurrió, o la orden ya bajó por otro camino
         obj.estatus_orden = EstatusOrden.ORDEN_CERRADA.value
 
     # ── Handoff con F3 (Cobranza) ─────────────────────────────────────────────

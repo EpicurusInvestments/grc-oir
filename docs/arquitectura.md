@@ -11798,7 +11798,7 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   una Orden de Servicio y una de Transmisión y ver el cambio reflejado en la tabla sin
   salir de la pantalla.
 
-### ADR-288 — Facturación: Notas de Crédito (captura + aplicación en Cobranza; timbrado sigue siendo manual)
+### ADR-293 — Facturación: Notas de Crédito (captura + aplicación en Cobranza; timbrado sigue siendo manual)
 
 - **Estado:** aceptada · **Fecha:** 2026-11-24 (petición del usuario, con captura, 2
   rondas de preguntas antes de implementar).
@@ -11929,3 +11929,295 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (`UsoCFDI/G02`, `TipoRelacion/01,03`) insertados a mano en la BD real de dev para
   poder probar manualmente (el CSV de referencia ya había divergido de los datos reales
   de esa BD en sesiones anteriores).
+### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de
+  pantalla).
+- **Disparador:** en "Órdenes de Transmisión", las vistas operativas del sidebar
+  "Pendientes de asignar" y "Pendientes de verificar" (y, al probarlo, también las pills
+  "2.1 Asignadas"/"2.2 Programados" del toolbar) mostraban la tabla vacía con
+  "No se pudieron cargar las órdenes de transmisión." El usuario también pidió quitar el
+  letrero ámbar "🔎 Filtro activo: ..." de "Órdenes de Servicio" (vistas "Listas para
+  cerrar"/"Listas para facturar") por describir el filtro en términos técnicos que no le
+  hacían sentido ("2.3 (reales conciliados)", "estado 3").
+- **Causa raíz (bug de carga):** `OrdenEstacion.estatus` existe en DOS vocabularios
+  distintos en el frontend — el real del backend (`EstatusOrdenEstacion`, spec:
+  `borrador`/`asignada`/`en_transmision`/`en_revision`/`cerrada`/`cancelada`,
+  `backend/app/modules/ordenes/orden_estacion.py:171`) y el "v5" que usa esta pantalla
+  para pintar (`EstadoOI`: `asignada_afiliado`/`programados_conciliados`/
+  `reales_conciliados`, traducido por `estatusOEDesdeApi` en
+  `frontend/src/modules/ordenes/adapters/vocabulario.ts`). `OrdenEstacionListPage.tsx`
+  mandaba el valor v5 de la pill (`filtro`) **tal cual** como query param `estatus` al
+  endpoint real (`GET /ordenes/estaciones`), que lo valida contra el enum spec y rechaza
+  cualquier otro valor con 422 — eso disparaba `lista.isError`. La pill "Todas" (sin
+  filtro) y "2.3 Reales"/Verificaciones no se veían afectadas: "Todas" no manda
+  `estatus`, y `useVerificacionesPagina` ya fuerza el valor spec correcto (`"cerrada"`)
+  a mano, sin pasar por `filtro`. Los conteos del sidebar (`useConteosOrdenes`) tampoco
+  se veían afectados — ya usaban los valores spec correctos de forma literal
+  (`"asignada"`/`"en_transmision"`), por eso los contadores sí mostraban el número
+  correcto aunque la tabla no cargara. No había ninguna prueba que ejercitara
+  `filtroInicial` con un valor distinto de `"todas"` — por eso ADR-285 no lo atrapó.
+- **Cambio (bug de carga):** se agrega `estatusOEHaciaApi` en `vocabulario.ts` — inverso
+  documentado de `estatusOEDesdeApi` para los 3 valores que `EstadoOI` puede tomar (no
+  hace falta más: la pantalla no tiene pill para `borrador`/`en_revision`/`cancelada`).
+  `OrdenEstacionListPage.tsx` lo usa al armar `filtros.estatus` en vez de mandar `filtro`
+  crudo.
+- **Cambio (letrero):** se quita por completo el bloque del letrero "Filtro activo"
+  (JSX, `FILTRO_DESCRIPCION`, `filtroDescripcion`) y la prop `onQuitarFiltroInicial` (ya
+  sin uso) de `OrdenClienteListPage.tsx`/`OrdenesExplorerPage.tsx`. La pill ya activa en
+  el `CatalogToolbar` (p.ej. "Listas para cerrar" resaltada en verde) sigue comunicando
+  qué filtro está aplicado, y el usuario puede quitarlo con la pill "Todas" — no hacía
+  falta un segundo control para lo mismo.
+- **No se tocó base de datos ni backend:** el fix es 100% frontend (un mapeo de
+  vocabulario y un letrero de UI); no hay migración ni cambio de esquema.
+- **Pruebas:** 2 nuevas en `OrdenEstacionListPage.test.tsx` — con `filtroInicial`
+  `"asignada_afiliado"` el mock de `paginaOrdenesEstacionApi` recibe `estatus: "asignada"`
+  (no `"asignada_afiliado"`); al hacer clic en la pill "2.2 Programados" recibe
+  `estatus: "en_transmision"`. Sin pruebas nuevas por el letrero quitado (ninguna prueba
+  existente lo ejercitaba).
+- **Verificado:** `tsc --noEmit`/`eslint` limpios (sin errores nuevos). Suite de
+  `ordenes` 100% verde (299/299, incluye las 2 nuevas).
+
+### ADR-289 — Fix: encabezados de "Órdenes de Servicio" mal rotulados ("Producto / Marca" mostraba Marca/Campaña; "Campaña" mostraba el Periodo)
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con captura de
+  pantalla y análisis propio correcto).
+- **Disparador:** el usuario notó que, en la tabla de "Órdenes de Servicio", la columna
+  rotulada "PRODUCTO / MARCA" en realidad despliega Marca y Campaña, y la columna
+  rotulada "CAMPAÑA" en realidad despliega el Periodo (rango de fechas). El mismo
+  problema ya existía en el panel de detalle ("Marca / Producto" / "Campaña").
+- **Causa raíz:** no es un bug de datos — es un rótulo que quedó desactualizado.
+  `OrdenCliente.producto` (texto libre) hace tiempo dejó de significar "producto" y pasó
+  a ser la **descripción de la campaña** — el propio formulario
+  (`OrdenClienteForm.tsx:799`) ya lo rotula "Campaña" con placeholder "Descripción de la
+  campaña anunciada", y los comentarios de `types.ts:70/198` ya lo documentaban así —
+  pero el encabezado de la tabla y la etiqueta del panel de detalle nunca se
+  actualizaron y seguían diciendo "Producto". De forma similar, `fecha_inicio_campania`/
+  `fecha_fin_campania` son el **periodo** de la campaña (mismo concepto que ya se rotula
+  "Periodo" en "Órdenes de Transmisión", `OrdenEstacionListPage.tsx`) — la spec no tiene
+  un campo de "nombre de campaña" separado de ese periodo; llamarlo "Campaña" a secas
+  hacía parecer que faltaba un nombre que, de hecho, nunca existió.
+- **Cambio** (solo rótulos, mismos datos/mismos campos de siempre):
+  - `OrdenClienteListPage.tsx`: encabezados `"Producto / Marca"` → `"Marca / Campaña"`,
+    `"Campaña"` → `"Periodo"`.
+  - `OrdenClienteDetailPanel.tsx`: etiquetas `"Marca / Producto"` → `"Marca / Campaña"`,
+    `"Campaña"` → `"Periodo"`.
+- **No se tocó base de datos ni backend:** el fix es 100% de texto de UI; los campos
+  (`producto`, `fecha_inicio_campania`, `fecha_fin_campania`) no cambiaron de nombre ni
+  de tipo.
+- **Pruebas:** ninguna prueba existente asertaba el texto viejo de estos rótulos
+  (confirmado con grep antes del cambio) — sin pruebas nuevas dedicadas, es un cambio de
+  copy sin lógica que ejercitar.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios. Suite de `ordenes` 100% verde
+  (299/299, sin cambios de conteo — ningún test dependía de estos textos).
+
+### ADR-290 — Facturación: carga de XML (CFDI) en Agencia/Vendedor/Afiliado precarga Subtotal/IVA, editables; se quita el CHECK de IVA=16% exacto
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (petición del usuario, con XML de prueba
+  propio). Rama `fix/facturacion-correcciones-f2`.
+- **Disparador:** el usuario pidió que, al cargar el XML de una factura de Agencia,
+  Vendedor o Afiliado, el sistema lo lea y precargue Subtotal/IVA — quedando
+  **editables** después, igual que ya funcionaba en `FacturaAfiliado`. Confirmado por
+  investigación: "Cargar XML" en los 3 formularios solo subía el archivo a
+  almacenamiento (`AdjuntoFacturaInput.tsx` → `adjuntosFacturacionApi.subir`); ningún
+  punto del sistema leía su contenido.
+- **Estado previo de Agencia/Vendedor (ADR-239/240):** Subtotal/IVA/Total eran **100%
+  calculados** (suma de la comisión de cada orden elegida × su propio %, IVA a la tasa
+  central) — decisión deliberada ("no se captura Subtotal manual, se vuelve un campo
+  calculado"), reforzada con un CHECK en la base
+  (`ck_factura_agencia_iva_tasa`/`ck_factura_vendedor_iva_tasa`:
+  `ROUND(iva,2) = ROUND(monto*0.16,2)`). Esta ronda la REVIERTE PARCIALMENTE: el
+  cálculo sigue existiendo como **default y referencia visible**, pero ahora se puede
+  **capturar/precargar manualmente** (confirmado con el usuario, con 4 preguntas antes
+  de programar: sí quitar el CHECK de 16%, sí mantener la comisión calculada como
+  referencia, sí XML sintético para pruebas — no datos reales de un tercero —, RFC
+  contra catálogo fuera de esta ronda).
+- **Nuevo integration (skill `integraciones-externas`):**
+  `backend/app/integrations/facturas_proveedor/parser.py` — `parsear_cfdi(bytes) ->
+  ResultadoLecturaCfdi` (dataclass `ok/motivo/subtotal/iva/total/rfc_emisor/folio`),
+  stdlib `xml.etree.ElementTree`, soporta namespace CFDI 3.3 y 4.0. El IVA se lee de
+  `Comprobante/Impuestos/@TotalImpuestosTrasladados` (no se suman `Traslado` por
+  concepto a mano: un CFDI puede traer otros impuestos como IEPS mezclados). Un XML
+  malformado o que no sea CFDI nunca lanza excepción — regresa `ok=False` con `motivo`
+  legible (el usuario siempre puede seguir capturando a mano).
+- **Endpoint nuevo:** `POST /facturacion/cfdi/leer` (`backend/app/modules/facturacion/
+  cfdi.py`) — multipart `archivo`, permiso `costos:editar`. SEPARADO del router
+  genérico de adjuntos (`adjuntos.py`/`build_adjuntos_router`, compartido entre
+  ordenes/facturación/cobranza — no se le acopla lógica de un solo módulo) y también
+  independiente del almacenamiento: lee el archivo directo, sin depender de que ya se
+  haya subido. Responde SIEMPRE 200 (`{ok, subtotal?, iva?, total?, rfc_emisor?,
+  motivo?}`) — nunca bloquea la carga del archivo.
+- **`factura_agencia.py`/`factura_vendedor.py` (mismo cambio en ambos):** `Create`/
+  `Update` ganan `monto_factura_*`/`iva_factura_*` opcionales (`model_validator`: ambos
+  o ninguno). Si vienen explícitos, GANAN sobre el cálculo de comisión
+  (`_totales_o_override`); si no, cae al cálculo de siempre (compatibilidad hacia
+  atrás total — nadie que no mande los campos nuevos nota el cambio).
+- **Migración:** `d9e1f3a5b7c9` quita `ck_factura_agencia_iva_tasa`/
+  `ck_factura_vendedor_iva_tasa` (SQLite vía `batch_alter_table`, SQL Server directo).
+  `ck_..._total_suma` (`total = monto + iva`) se conserva en ambas tablas: sigue siendo
+  válido venga el IVA de donde venga. **Nota de bitácora:** al aplicar esta migración
+  se encontró que `dev_ordenes.db` tenía su `alembic_version` apuntando a una revisión
+  de OTRA rama (`feature/NotasDeCredito`, trabajada antes en el mismo checkout) que no
+  existe en esta rama — confirmado que el esquema real ya traía esas columnas
+  adicionales de forma inofensiva (aditivas, no referenciadas por los modelos de esta
+  rama); se corrigió con `alembic stamp --purge` al `down_revision` correcto de esta
+  rama y luego `upgrade head`, SIN perder ningún dato (confirmado antes/después:
+  mismas 1,122 OrdenCliente, mismas OE de prueba recién creadas).
+- **Frontend:** `AdjuntoFacturaInput.tsx` gana prop opcional `onArchivoXmlLeido` —
+  SOLO para el slot de XML (`!esPdf`), llama `cfdiApi.leer(archivo)` EN PARALELO a la
+  subida normal (independiente, un fallo no la tumba). `FacturaAfiliadoForm.tsx`: ya
+  tenía Subtotal/IVA editables, solo se conecta el `setValue` tras la lectura.
+  `FacturaAgenciaForm.tsx`/`FacturaVendedorForm.tsx`: Subtotal/IVA pasan de `<div>`
+  calculado de solo lectura a `<input>` registrado en RHF; se precargan con el cálculo
+  en vivo de comisión MIENTRAS el usuario no los haya tocado a mano ni cargado un XML
+  (bandera `tocado`, mismo criterio que la bandera "sobrescrito" de
+  `OrdenClienteForm.tsx` para % de comisión); al EDITAR arrancan "tocados" desde el
+  montaje (el valor ya guardado manda, no se recalcula solo porque cambien las
+  órdenes — mismo criterio que `FacturaAfiliadoForm`). La comisión calculada se sigue
+  mostrando como texto de referencia junto al campo.
+- **XML de prueba:** `docs/referencias/cfdi_ejemplo_prueba.xml` — CFDI 4.0 **sintético**
+  (RFC/razón social/folio inventados, sin relación con ningún contribuyente real),
+  Subtotal $957.00 / IVA $153.12 / Total $1,110.12, para probar el parser y la carga
+  en pantalla sin exponer datos reales de nadie.
+- **Pruebas:** backend — `test_facturas_proveedor_cfdi.py` (parser puro + endpoint,
+  8 pruebas, incluye XML malformado/no-CFDI/sin impuestos/permiso); 8 nuevas en
+  `test_f2_02_facturacion_escritura.py` (override persiste sin el 16% exacto, ambos o
+  ninguno se rechaza con 422, editar solo Subtotal/IVA sin tocar órdenes, no-regresión
+  sin override). Frontend — nuevas en `AdjuntoFacturaInput.test.tsx` (5, cubre
+  `onArchivoXmlLeido` en sus variantes) y en los 3 `*Form.test.tsx` (carga de XML
+  precarga y sigue editable); las pruebas existentes de Agencia/Vendedor que asumían
+  Subtotal como texto de solo lectura se migraron a `getByDisplayValue` (ya no
+  `getByText`, el campo ahora es un input).
+- **Verificado:** backend `pytest app/tests` completo 100% verde; `ruff` limpio en los
+  archivos tocados (mypy limpio en los 2 archivos nuevos; los `error: ... Service.list
+  is not valid as a type` en `factura_agencia.py`/`factura_vendedor.py` son
+  preexistentes, confirmados con `git stash` antes de este cambio — no son
+  regresión). Frontend `tsc --noEmit`/`eslint` limpios; suite de `facturacion` 100%
+  verde (133/133). Manual: `curl` contra el backend real con el XML de prueba — `{"ok":
+  true, "subtotal": "957.00", "iva": "153.12", ...}`.
+- **Fuera de alcance de esta ronda (confirmado con el usuario):** validar el RFC del
+  emisor del XML contra el catálogo de Agencia/Afiliado/Vendedor (el parser ya lo
+  extrae, para cuando se aborde); lectura/autofill desde el PDF (el usuario pidió
+  explícitamente "solo es con la carga del xml no del pdf").
+
+### ADR-291 — Fix de UI: quita el letrero "Sugerido, editable" de "Monto de la requisición" (desalineaba el bloque "Generar requisición de pago")
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con captura).
+- **Disparador:** en el detalle de una factura autorizada (Agencia/Vendedor/Afiliado —
+  las 3 comparten `RequisicionInlineForm.tsx`, ADR-282), el campo "Monto de la
+  requisición" llevaba `<FieldTag origin="catalogo" text="Sugerido, editable" />` — un
+  texto largo dentro de un componente pensado para etiquetas de una palabra
+  ("Catálogo", "Calculado"). El texto se envolvía en 2 líneas ("SUGERIDO," / "EDITABLE"),
+  lo que empujaba el input hacia abajo y lo desalineaba contra "Número de OC (SAP)" en
+  la misma fila de 2 columnas (`.r2`).
+- **Cambio:** se quita el `<FieldTag>` por completo — el título queda en un solo
+  renglón ("Monto de la requisición") y los 2 inputs de la fila vuelven a alinearse
+  (mismo criterio en los 3 formularios, al ser un único componente compartido).
+- **No se tocó base de datos ni backend:** es un cambio de UI puro.
+- **Verificado:** `tsc --noEmit`/`eslint` limpios. Suite de `FacturasAgenciaPage`/
+  `FacturasVendedorPage`/`FacturasAfiliadoPage` 100% verde (30/30) — ninguna prueba
+  dependía de ese texto.
+
+### ADR-292 — Cascada de reversión al cancelar (pago del cliente, factura del cliente,
+requisición al proveedor) — unifica y reemplaza los bloqueos "ciegos" de ADR-047/271
+
+- **Estado:** aceptada · **Fecha:** 2026-11-25 (lote grande de bugs reportados por el
+  usuario, con capturas, sobre el ciclo completo de cancelaciones).
+- **Disparador:** el usuario probó cancelar en los 3 niveles (pago del cliente →
+  factura del cliente → requisición al proveedor) y encontró que cada uno se bloqueaba
+  por lo que pasó río abajo, en vez de revertir lo que todavía se podía revertir:
+  - `PagoClienteService.cancelar` rechazaba con 409 si `comisiones_comprometidas_de_orden`
+    (`factura_cliente.py`) encontraba una `FacturaAgencia`/`FacturaVendedor`/
+    `FacturaAfiliado` `autorizada` **o** `pagada` para alguna orden del pago — además el
+    mensaje interpolaba el UUID crudo de la orden, no un folio legible.
+  - `FacturaClienteService.cancelar` (vía `CobranzaFacturaService.eliminar_o_rechazar`)
+    rechazaba con 400 "requeriría una nota de crédito" si la `CobranzaFactura` ya tenía
+    `importe_cobrado > 0` — el mismo espíritu de bloqueo, un nivel arriba.
+  - `Requisicion.TRANSICIONES` dejaba `pagada` como **terminal** (`set()` vacío): una
+    requisición ya pagada no se podía cancelar aunque el pago a proveedor nunca se
+    hubiera hecho en la práctica (dato de prueba, error de captura, etc.).
+  - Ninguna cancelación de `Requisicion` (ni siquiera la ya posible `autorizada→
+    cancelada`) revertía la `FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor` ligada:
+    quedaba huérfana, `autorizada`, sin requisición, y el combo "Buscar y agregar" de
+    esa pantalla seguía excluyendo sus órdenes (ninguna fila se borraba de
+    `FacturaXOrden`).
+- **Decisión (confirmada con el usuario, 3 preguntas antes de programar):** cancelar
+  SIEMPRE se permite y **revierte en cascada** todo lo que todavía sea reversible;
+  nunca toca dinero que ya salió o entró. Un solo mecanismo, reusado en los 2 niveles:
+  1. **`Requisicion.transicionar()` hacia `cancelada`** (desde `pendiente`, `autorizada`
+     — ya existían — o la nueva `pagada`): si la requisición tiene una
+     `factura_afiliado_id`/`factura_agencia_id`/`factura_vendedor_id`, llama un método
+     nuevo "tonto" (mismo estilo que `revertir_facturacion`/`revertir_cobro`: sin
+     validar, sin `commit` propio) en el servicio F2 correspondiente —
+     `revertir_a_recibida(factura_id)` — que pone `estatus_factura_* = recibida` y
+     **borra** todas sus filas `FacturaXOrden`/asignaciones (la factura queda vacía y
+     vuelve a ser editable/reusable; sus montos NO se tocan, quedan como registro
+     histórico). Desde `pagada`, `motivo` es **obligatorio** (422 claro si falta); desde
+     `pendiente`/`autorizada` sigue opcional, sin cambiar ese flujo existente. Se
+     persiste en `Requisicion.motivo_cancelacion` (columna nueva).
+  2. **`PagoClienteService.cancelar`** ya NO rechaza por comisiones comprometidas: por
+     cada orden afectada, si su `FacturaAgencia`/`FacturaVendedor`/`FacturaAfiliado`
+     tiene una `Requisicion` **autorizada** ligada, la cancela en cascada (reusa el
+     mecanismo del punto 1, que ya revierte la factura y vacía sus órdenes); si está
+     **pagada**, no se toca (dinero que ya salió).
+  3. **`FacturaClienteService.cancelar`** (vía `CobranzaFacturaService.
+     eliminar_o_rechazar`) ya NO rechaza por `importe_cobrado > 0`: cancela en cascada
+     TODOS los `PagoCliente` activos de esa `CobranzaFactura` (agrupados por
+     `pago_multiple_id` para no cancelar 2 veces el mismo grupo), reusando el punto 2
+     completo — incluida su propia cascada de Requisiciones. La `CobranzaFactura` solo
+     se borra si queda sin ninguna fila `PagoCliente` (activa o cancelada); si quedó con
+     filas canceladas por la cascada, se deja (rastro de auditoría, evita violar la FK).
+     `motivo` ahora es **obligatorio** en este endpoint también (antes no se pedía
+     porque la cancelación "simple" nunca tocaba un cobro). Se persiste en
+     `FacturaCliente.motivo_cancelacion` (columna nueva).
+  4. `OrdenClienteService.revertir_facturacion`: se quita el `raise` cuando
+     `estatus_orden == cobrada` — para entonces la orden ya se revirtió desde `cobrada`
+     hacia abajo por la cascada del punto 3, así que este `raise` ya casi no se
+     alcanza; se quita por si queda algún camino residual (prueba sintética que fuerza
+     el estado a mano sin pasar por la cascada real).
+- **Simplificación encontrada en el diseño:** no hizo falta tocar los combos "Buscar y
+  agregar" de Agencia/Vendedor/Afiliado (`factura_agencia.py`/`factura_vendedor.py`/
+  `factura_afiliado.py`) ni unirlos contra `Requisicion`: como cancelar SIEMPRE vacía
+  las filas `FacturaXOrden` de la factura revertida, el query existente (que ya excluye
+  una orden solo por tener una fila en esa tabla puente) vuelve a ofrecerla sin ningún
+  cambio.
+- **Decisión de UI (confirmada con el usuario):** el botón **"+ Nueva comisión de
+  agencia"** de `RequisicionesPage.tsx` (única vía para dar de alta una `Requisicion`
+  tipo `comision_agencia`, sin factura de origen) se **quita sin reemplazo** — ya no se
+  usa. Se borró también `RequisicionForm.tsx` (el formulario de alta libre, sin otro
+  consumidor). El endpoint `POST /cobranza/requisiciones` sigue aceptando ese tipo (no
+  se tocó el backend): solo desapareció el único camino de UI que lo alcanzaba.
+  Nuevo botón **"Cancelar Pago a Proveedor"**, visible SOLO si
+  `estatus_requisicion === "pagada"` — mismo patrón de `ConfirmDialog` + textarea de
+  motivo obligatorio que ADR-286 ya estableció para "Cancelar pago"; llama al mismo
+  `POST /{id}/estatus` con `{estatus: "cancelada", motivo}`. El `ConfirmDialog` de
+  "Cancelar factura" (`FacturasClientePage.tsx`) gana el mismo patrón de motivo
+  obligatorio.
+- **Nueva columna "Órdenes" en Requisiciones** (pedido explícito): `RequisicionRead`
+  gana `ordenes_folios: str | None` — folios de las órdenes relacionadas, separados por
+  coma, resueltos en lote por página (`_enriquecer_ordenes()`, mismo patrón por lote que
+  `_enriquecer_folios()`: una query por tabla puente — `FacturaAgenciaOrden`/
+  `FacturaVendedorOrden`/`FacturaAfiliadoOrden` — más `orden_id` directo para
+  `comision_agencia`). La búsqueda (`q`) de `RequisicionRepository._apply_filters` gana
+  4 `EXISTS` correlacionados más (uno por tipo + el directo) contra
+  `OrdenCliente.folio_orden`/`OrdenEstacion.folio_orden_estacion`, mismo criterio ya
+  usado ahí para folio/beneficiario.
+- **El mensaje de "en amarillo sale el UUID interno, debería salir el OS/OT"** queda
+  resuelto por eliminación: ese mensaje pertenecía al bloqueo de
+  `comisiones_comprometidas_de_orden` que este ADR quita por completo (ya no hay nada
+  que bloquear, por lo tanto ya no hay mensaje que corregir).
+- **Migración:** `e2f4a6b8c0d2` agrega `factura_cliente.motivo_cancelacion` y
+  `requisicion.motivo_cancelacion` (`Unicode(255)`, nullable). Round-trip
+  `upgrade`/`downgrade`/`upgrade` verificado sobre copia de `dev_ordenes.db`.
+- **Verificado:** backend `pytest app/tests` completo 100% verde (incluye casos nuevos:
+  cancelar un pago con comisión `autorizada` → éxito + `Requisicion` cancelada +
+  factura de proveedor vuelve a `recibida` sin órdenes; con comisión `pagada` → éxito,
+  esa `Requisicion` NO se toca; pago múltiple con alguna factura ya cobrada → éxito,
+  reversa completa; factura con pagos ya recibidos → éxito, cascada completa;
+  `Requisicion.transicionar` a `cancelada` desde `pagada` sin `motivo` → 422, con
+  `motivo` → éxito; combo "Buscar y agregar" vuelve a ofrecer una orden cuya única
+  factura/requisición se canceló). `ruff`/`mypy` limpios en los archivos tocados (los
+  `error: ... Service.list is not valid as a type` y el `dict(Sequence[Row[...]])`
+  `arg-type` son preexistentes, confirmados con `git stash` antes de este cambio — no
+  son regresión). Frontend `tsc --noEmit`/`eslint` limpios; suites de `cobranza` y
+  `facturacion` 100% verdes (197/197).

@@ -317,8 +317,9 @@ export interface FacturaAgencia {
   agencia_id: string;
   folio_factura_agencia: string | null;
   fecha_factura_agencia: string;
-  /** Los 3 se CALCULAN en el backend (suma de las comisiones de las órdenes elegidas) —
-   *  ya no se capturan a mano. */
+  /** Se CALCULAN en el backend por default (suma de las comisiones de las órdenes
+   *  elegidas) — o se precargan/capturan manual (XML del proveedor), si se mandaron
+   *  explícitos al guardar (fix, petición del usuario). */
   monto_factura_agencia: string;
   iva_factura_agencia: string;
   total_factura_agencia: string;
@@ -350,6 +351,10 @@ export interface FacturaAgenciaCreate {
   fecha_factura_agencia: string;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  /** Fix (petición del usuario): precargados desde el XML del proveedor (o a mano) —
+   *  si se mandan, GANAN sobre el cálculo de comisión. Ambos o ninguno. */
+  monto_factura_agencia?: string | null;
+  iva_factura_agencia?: string | null;
   /** Órdenes elegidas en el combo "Buscar y agregar" (al menos 1: sin órdenes no hay
    *  comisión que calcular). El mismo orden puede estar en OTRAS facturas de agencia
    *  (parcialidades, ADR-079), pero no repetido en ESTA. */
@@ -366,6 +371,8 @@ export interface FacturaAgenciaUpdate {
   fecha_factura_agencia?: string;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  monto_factura_agencia?: string | null;
+  iva_factura_agencia?: string | null;
   ordenes_ids?: string[];
 }
 
@@ -417,7 +424,9 @@ export interface FacturaVendedor {
   vendedor_id: string;
   folio_factura_vendedor: string | null;
   fecha_factura_vendedor: string;
-  /** Los 3 se CALCULAN en el backend (suma de las comisiones de las órdenes elegidas). */
+  /** Se CALCULAN en el backend por default (suma de las comisiones de las órdenes
+   *  elegidas) — o se precargan/capturan manual (XML del proveedor), si se mandaron
+   *  explícitos al guardar (fix, petición del usuario). */
   monto_factura_vendedor: string;
   iva_factura_vendedor: string;
   total_factura_vendedor: string;
@@ -441,6 +450,10 @@ export interface FacturaVendedorCreate {
   fecha_factura_vendedor: string;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  /** Fix (petición del usuario): precargados desde el XML del proveedor (o a mano) —
+   *  si se mandan, GANAN sobre el cálculo de comisión. Ambos o ninguno. */
+  monto_factura_vendedor?: string | null;
+  iva_factura_vendedor?: string | null;
   /** Órdenes elegidas en el combo "Buscar y agregar" (al menos 1). */
   ordenes_ids: string[];
 }
@@ -454,6 +467,8 @@ export interface FacturaVendedorUpdate {
   fecha_factura_vendedor?: string;
   archivo_pdf_path?: string | null;
   archivo_xml_path?: string | null;
+  monto_factura_vendedor?: string | null;
+  iva_factura_vendedor?: string | null;
   ordenes_ids?: string[];
 }
 

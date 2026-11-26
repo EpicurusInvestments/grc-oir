@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiRequestError } from "@/shared/lib/apiClient";
-import { CatalogToolbar, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
+import { CatalogToolbar, ConfirmDialog, DetailEmpty, FieldTag, ListDetailLayout, Paginator } from "@/shared/ui";
 
 import { NotaCreditoForm } from "../components/NotaCreditoForm";
 import { RegistrarTimbradoForm } from "../components/RegistrarTimbradoForm";
@@ -117,6 +117,11 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
   const [modo, setModo] = useState<"view" | "timbrar" | "nota_credito">("view");
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [faltantes, setFaltantes] = useState<string[] | null>(null);
+  // Fix (petición del usuario): "Cancelar" ahora exige motivo — antes se cancelaba
+  // directo, sin diálogo, y se rechazaba con 400 si ya había cobros recibidos; ahora
+  // cancela en cascada (mismo criterio que "Cancelar pago" en Cobranza, ADR-286).
+  const [aCancelar, setACancelar] = useState<FacturaCliente | null>(null);
+  const [motivoCancelacion, setMotivoCancelacion] = useState("");
 
   // "Pendientes timbrar" agrupa los DOS estados previos al folio fiscal; el backend filtra
   // por un solo estado, así que ese filtro se resuelve sobre la página ya cargada.
@@ -152,6 +157,15 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
     } catch (e) {
       setErrorAccion(mensajeDeError(e));
     }
+  };
+
+  const confirmarCancelarFactura = async () => {
+    if (!aCancelar) return;
+    await ejecutar(() =>
+      cancelar.mutateAsync({ id: aCancelar.factura_id, motivo: motivoCancelacion.trim() }),
+    );
+    setACancelar(null);
+    setMotivoCancelacion("");
   };
 
   // ADR-206 (petición del usuario): una vez timbrada, el detalle permite descargar
@@ -667,7 +681,7 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
                     ? "La orden asociada regresará a «orden cerrada» y podrá volver a facturarse."
                     : undefined
                 }
-                onClick={() => ejecutar(() => cancelar.mutateAsync(selected.factura_id))}
+                onClick={() => setACancelar(selected)}
               >
                 Cancelar
               </button>
@@ -813,6 +827,39 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
       />
 
       <ListDetailLayout list={listNode} detail={detail} />
+
+      <ConfirmDialog
+        visible={!!aCancelar}
+        title="Cancelar factura"
+        message={
+          aCancelar
+            ? `¿Cancelar la factura ${aCancelar.numero_factura}? Si ya tiene cobros recibidos, ` +
+              "se cancelarán también (mismo mecanismo que \"Cancelar pago\" en Cobranza) — " +
+              "incluida cualquier comisión de agencia/vendedor/afiliado ya AUTORIZADA con base " +
+              "en ese cobro (se cancela en cascada); las ya PAGADAS no se tocan."
+            : ""
+        }
+        confirmLabel="Cancelar factura"
+        danger
+        loading={cancelar.isPending}
+        confirmDisabled={!motivoCancelacion.trim()}
+        onConfirm={() => void confirmarCancelarFactura()}
+        onCancel={() => {
+          setACancelar(null);
+          setMotivoCancelacion("");
+        }}
+      >
+        <label className="fl" style={{ display: "block", marginTop: 10 }}>
+          Motivo de la cancelación *
+        </label>
+        <textarea
+          className="fsel"
+          style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+          value={motivoCancelacion}
+          onChange={(e) => setMotivoCancelacion(e.target.value)}
+          placeholder="Explica por qué se cancela esta factura…"
+        />
+      </ConfirmDialog>
     </>
   );
 }

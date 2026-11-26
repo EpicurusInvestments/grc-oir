@@ -204,7 +204,9 @@ afecta por igual a `FacturaAgencia`/`FacturaVendedor`, que comparten el mismo en
 detalle muestra un bloque "Generar requisición de pago"
 (`RequisicionInlineForm.tsx`, compartido por las 3 pantallas de este grupo) que da de
 alta la `Requisicion` de F3 sin salir de esta pantalla — ver la ficha de F3 para el
-detalle del endpoint y la validación de elegibilidad.
+detalle del endpoint y la validación de elegibilidad. **ADR-291 (fix de UI):** se quitó
+el letrero "Sugerido, editable" de "Monto de la requisición" — desalineaba esa fila
+contra "Número de OC (SAP)".
 
 **`ordenes_asignadas` (ADR-084, no es columna de la tabla):** cuántas `OrdenEstacion`
 tiene asignadas — se resuelve en el servicio (conteo `GROUP BY` sobre
@@ -453,6 +455,19 @@ del grid de 2 columnas. `AdjuntoFacturaInput.tsx` ahora trunca a un largo FIJO (
 + "..." + extensión, p. ej. "factu...xml"), con el nombre completo en un `title` nativo
 (tooltip). Afecta a los 4 tipos de factura (mismo componente compartido).
 
+**ADR-290 (petición del usuario): lectura de CFDI al cargar el XML, precarga
+Subtotal/IVA editables en Agencia/Vendedor/Afiliado.** `AdjuntoFacturaInput.tsx` gana
+una prop opcional `onArchivoXmlLeido` — solo para el slot de XML, llama al endpoint
+NUEVO `POST /facturacion/cfdi/leer` (independiente del almacenamiento, no depende de
+que el adjunto ya se haya subido) en paralelo a la subida normal. El parser vive en
+`backend/app/integrations/facturas_proveedor/parser.py` (capa de integración, patrón
+anti-corrupción). Para Agencia/Vendedor esto además revierte PARCIALMENTE ADR-239/240:
+Subtotal/IVA dejan de ser 100% calculados — ahora se pueden precargar/capturar
+manualmente (el cálculo de comisión se sigue mostrando como referencia), y se quitó el
+CHECK de la base que forzaba IVA = Subtotal × 16% exacto. Ver ADR-290 en
+`arquitectura.md` para el detalle completo (incluye nota de la corrección de
+`alembic_version` de `dev_ordenes.db`, sin pérdida de datos).
+
 ## RBAC (confirmado en sesión)
 
 | Entidad | Quién captura | Quién solo lee |
@@ -590,6 +605,11 @@ en F1) — no el propio CxP que capturó el registro.
     cancelar desde `preparada`/`enviada_a_timbrado` (el handoff nunca ocurrió) como desde
     `entregada`, que la redacción inicial de la decisión no mencionaba pero sí requiere
     reversión.
+    **Actualizado en ADR-292 (F3, `docs/arquitectura.md`):** el 400 para `cobrada` deja
+    de alcanzarse en la práctica — cancelar la factura ahora cancela en cascada sus
+    `PagoCliente` (F3), que revierten la orden de `cobrada` hacia abajo ANTES de este
+    punto; el `raise` se quitó de `revertir_facturacion()` por si queda algún camino
+    residual (p. ej. una prueba que fuerza el estado a mano sin pasar por la cascada).
   - **Portabilidad verificada, no supuesta:** SQLite SÍ soporta índices parciales (desde
     3.8) y SQLAlchemy emite el mismo DDL para SQL Server y SQLite, así que no hizo falta
     una validación de unicidad de respaldo en el servicio. Lo que sí se ajustó es el
@@ -1056,11 +1076,11 @@ en F1) — no el propio CxP que capturó el registro.
   confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
   cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
 
-## Notas de Crédito (ADR-288, petición del usuario, con captura)
+## Notas de Crédito (ADR-293, petición del usuario, con captura)
 
 `FacturaCliente` con `tipo_comprobante == "E"` — reutiliza la entidad existente, no se
 creó ninguna tabla nueva (ni para la NC en sí, ni para su efecto en Cobranza). Detalle
-técnico completo en `docs/arquitectura.md` (ADR-288); resumen operativo:
+técnico completo en `docs/arquitectura.md` (ADR-293); resumen operativo:
 
 - **Alta:** botón "+ Nota de crédito" en el detalle de una factura YA TIMBRADA (no
   marcada "Facturado en sistema externo"). Sin órdenes propias — receptor, empresa
@@ -1080,9 +1100,10 @@ técnico completo en `docs/arquitectura.md` (ADR-288); resumen operativo:
   (la factura de origen queda `cobro_parcial` o `cobrada`, cascada a F1 incluida, según
   cubra o no el 100%). Siempre cuenta como la **parcialidad #1** (`numero_pago` fijo, no
   calculado). Aparece sola, con trazabilidad completa, en "Pagos recibidos".
-- **Cancelación:** reutiliza COMPLETO ADR-286 — valida que ninguna comisión de
-  agencia/vendedor/afiliado ya se haya comprometido con base en el cobro que la NC
-  completó, y revierte la cascada si hacía falta.
+- **Cancelación:** reutiliza COMPLETO ADR-292 — ya no bloquea si alguna comisión de
+  agencia/vendedor/afiliado ya se comprometió con base en el cobro que la NC completó
+  (la cancela/revierte en cascada si estaba `autorizada`; si ya estaba `pagada`, no la
+  toca), y revierte la cascada de cobro que la NC produjo igual.
 - **Catálogos nuevos:** `UsoCFDI,G02` (devoluciones/descuentos/bonificaciones) y el
   grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) pero, igual que
   `tipo_comprobante`, todavía no se conectan al archivo plano del timbrador.
@@ -1156,7 +1177,8 @@ campo sin uso real.
   RDS. `alembic check` sigue reportando esas 3 operaciones (y solo esas).
 - ~~¿Cancelar una factura timbrada debe revertir la `OrdenCliente`?~~ **RESUELTO** en la
   Tanda 4 (ADR-047): sí revierte, y el 1:1 pasó a índice único filtrado para permitir
-  refacturar. La excepción es una orden ya `cobrada`, que se rechaza con 400 porque
-  requeriría una nota de crédito — eso sí sigue fuera de alcance.
+  refacturar. La excepción histórica era una orden ya `cobrada` (400, requeriría nota de
+  crédito) — **superada en ADR-292 (F3):** ahora cancela en cascada los cobros (F3) y la
+  orden se revierte igual; la nota de crédito real sigue fuera de alcance.
 - **¿Quién dispara `FacturaCliente → cobrada`?** La transición existe en la máquina pero
   en F2 nadie la invoca; es de F3 (Cobranza), igual que `OrdenCliente → cobrada`.

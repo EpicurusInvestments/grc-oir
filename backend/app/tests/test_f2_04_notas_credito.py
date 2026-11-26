@@ -485,7 +485,9 @@ def test_cancelar_nota_credito_revierte_el_pago_sintetico(
     _timbrar_nc(client, nc["factura_id"])
 
     r = client.post(
-        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar", headers=_hdr("facturacion")
+        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar",
+        json={"motivo": "Cancelacion de prueba."},
+        headers=_hdr("facturacion"),
     )
     assert r.status_code == 200, r.text
     assert r.json()["estado_facturacion"] == "cancelada"
@@ -510,7 +512,9 @@ def test_cancelar_nota_credito_sin_timbrar_no_falla_sin_nada_que_revertir(
     nc = _crear_nc(client, cat, factura_id, monto="2000.00").json()
 
     r = client.post(
-        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar", headers=_hdr("facturacion")
+        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar",
+        json={"motivo": "Cancelacion de prueba."},
+        headers=_hdr("facturacion"),
     )
     assert r.status_code == 200, r.text
     assert r.json()["estado_facturacion"] == "cancelada"

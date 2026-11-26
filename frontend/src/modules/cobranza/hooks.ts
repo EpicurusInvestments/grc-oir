@@ -40,7 +40,6 @@ import type {
   MovimientoBancarioCreate,
   PagoClienteCreate,
   PagoMultipleCreate,
-  RequisicionCreate,
   RequisicionUpdate,
 } from "./types";
 
@@ -279,11 +278,6 @@ export function useRequisiciones(filtros: FiltrosRequisicion) {
     queryFn: () => requisicionApi.list(filtros),
   });
 
-  const crear = useMutation({
-    mutationFn: (data: RequisicionCreate) => requisicionApi.create(data),
-    onSuccess: invalidar,
-  });
-
   const actualizar = useMutation({
     mutationFn: ({ id, data }: { id: string; data: RequisicionUpdate }) =>
       requisicionApi.update(id, data),
@@ -295,11 +289,13 @@ export function useRequisiciones(filtros: FiltrosRequisicion) {
       id,
       estatus,
       fecha_pago_requisicion,
+      motivo,
     }: {
       id: string;
       estatus: EstatusRequisicion;
       fecha_pago_requisicion?: string | null;
-    }) => requisicionApi.cambiarEstatus(id, estatus, fecha_pago_requisicion),
+      motivo?: string | null;
+    }) => requisicionApi.cambiarEstatus(id, estatus, fecha_pago_requisicion, motivo),
     onSuccess: invalidar,
   });
 
@@ -308,7 +304,7 @@ export function useRequisiciones(filtros: FiltrosRequisicion) {
     onSuccess: invalidar,
   });
 
-  return { list, crear, actualizar, cambiarEstatus, autorizar };
+  return { list, actualizar, cambiarEstatus, autorizar };
 }
 
 /** Badge "Orden de servicio" del detalle de Requisiciones (petición del usuario, con

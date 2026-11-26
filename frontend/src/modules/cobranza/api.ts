@@ -212,16 +212,20 @@ export const requisicionApi = {
     const { data } = await apiClient.put<Requisicion>(`${BASE}/requisiciones/${id}`, payload);
     return data;
   },
-  /** Transiciones OPERATIVAS: `pendiente→cancelada`, `autorizada→pagada|cancelada`.
-   *  `autorizada` NO pasa por aquí (403, remite al canal dedicado). */
+  /** Transiciones OPERATIVAS: `pendiente→cancelada`, `autorizada→pagada|cancelada`,
+   *  y (fix, petición del usuario) `pagada→cancelada` ("Cancelar Pago a Proveedor").
+   *  `autorizada` NO pasa por aquí (403, remite al canal dedicado). `motivo` es
+   *  obligatorio al cancelar desde `pagada` (el backend lo exige con 400 si falta). */
   async cambiarEstatus(
     id: string,
     estatus: EstatusRequisicion,
     fecha_pago_requisicion?: string | null,
+    motivo?: string | null,
   ) {
     const { data } = await apiClient.post<Requisicion>(`${BASE}/requisiciones/${id}/estatus`, {
       estatus,
       fecha_pago_requisicion: fecha_pago_requisicion ?? null,
+      motivo: motivo ?? null,
     });
     return data;
   },

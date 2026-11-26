@@ -282,12 +282,18 @@ export interface Requisicion {
   estatus_requisicion: EstatusRequisicion;
   fecha_pago_requisicion: string | null;
   observaciones_cuentas_por_pagar: string | null;
+  /** Fix (petición del usuario): obligatorio al cancelar desde `pagada` ("Cancelar
+   *  Pago a Proveedor"); opcional al cancelar desde `pendiente`/`autorizada`. */
+  motivo_cancelacion: string | null;
   created_by: string;
   created_at: string;
   updated_at: string | null;
   /** ADR-282: folio de la factura de origen (Afiliado/Agencia/Vendedor, según
    *  `tipo_requisicion`); `null` para `comision_agencia` (no tiene factura ligada). */
   folio_factura_origen: string | null;
+  /** Fix (petición del usuario): folios de las órdenes relacionadas, separados por
+   *  coma — columna "Órdenes" de la lista. */
+  ordenes_folios: string | null;
 }
 
 /** Las FKs obligatorias dependen de `tipo_requisicion` (el backend las valida, 400 si

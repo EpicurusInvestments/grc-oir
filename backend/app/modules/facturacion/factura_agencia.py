@@ -14,12 +14,15 @@ porcentaje_comision / 100`, usando el `%` YA PACTADO en esa orden
 como respaldo si la orden no trae snapshot — cada orden conserva el suyo, nunca un `%`
 único para toda la factura.
 
-`monto_factura_agencia`/`iva_factura_agencia`/`total_factura_agencia` DEJAN de
-capturarse a mano (petición del usuario: "no se captura Subtotal manual, se vuelve un
-campo calculado") — se derivan de la suma de comisiones de las órdenes elegidas, con el
-IVA a la tasa central (a diferencia de `FacturaAfiliado`, donde el IVA SÍ es "Manual"
-porque ahí se reconcilia contra una factura real de un tercero con posibles retenciones;
-aquí ya no hay semejante reconciliación que hacer, es 100% lo que el sistema calculó).
+`monto_factura_agencia`/`iva_factura_agencia`/`total_factura_agencia` se CALCULAN por
+default (suma de comisiones de las órdenes elegidas, IVA a la tasa central) — mismo
+criterio que dejó ADR-239/240. Fix/giro (petición del usuario, ver ADR nuevo): ahora
+TAMBIÉN se pueden capturar/precargar manualmente (desde el XML del proveedor, igual que
+`FacturaAfiliado`) — si el payload trae `monto_factura_agencia`/`iva_factura_agencia`
+explícitos, esos GANAN sobre el cálculo (que se sigue mostrando en pantalla como
+referencia); si no se mandan, se sigue calculando exactamente como antes. Por esto se
+quitó el CHECK `ck_factura_agencia_iva_tasa` (forzaba IVA = 16% exacto del monto) — un
+XML real puede traer redondeos/retenciones que no cuadren con esa fórmula.
 
 ADR-264 (petición del usuario, con captura) ajusta dos reglas más:
 - El combo "Buscar y agregar" ya NO sugiere una orden que ya esté en OTRA factura de
@@ -47,7 +50,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
@@ -100,13 +103,10 @@ class FacturaAgencia(Base):
             "ROUND(monto_factura_agencia + iva_factura_agencia, 2)",
             name="ck_factura_agencia_total_suma",
         ),
-        # NUEVO: a diferencia de FacturaAfiliado, aquí el IVA SÍ se calcula a la tasa
-        # central (ya no se captura a mano) — se escribe la tasa LITERAL 0.16 porque un
-        # CHECK no puede leer `settings.iva_rate` (mismo criterio que `factura_cliente.py`).
-        CheckConstraint(
-            "ROUND(iva_factura_agencia, 2) = ROUND(monto_factura_agencia * 0.16, 2)",
-            name="ck_factura_agencia_iva_tasa",
-        ),
+        # `ck_factura_agencia_iva_tasa` (forzaba IVA = monto*16% exacto) se quitó — ver
+        # ADR nuevo y migración `...quita_check_iva_tasa_agencia_vendedor.py`: ahora
+        # monto/iva pueden venir de un XML real (redondeos/retenciones) o capturarse a
+        # mano, no solo del cálculo de comisión.
     )
 
     factura_agencia_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -264,9 +264,11 @@ class FacturaAgenciaListParams(ListParams):
 
 # ── Schemas de escritura (Tanda 2) ───────────────────────────────────────────────
 class FacturaAgenciaCreate(BaseModel):
-    """Captura de CxP. `monto_factura_agencia`/`iva_factura_agencia`/
-    `total_factura_agencia`/`comision_agencia` se CALCULAN — suma de las comisiones de
-    las órdenes elegidas, cada una con su propio `%` ya pactado."""
+    """Captura de CxP. `monto_factura_agencia`/`iva_factura_agencia` se CALCULAN por
+    default — suma de las comisiones de las órdenes elegidas, cada una con su propio
+    `%` ya pactado. Fix (petición del usuario): si se mandan explícitos (precargados
+    desde el XML del proveedor, o a mano), GANAN sobre el cálculo — `total_factura_agencia`
+    siempre se deriva de ellos (`monto + iva`), nunca se acepta del cliente."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -277,10 +279,26 @@ class FacturaAgenciaCreate(BaseModel):
     archivo_path: str | None = Field(default=None, max_length=500)
     archivo_pdf_path: str | None = Field(default=None, max_length=500)
     archivo_xml_path: str | None = Field(default=None, max_length=500)
+    # Override manual/XML (ambos o ninguno — ver `_valida_override_completo`). `None`
+    # en los 2 (default) = comportamiento de siempre: se calcula de las órdenes.
+    monto_factura_agencia: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    iva_factura_agencia: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     # Órdenes elegidas en el combo "Buscar y agregar" (al menos 1: sin órdenes no hay
     # comisión que calcular). Cada una debe existir; el mismo orden puede estar en OTRAS
     # facturas de agencia (parcialidades, ADR-079), pero no repetida en ESTA.
     ordenes_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _valida_override_completo(self) -> FacturaAgenciaCreate:
+        if (self.monto_factura_agencia is None) != (self.iva_factura_agencia is None):
+            raise ValueError(
+                "Si se captura el Subtotal o el IVA manualmente, hay que capturar ambos."
+            )
+        return self
 
 
 class FacturaAgenciaUpdate(BaseModel):
@@ -299,7 +317,21 @@ class FacturaAgenciaUpdate(BaseModel):
     archivo_path: str | None = Field(default=None, max_length=500)
     archivo_pdf_path: str | None = Field(default=None, max_length=500)
     archivo_xml_path: str | None = Field(default=None, max_length=500)
+    monto_factura_agencia: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
+    iva_factura_agencia: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     ordenes_ids: list[uuid.UUID] | None = None
+
+    @model_validator(mode="after")
+    def _valida_override_completo(self) -> FacturaAgenciaUpdate:
+        if (self.monto_factura_agencia is None) != (self.iva_factura_agencia is None):
+            raise ValueError(
+                "Si se captura el Subtotal o el IVA manualmente, hay que capturar ambos."
+            )
+        return self
 
 
 # ── Repositorio ───────────────────────────────────────────────────────────────
@@ -542,8 +574,24 @@ class FacturaAgenciaService(
         iva = (comision_total * IVA_RATE).quantize(CENTAVOS)
         return comision_total, iva, (comision_total + iva).quantize(CENTAVOS)
 
+    def _totales_o_override(
+        self,
+        validadas: list[tuple[Any, Decimal, Decimal]],
+        monto_override: Decimal | None,
+        iva_override: Decimal | None,
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        """`monto`/`iva` explícitos (del XML o a mano) GANAN sobre el cálculo de
+        comisión — `total` siempre se deriva de ellos, nunca se acepta del cliente."""
+        if monto_override is not None and iva_override is not None:
+            return monto_override, iva_override, (monto_override + iva_override).quantize(CENTAVOS)
+        return self._totales(validadas)
+
     def _aplicar_ordenes(
-        self, obj: FacturaAgencia, validadas: list[tuple[Any, Decimal, Decimal]]
+        self,
+        obj: FacturaAgencia,
+        validadas: list[tuple[Any, Decimal, Decimal]],
+        monto_override: Decimal | None = None,
+        iva_override: Decimal | None = None,
     ) -> None:
         """Deja las órdenes de la factura EXACTAMENTE como pide `validadas` (ya
         validadas por `_validar_ordenes`): agrega las nuevas y quita las que ya no
@@ -572,7 +620,9 @@ class FacturaAgenciaService(
                     comision_calculada=comision,
                 )
             )
-        comision_total, iva, total = self._totales(validadas)
+        comision_total, iva, total = self._totales_o_override(
+            validadas, monto_override, iva_override
+        )
         db.commit()
         self._repo.update(
             obj,
@@ -598,10 +648,14 @@ class FacturaAgenciaService(
         if not validadas:
             raise DomainError("Agrega al menos una orden para calcular la comisión.")
 
-        comision_total, iva, total = self._totales(validadas)
+        comision_total, iva, total = self._totales_o_override(
+            validadas, data.monto_factura_agencia, data.iva_factura_agencia
+        )
         obj = FacturaAgencia(
             factura_agencia_id=uuid4(),
-            **data.model_dump(exclude={"ordenes_ids"}),
+            **data.model_dump(
+                exclude={"ordenes_ids", "monto_factura_agencia", "iva_factura_agencia"}
+            ),
             monto_factura_agencia=comision_total,
             iva_factura_agencia=iva,
             total_factura_agencia=total,
@@ -640,6 +694,11 @@ class FacturaAgenciaService(
             )
         payload = data.model_dump(exclude_unset=True)
         ordenes_ids = payload.pop("ordenes_ids", None)
+        # Se sacan del payload genérico: su escritura la decide `_totales_o_override`/
+        # `_aplicar_ordenes` más abajo (y `total_factura_agencia`/`comision_agencia` con
+        # ellos), nunca un `_repo.update()` a ciegas.
+        monto_override = payload.pop("monto_factura_agencia", None)
+        iva_override = payload.pop("iva_factura_agencia", None)
 
         agencia_nueva = None
         if "agencia_id" in payload:
@@ -662,7 +721,21 @@ class FacturaAgenciaService(
         obj = self._repo.update(obj, payload)
 
         if validadas is not None:
-            self._aplicar_ordenes(obj, validadas)
+            # Las órdenes cambiaron: `_aplicar_ordenes` recalcula desde cero sobre la
+            # lista completa — el override (si vino) se vuelve a aplicar encima.
+            self._aplicar_ordenes(obj, validadas, monto_override, iva_override)
+        elif monto_override is not None and iva_override is not None:
+            # Solo cambió el override (Subtotal/IVA), las órdenes siguen igual.
+            total = (monto_override + iva_override).quantize(CENTAVOS)
+            self._repo.update(
+                obj,
+                {
+                    "monto_factura_agencia": monto_override,
+                    "iva_factura_agencia": iva_override,
+                    "total_factura_agencia": total,
+                    "comision_agencia": monto_override,
+                },
+            )
 
         return self._enriquecida(self._to_read(obj))
 
@@ -697,6 +770,21 @@ class FacturaAgenciaService(
         self._repo.db.commit()
         self._repo.db.refresh(obj)
         return self._enriquecida(self._to_read(obj))
+
+    def revertir_a_recibida(self, factura_agencia_id: uuid.UUID) -> None:
+        """Fix (petición del usuario): al cancelar la `Requisicion` (`autorizada` o
+        `pagada`) ligada a esta factura, la factura vuelve a `recibida` y se VACÍA de
+        órdenes asignadas — decisión explícita del usuario para que ninguna orden quede
+        asignada a la vez a esta factura (reactivada, de nuevo editable) Y a una nueva.
+        `monto_factura_agencia`/`iva_factura_agencia`/`comision_agencia` NO se tocan
+        (quedan como registro histórico de lo que se llegó a requisitar).
+
+        "Tonta" — mismo contrato que `FacturaAfiliadoService.revertir_a_recibida` (ver
+        su docstring). Sin `commit` propio."""
+        obj = self._get_or_404(factura_agencia_id)
+        for fila in self._repo.listar_ordenes(factura_agencia_id):
+            self._repo.db.delete(fila)
+        obj.estatus_factura_agencia = EstatusFacturaProveedor.RECIBIDA.value
 
     def _validar_cobradas_antes_de_autorizar(self, factura_agencia_id: uuid.UUID) -> None:
         """ADR-264 (petición del usuario, con captura): no se autoriza el pago a la

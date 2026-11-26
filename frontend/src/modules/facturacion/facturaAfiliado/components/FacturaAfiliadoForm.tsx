@@ -11,6 +11,10 @@
  * que copiar) — "Sin asignar" es solo la resta contra lo capturado, para que quien
  * factura verifique que cuadra, sin bloquear el guardado si no.
  *
+ * Fix (petición del usuario): al cargar el XML del CFDI, se lee y precarga Subtotal/IVA
+ * (`onArchivoXmlLeido` de `AdjuntoFacturaInput`) — siguen siendo editables después, el
+ * usuario puede corregirlos si el XML no se pudo leer o si hace falta ajustarlos.
+ *
  * La edición hace todo lo que hace el alta (petición del usuario): el afiliado se puede
  * reasignar y esta misma sección edita qué OI tiene asignadas — las que ya estaban
  * (`asignacionesIniciales`) se precargan en la lista y se pueden quitar igual que las
@@ -101,6 +105,7 @@ export function FacturaAfiliadoForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
@@ -281,6 +286,11 @@ export function FacturaAfiliadoForm({
                 placeholder="Cargar XML de la factura"
                 value={archivoXmlPath}
                 onChange={setArchivoXmlPath}
+                onArchivoXmlLeido={(r) => {
+                  if (!r) return;
+                  if (r.subtotal != null) setValue("monto_factura_afiliado", r.subtotal);
+                  if (r.iva != null) setValue("iva_factura_afiliado", r.iva);
+                }}
               />
             </div>
           </div>

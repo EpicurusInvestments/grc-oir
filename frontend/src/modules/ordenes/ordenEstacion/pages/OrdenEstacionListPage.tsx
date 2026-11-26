@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 
 import { CatalogToolbar, ConfirmDialog, DetailEmpty, ListDetailLayout, Paginator } from "@/shared/ui";
 
+import { estatusOEHaciaApi } from "../../adapters/vocabulario";
 import { EstadoOIBadge } from "../../components/EstadoBadge";
 import { fmtFecha, fmtFolio, fmtMonto } from "../../format";
 import { useIncidenciasDeLaOC, useOrdenEstacionSeleccionada, useOrdenesEstacionPagina } from "../../hooks";
@@ -96,7 +97,12 @@ export function OrdenEstacionListPage({
     page,
     size,
     q: search || undefined,
-    estatus: filtro === "todas" ? undefined : filtro,
+    // Fix (ADR-288): `filtro` está en vocabulario v5 ("asignada_afiliado", etc.) — el
+    // backend solo acepta su propio vocabulario spec en el query param `estatus`
+    // (`EstatusOrdenEstacion`) y rechazaba (422) cualquier otro valor, lo que dejaba
+    // "Pendientes de asignar"/"Pendientes de verificar" (y las pills 2.1/2.2/2.3) sin
+    // poder cargar la tabla.
+    estatus: filtro === "todas" ? undefined : estatusOEHaciaApi(filtro),
   };
   const lista = useOrdenesEstacionPagina(filtros);
   const items = lista.data?.items ?? [];
