@@ -1,7 +1,7 @@
 /** Registro de fases del sistema GRC-OIR — FUENTE ÚNICA.
  *
  * El Dashboard (Home) y el menú lateral global (AppNavDrawer) se generan iterando este
- * arreglo. Hoy solo F0 (Catálogos) está construida y por eso es la única `enabled`.
+ * arreglo. Todas las fases (F0-F5) están `enabled` desde F4-01 (Tanda 1 de Reportes).
  *
  * Para ACTIVAR una fase futura cuando se construya:
  *   1. `enabled: true`
@@ -46,7 +46,29 @@ export interface PhaseEntry {
   route: string | null;
   /** Solo las fases construidas son navegables; el resto se muestran "Próximamente". */
   enabled: boolean;
+  /** Opcional: oculta por completo la tarjeta/entrada de menú para áreas sin ningún
+   *  permiso dentro de la fase (en vez de mostrarla deshabilitada). Si se omite, la
+   *  fase es visible para todos (comportamiento de siempre) — hoy SOLO F4 lo define,
+   *  porque es la primera fase con vistas tan restringidas (p.ej. Estado de
+   *  resultados es exclusivo de Dirección) que vale la pena no mostrar la tarjeta a
+   *  quien de todas formas no podría ver nada adentro. */
+  visibleParaArea?: (area: string) => boolean;
 }
+
+/** Áreas con al menos una de las 4 claves RBAC de F4 (`app/core/security.py`), más
+ *  `admin` (ADR-040, superusuario). Lista espejo del backend — si la matriz de
+ *  `reportes_*` cambia ahí, actualizar aquí (son solo áreas, no hay forma de leer la
+ *  matriz real del backend desde el frontend sin una llamada de red). */
+const AREAS_CON_ALGUN_REPORTE = new Set([
+  "admin",
+  "direccion",
+  "ventas",
+  "facturacion",
+  "tesoreria",
+  "cxc",
+  "cxp",
+  "nominas",
+]);
 
 export const phaseRegistry: PhaseEntry[] = [
   {
@@ -102,12 +124,13 @@ export const phaseRegistry: PhaseEntry[] = [
     key: "f4",
     code: "F4",
     name: "Reportes",
-    description: "Reportería ejecutiva, KPIs y cierre mensual de resultados.",
+    description: "Estado de resultados y dashboards ejecutivos (comercial, cobranza, operativo).",
     accent: "gray",
     imageWebp: reportesWebp,
     imagePng: reportesPng,
-    route: null,
-    enabled: false,
+    route: "/reportes",
+    enabled: true,
+    visibleParaArea: (area) => AREAS_CON_ALGUN_REPORTE.has(area),
   },
   {
     key: "f5",

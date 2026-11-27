@@ -30,15 +30,25 @@ _GRUPOS_IN_SIN_TIPO_RELACION = (
     "'UsoCFDI', 'FormaPago', 'MetodoPago', 'MonedaSAT', 'MotivoCambio'"
 )
 
+#  SQL Server rechaza un operador de comparación (<=, >=) como valor THEN/ELSE de un
+#  CASE — un CASE solo puede regresar un valor escalar, no un predicado booleano
+#  (SQLite sí lo permite, trata el predicado como 0/1, por eso esto pasaba la validación
+#  local y tronaba hasta que se corría contra SQL Server real: "Incorrect syntax near
+#  '<'."). Se reescribe como una expresión booleana con OR/AND; `COALESCE(...,'I')`
+#  evita que la comparación con `tipo_comprobante` (nullable) propague NULL de vuelta
+#  al OR exterior — con NULL de por medio, `NULL OR FALSE` evalúa NULL, y un CHECK
+#  trata NULL como "no violado" (aceptaría una fila que debía rechazarse).
 _SUBTOTAL_CHECK = (
-    "CASE WHEN tipo_comprobante = 'E' THEN subtotal_factura <= 0 "
-    "ELSE subtotal_factura >= 0 END"
+    "(COALESCE(tipo_comprobante, 'I') = 'E' AND subtotal_factura <= 0) "
+    "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND subtotal_factura >= 0)"
 )
 _IVA_CHECK = (
-    "CASE WHEN tipo_comprobante = 'E' THEN iva_factura <= 0 ELSE iva_factura >= 0 END"
+    "(COALESCE(tipo_comprobante, 'I') = 'E' AND iva_factura <= 0) "
+    "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND iva_factura >= 0)"
 )
 _TOTAL_CHECK = (
-    "CASE WHEN tipo_comprobante = 'E' THEN total_factura <= 0 ELSE total_factura >= 0 END"
+    "(COALESCE(tipo_comprobante, 'I') = 'E' AND total_factura <= 0) "
+    "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND total_factura >= 0)"
 )
 _MOTIVO_NOTA_CREDITO_CHECK = (
     "motivo_nota_credito IS NULL OR motivo_nota_credito IN "

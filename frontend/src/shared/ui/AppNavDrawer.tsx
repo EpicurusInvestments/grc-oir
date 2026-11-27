@@ -16,9 +16,13 @@ import { phaseRegistry } from "@/shared/phases/phaseRegistry";
 interface AppNavDrawerProps {
   open: boolean;
   onClose: () => void;
+  /** Área del usuario actual — oculta del menú las fases con `visibleParaArea` que no
+   *  la incluyan (hoy solo F4). Opcional por compatibilidad; sin ella, se muestran
+   *  todas (comportamiento de siempre). */
+  area?: string;
 }
 
-export function AppNavDrawer({ open, onClose }: AppNavDrawerProps) {
+export function AppNavDrawer({ open, onClose, area }: AppNavDrawerProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -77,31 +81,33 @@ export function AppNavDrawer({ open, onClose }: AppNavDrawerProps) {
 
           <div className="nav-section-title">Fases</div>
 
-          {phaseRegistry.map((phase) => {
-            const active = phase.enabled && phase.route !== null;
-            const current = phase.route !== null && location.pathname.startsWith(phase.route);
-            return (
-              <button
-                type="button"
-                key={phase.key}
-                className={`nav-phase pc-accent-${phase.accent} ${active ? "" : "disabled"} ${
-                  current ? "current" : ""
-                }`}
-                onClick={active && phase.route ? () => go(phase.route!) : undefined}
-                disabled={!active}
-                aria-disabled={!active}
-              >
-                <picture>
-                  <source srcSet={phase.imageWebp} type="image/webp" />
-                  <img src={phase.imagePng} alt="" className="nav-phase-img" loading="lazy" />
-                </picture>
-                <span className="nav-phase-text">
-                  <span className="nav-phase-name">{phase.name}</span>
-                </span>
-                {!active && <span className="badge b-gray nav-phase-badge">Próximamente</span>}
-              </button>
-            );
-          })}
+          {phaseRegistry
+            .filter((phase) => !phase.visibleParaArea || !area || phase.visibleParaArea(area))
+            .map((phase) => {
+              const active = phase.enabled && phase.route !== null;
+              const current = phase.route !== null && location.pathname.startsWith(phase.route);
+              return (
+                <button
+                  type="button"
+                  key={phase.key}
+                  className={`nav-phase pc-accent-${phase.accent} ${active ? "" : "disabled"} ${
+                    current ? "current" : ""
+                  }`}
+                  onClick={active && phase.route ? () => go(phase.route!) : undefined}
+                  disabled={!active}
+                  aria-disabled={!active}
+                >
+                  <picture>
+                    <source srcSet={phase.imageWebp} type="image/webp" />
+                    <img src={phase.imagePng} alt="" className="nav-phase-img" loading="lazy" />
+                  </picture>
+                  <span className="nav-phase-text">
+                    <span className="nav-phase-name">{phase.name}</span>
+                  </span>
+                  {!active && <span className="badge b-gray nav-phase-badge">Próximamente</span>}
+                </button>
+              );
+            })}
         </nav>
       </aside>
     </div>

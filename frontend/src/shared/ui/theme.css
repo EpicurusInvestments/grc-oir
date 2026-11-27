@@ -252,11 +252,18 @@ body {
 }
 
 /* ── Main ── */
+/* `overflow-y: auto` (no `hidden`): las pantallas de lista+detalle no lo necesitan —
+   `.split`/`.list-pane` ya scrollean internamente y llenan exactamente la altura de
+   `.main`, así que esto no les agrega una barra de scroll extra. Pero las pantallas de
+   F4 (Estado de resultados, dashboards) renderizan su contenido directo aquí, sin un
+   contenedor propio con scroll — con `hidden` quedaban cortadas sin forma de bajar ni
+   con teclado ni con la rueda del mouse (reportado por el usuario, con captura). */
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg);
 }
 .cat-header {
@@ -1683,6 +1690,14 @@ body {
   --phase-border: var(--teal-border);
 }
 
+.phase-f4 {
+  --phase: #6b6b66;
+  --phase-hover: #55554f;
+  --phase-bg: var(--gray-bg);
+  --phase-text: var(--gray-text);
+  --phase-border: #c6c4ba;
+}
+
 .phase-f3 {
   --phase: var(--amber);
   /* Fix (reportado por el usuario: "Guardar" se veía transparente/"escondido" en
@@ -1898,6 +1913,241 @@ body {
   font-size: 11px;
   color: var(--text3);
   margin-top: 2px;
+}
+/* F4: KPI con signo (utilidad bruta/neta) y su tendencia vs. el mes anterior. */
+.kpi-val.good {
+  color: var(--green-text);
+}
+.kpi-val.bad {
+  color: var(--red-text);
+}
+.kpi-trend {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+.kpi-trend.up {
+  background: var(--green-bg);
+  color: var(--green-text);
+}
+.kpi-trend.down {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
+.kpi-trend.flat {
+  background: var(--surface3);
+  color: var(--text2);
+}
+/* F4: panel simple para una tabla/sección de un tablero (sin lista+detalle). */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 18px;
+}
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 10px;
+}
+/* F4: fila de encabezado de sección dentro de una `.cat-table` (INGRESOS, COSTOS...). */
+.cat-table tr.sec-header td {
+  background: var(--surface2);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text2);
+}
+.cat-table tr.total td {
+  font-weight: 600;
+  border-top: 1px solid var(--border-med);
+}
+
+/* F4: grid de 2 columnas (P&L + panel lateral de composición/indicadores), mismo
+ * patrón que el mockup aprobado `Fase_4_-_Reportes.html` (`.grid2`). */
+.grid2 {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* F4: tabla del P&L — una sola columna de valor por renglón (sección/subtotal/total). */
+.pl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.pl-table td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.pl-table td:last-child {
+  text-align: right;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.pl-table tr.sec-header td {
+  background: var(--surface2);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text2);
+  border-bottom: none;
+  /* La fila de sección usa un solo <td colSpan={2}> — por eso también coincide con
+     `.pl-table td:last-child` (es, a la vez, el ÚNICO td de su fila) y heredaría el
+     `text-align: right` pensado para la columna de valor. Se fuerza a la izquierda
+     aquí, con más especificidad (2 clases + 2 elementos vs. 1 clase + pseudo-clase +
+     1 elemento), para que gane sin importar el orden en el archivo. */
+  text-align: left;
+  font-family: inherit;
+}
+.pl-table tr.subtotal td {
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-med);
+}
+.pl-table tr.total td {
+  font-weight: 700;
+  font-size: 14px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.pl-neg {
+  color: var(--red-text);
+}
+.pl-pos {
+  color: var(--green-text);
+}
+.card-title-sub {
+  float: right;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text3);
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+/* F4: celda de "Indicadores clave" (margen bruto/neto, % cobranza...). */
+.indicador-lbl {
+  font-size: 10px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.indicador-val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 600;
+  /* Sin `color` propio a propósito: hereda `--text` del `.panel`, y así `.pl-pos`/
+     `.pl-neg` (misma especificidad, definidas antes en este archivo) si pueden
+     pintarla cuando se combinan — si esta regla trajera su propio color, por orden
+     de cascada ganaría ella y nunca se vería el rojo/verde. */
+}
+
+/* F4: barras horizontales (Composición de costos, % del cobrado). */
+.hbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.hbar-lbl {
+  flex: 0 0 110px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.hbar-bg {
+  flex: 1;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--surface3);
+  overflow: hidden;
+}
+.hbar-fill {
+  height: 100%;
+  background: var(--phase, #6b6b66);
+}
+/* F4-04: resalta la barra de un afiliado cuya tasa de incidencias supera el 10%. */
+.hbar-fill.danger {
+  background: var(--red-text);
+}
+.hbar-val {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  min-width: 95px;
+}
+
+/* F4: barras verticales (Evolución de utilidad neta, histórico de 6 meses). */
+.chart-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  height: 160px;
+  gap: 10px;
+  padding-top: 24px;
+}
+.chart-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+}
+.chart-bar-stack {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.chart-bar-fill {
+  width: 60%;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  position: relative;
+}
+.chart-bar-fill.pos {
+  background: var(--green-text);
+}
+.chart-bar-fill.neg {
+  background: var(--red-text);
+}
+.chart-bar-fill.muted {
+  background: var(--phase, #6b6b66);
+  opacity: 0.6;
+}
+.chart-col-val {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.chart-col-lbl {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 6px;
+  text-align: center;
 }
 
 /* Barra de avance de cobro (F3): porcentaje de `importe_cobrado` sobre el total. */

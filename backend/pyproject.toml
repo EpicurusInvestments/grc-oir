@@ -31,6 +31,7 @@ dependencies = [
                        # base de datos IANA instalada — Windows (dev) y algunas imágenes
                        # Linux "slim"/Alpine (prod) no la traen de fábrica; con este
                        # paquete el proceso trae la suya propia, sin depender del SO.
+    "openpyxl>=3.1",  # F4-01: exportación de reportes a .xlsx (app/shared/exportacion.py).
 ]
 
 [dependency-groups]
@@ -92,7 +93,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["migrations/"]
 
 [[tool.mypy.overrides]]
-module = ["pyodbc", "boto3", "botocore", "botocore.exceptions"]
+module = ["pyodbc", "boto3", "botocore", "botocore.exceptions", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 # crud_router usa anotaciones DINÁMICAS a propósito (payload: create_schema, etc.) para

@@ -117,7 +117,7 @@ export function AppHeader({ faseLabel, user, beforeUser }: AppHeaderProps) {
           )}
         </div>
       </header>
-      <AppNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <AppNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} area={user.area} />
     </>
   );
 }
