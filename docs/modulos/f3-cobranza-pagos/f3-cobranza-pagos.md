@@ -348,6 +348,23 @@ Resumen del cambio (detalle técnico completo en `arquitectura.md`):
 - `POST /pagos/{id}/cancelar` ahora exige body `{"motivo": "..."}` (`min_length=3`).
 - `PagoGrupoDetalleRead`/`PagoClienteRead` exponen `motivo_cancelacion`.
 
+**ADR-293 (F2, petición del usuario, con captura) — Notas de Crédito aplicadas como
+`PagoCliente` sintético; ver la entrada completa en `arquitectura.md` y en
+`docs/modulos/f2-facturacion/f2-facturacion.md`:** una Nota de Crédito
+(`FacturaCliente.tipo_comprobante == "E"`) NO es una entidad de F3 ni tiene su propia
+`CobranzaFactura` — al timbrarse, `PagoClienteService.aplicar_nota_credito` inserta un
+`PagoCliente` más sobre la `CobranzaFactura` de la factura que acredita, marcado con la
+columna nueva `factura_egreso_id` (FK a la NC, `UNIQUE` — se aplica una sola vez).
+`metodo_pago_clave` siempre `PUE`, `numero_pago` siempre `"1"` (la NC cuenta como la
+primera parcialidad, nunca se calcula con `_info_pagos`), `referencia_pago` = el folio
+de la NC (para identificarla sola en "Pagos recibidos"). `importe_cobrado()`/
+`recalcular_tras_pago()` no se tocaron: ya suman cualquier `PagoCliente` `pagado`, sin
+importar su origen. Cancelar la NC (`PagoClienteService.revertir_nota_credito`) reutiliza
+completo `_cancelar_sin_commit` (la versión pública `cancelar()` se separó del
+`commit` para poder componerse dentro de la transacción de
+`FacturaClienteService.cancelar`) — incluida la cascada de ADR-292 de abajo, ya que
+nació después y `_cancelar_sin_commit` es compartido.
+
 **ADR-292 (petición del usuario, con capturas, lote grande de bugs) — reemplaza el
 bloqueo de "comisiones comprometidas" de ADR-271/286; ver la entrada completa en
 `arquitectura.md`:** el usuario reportó que cancelar un pago seguía fallando (409) si

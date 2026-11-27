@@ -1238,8 +1238,11 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
 #### FacturaCliente
 
 - **`POST /facturacion/clientes`** (`facturacion:crear`) — alta. Recibe **`ordenes_ids`**
-  (lista, mínimo 1): una sola orden es el flujo de siempre; varias son **facturación
-  múltiple** (ADR-064). Los ids repetidos se deduplican.
+  (lista): una sola orden es el flujo de siempre; varias son **facturación
+  múltiple** (ADR-064). Los ids repetidos se deduplican. Obligatoria (mínimo 1) cuando
+  `tipo_comprobante` es `"I"` (o se omite); debe venir **vacía** cuando es `"E"` (Nota de
+  crédito — ADR-293, ver más abajo), validado con un `model_validator` cruzado, no con
+  un mínimo estático de `Field`.
 
   Rechaza con **400 `error_dominio`**: si alguna orden no existe; si alguna no está en
   `orden_cerrada` —y las nombra **todas**, no solo la primera—; si no comparten
@@ -1259,12 +1262,44 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   orden del cliente, periodo y subtotal ya resueltos. `orden_id` y `folio_orden` siguen
   presentes como escalares de la **primera** orden (por folio), que es el identificador
   corto que usan la tabla y el encabezado del panel.
+
+  **Notas de crédito (`tipo_comprobante = "E"`, ADR-293, petición del usuario, con
+  captura):** no se modeló como entidad nueva — es una `FacturaCliente` más, con el
+  monto en negativo. Con `tipo_comprobante = "E"` el payload exige: `ordenes_ids` vacía;
+  **exactamente 1** id en `facturas_relacionadas_ids` (la factura de origen, reutilizando
+  `FacturaClienteRelacionada` — ADR-062); `motivo_nota_credito` (uno de
+  `devolucion_total`/`devolucion_parcial`/`descuento`/`bonificacion`, lista fija);
+  `monto_nota_credito` (la magnitud a acreditar, **positiva** — el servicio la niega
+  antes de persistir en `subtotal_factura`/`iva_factura`/`total_factura`); y
+  `numero_factura` con el formato `NC-AAAA-MM-folio` (p.ej. `NC-2026-11-0071`), **capturado
+  a mano por el usuario** (sin folio automático). `tipo_relacion_sat` (clave SAT, p.ej.
+  `01`/`03`) es opcional y hoy solo se guarda — no viaja todavía al archivo plano del PAC.
+
+  Receptor, `empresa_facturadora_id`, `anunciante_id`/`agencia_id` y
+  `facturado_directo` se heredan de la **factura de origen** (no de una orden — una NC no
+  tiene órdenes). `metodo_pago_clave` se fija siempre a `"PUE"` (no editable) y
+  `forma_pago_clave` se copia de la factura de origen (tampoco editable), ignorando lo
+  que mande el payload. `uso_cfdi` default `"G02"` si no se especifica.
+
+  Al **timbrar** una Nota de crédito (mismo endpoint `/timbrar` de abajo, mismo flujo
+  manual), en vez de crear su propia `CobranzaFactura` el sistema aplica un `PagoCliente`
+  **sintético** sobre la `CobranzaFactura` de la factura de origen (columna nueva
+  `factura_egreso_id`, única, que identifica la fila como "venida de" esa NC) —
+  reutilizando sin cambios `recalcular_tras_pago` (parcial/total/cascada a `cobrada`) y
+  apareciendo sola, con trazabilidad completa, en "Pagos recibidos" como la
+  **parcialidad 1**. Al **cancelar** una Nota de crédito ya timbrada, se revierte ese
+  mismo `PagoCliente` sintético reusando íntegro el mecanismo de **ADR-292**
+  (motivo obligatorio; ya no bloquea por comisión de proveedor comprometida, la
+  cancela/revierte en cascada). Ver la ficha de F3 para el detalle del lado de Cobranza.
 - **`PUT /facturacion/clientes/{id}`** (`facturacion:editar`) — edición de los campos
   capturables. **409** una vez `timbrada`: el contenido ya salió al SAT.
 - **`GET /facturacion/clientes/{id}/archivo-plano`** (`facturacion:leer`) — exporta la
   factura al **layout real del PAC (V40)** vía el puerto `TimbradoExportPort`. Texto plano
   con CRLF, codificado según `TIMBRADO_ENCODING` (hoy `cp1252`). **409** si la factura está
-  cancelada.
+  cancelada. **409** también si `tipo_comprobante` no es `"I"` ni `null` (p.ej. una Nota de
+  crédito, `"E"` — ADR-293): el layout de Egreso no está implementado todavía, el
+  timbrado de esos documentos sigue siendo 100% manual. `null` se deja pasar por
+  compatibilidad con facturas capturadas antes de que este campo se usara de verdad.
 
   Devuelve la cabecera **`X-Campos-Faltantes`** (expuesta por CORS) con los campos que el
   PAC exige y que el modelo todavía no captura, separados por `;`. Vacía = archivo
@@ -1295,6 +1330,16 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   cualquier otro estado la orden no se toca. La factura cancelada **no se borra**: sigue
   listándose con estado `cancelada`, y la orden puede recibir una factura nueva porque el
   1:1 es un índice único FILTRADO que excluye las canceladas.
+
+  Si la factura es una **Nota de crédito** (`tipo_comprobante = "E"`, ADR-293) y ya
+  estaba timbrada, este endpoint no toca ninguna `OrdenCliente` (una NC no tiene
+  órdenes): en su lugar revierte el `PagoCliente` sintético que la NC había aplicado
+  sobre la `CobranzaFactura` de la factura de origen, reusando íntegro
+  `PagoClienteService` de F3 (ADR-292 — ya NO bloquea si hay una comisión de
+  agencia/vendedor/afiliado comprometida sobre esa orden: si está `autorizada` cancela
+  en cascada su `Requisicion`, si está `pagada` no la toca; siempre revierte en cascada
+  el `cobro_parcial`/`cobrada` que la NC había producido). Si la NC nunca se timbró,
+  cancelarla es un no-op seguro sobre Cobranza.
 
 Todas las transiciones son **idempotentes** (repetir el destino actual devuelve 200 sin
 efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
@@ -1472,6 +1517,16 @@ handoff, nunca por un endpoint propio de alta:
   cascada de `Requisicion` (ver "Requisicion" más abajo). Si tras la cascada no queda
   ninguna fila `PagoCliente` (ni activa ni cancelada), la `CobranzaFactura` se borra
   igual que antes; si quedó con filas canceladas, se deja (rastro de auditoría).
+
+  **Excepción — Notas de crédito (`tipo_comprobante = "E"`, ADR-293):** no son 1:1 con
+  una `CobranzaFactura` propia (no facturan órdenes, no hay `OrdenCliente` que
+  promover). Al timbrarse, en vez de crear una `CobranzaFactura` nueva se inserta un
+  `PagoCliente` sintético (`factura_egreso_id` apuntando a la NC) sobre la
+  `CobranzaFactura` de la factura **de origen**, y se recalcula su `estatus_cobro` con el
+  mismo `recalcular_tras_pago` de siempre. Al cancelarse, se revierte ese `PagoCliente`
+  vía `PagoClienteService.revertir_nota_credito` (reusa el mismo mecanismo de ADR-292:
+  ya no bloquea por comisión de proveedor comprometida, la cancela/revierte en
+  cascada), nunca la ruta de "eliminar `CobranzaFactura`" de arriba.
 - **Cierre del ciclo**: cuando `estatus_cobro` llega a `cobrada`, la cascada sube sola —
   `FacturaCliente.estado_facturacion = cobrada` y `OrdenCliente.estatus_orden = cobrada`
   en TODAS las órdenes de la factura, misma transacción. No hay endpoint para esto: lo

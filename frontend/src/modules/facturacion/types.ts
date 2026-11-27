@@ -116,6 +116,9 @@ export interface FacturaCliente {
   clave_unidad: string | null;
   moneda_sat: string | null;
   tipo_comprobante: string | null;
+  /** Notas de Crédito (petición del usuario): solo aplican si `tipo_comprobante === "E"`. */
+  motivo_nota_credito: string | null;
+  tipo_relacion_sat: string | null;
   info_cuenta_pago: string | null;
   layout_factura: string | null;
   estado_facturacion: EstadoFacturacion;
@@ -136,13 +139,38 @@ export interface FacturaCliente {
   empresa_facturadora: string | null;
   /** Folio de la OrdenCliente asociada, denormalizado por el backend (ADR-055). */
   folio_orden: string | null;
-  /** IDs de las facturas relacionadas (ADR-062: N:N, no columna de esta tabla). */
+  /** IDs de las facturas relacionadas (ADR-062: N:N, no columna de esta tabla). Para una
+   *  Nota de Crédito, trae exactamente 1: la factura de origen. */
   facturas_relacionadas_ids: string[];
 }
 
+/** Notas de Crédito (petición del usuario, con captura): `FacturaCliente` con
+ *  `tipo_comprobante === "E"` — sin órdenes propias, montos negativos, relacionada con
+ *  exactamente 1 factura de origen (`facturas_relacionadas_ids[0]`). */
+export function esNotaCredito(f: Pick<FacturaCliente, "tipo_comprobante">): boolean {
+  return f.tipo_comprobante === "E";
+}
+
+/** Notas de Crédito (petición del usuario, con captura): lista FIJA, ligada a reglas
+ *  del SAT — no catálogo editable. */
+export type MotivoNotaCredito =
+  | "devolucion_total"
+  | "devolucion_parcial"
+  | "descuento"
+  | "bonificacion";
+
+export const MOTIVOS_NOTA_CREDITO: { value: MotivoNotaCredito; label: string }[] = [
+  { value: "devolucion_total", label: "Devolución total" },
+  { value: "devolucion_parcial", label: "Devolución parcial" },
+  { value: "descuento", label: "Descuento" },
+  { value: "bonificacion", label: "Bonificación" },
+];
+
 /** Lo que Facturación captura. Lo derivado y lo calculado los pone el servicio. */
 export interface FacturaClienteCreate {
-  /** Órdenes que cubrirá la factura (ADR-064). Una sola = flujo de siempre. */
+  /** Órdenes que cubrirá la factura (ADR-064). Una sola = flujo de siempre. Para una
+   *  Nota de Crédito (`tipo_comprobante === "E"`) va VACÍA — no factura órdenes, se
+   *  relaciona con otra factura vía `facturas_relacionadas_ids`. */
   ordenes_ids: string[];
   numero_factura: string;
   numero_pedido?: string | null;
@@ -171,6 +199,13 @@ export interface FacturaClienteCreate {
   /** Si se omite, el servicio la precarga del `Anunciante.uso_cfdi_default` (solo si el
    *  receptor es el anunciante directo). */
   uso_cfdi?: string | null;
+  // ── Notas de Crédito (petición del usuario, con captura) ──────────────────────
+  // Solo se usan/exigen si `tipo_comprobante === "E"`.
+  motivo_nota_credito?: MotivoNotaCredito | null;
+  tipo_relacion_sat?: string | null;
+  /** Monto a acreditar, como MAGNITUD POSITIVA (el backend lo niega antes de persistir
+   *  — `subtotal_factura`/`iva_factura`/`total_factura` quedan negativos). */
+  monto_nota_credito?: string | null;
 }
 
 export interface TimbrarInput {

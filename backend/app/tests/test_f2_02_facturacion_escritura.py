@@ -1350,14 +1350,14 @@ def test_claves_fiscales_adr223_se_capturan_y_se_leen(
     payload["clave_prod_serv"] = "80141600"
     payload["clave_unidad"] = "H87"
     payload["moneda_sat"] = "USD"
-    payload["tipo_comprobante"] = "E"
+    payload["tipo_comprobante"] = "P"
     r = client.post("/api/v1/facturacion/clientes", json=payload, headers=_hdr("facturacion"))
     assert r.status_code == 201, r.text
     leida = r.json()
     assert leida["clave_prod_serv"] == "80141600"
     assert leida["clave_unidad"] == "H87"
     assert leida["moneda_sat"] == "USD"
-    assert leida["tipo_comprobante"] == "E"
+    assert leida["tipo_comprobante"] == "P"
 
 
 def test_claves_fiscales_adr223_faltan_en_el_alta_400(

@@ -63,9 +63,9 @@ COLUMNAS_OPCIONALES = ["valor", "activo"]
 
 
 class GrupoConstante(StrEnum):
-    """Grupos de la pantalla aprobada (fuente única de los valores válidos). Los primeros
-    9 son SAT/timbrador; `MOTIVO_CAMBIO` (ADR-178) es el único grupo NO fiscal — catálogo
-    de motivos reutilizable por otras pantallas que piden un "motivo del cambio"."""
+    """Grupos de la pantalla aprobada (fuente única de los valores válidos). Todos menos
+    `MOTIVO_CAMBIO` (ADR-178, el único grupo NO fiscal — catálogo de motivos reutilizable
+    por otras pantallas que piden un "motivo del cambio") son SAT/timbrador."""
 
     TIPO_COMPROBANTE = "TipoComprobante"
     SERIE = "Serie"
@@ -77,6 +77,11 @@ class GrupoConstante(StrEnum):
     METODO_PAGO = "MetodoPago"
     MONEDA_SAT = "MonedaSAT"
     MOTIVO_CAMBIO = "MotivoCambio"
+    # Notas de Crédito (petición del usuario, con captura): clave c_TipoRelacion del SAT
+    # (p.ej. "01" nota de crédito de los documentos relacionados, "03" devolución de
+    # mercancía) — se captura en `FacturaCliente.tipo_relacion_sat`, pero todavía no se
+    # conecta al archivo plano del timbrador (fuera de alcance de esta ronda).
+    TIPO_RELACION_SAT = "TipoRelacion"
 
 
 # CHECK del `grupo` derivado del enum (una sola fuente de verdad para el DDL del modelo).

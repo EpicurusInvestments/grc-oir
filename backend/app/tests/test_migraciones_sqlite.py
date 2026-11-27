@@ -18,8 +18,27 @@ import sys
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 RAIZ = Path(__file__).resolve().parents[2]
+
+
+def _un_paso_atras_de_head() -> str:
+    """Revisión a la que bajar "un paso" desde la punta actual.
+
+    `downgrade -1` es AMBIGUO si la punta es un punto de *merge* (2+
+    `down_revision`): alembic no sabe a cuál de las 2 ramas bajar. En ese caso se baja
+    a una de ellas explícitamente (cualquiera sirve — el propio migration de merge no
+    hace nada, `upgrade`/`downgrade` son `pass`)."""
+    script = ScriptDirectory.from_config(Config(str(RAIZ / "alembic.ini")))
+    cabezas = script.get_revisions("heads")
+    if len(cabezas) != 1:
+        raise AssertionError(f"se esperaba 1 sola cabeza, hay {len(cabezas)}: {cabezas}")
+    punta = cabezas[0]
+    if isinstance(punta.down_revision, tuple):
+        return punta.down_revision[0]
+    return "-1"
 
 
 def _alembic(*args: str, url: str) -> subprocess.CompletedProcess[str]:
@@ -51,8 +70,9 @@ def test_viaje_redondo_de_la_ultima_migracion(url_temporal: str) -> None:
     """`downgrade` y `upgrade` de la punta: un downgrade roto solo se ve al usarlo."""
     assert _alembic("upgrade", "head", url=url_temporal).returncode == 0
 
-    abajo = _alembic("downgrade", "-1", url=url_temporal)
-    assert abajo.returncode == 0, f"downgrade -1 falló:\n{abajo.stderr}"
+    destino = _un_paso_atras_de_head()
+    abajo = _alembic("downgrade", destino, url=url_temporal)
+    assert abajo.returncode == 0, f"downgrade {destino} falló:\n{abajo.stderr}"
 
     arriba = _alembic("upgrade", "head", url=url_temporal)
     assert arriba.returncode == 0, f"re-upgrade falló:\n{arriba.stderr}"

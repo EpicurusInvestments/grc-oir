@@ -27,7 +27,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
@@ -78,6 +78,20 @@ class EstadoFacturacion(StrEnum):
 # CHECK del estado derivado del enum: una sola fuente de verdad para el DDL del modelo
 # (mismo patrón que `_GRUPOS_SQL` en `catalogos/constantes_sistema.py`).
 _ESTADOS_SQL = ", ".join(f"'{e.value}'" for e in EstadoFacturacion)
+
+
+class MotivoNotaCredito(StrEnum):
+    """Notas de Crédito (petición del usuario, con captura): lista FIJA en código (no
+    catálogo editable) — ligada a reglas del SAT, no a algo que el negocio amplíe a su
+    gusto. Solo aplica cuando `FacturaCliente.tipo_comprobante == 'E'`."""
+
+    DEVOLUCION_TOTAL = "devolucion_total"
+    DEVOLUCION_PARCIAL = "devolucion_parcial"
+    DESCUENTO = "descuento"
+    BONIFICACION = "bonificacion"
+
+
+_MOTIVOS_NOTA_CREDITO_SQL = ", ".join(f"'{e.value}'" for e in MotivoNotaCredito)
 
 # Mismos helpers de dinero que F1 (`orden_cliente.py`): `Decimal` cuantizado a centavos y
 # la tasa de IVA desde configuración central, nunca repetida como literal en el código.
@@ -217,7 +231,13 @@ def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
 # límite de longitud), p.ej. "FMEX-001246" o "FSOIR-99999". El prefijo se normaliza a
 # mayúscula automáticamente en vez de rechazar minúsculas: el usuario no tiene que
 # recordar la regla, solo teclearla como le salga.
-NUMERO_FACTURA_REGEX = re.compile(r"^(FMEX|FSOIR)-[0-9]+$")
+#
+# Notas de Crédito (petición del usuario, con captura): folio propio en el mismo campo,
+# formato "NC-AAAA-MM-folio" (p.ej. "NC-2026-11-0071") — el usuario lo captura a mano
+# (no hay consecutivo automático), igual que FMEX/FSOIR. La correspondencia
+# tipo_comprobante↔prefijo se valida aparte, en `FacturaClienteCreate` (necesita ver
+# ambos campos a la vez; una regex sola no puede).
+NUMERO_FACTURA_REGEX = re.compile(r"^(?:(?:FMEX|FSOIR)-[0-9]+|NC-[0-9]{4}-[0-9]{2}-[0-9]+)$")
 
 
 def _normaliza_numero_factura(valor: str) -> str:
@@ -292,10 +312,30 @@ class FacturaCliente(Base):
         CheckConstraint(
             f"estado_facturacion IN ({_ESTADOS_SQL})", name="ck_factura_cliente_estado"
         ),
-        # Montos: ninguno es legítimamente negativo (mismo criterio que F1).
-        CheckConstraint("subtotal_factura >= 0", name="ck_factura_cliente_subtotal"),
-        CheckConstraint("iva_factura >= 0", name="ck_factura_cliente_iva"),
-        CheckConstraint("total_factura >= 0", name="ck_factura_cliente_total"),
+        CheckConstraint(
+            f"motivo_nota_credito IS NULL OR motivo_nota_credito IN "
+            f"({_MOTIVOS_NOTA_CREDITO_SQL})",
+            name="ck_factura_cliente_motivo_nota_credito",
+        ),
+        # Montos: negativos SOLO para una Nota de Crédito (`tipo_comprobante='E'`,
+        # petición del usuario — "con signo negativo, para efecto de reportes"); para
+        # cualquier otro tipo de comprobante, ninguno es legítimamente negativo (mismo
+        # criterio que F1).
+        CheckConstraint(
+            "CASE WHEN tipo_comprobante = 'E' THEN subtotal_factura <= 0 "
+            "ELSE subtotal_factura >= 0 END",
+            name="ck_factura_cliente_subtotal",
+        ),
+        CheckConstraint(
+            "CASE WHEN tipo_comprobante = 'E' THEN iva_factura <= 0 "
+            "ELSE iva_factura >= 0 END",
+            name="ck_factura_cliente_iva",
+        ),
+        CheckConstraint(
+            "CASE WHEN tipo_comprobante = 'E' THEN total_factura <= 0 "
+            "ELSE total_factura >= 0 END",
+            name="ck_factura_cliente_total",
+        ),
         # ── Invariantes de suma exacta (ADR-039, aplicado desde el día 1 en F2) ──
         # `ROUND(x, 2)` en AMBOS lados, no comparación directa: en SQLite (desarrollo
         # local) `NUMERIC` se almacena como float64, así que sumar dos montos ya
@@ -409,6 +449,13 @@ class FacturaCliente(Base):
     # así que inventar el mapeo podría producir un archivo fiscal mal armado para esos
     # casos (ver docs/modulos/f2-facturacion/f2-facturacion.md, "Pendientes/dudas").
     tipo_comprobante: Mapped[str | None] = mapped_column(Unicode(20), default=None)
+    # Notas de Crédito (petición del usuario, con captura): solo aplican si
+    # `tipo_comprobante == 'E'`. `tipo_relacion_sat` (catálogo c_TipoRelacion, p.ej. "01"
+    # nota de crédito de los documentos relacionados, "03" devolución de mercancía) se
+    # CAPTURA pero, igual que `tipo_comprobante`, todavía no se conecta al archivo plano
+    # del timbrador (fuera de alcance de esta ronda — ver docs/modulos/f2-facturacion).
+    motivo_nota_credito: Mapped[str | None] = mapped_column(Unicode(30), default=None)
+    tipo_relacion_sat: Mapped[str | None] = mapped_column(Unicode(2), default=None)
     info_cuenta_pago: Mapped[str | None] = mapped_column(texto_largo(), default=None)
     # Desviación aditiva 1: texto libre nullable, sin catálogo LayoutFactura.
     layout_factura: Mapped[str | None] = mapped_column(Unicode(200), default=None)
@@ -571,6 +618,8 @@ class FacturaClienteRead(BaseModel):
     clave_unidad: str | None = None
     moneda_sat: str | None = None
     tipo_comprobante: str | None = None
+    motivo_nota_credito: str | None = None
+    tipo_relacion_sat: str | None = None
     info_cuenta_pago: str | None = None
     layout_factura: str | None = None
     estado_facturacion: str
@@ -736,8 +785,11 @@ class FacturaClienteCreate(BaseModel):
 
     # Órdenes que cubrirá la factura (ADR-064). Una sola = el flujo de siempre; varias =
     # facturación múltiple. El servicio exige que compartan emisora y receptor, porque un
-    # CFDI tiene un único emisor y un único receptor.
-    ordenes_ids: list[uuid.UUID] = Field(min_length=1)
+    # CFDI tiene un único emisor y un único receptor. Notas de Crédito (petición del
+    # usuario): esta lista va VACÍA — una NC no factura órdenes, se relaciona con otra
+    # factura vía `facturas_relacionadas_ids` (validado en `_valida_nota_credito` abajo,
+    # no con `Field(min_length=1)`: necesita ver `tipo_comprobante` a la vez).
+    ordenes_ids: list[uuid.UUID] = Field(default_factory=list)
     numero_factura: str = Field(min_length=1, max_length=30)
 
     @field_validator("numero_factura")
@@ -778,6 +830,52 @@ class FacturaClienteCreate(BaseModel):
     tipo_comprobante: str = Field(min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
+    # ── Notas de Crédito (petición del usuario, con captura) ──────────────────────
+    # Solo se usan/exigen si `tipo_comprobante == "E"`; el servicio las ignora para
+    # cualquier otro tipo.
+    motivo_nota_credito: str | None = None
+    tipo_relacion_sat: str | None = Field(default=None, max_length=2)
+    #: Monto a acreditar, como MAGNITUD POSITIVA (UX natural: "cuánto se acredita") — el
+    #: servicio lo niega antes de persistir (`subtotal_factura`/`iva_factura`/
+    #: `total_factura` quedan negativos, pedido explícito del usuario "para efecto de
+    #: reportes"). Reemplaza a `ordenes_ids` como fuente del subtotal solo para este tipo.
+    monto_nota_credito: Decimal | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _valida_nota_credito(self) -> FacturaClienteCreate:
+        if self.tipo_comprobante == "E":
+            if self.ordenes_ids:
+                raise ValueError(
+                    "Una Nota de Crédito no factura órdenes — deja 'ordenes_ids' vacío."
+                )
+            if len(dict.fromkeys(self.facturas_relacionadas_ids)) != 1:
+                raise ValueError(
+                    "Una Nota de Crédito debe relacionar exactamente 1 factura de origen "
+                    "('facturas_relacionadas_ids')."
+                )
+            if not self.motivo_nota_credito:
+                raise ValueError("Una Nota de Crédito exige 'motivo_nota_credito'.")
+            if self.motivo_nota_credito not in set(MotivoNotaCredito):
+                raise ValueError(
+                    f"'motivo_nota_credito' debe ser uno de: "
+                    f"{', '.join(m.value for m in MotivoNotaCredito)}."
+                )
+            if self.monto_nota_credito is None:
+                raise ValueError("Una Nota de Crédito exige 'monto_nota_credito' (> 0).")
+            if not self.numero_factura.startswith("NC-"):
+                raise ValueError(
+                    "El folio de una Nota de Crédito debe empezar con 'NC-' "
+                    "(p.ej. 'NC-2026-11-0071')."
+                )
+        else:
+            if not self.ordenes_ids:
+                raise ValueError("Selecciona al menos una orden a facturar ('ordenes_ids').")
+            if self.numero_factura.startswith("NC-"):
+                raise ValueError(
+                    "El folio 'NC-...' es exclusivo de Notas de Crédito "
+                    "('tipo_comprobante' == 'E')."
+                )
+        return self
 
 
 class FacturaClienteCancelarRequest(BaseModel):
@@ -811,6 +909,8 @@ class FacturaClienteUpdate(BaseModel):
     tipo_comprobante: str | None = Field(default=None, min_length=1, max_length=20)
     info_cuenta_pago: str | None = None
     layout_factura: str | None = Field(default=None, max_length=200)
+    motivo_nota_credito: str | None = None
+    tipo_relacion_sat: str | None = Field(default=None, max_length=2)
 
     @field_validator("numero_factura")
     @classmethod
@@ -1069,12 +1169,102 @@ class FacturaClienteService(
         return self._enriquecida(leida)
 
     # ── Captura ───────────────────────────────────────────────────────────────
+    def _crear_nota_credito(
+        self, data: FacturaClienteCreate, usuario: CurrentUser
+    ) -> FacturaClienteRead:
+        """Alta de una Nota de Crédito (petición del usuario, con captura) —
+        `FacturaCliente` con `tipo_comprobante='E'`, sin órdenes propias: el receptor,
+        la empresa emisora, el anunciante/agencia y la forma de pago se HEREDAN de la
+        factura de origen (`facturas_relacionadas_ids[0]`, ya validada como exactamente
+        1 por `FacturaClienteCreate._valida_nota_credito`). `metodo_pago_clave` se fija
+        a `PUE` ignorando lo que mande el payload (siempre es de una sola exhibición).
+        Los montos se CAPTURAN como magnitud positiva (`monto_nota_credito`) y se niegan
+        aquí antes de persistir — `subtotal_factura`/`iva_factura`/`total_factura` quedan
+        negativos (pedido explícito del usuario, "para efecto de reportes").
+
+        Sin período de transmisión real (no hay orden): `fecha_inicio_transmision`/
+        `fecha_fin_transmision` se fijan a `fecha_factura` — valor inerte, nunca se
+        muestra para una NC (el frontend oculta esa sección cuando
+        `tipo_comprobante == 'E'`), pero la columna sigue siendo NOT NULL.
+        """
+        from app.modules.catalogos.cuenta_contable import CuentaContable
+        from app.modules.usuarios.lookup import resolver_usuario_id
+
+        db = self._repo.db
+        self._verificar_numero_factura_unico(data.numero_factura, excluir_id=None)
+
+        origen = db.get(FacturaCliente, data.facturas_relacionadas_ids[0])
+        if origen is None:
+            raise DomainError(
+                "La factura de origen de la Nota de Crédito no existe.",
+                detalles={"factura_relacionada_id": str(data.facturas_relacionadas_ids[0])},
+            )
+        if db.get(CuentaContable, data.cuenta_contable_id) is None:
+            raise DomainError(
+                "La cuenta contable indicada no existe.",
+                detalles={"cuenta_contable_id": str(data.cuenta_contable_id)},
+            )
+
+        assert data.monto_nota_credito is not None  # ya validado en el schema
+        subtotal = (-data.monto_nota_credito).quantize(CENTAVOS)
+        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+        total = (subtotal + iva).quantize(CENTAVOS)
+
+        capturado = data.model_dump(
+            exclude={
+                "razon_social_facturacion",
+                "rfc_facturacion",
+                "direccion_facturacion",
+                "uso_cfdi",
+                "facturas_relacionadas_ids",
+                "ordenes_ids",
+                "monto_nota_credito",
+                "metodo_pago_clave",
+                "forma_pago_clave",
+            }
+        )
+        nuevo_id = uuid4()
+        obj = FacturaCliente(
+            factura_id=nuevo_id,
+            **capturado,
+            empresa_facturadora_id=origen.empresa_facturadora_id,
+            anunciante_id=origen.anunciante_id,
+            agencia_id=origen.agencia_id,
+            facturado_directo=origen.facturado_directo,
+            razon_social_facturacion=origen.razon_social_facturacion,
+            rfc_facturacion=origen.rfc_facturacion,
+            direccion_facturacion=origen.direccion_facturacion,
+            uso_cfdi=data.uso_cfdi or "G02",
+            metodo_pago_clave="PUE",
+            forma_pago_clave=origen.forma_pago_clave,
+            fecha_inicio_transmision=data.fecha_factura,
+            fecha_fin_transmision=data.fecha_factura,
+            subtotal_factura=subtotal,
+            iva_factura=iva,
+            total_factura=total,
+            estado_facturacion=EstadoFacturacion.PREPARADA.value,
+            created_by=resolver_usuario_id(db, usuario.username),
+        )
+        db.add(obj)
+        db.add(FacturaClienteRelacionada(factura_id=nuevo_id, relacionada_id=origen.factura_id))
+        db.commit()
+        db.refresh(obj)
+        return self._enriquecida(self._to_read(obj))
+
     def create(self, data: FacturaClienteCreate, usuario: CurrentUser) -> FacturaClienteRead:
         """Alta de la factura a partir de una OrdenCliente CERRADA.
 
         Hereda de la OC todo lo que la spec marca como "Derivado" y calcula IVA y total:
         el cliente no puede mandar ninguno de esos campos (`extra="forbid"` en el schema).
+
+        Notas de Crédito (petición del usuario, `tipo_comprobante == "E"`): invariantes
+        completamente distintos (no hay orden de origen, el receptor/emisora se heredan
+        de OTRA FACTURA, no de una OC) — se delega a `_crear_nota_credito` en vez de
+        enredar un `if` más en este método ya largo.
         """
+        if data.tipo_comprobante == "E":
+            return self._crear_nota_credito(data, usuario)
+
         from app.modules.catalogos.agencia import Agencia
         from app.modules.catalogos.anunciante import Anunciante
         from app.modules.catalogos.cuenta_contable import CuentaContable
@@ -1221,6 +1411,10 @@ class FacturaClienteService(
                 "facturas_relacionadas_ids",
                 # Ya no son columnas: se persisten como filas de `factura_cliente_orden`.
                 "ordenes_ids",
+                # Notas de Crédito: solo tiene sentido con `tipo_comprobante == "E"`, que
+                # ya se fue por `_crear_nota_credito` — aquí nunca es una columna de
+                # `FacturaCliente` (el monto se deriva de las órdenes, no se captura).
+                "monto_nota_credito",
             }
         )
         nuevo_id = uuid4()
@@ -1517,6 +1711,16 @@ class FacturaClienteService(
         obj = self._get_or_404(factura_id)
         if obj.estado_facturacion == EstadoFacturacion.CANCELADA.value:
             raise ConflictError("Una factura cancelada no se exporta a timbrado.")
+        if obj.tipo_comprobante is not None and obj.tipo_comprobante != "I":
+            # Notas de Crédito (petición del usuario): el timbrado sigue siendo MANUAL
+            # esta ronda — el archivo plano del PAC solo sabe armar el layout de
+            # Ingreso (`adapter_pac_v40.py` fija "33" a mano, nunca lee
+            # `tipo_comprobante`). Conectar Egreso es una fase aparte.
+            raise ConflictError(
+                "Exportación a archivo plano no disponible todavía para este tipo de "
+                "comprobante — regístralo manualmente con 'Registrar timbrado'.",
+                detalles={"tipo_comprobante": obj.tipo_comprobante},
+            )
         exportador = get_timbrado_export()
         datos = self._datos_timbrado(obj)
         return (
@@ -1547,11 +1751,20 @@ class FacturaClienteService(
         F3: en el MISMO punto se crea la `CobranzaFactura` (`CobranzaFacturaService.
         crear_para_factura`), mismo mecanismo — misma sesión, sin commit propio, dueño
         del agregado (F3) construyéndolo desde el evento que lo origina (F2 timbra).
+
+        Notas de Crédito (petición del usuario, `tipo_comprobante == "E"`): NO se les
+        crea su propia `CobranzaFactura` — en vez de eso, se APLICA como un
+        `PagoCliente` sintético sobre la `CobranzaFactura` de la factura de ORIGEN
+        (`PagoClienteService.aplicar_nota_credito`), reutilizando toda la máquina de
+        `recalcular_tras_pago` (parcial/total/cascada a `cobrada`) sin tocarla.
         """
         from app.modules.cobranza.cobranza_factura import (
             CobranzaFactura,
             CobranzaFacturaRepository,
             CobranzaFacturaService,
+            PagoCliente,
+            PagoClienteRepository,
+            PagoClienteService,
         )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
@@ -1575,17 +1788,51 @@ class FacturaClienteService(
         obj.facturado_en_sistema_externo = input_.facturado_en_sistema_externo
         obj.estado_facturacion = EstadoFacturacion.TIMBRADA.value
 
-        # ── handoff con F1, misma sesión, antes del commit ──
-        # Sobre TODAS las órdenes de la factura: hoy es una, pero el bucle ya es la forma
-        # correcta y evita que la facturación múltiple deje órdenes sin promover.
-        servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
-        for orden_id in self._ordenes_de_factura(obj.factura_id):
-            servicio_oc.marcar_facturada(orden_id)
+        if obj.tipo_comprobante == "E":
+            origen = db.scalar(
+                select(FacturaCliente)
+                .join(
+                    FacturaClienteRelacionada,
+                    FacturaClienteRelacionada.relacionada_id == FacturaCliente.factura_id,
+                )
+                .where(FacturaClienteRelacionada.factura_id == obj.factura_id)
+            )
+            if origen is None:
+                raise DomainError(
+                    "La Nota de Crédito no tiene factura de origen asociada.",
+                    detalles={"factura_id": str(obj.factura_id)},
+                )
+            cobranza_origen = db.scalar(
+                select(CobranzaFactura).where(CobranzaFactura.factura_id == origen.factura_id)
+            )
+            if cobranza_origen is None:
+                raise DomainError(
+                    "La factura de origen todavía no tiene Cobranza — debe estar "
+                    "timbrada antes de aplicar la Nota de Crédito.",
+                    detalles={"factura_relacionada_id": str(origen.factura_id)},
+                )
+            PagoClienteService(PagoClienteRepository(db, PagoCliente)).aplicar_nota_credito(
+                cobranza_id=cobranza_origen.cobranza_id,
+                monto=abs(obj.total_factura),
+                factura_egreso_id=obj.factura_id,
+                forma_pago_clave=origen.forma_pago_clave,
+                fecha_pago=obj.fecha_timbrado,
+                referencia=obj.numero_factura,
+                usuario=usuario,
+            )
+        else:
+            # ── handoff con F1, misma sesión, antes del commit ──
+            # Sobre TODAS las órdenes de la factura: hoy es una, pero el bucle ya es la
+            # forma correcta y evita que la facturación múltiple deje órdenes sin
+            # promover.
+            servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
+            for orden_id in self._ordenes_de_factura(obj.factura_id):
+                servicio_oc.marcar_facturada(orden_id)
 
-        # ── handoff con F3, misma sesión, antes del commit ──
-        CobranzaFacturaService(CobranzaFacturaRepository(db, CobranzaFactura)).crear_para_factura(
-            obj, usuario
-        )
+            # ── handoff con F3, misma sesión, antes del commit ──
+            CobranzaFacturaService(
+                CobranzaFacturaRepository(db, CobranzaFactura)
+            ).crear_para_factura(obj, usuario)
 
         db.commit()
         db.refresh(obj)
@@ -1715,9 +1962,17 @@ class FacturaClienteService(
         La reversión se invoca ANTES del commit y con la misma sesión, igual que el
         handoff hacia adelante: cancelar la factura y revertir la orden son atómicos.
 
-        F3: `CobranzaFacturaService.eliminar_o_rechazar` cancela en cascada cualquier
-        pago recibido (ya no rechaza) y borra la `CobranzaFactura` si queda sin ningún
-        `PagoCliente` (ni activo ni cancelado) que referenciarla.
+        F3 (ADR-292): `CobranzaFacturaService.eliminar_o_rechazar` cancela en cascada
+        cualquier pago recibido (ya no rechaza) y borra la `CobranzaFactura` si queda
+        sin ningún `PagoCliente` (ni activo ni cancelado) que referenciarla.
+
+        Notas de Crédito (petición del usuario, `tipo_comprobante == "E"`): nunca tienen
+        su propia `CobranzaFactura` (`eliminar_o_rechazar` no encontraría nada), así que
+        en vez de eso se revierte el `PagoCliente` sintético que `timbrar()` le aplicó a
+        la factura de ORIGEN (`PagoClienteService.revertir_nota_credito`) — reutiliza
+        completo el mecanismo de ADR-292 (ya no bloquea por comisiones comprometidas,
+        las cancela/revierte en cascada). No-op si la NC nunca llegó a timbrarse (nada
+        que revertir).
         """
         if not motivo.strip():
             raise DomainError("El motivo de cancelación no puede estar vacío.")
@@ -1726,6 +1981,9 @@ class FacturaClienteService(
             CobranzaFactura,
             CobranzaFacturaRepository,
             CobranzaFacturaService,
+            PagoCliente,
+            PagoClienteRepository,
+            PagoClienteService,
         )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
@@ -1739,10 +1997,17 @@ class FacturaClienteService(
             # ya cancelada: idempotente, no re-revierte
             return self._enriquecida(self._to_read(obj))
 
-        # ── F3: cascada o limpieza de la CobranzaFactura, ANTES de tocar nada más ──
-        CobranzaFacturaService(
-            CobranzaFacturaRepository(db, CobranzaFactura)
-        ).eliminar_o_rechazar(obj.factura_id, usuario, motivo)
+        if obj.tipo_comprobante == "E":
+            # Nota de crédito: no tiene su propia CobranzaFactura, revierte el pago
+            # sintético aplicado sobre la factura de origen (ver docstring arriba).
+            PagoClienteService(PagoClienteRepository(db, PagoCliente)).revertir_nota_credito(
+                obj.factura_id, usuario, obj.numero_factura
+            )
+        else:
+            # ── F3: cascada o limpieza de la CobranzaFactura, ANTES de tocar nada más ──
+            CobranzaFacturaService(
+                CobranzaFacturaRepository(db, CobranzaFactura)
+            ).eliminar_o_rechazar(obj.factura_id, usuario, motivo)
 
         obj.estado_facturacion = EstadoFacturacion.CANCELADA.value
         obj.motivo_cancelacion = motivo
@@ -1750,6 +2015,8 @@ class FacturaClienteService(
         # ── reversión del handoff, misma transacción ──
         # Si CUALQUIERA de las órdenes está en `cobrada`, `revertir_facturacion` lanza 400
         # y la cancelación entera no ocurre: nunca quedan órdenes revertidas a medias.
+        # Para una NC esto es un no-op (`_ordenes_de_factura` regresa vacío: no hay
+        # ninguna `FacturaClienteOrden` propia).
         servicio_oc = OrdenClienteService(OrdenClienteRepository(db, OrdenCliente))
         for orden_id in self._ordenes_de_factura(obj.factura_id):
             servicio_oc.revertir_facturacion(orden_id)

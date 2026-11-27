@@ -1076,6 +1076,38 @@ en F1) — no el propio CxP que capturó el registro.
   confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
   cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
 
+## Notas de Crédito (ADR-293, petición del usuario, con captura)
+
+`FacturaCliente` con `tipo_comprobante == "E"` — reutiliza la entidad existente, no se
+creó ninguna tabla nueva (ni para la NC en sí, ni para su efecto en Cobranza). Detalle
+técnico completo en `docs/arquitectura.md` (ADR-293); resumen operativo:
+
+- **Alta:** botón "+ Nota de crédito" en el detalle de una factura YA TIMBRADA (no
+  marcada "Facturado en sistema externo"). Sin órdenes propias — receptor, empresa
+  emisora, anunciante/agencia y forma de pago se heredan de la factura de ORIGEN
+  (`facturas_relacionadas_ids[0]`, exactamente 1). Motivo de una lista fija
+  (`MotivoNotaCredito`: devolución total/parcial, descuento, bonificación). Método de
+  pago siempre `PUE`. Folio propio: `NC-AAAA-MM-folio`, capturado a mano (sin
+  consecutivo automático). Monto capturado en POSITIVO; el servicio lo niega antes de
+  persistir (`subtotal_factura`/`iva_factura`/`total_factura` quedan negativos — "para
+  efecto de reportes", petición del usuario).
+- **Timbrado:** sigue siendo 100% MANUAL (mismo `RegistrarTimbradoForm` de cualquier
+  factura) — el archivo plano del PAC no sabe armar el layout de Egreso todavía (fuera
+  de alcance), "Archivo plano" se oculta para cualquier `tipo_comprobante != "I"`.
+- **Efecto en Cobranza:** al timbrarse, se aplica como un `PagoCliente` SINTÉTICO sobre
+  la `CobranzaFactura` de la factura de origen (columna `factura_egreso_id`, nunca crea
+  su propia `CobranzaFactura`) — reutiliza completa la máquina de `recalcular_tras_pago`
+  (la factura de origen queda `cobro_parcial` o `cobrada`, cascada a F1 incluida, según
+  cubra o no el 100%). Siempre cuenta como la **parcialidad #1** (`numero_pago` fijo, no
+  calculado). Aparece sola, con trazabilidad completa, en "Pagos recibidos".
+- **Cancelación:** reutiliza COMPLETO ADR-292 — ya no bloquea si alguna comisión de
+  agencia/vendedor/afiliado ya se comprometió con base en el cobro que la NC completó
+  (la cancela/revierte en cascada si estaba `autorizada`; si ya estaba `pagada`, no la
+  toca), y revierte la cascada de cobro que la NC produjo igual.
+- **Catálogos nuevos:** `UsoCFDI,G02` (devoluciones/descuentos/bonificaciones) y el
+  grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) pero, igual que
+  `tipo_comprobante`, todavía no se conectan al archivo plano del timbrador.
+
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 
 Al revisar el `Detalle` del archivo plano campo por campo (petición del usuario), quedaron
