@@ -114,10 +114,11 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
           forma_pago_clave: origen.forma_pago_clave ?? "",
         } as FacturaClienteCreate),
       )}
-      style={{ maxWidth: 900 }}
+      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
     >
       <SavingOverlay visible={!!submitting} />
 
+      <div className="db" style={{ maxWidth: 900 }}>
       <div className="heredado-block">
         <div className="heredado-title">Factura de origen</div>
         <div className="heredado-grid">
@@ -320,6 +321,7 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
       </div>
 
       {submitError && <div className="state-msg error">{submitError}</div>}
+      </div>
 
       <div className="df">
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
