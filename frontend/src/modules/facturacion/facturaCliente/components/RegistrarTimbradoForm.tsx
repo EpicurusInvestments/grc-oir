@@ -14,12 +14,21 @@
  * externo" — solo IDENTIFICA la factura (p.ej. cuando en realidad se facturó en OIR),
  * el resto del flujo sigue tal cual: el monto para OIR es el que ya se calculó en este
  * sistema (`total_factura`), nunca el del folio/archivo cargado aquí.
+ *
+ * ADR-296 (petición del usuario, aplica igual a Factura y Nota de Crédito — ambas usan
+ * este mismo componente): se despliega la SERIE del propio número de factura (el
+ * prefijo antes del guion: "NC", "FSOIR", "FMEX"); y al cargar el XML ya timbrado, se
+ * lee su Timbre Fiscal Digital para precargar folio fiscal/fecha de timbrado/
+ * certificado — el XML es la fuente de verdad, así que SIEMPRE sobreescribe esos 3
+ * campos (a diferencia de otras sugerencias del sistema, aquí no hay "no pisar lo ya
+ * escrito": si el usuario cargó el XML es justo para que ese dato mande).
  */
 
 import { useState } from "react";
 
 import { DateInput } from "@/shared/ui";
 
+import type { LecturaTimbre } from "../../api";
 import { AdjuntoFacturaInput } from "./AdjuntoFacturaInput";
 import type { TimbrarInput } from "../../types";
 
@@ -71,6 +80,27 @@ export function RegistrarTimbradoForm({
   const [facturadoExterno, setFacturadoExterno] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ADR-296 (petición del usuario): la serie es el prefijo del propio número de
+  // factura ("NC-2026-11-04" → "NC") — mismo criterio que `_serie_desde_numero()` en
+  // el backend (`factura_cliente.py`, usada para el archivo plano), calculado aquí sin
+  // ida y vuelta al servidor porque ya se tiene el dato completo en `numeroFactura`.
+  const [serieFactura] = numeroFactura.split("-");
+
+  // ADR-296: al leerse el Timbre Fiscal Digital del XML, SIEMPRE sobreescribe estos 3
+  // campos — es la fuente de verdad del timbrado, no una sugerencia (a diferencia de
+  // otras precargas del sistema, aquí si el usuario cargó el XML es justo para que
+  // ese dato mande). `resultado === null` (no se pudo leer) no hace nada: se sigue
+  // pudiendo capturar a mano, como si esta prop no existiera.
+  const onXmlTimbreLeido = (resultado: LecturaTimbre | null) => {
+    if (!resultado) return;
+    if (resultado.folio_fiscal_sat) {
+      setFolio(aplicarMascaraFolio(resultado.folio_fiscal_sat));
+      setError(null);
+    }
+    if (resultado.fecha_timbrado) setFecha(resultado.fecha_timbrado);
+    if (resultado.serie_timbrado) setSerie(resultado.serie_timbrado);
+  };
+
   // Bug corregido (petición del usuario, con captura): el error de formato solo se
   // veía hasta dar clic en "Registrar timbrado" — si alguien tecleaba un folio mal
   // formado y no intentaba guardar todavía, no había ninguna señal. Ahora se avisa en
@@ -114,8 +144,9 @@ export function RegistrarTimbradoForm({
         <div>
           <div className="cat-title">Registrar respuesta del timbrado</div>
           <div className="cat-sub">
-            Factura <strong>{numeroFactura}</strong>. Captura los datos que recibiste del sistema
-            externo de timbrado. Al confirmar, la orden asociada pasará a <strong>facturada</strong>.
+            Factura <strong>{numeroFactura}</strong> · Serie <strong>{serieFactura}</strong>.
+            Captura los datos que recibiste del sistema externo de timbrado. Al confirmar, la
+            orden asociada pasará a <strong>facturada</strong>.
           </div>
         </div>
         <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
@@ -169,6 +200,7 @@ export function RegistrarTimbradoForm({
                   placeholder="Cargar XML del CFDI"
                   value={xmlPath}
                   onChange={setXmlPath}
+                  onArchivoXmlLeidoTimbre={onXmlTimbreLeido}
                 />
               </div>
               <div>

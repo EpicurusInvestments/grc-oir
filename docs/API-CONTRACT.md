@@ -1475,6 +1475,17 @@ efectos) y responden **409 `transicion_invalida`** ante un salto no permitido.
   HTTP (el usuario siempre puede seguir capturando Subtotal/IVA a mano). El frontend
   usa esto para precargar `monto_*`/`iva_*` en Agencia/Vendedor/Afiliado al cargar el
   XML (ver arriba) — endpoint de solo LECTURA, no guarda nada.
+- **`POST /facturacion/clientes/cfdi-timbrado/leer`** (`facturacion:editar`, ADR-296,
+  petición del usuario) — ruta ESTÁTICA (mismo criterio que `/existe-numero-factura`),
+  multipart `archivo` (el XML YA TIMBRADO que regresa el PAC). Lee el **Timbre Fiscal
+  Digital** del CFDI (distinto de `/cfdi/leer`: ese lee `Comprobante/@SubTotal` de una
+  factura de PROVEEDOR; este lee `Complemento/TimbreFiscalDigital` de la propia
+  factura/Nota de Crédito) y responde **SIEMPRE 200** con
+  `{ok, folio_fiscal_sat?, fecha_timbrado?, serie_timbrado?, motivo?}` — un XML sin
+  timbrar o que no sea CFDI da `ok: false` con `motivo` legible, nunca un error HTTP
+  (el usuario siempre puede seguir capturando los 3 campos a mano). El frontend usa
+  esto en "Registrar respuesta del timbrado" para precargar folio fiscal/fecha de
+  timbrado/certificado al cargar el XML — endpoint de solo LECTURA, no guarda nada.
 
 ## Cobranza y Pagos (F3)
 

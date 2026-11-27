@@ -774,6 +774,20 @@ en F1) — no el propio CxP que capturó el registro.
   usuario quiere usar un `FMEX-...` en vez de la sugerencia, lo escribe a mano — el campo
   nunca deja de ser editable.
 
+- **ADR-296 (petición del usuario) — "Registrar respuesta del timbrado" despliega la
+  serie y precarga folio/fecha/certificado al cargar el XML:** aplica igual a Factura y
+  Nota de Crédito (mismo componente, `RegistrarTimbradoForm.tsx`; "Complemento de Pago"
+  queda fuera porque no existe todavía). La SERIE es el prefijo del propio
+  `numero_factura` ("NC"/"FSOIR"/"FMEX"), calculada en el frontend sin ida y vuelta al
+  servidor. Al cargar el XML YA TIMBRADO (el que regresa el PAC), un parser nuevo
+  (`app/integrations/timbrado/lector_respuesta.py`, distinto del que ya existía para
+  leer Subtotal/IVA de facturas de PROVEEDOR) lee su Timbre Fiscal Digital — nuevo
+  endpoint `POST /facturacion/clientes/cfdi-timbrado/leer` — y SIEMPRE sobreescribe
+  folio fiscal/fecha de timbrado/certificado (el XML es la fuente de verdad del
+  timbrado, no una sugerencia que respeta lo ya escrito). Lo demás del formulario
+  (subida real del archivo, botón Descargar/Ver, checkbox "Facturado en sistema
+  externo") no se tocó.
+
 - **Corrección posterior: `regimen_fiscal_emisor`/`regimen_fiscal_receptor` y
   `AGREGADOS.UsoCFDI` ya NO salen de `ConstanteSistema` (ADR-065, bug real).** Al
   completar el catálogo de constantes SAT (ver `f0-05-constantes-sistema.md`), los

@@ -12066,6 +12066,65 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   mismo preexistente, confirmado antes en ADR-294). Frontend: 144/144 del módulo
   `facturacion` verdes, `tsc --noEmit`/`eslint` limpios.
 
+### ADR-296 — "Registrar respuesta del timbrado": despliega la serie, precarga folio/fecha/certificado al cargar el XML ya timbrado
+
+- **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, con captura,
+  reportado como "bug nuevo" al revisar "Registrar respuesta del timbrado").
+- **Disparador:** captura de pantalla de "Registrar respuesta del timbrado" + 2
+  puntos: (1) debe desplegarse el número de SERIE de la factura; (2) "para toda la
+  captura de timbrado (FACTURA, NOTA DE CREDITO, PAGO PARCIAL aún no existe)", al
+  cargar el XML debe precargar los datos del formulario (UUID, fecha del timbrado,
+  certificado) — "y los campos que ya llena esos déjalos así" (no tocar nada de lo que
+  ya funciona: subida real a almacenamiento, botón Descargar/Ver, checkbox "Facturado
+  en sistema externo").
+- **Decisión de diseño: 2 problemas distintos, 2 soluciones de tamaño distinto.**
+  - **(1) "Serie de la factura"** resultó ser el PREFIJO del propio `numero_factura`
+    ("NC-2026-11-04" → "NC") — el mismo dato que ya calcula
+    `_serie_desde_numero()` en el backend para el archivo plano (ADR-060 bis). Se
+    resolvió 100% en el FRONTEND (`numeroFactura.split("-")[0]`, ya es un prop del
+    componente): sin ida y vuelta al servidor, sin endpoint nuevo.
+  - **(2) Autocompletar desde el XML** necesitó un parser nuevo: el que YA existe
+    (`app/integrations/facturas_proveedor/parser.py`, ADR-290) lee
+    `Comprobante/@SubTotal` de una factura de PROVEEDOR (Agencia/Vendedor/Afiliado) —
+    dato completamente distinto al que pide este ADR, que es el complemento
+    `TimbreFiscalDigital` (UUID/FechaTimbrado/NoCertificadoSAT) que el PAC AGREGA al
+    CFDI al timbrarlo. Mismo patrón "lectura pura de archivo, sin servicio detrás"
+    (skill `integraciones-externas`), pero un parser y un endpoint nuevos.
+- **Cambios — backend:**
+  - `app/integrations/timbrado/lector_respuesta.py` (nuevo):
+    `parsear_timbre_fiscal(contenido: bytes) -> ResultadoLecturaTimbre` — busca el nodo
+    `TimbreFiscalDigital` por NOMBRE LOCAL (no por el URI exacto del namespace: el SAT
+    tiene más de una versión de ese namespace) dentro de `Comprobante/Complemento`;
+    `ok=False` (nunca una excepción) si el XML no es CFDI, no tiene Complemento, o el
+    TFD no trae `UUID`/`FechaTimbrado` legibles — el usuario siempre puede seguir
+    capturando a mano. Re-exportado desde `app/integrations/timbrado/__init__.py`.
+  - `POST /facturacion/clientes/cfdi-timbrado/leer` (`factura_cliente.py`, ruta
+    ESTÁTICA, `facturacion:editar`) — mismo criterio que `POST /facturacion/cfdi/leer`
+    (ADR-290): `leer_adjunto()` + el parser nuevo, responde SIEMPRE 200.
+- **Cambios — frontend:**
+  - `AdjuntoFacturaInput.tsx` gana una prop HERMANA de `onArchivoXmlLeido` (la de
+    ADR-290):  `onArchivoXmlLeidoTimbre` — misma lógica (lectura EN PARALELO a la
+    subida, nunca la bloquea), pero llama `cfdiTimbradoApi.leer()` en vez de
+    `cfdiApi.leer()`. Ningún llamador pasa las 2 props a la vez.
+  - `RegistrarTimbradoForm.tsx`: despliega "Serie <strong>{serieFactura}</strong>" en
+    el `cat-sub`; pasa `onArchivoXmlLeidoTimbre` al `AdjuntoFacturaInput` del campo
+    XML (el de PDF no cambia). A diferencia de ADR-295 (una SUGERENCIA que no pisa lo
+    ya escrito), aquí el XML es la fuente de verdad del timbrado: `onXmlTimbreLeido`
+    SIEMPRE sobreescribe folio/fecha/certificado cuando la lectura es `ok: true` —
+    decisión explícita, consistente con que el usuario cargó el XML precisamente para
+    que esos 3 datos manden. Aplica igual a Factura y Nota de Crédito (mismo
+    componente); "Complemento de Pago" queda fuera porque esa entidad no existe todavía.
+- **Pruebas:** `test_f2_06_lectura_timbre.py` (nuevo, 9 pruebas: parser puro contra el
+  mismo XML de ejemplo que ya usa `test_facturas_proveedor_cfdi.py` —
+  `docs/referencias/cfdi_ejemplo_prueba.xml`, que ya traía su propio Complemento/TFD de
+  prueba — más los casos `ok: false`; endpoint de punta a punta, incluido el 403 sin
+  permiso). Frontend: `AdjuntoFacturaInput.test.tsx` (+4 pruebas, mismo patrón que las
+  de `onArchivoXmlLeido`) y `RegistrarTimbradoForm.test.tsx` (nuevo, 3 pruebas: serie
+  desplegada, precarga de los 3 campos, y que `ok: false` no los toca).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
+  limpio; `mypy` sin errores nuevos. Frontend: 151/151 del módulo `facturacion` verdes
+  (144 + 7 nuevas), `tsc --noEmit`/`eslint` limpios.
+
 ### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
 
 - **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de

@@ -237,6 +237,34 @@ export const cfdiApi = {
   },
 };
 
+/** Resultado de `POST /facturacion/clientes/cfdi-timbrado/leer` (ADR-296, petición del
+ * usuario) — `ok=false` NO es un error: el usuario sigue pudiendo capturar los 3 campos
+ * a mano. Distinto de `LecturaCfdi` (ese lee Subtotal/IVA de una factura de PROVEEDOR;
+ * este lee el Timbre Fiscal Digital del XML ya timbrado que regresa el PAC). */
+export interface LecturaTimbre {
+  ok: boolean;
+  motivo: string | null;
+  folio_fiscal_sat: string | null;
+  fecha_timbrado: string | null;
+  serie_timbrado: string | null;
+}
+
+/** Lectura del Timbre Fiscal Digital (ADR-296): al cargar el XML YA TIMBRADO en
+ * "Registrar respuesta del timbrado" (Factura, Nota de Crédito), precarga folio
+ * fiscal/fecha de timbrado/certificado. Endpoint SEPARADO de `subir()` — lee el
+ * archivo directo, independiente de si ya se subió a almacenamiento. */
+export const cfdiTimbradoApi = {
+  async leer(archivo: File): Promise<LecturaTimbre> {
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    const { data } = await apiClient.post<LecturaTimbre>(
+      `${BASE}/clientes/cfdi-timbrado/leer`,
+      fd,
+    );
+    return data;
+  },
+};
+
 // ── FacturaAfiliado ───────────────────────────────────────────────────────────
 export interface FiltrosFacturaAfiliado extends ListParams {
   estatus_factura_afiliado?: string;

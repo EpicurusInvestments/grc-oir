@@ -16,6 +16,10 @@ from app.integrations.timbrado.adapter_pac_v40 import (
     ErrorCodificacionTimbrado,
     TimbradoExportPacV40,
 )
+from app.integrations.timbrado.lector_respuesta import (
+    ResultadoLecturaTimbre,
+    parsear_timbre_fiscal,
+)
 from app.integrations.timbrado.port import (
     DatosTimbrado,
     DomicilioFiscal,
@@ -28,9 +32,11 @@ __all__ = [
     "DomicilioFiscal",
     "ErrorCodificacionTimbrado",
     "RenglonDetalle",
+    "ResultadoLecturaTimbre",
     "TimbradoExportPacV40",
     "TimbradoExportPort",
     "get_timbrado_export",
+    "parsear_timbre_fiscal",
 ]
 
 

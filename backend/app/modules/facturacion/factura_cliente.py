@@ -26,7 +26,7 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import (
     CheckConstraint,
@@ -46,11 +46,13 @@ from app.core.config import settings
 from app.core.db import Base, datetime2, fecha_sql, get_db, texto_largo
 from app.core.errors import ConflictError, DomainError, StateTransitionError
 from app.core.security import CurrentUser, requiere_permiso
+from app.integrations.almacenamiento.documentos import leer_adjunto
 from app.integrations.timbrado import (
     DatosTimbrado,
     DomicilioFiscal,
     RenglonDetalle,
     get_timbrado_export,
+    parsear_timbre_fiscal,
 )
 from app.shared.base_repository import BaseRepository
 from app.shared.base_service import BaseService
@@ -2188,6 +2190,41 @@ def siguiente_numero_factura(
     abrir el formulario de alta — el campo se queda editable, esto no reserva nada."""
     return SiguienteNumeroFacturaRead(
         numero_factura=svc.siguiente_numero_factura(tipo_comprobante)
+    )
+
+
+class LecturaTimbreRead(BaseModel):
+    ok: bool
+    motivo: str | None = None
+    folio_fiscal_sat: str | None = None
+    fecha_timbrado: date | None = None
+    serie_timbrado: str | None = None
+
+
+_SOLO_XML: frozenset[str] = frozenset({"xml"})
+
+
+# Misma razón que las 2 rutas anteriores: estática, y además de método/ruta propios
+# (POST, no choca con el `GET /{item_id}` de ningún modo).
+@router_clientes.post("/cfdi-timbrado/leer", response_model=LecturaTimbreRead)
+def leer_cfdi_timbrado(
+    archivo: UploadFile = File(...),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:editar")),
+) -> LecturaTimbreRead:
+    """Lee UUID/FechaTimbrado/NoCertificadoSAT del XML YA TIMBRADO que regresa el PAC
+    (ADR-296, petición del usuario) — para precargar «Registrar respuesta del
+    timbrado» (Factura, Nota de Crédito). Distinto de `POST /cfdi/leer` (ese lee
+    Subtotal/IVA de una factura de PROVEEDOR, no el Timbre Fiscal Digital)."""
+    contenido, _, _ = leer_adjunto(
+        archivo, max_bytes=settings.s3_max_pdf_bytes, extensiones_permitidas=_SOLO_XML
+    )
+    resultado = parsear_timbre_fiscal(contenido)
+    return LecturaTimbreRead(
+        ok=resultado.ok,
+        motivo=resultado.motivo,
+        folio_fiscal_sat=resultado.folio_fiscal_sat,
+        fecha_timbrado=resultado.fecha_timbrado,
+        serie_timbrado=resultado.no_certificado_sat,
     )
 
 

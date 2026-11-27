@@ -12,6 +12,7 @@ import { AdjuntoFacturaInput } from "../facturaCliente/components/AdjuntoFactura
 
 const subirMock = vi.fn();
 const leerCfdiMock = vi.fn();
+const leerCfdiTimbradoMock = vi.fn();
 
 vi.mock("../api", () => ({
   adjuntosFacturacionApi: {
@@ -21,6 +22,9 @@ vi.mock("../api", () => ({
   },
   cfdiApi: {
     leer: (...args: unknown[]) => leerCfdiMock(...args),
+  },
+  cfdiTimbradoApi: {
+    leer: (...args: unknown[]) => leerCfdiTimbradoMock(...args),
   },
   nombreDeAdjuntoFacturacionRef: (ref: string) => ref,
 }));
@@ -35,6 +39,7 @@ describe("AdjuntoFacturaInput", () => {
     subirMock.mockReset();
     subirMock.mockResolvedValue({ ref: "facturacion/clientes/xml/abc_cfdi.xml" });
     leerCfdiMock.mockReset();
+    leerCfdiTimbradoMock.mockReset();
   });
 
   // Fix (petición del usuario): al elegir un XML, si se pasa `onArchivoXmlLeido`, se
@@ -137,6 +142,95 @@ describe("AdjuntoFacturaInput", () => {
 
       await vi.waitFor(() => expect(subirMock).toHaveBeenCalled());
       expect(leerCfdiMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ADR-296 (petición del usuario): prop HERMANA de `onArchivoXmlLeido` — lee el
+  // Timbre Fiscal Digital en vez de Subtotal/IVA, para precargar
+  // `RegistrarTimbradoForm.tsx`.
+  describe("onArchivoXmlLeidoTimbre (ADR-296, precarga folio fiscal/fecha/certificado)", () => {
+    it("al elegir un .xml válido, lee el Timbre Fiscal Digital y entrega el resultado al callback", async () => {
+      leerCfdiTimbradoMock.mockResolvedValue({
+        ok: true,
+        motivo: null,
+        folio_fiscal_sat: "00000000-0000-0000-0000-000000000000",
+        fecha_timbrado: "2026-11-24",
+        serie_timbrado: "00000000000000000000",
+      });
+      const onArchivoXmlLeidoTimbre = vi.fn();
+      const { container } = render(
+        <AdjuntoFacturaInput
+          tipo="cfdi_xml"
+          placeholder="Cargar XML del CFDI"
+          value={null}
+          onChange={vi.fn()}
+          onArchivoXmlLeidoTimbre={onArchivoXmlLeidoTimbre}
+        />,
+      );
+      elegirArchivo(container.querySelector('input[type="file"]')!, "cfdi.xml");
+
+      await vi.waitFor(() => expect(leerCfdiTimbradoMock).toHaveBeenCalledWith(expect.any(File)));
+      await vi.waitFor(() =>
+        expect(onArchivoXmlLeidoTimbre).toHaveBeenCalledWith(
+          expect.objectContaining({ ok: true, folio_fiscal_sat: "00000000-0000-0000-0000-000000000000" }),
+        ),
+      );
+      expect(leerCfdiMock).not.toHaveBeenCalled();
+      // La subida normal del archivo NO se bloquea ni depende de la lectura del timbre.
+      await vi.waitFor(() => expect(subirMock).toHaveBeenCalledWith("cfdi_xml", expect.any(File)));
+    });
+
+    it("si el XML no trae Timbre Fiscal Digital (ok: false), entrega null — no bloquea la subida", async () => {
+      leerCfdiTimbradoMock.mockResolvedValue({
+        ok: false,
+        motivo: "todavía no está timbrado",
+        folio_fiscal_sat: null,
+        fecha_timbrado: null,
+        serie_timbrado: null,
+      });
+      const onArchivoXmlLeidoTimbre = vi.fn();
+      const { container } = render(
+        <AdjuntoFacturaInput
+          tipo="cfdi_xml"
+          placeholder="Cargar XML del CFDI"
+          value={null}
+          onChange={vi.fn()}
+          onArchivoXmlLeidoTimbre={onArchivoXmlLeidoTimbre}
+        />,
+      );
+      elegirArchivo(container.querySelector('input[type="file"]')!, "cfdi.xml");
+
+      await vi.waitFor(() => expect(onArchivoXmlLeidoTimbre).toHaveBeenCalledWith(null));
+      await vi.waitFor(() => expect(subirMock).toHaveBeenCalled());
+    });
+
+    it("en el campo de PDF nunca se intenta leer el timbre, aunque se pase el callback", async () => {
+      subirMock.mockResolvedValue({ ref: "facturacion/clientes/pdf/abc_factura.pdf" });
+      const onArchivoXmlLeidoTimbre = vi.fn();
+      const { container } = render(
+        <AdjuntoFacturaInput
+          tipo="cfdi_pdf"
+          placeholder="Cargar PDF de la factura"
+          value={null}
+          onChange={vi.fn()}
+          onArchivoXmlLeidoTimbre={onArchivoXmlLeidoTimbre}
+        />,
+      );
+      elegirArchivo(container.querySelector('input[type="file"]')!, "factura.pdf");
+
+      await vi.waitFor(() => expect(subirMock).toHaveBeenCalled());
+      expect(leerCfdiTimbradoMock).not.toHaveBeenCalled();
+      expect(onArchivoXmlLeidoTimbre).not.toHaveBeenCalled();
+    });
+
+    it("sin `onArchivoXmlLeidoTimbre`, elegir un XML no llama a leer el timbre (comportamiento de siempre)", async () => {
+      const { container } = render(
+        <AdjuntoFacturaInput tipo="cfdi_xml" placeholder="Cargar XML del CFDI" value={null} onChange={vi.fn()} />,
+      );
+      elegirArchivo(container.querySelector('input[type="file"]')!, "cfdi.xml");
+
+      await vi.waitFor(() => expect(subirMock).toHaveBeenCalled());
+      expect(leerCfdiTimbradoMock).not.toHaveBeenCalled();
     });
   });
 

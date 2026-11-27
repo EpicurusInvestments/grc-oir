@@ -12,8 +12,14 @@
  * Fix (petición del usuario, ADR nuevo): prop opcional `onArchivoXmlLeido` — al elegir
  * un XML, lee el CFDI (`cfdiApi.leer`, EN PARALELO a la subida normal, independiente de
  * ella) para precargar Subtotal/IVA en las facturas de Agencia/Vendedor/Afiliado. Usada
- * por esos 3 formularios; los demás usos de este componente (p.ej.
- * `RegistrarTimbradoForm.tsx`) simplemente no la pasan y siguen igual que siempre.
+ * por esos 3 formularios.
+ *
+ * ADR-296 (petición del usuario): prop opcional HERMANA `onArchivoXmlLeidoTimbre` — al
+ * elegir un XML, lee el Timbre Fiscal Digital (`cfdiTimbradoApi.leer`, misma lógica EN
+ * PARALELO) para precargar folio fiscal/fecha de timbrado/certificado en
+ * `RegistrarTimbradoForm.tsx` (Factura, Nota de Crédito). Ningún uso pasa las 2 props a
+ * la vez — son lecturas de datos distintos del mismo tipo de archivo. Los demás usos de
+ * este componente simplemente no pasan ninguna y siguen igual que siempre.
  */
 
 import { useRef, useState } from "react";
@@ -23,8 +29,10 @@ import { ApiRequestError } from "@/shared/lib/apiClient";
 import {
   adjuntosFacturacionApi,
   cfdiApi,
+  cfdiTimbradoApi,
   nombreDeAdjuntoFacturacionRef,
   type LecturaCfdi,
+  type LecturaTimbre,
   type TipoAdjuntoFacturacion,
 } from "../../api";
 import { ADJUNTO_FACTURACION_MAX_BYTES } from "../../constants";
@@ -59,6 +67,10 @@ interface AdjuntoFacturaInputProps {
    *  (el usuario sigue pudiendo capturar a mano). Opcional: sin ella, el campo se
    *  comporta exactamente como antes. */
   onArchivoXmlLeido?: (resultado: LecturaCfdi | null) => void;
+  /** ADR-296 (petición del usuario): como `onArchivoXmlLeido`, pero lee el Timbre
+   *  Fiscal Digital (folio fiscal/fecha de timbrado/certificado) en vez de
+   *  Subtotal/IVA — usada por `RegistrarTimbradoForm.tsx`. */
+  onArchivoXmlLeidoTimbre?: (resultado: LecturaTimbre | null) => void;
 }
 
 export function AdjuntoFacturaInput({
@@ -68,6 +80,7 @@ export function AdjuntoFacturaInput({
   onChange,
   disabled,
   onArchivoXmlLeido,
+  onArchivoXmlLeidoTimbre,
 }: AdjuntoFacturaInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -113,6 +126,14 @@ export function AdjuntoFacturaInput({
         .leer(archivo)
         .then((r) => onArchivoXmlLeido(r.ok ? r : null))
         .catch(() => onArchivoXmlLeido(null));
+    }
+    // ADR-296 (petición del usuario): misma lógica, pero para el Timbre Fiscal Digital
+    // (folio fiscal/fecha de timbrado/certificado) — nunca a la vez que la de arriba.
+    if (!esPdf && onArchivoXmlLeidoTimbre) {
+      cfdiTimbradoApi
+        .leer(archivo)
+        .then((r) => onArchivoXmlLeidoTimbre(r.ok ? r : null))
+        .catch(() => onArchivoXmlLeidoTimbre(null));
     }
 
     setSubiendo(true);
