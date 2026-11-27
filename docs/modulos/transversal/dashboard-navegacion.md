@@ -5,12 +5,19 @@
 
 ## Alcance
 
-- **Dashboard (`/`)**: malla responsiva de 6 tarjetas, una por fase, con ilustración,
-  código+nombre, descripción de una línea y acento de color por fase. Hoy están **activas
-  F0 (Catálogos), F1 (Órdenes), F2 (Facturación), F3 (Cobranza y Pagos) y F5
-  (Seguridad)**; solo **F4 (Reportes)** se muestra "Próximamente" (atenuada, no
-  clicable). La fuente única de qué está activa es `enabled` en `phaseRegistry.ts` —
-  esta lista se actualiza cuando ese arreglo cambia.
+- **Dashboard (`/`)**: malla responsiva de hasta 6 tarjetas, una por fase, con
+  ilustración, código+nombre, descripción de una línea y acento de color por fase.
+  Desde F4-01 (Tanda 1 de Reportes) las **6 fases (F0–F5) están `enabled`**. La fuente
+  única de qué está activa es `enabled` en `phaseRegistry.ts` — esta lista se actualiza
+  cuando ese arreglo cambia.
+- **Visibilidad por área (`visibleParaArea`, desde F4-01):** una fase puede, además,
+  declarar `visibleParaArea?: (area: string) => boolean` — si el área actual no
+  califica, su tarjeta/entrada de menú se **oculta por completo** (no "Próximamente":
+  directamente no aparece). Sin esta función (todas las fases salvo F4 hoy), el
+  comportamiento no cambia: visible para cualquiera con sesión. F4 la usa porque es la
+  primera fase con vistas tan restringidas (Estado de resultados es exclusivo de
+  Dirección) que vale la pena no mostrar la tarjeta a quien de todas formas no podría
+  ver nada adentro — ver `docs/modulos/f4-reportes/f4-reportes.md`.
 - **Navegación global (drawer)**: menú lateral deslizante disponible desde cualquier
   pantalla que use `AppHeader` (hamburguesa arriba a la izquierda). Contiene acceso a
   Inicio y a las 6 fases. Cierra con overlay, tecla Escape y botón de cerrar.
@@ -54,12 +61,15 @@ y consume `--acc` / `--acc-bg` / `--acc-text`.
 
 ## Estado "Próximamente" vs. activa
 
-| | Activa (F0) | Próximamente (F1–F5) |
+| | Activa | Próximamente (ninguna hoy, F0-F5 ya construidas) |
 |---|---|---|
 | Interacción | `<button>`, navega a su ruta | `<div aria-disabled>`, sin acción |
 | Opacidad / imagen | 100% / a color | ~55% / escala de grises |
 | Hover | Elevación + sombra + zoom de imagen | Sin efecto |
 | Badge | — | Gris "Próximamente" |
+
+El mecanismo sigue existiendo (no se eliminó código): la próxima fase nueva que se
+agregue al registro con `enabled: false` volverá a mostrarse así automáticamente.
 
 Animaciones sutiles (fade-in escalonado por índice; hover con elevación y zoom) con
 respeto a `prefers-reduced-motion`.

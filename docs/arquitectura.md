@@ -11929,6 +11929,21 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (`UsoCFDI/G02`, `TipoRelacion/01,03`) insertados a mano en la BD real de dev para
   poder probar manualmente (el CSV de referencia ya había divergido de los datos reales
   de esa BD en sesiones anteriores).
+- **Corrección posterior (2026-11-26, reportado por el usuario al intentar
+  `alembic upgrade head` contra la BD de desarrollo compartida en SQL Server):** el
+  "viaje redondo" de arriba solo se había corrido contra SQLite — los 3 CHECK nuevos de
+  `factura_cliente` (`ck_factura_cliente_subtotal`/`_iva`/`_total`) usaban
+  `CASE WHEN tipo_comprobante = 'E' THEN subtotal_factura <= 0 ELSE ... END`, y SQL
+  Server rechaza un operador de comparación como valor THEN/ELSE de un CASE ("Incorrect
+  syntax near '<'" — un CASE solo regresa un escalar, no un predicado booleano; SQLite
+  sí lo permite, sin tipo booleano real, por eso pasaba en local). Se reescribieron las
+  3 condiciones como OR/AND (`(COALESCE(tipo_comprobante,'I') = 'E' AND ... <= 0) OR
+  (COALESCE(tipo_comprobante,'I') <> 'E' AND ... >= 0)` — el `COALESCE` evita que la
+  columna nullable propague NULL al OR exterior, que un CHECK trataría como "no
+  violado"), tanto en la migración `d44def894ea8` como en el `CheckConstraint` espejo
+  del modelo (`factura_cliente.py`). Mismo riesgo de familia que ADR-039/ADR-014: una
+  migración que solo se corrió contra SQLite puede fallar en SQL Server real. Pendiente:
+  confirmar que la migración ya corrió sin error contra la BD de desarrollo compartida.
 ### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
 
 - **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de
@@ -12221,3 +12236,59 @@ requisición al proveedor) — unifica y reemplaza los bloqueos "ciegos" de ADR-
   `arg-type` son preexistentes, confirmados con `git stash` antes de este cambio — no
   son regresión). Frontend `tsc --noEmit`/`eslint` limpios; suites de `cobranza` y
   `facturacion` 100% verdes (197/197).
+
+### ADR-294 — F4 Reportes: `PeriodoResultados` no se persiste; módulo 100% de solo lectura, agregado en SQL
+
+- **Estado:** aceptada · **Fecha:** 2026-11-26 (cierre de F4, al completar la Tanda 3 —
+  Dashboard operativo). Formaliza una decisión tomada desde el inicio de F4 (Tanda 1) y
+  documentada mientras tanto solo en la ficha del módulo
+  (`docs/modulos/f4-reportes/f4-reportes.md`), tal como esa ficha ya anunciaba desde su
+  primera versión ("ADR a escribir").
+- **Contexto:** la especificación BD v2 modela `PeriodoResultados` como una entidad
+  persistida — un registro por mes con los totales ya calculados del Estado de
+  resultados (snapshot). F4 fue aprobada explícitamente **sin** cierre de período ni
+  snapshots (decisión 5 de la ficha, confirmada con el equipo antes de programar): el
+  usuario quería ver el P&L y los 3 dashboards **en vivo**, siempre recalculados sobre
+  F1–F3, nunca una foto congelada que pudiera desincronizarse de los datos reales si
+  una orden/factura/pago se corrige después.
+- **Decisión:** `PeriodoResultados` **no se crea como tabla**. Los 4 endpoints de
+  `GET /api/v1/reportes/*` (`estado-resultados`, `comercial`, `cobranza`, `operativo`)
+  calculan sus cifras en cada request, agregando directamente sobre las tablas de
+  F1–F3 (`OrdenCliente`/`OrdenEstacion`/`OrdenEstacionDia`/`Verificacion`/`Incidencia`,
+  `FacturaCliente`/`FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`,
+  `CobranzaFactura`/`PagoCliente`/`Requisicion`/`CostoAdicional`). Consecuencias
+  directas de esta decisión, ya implementadas en las 3 tandas:
+  - **Sin migración en todo F4** (confirmado en cada tanda): el módulo
+    `backend/app/modules/reportes/` no tiene `models.py` — solo `schemas.py`
+    (DTOs de lectura), `repository.py` (consultas `SELECT`/`GROUP BY` puras, nunca
+    `INSERT`/`UPDATE`), `service.py` (fórmulas/ventanas de fecha) y `router.py`.
+  - **Toda aritmética de dinero vive en el service, nunca en SQL** (ADR-039): el
+    repository regresa filas crudas (p.ej. `FilaProrrateable`, `FilaCumplimientoEstacion`)
+    y el service calcula con `Decimal`/`ROUND_HALF_UP`, para que una consulta SQL
+    manual en SSMS pueda reproducir el mismo número exacto al validar.
+  - **"Agregar en SQL, nunca N+1"** (decisión 10 de la ficha): toda cifra por
+    renglón/estación/afiliado es un `GROUP BY` del repository, nunca un bucle en
+    Python por fila de negocio — explícitamente CONTRASTA con
+    `CobranzaFacturaService.adeudo_vencido` (ADR-277), que el Dashboard de cobranza
+    NO reutiliza por ser fila-por-fila.
+  - **4 claves RBAC separadas** (`reportes_financiero`/`_comercial`/`_cobranza`/
+    `_operativo`, ADR-044), las 4 agregadas de una sola vez desde la Tanda 1 aunque
+    sus endpoints llegaran después — Admin nunca se lista (ADR-040, superusuario).
+  - **Exportación transversal** (`app/shared/exportacion.py`, no en el módulo): única
+    utilidad `.xlsx`/`.csv` para las 4 vistas, con neutralización de
+    CSV/formula-injection (ADR-025).
+  - **`PhaseEntry.visibleParaArea`** (nuevo campo opcional en `phaseRegistry.ts`,
+    frontend): F4 es la primera fase que oculta su tarjeta/entrada de menú por
+    completo (no "Próximamente") para un área sin ningún permiso `reportes_*` — ver
+    `docs/modulos/transversal/dashboard-navegacion.md`.
+- **Alternativa descartada:** persistir `PeriodoResultados` con un job de cierre
+  mensual (fiel a la spec v2). Se descartó porque el usuario explícitamente no pidió
+  cierre/reapertura de periodos para esta fase, y un snapshot requeriría un mecanismo
+  de invalidación/recálculo cada vez que F1–F3 corrigen un dato ya cerrado — complejidad
+  no pedida. Si el negocio pide después un cierre formal (auditable, inmutable), se
+  reabre como alcance nuevo, no como ajuste de esta fase.
+- **Verificado:** las 3 tandas de F4 pasaron sin ninguna migración Alembic generada;
+  `pytest app/tests/test_f4_*.py` (41 pruebas) compara cada renglón/KPI contra consultas
+  SQL independientes escritas a mano, no copiadas del repository — ver
+  `f4-Reportes-Plan-completo.md` y la ficha del módulo para el detalle completo de
+  reglas y fórmulas por vista.

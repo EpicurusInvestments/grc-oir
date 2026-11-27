@@ -5,6 +5,8 @@
  *  /ordenes    → Explorador de órdenes (F1).
  *  /facturacion → Explorador de Facturación (F2).
  *  /cobranza   → Explorador de Cobranza y Pagos (F3).
+ *  /reportes   → Explorador de Reportes (F4) — el RBAC es por vista/endpoint, igual
+ *                que Órdenes/Facturación/Cobranza (ver `reportesRegistry`).
  *  /seguridad  → Explorador de Seguridad (F5) — solo área admin.
  *
  *  Todo lo que cuelga de `RequireSession` exige sesión: al agregar una fase nueva basta
@@ -25,6 +27,7 @@ import { CatalogosExplorerPage } from "@/modules/catalogos/pages/CatalogosExplor
 import { CobranzaExplorerPage } from "@/modules/cobranza/pages/CobranzaExplorerPage";
 import { FacturacionExplorerPage } from "@/modules/facturacion/pages/FacturacionExplorerPage";
 import { OrdenesExplorerPage } from "@/modules/ordenes/pages/OrdenesExplorerPage";
+import { ReportesExplorerPage } from "@/modules/reportes/pages/ReportesExplorerPage";
 import { SeguridadExplorerPage } from "@/modules/seguridad/pages/SeguridadExplorerPage";
 
 export const router = createBrowserRouter([
@@ -38,6 +41,7 @@ export const router = createBrowserRouter([
       { path: "/ordenes", element: <OrdenesExplorerPage /> },
       { path: "/facturacion", element: <FacturacionExplorerPage /> },
       { path: "/cobranza", element: <CobranzaExplorerPage /> },
+      { path: "/reportes", element: <ReportesExplorerPage /> },
       {
         element: <RequireArea areas={["admin"]} />,
         children: [{ path: "/seguridad", element: <SeguridadExplorerPage /> }],
