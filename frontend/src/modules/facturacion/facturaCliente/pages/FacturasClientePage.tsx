@@ -838,7 +838,11 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
             ? `¿Cancelar la factura ${aCancelar.numero_factura}? Si ya tiene cobros recibidos, ` +
               "se cancelarán también (mismo mecanismo que \"Cancelar pago\" en Cobranza) — " +
               "incluida cualquier comisión de agencia/vendedor/afiliado ya AUTORIZADA con base " +
-              "en ese cobro (se cancela en cascada); las ya PAGADAS no se tocan."
+              "en ese cobro (se cancela en cascada); las ya PAGADAS no se tocan." +
+              (esNotaCredito(aCancelar)
+                ? " Si esta Nota de Crédito generó una Requisición de Devolución (factura de " +
+                  "origen ya cobrada), también se cancela — salvo que ya esté pagada."
+                : "")
             : ""
         }
         confirmLabel="Cancelar factura"

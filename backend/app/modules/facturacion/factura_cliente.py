@@ -1230,6 +1230,22 @@ class FacturaClienteService(
                 "La factura de origen de la Nota de Crédito no existe.",
                 detalles={"factura_relacionada_id": str(data.facturas_relacionadas_ids[0])},
             )
+        # ADR-297 (petición del usuario): "debe estar de Timbrada hacia adelante" — ya
+        # no cualquier estado (antes se aceptaba hasta una factura `cancelada`).
+        estados_nc_validos = (
+            EstadoFacturacion.TIMBRADA.value,
+            EstadoFacturacion.ENTREGADA.value,
+            EstadoFacturacion.COBRADA.value,
+        )
+        if origen.estado_facturacion not in estados_nc_validos:
+            raise DomainError(
+                "La factura de origen debe estar timbrada (o más adelante: entregada, "
+                "cobrada) para poder generarle una Nota de Crédito.",
+                detalles={
+                    "factura_relacionada_id": str(origen.factura_id),
+                    "estado_facturacion": origen.estado_facturacion,
+                },
+            )
         if db.get(CuentaContable, data.cuenta_contable_id) is None:
             raise DomainError(
                 "La cuenta contable indicada no existe.",
@@ -1826,14 +1842,28 @@ class FacturaClienteService(
         `PagoCliente` sintético sobre la `CobranzaFactura` de la factura de ORIGEN
         (`PagoClienteService.aplicar_nota_credito`), reutilizando toda la máquina de
         `recalcular_tras_pago` (parcial/total/cascada a `cobrada`) sin tocarla.
+
+        ADR-297 (petición del usuario): EXCEPCIÓN — si la factura de origen YA estaba
+        `cobrada` en su totalidad (p.ej. una NC "de timbrada hacia adelante" contra una
+        factura ya pagada), aplicarle igual el pago sintético la sobre-acreditaría
+        (`importe_pendiente_cobro` quedaría negativo, sin aviso — bug real detectado al
+        revisar este ADR). En su lugar se crea una `Requisicion` tipo `devolucion`
+        (pago pendiente de OIR hacia el cliente) y la `CobranzaFactura` de origen NO se
+        toca ("así se queda", pedido explícito del usuario).
         """
         from app.modules.cobranza.cobranza_factura import (
             CobranzaFactura,
             CobranzaFacturaRepository,
             CobranzaFacturaService,
+            EstatusCobro,
             PagoCliente,
             PagoClienteRepository,
             PagoClienteService,
+        )
+        from app.modules.cobranza.requisicion import (
+            Requisicion,
+            RequisicionRepository,
+            RequisicionService,
         )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
@@ -1880,15 +1910,27 @@ class FacturaClienteService(
                     "timbrada antes de aplicar la Nota de Crédito.",
                     detalles={"factura_relacionada_id": str(origen.factura_id)},
                 )
-            PagoClienteService(PagoClienteRepository(db, PagoCliente)).aplicar_nota_credito(
-                cobranza_id=cobranza_origen.cobranza_id,
-                monto=abs(obj.total_factura),
-                factura_egreso_id=obj.factura_id,
-                forma_pago_clave=origen.forma_pago_clave,
-                fecha_pago=obj.fecha_timbrado,
-                referencia=obj.numero_factura,
-                usuario=usuario,
-            )
+            if cobranza_origen.estatus_cobro == EstatusCobro.COBRADA.value:
+                # ADR-297: ya estaba pagada — no se le aplica pago sintético (quedaría
+                # sobre-acreditada), se crea la Requisición de Devolución en su lugar.
+                RequisicionService(
+                    RequisicionRepository(db, Requisicion)
+                ).crear_devolucion_desde_nota_credito(
+                    nc_factura_id=obj.factura_id,
+                    razon_social_cliente=obj.razon_social_facturacion,
+                    monto=abs(obj.total_factura),
+                    usuario=usuario,
+                )
+            else:
+                PagoClienteService(PagoClienteRepository(db, PagoCliente)).aplicar_nota_credito(
+                    cobranza_id=cobranza_origen.cobranza_id,
+                    monto=abs(obj.total_factura),
+                    factura_egreso_id=obj.factura_id,
+                    forma_pago_clave=origen.forma_pago_clave,
+                    fecha_pago=obj.fecha_timbrado,
+                    referencia=obj.numero_factura,
+                    usuario=usuario,
+                )
         else:
             # ── handoff con F1, misma sesión, antes del commit ──
             # Sobre TODAS las órdenes de la factura: hoy es una, pero el bucle ya es la
@@ -2042,6 +2084,12 @@ class FacturaClienteService(
         completo el mecanismo de ADR-292 (ya no bloquea por comisiones comprometidas,
         las cancela/revierte en cascada). No-op si la NC nunca llegó a timbrarse (nada
         que revertir).
+
+        ADR-297 (petición del usuario): si en vez de un pago sintético se le creó una
+        Requisición `devolucion` (factura de origen ya cobrada al timbrar, ver
+        `timbrar()`), se cancela esa Requisición en cascada — salvo que ya esté
+        `pagada` (ya se le devolvió el dinero al cliente: no se toca, mismo criterio
+        que las comisiones de proveedor ya pagadas en el resto de este mecanismo).
         """
         if not motivo.strip():
             raise DomainError("El motivo de cancelación no puede estar vacío.")
@@ -2053,6 +2101,14 @@ class FacturaClienteService(
             PagoCliente,
             PagoClienteRepository,
             PagoClienteService,
+        )
+        from app.modules.cobranza.requisicion import (
+            EstatusRequisicion,
+            Requisicion,
+            RequisicionRepository,
+            RequisicionService,
+            TipoRequisicion,
+            TransicionRequisicionIn,
         )
         from app.modules.ordenes.orden_cliente import (
             OrdenCliente,
@@ -2068,10 +2124,31 @@ class FacturaClienteService(
 
         if obj.tipo_comprobante == "E":
             # Nota de crédito: no tiene su propia CobranzaFactura, revierte el pago
-            # sintético aplicado sobre la factura de origen (ver docstring arriba).
+            # sintético aplicado sobre la factura de origen (ver docstring arriba) —
+            # no-op si lo que se le aplicó fue una Requisición de Devolución en vez de
+            # un pago (ADR-297).
             PagoClienteService(PagoClienteRepository(db, PagoCliente)).revertir_nota_credito(
                 obj.factura_id, usuario, obj.numero_factura
             )
+            devolucion = db.scalar(
+                select(Requisicion).where(
+                    Requisicion.factura_cliente_id == obj.factura_id,
+                    Requisicion.tipo_requisicion == TipoRequisicion.DEVOLUCION.value,
+                )
+            )
+            if devolucion is not None and devolucion.estatus_requisicion in (
+                EstatusRequisicion.PENDIENTE.value,
+                EstatusRequisicion.AUTORIZADA.value,
+            ):
+                RequisicionService(RequisicionRepository(db, Requisicion))._transicionar_sin_commit(
+                    devolucion.requisicion_id,
+                    EstatusRequisicion.CANCELADA.value,
+                    TransicionRequisicionIn(
+                        estatus=EstatusRequisicion.CANCELADA.value,
+                        motivo=f"Nota de crédito {obj.numero_factura} cancelada.",
+                    ),
+                    usuario,
+                )
         else:
             # ── F3: cascada o limpieza de la CobranzaFactura, ANTES de tocar nada más ──
             CobranzaFacturaService(

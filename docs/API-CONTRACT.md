@@ -1280,14 +1280,20 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   `devolucion_total`/`devolucion_parcial`/`descuento`/`bonificacion`, lista fija);
   `monto_nota_credito` (la magnitud a acreditar, **positiva** — el servicio la niega
   antes de persistir en `subtotal_factura`/`iva_factura`/`total_factura`); y
-  `numero_factura` con el formato `NC-AAAA-MM-folio` (p.ej. `NC-2026-11-0071`), **capturado
-  a mano por el usuario** (sin folio automático). `tipo_relacion_sat` (clave SAT, p.ej.
-  `01`/`03`) es opcional y hoy solo se guarda — no viaja todavía al archivo plano del
-  PAC más que como el `TipoRelacion` de "Documentos Relacionados" (ver `/archivo-plano`
-  abajo); el resto del layout sigue sin leerlo. `iva_nota_credito` (ADR-294, petición del
-  usuario: "dejar el campo editable") es **opcional**, misma magnitud positiva que
-  `monto_nota_credito` — si se manda, el servicio lo usa tal cual (negado) en vez de
-  calcular el 16% exacto del monto; si se omite, calcula igual que antes.
+  `numero_factura` con el formato `NC-AAAA-MM-folio` (p.ej. `NC-2026-11-0071`) — el
+  usuario sigue pudiendo escribirlo a mano, pero el frontend lo precarga con una
+  sugerencia (ADR-295, `GET /facturacion/clientes/siguiente-numero-factura`).
+  `tipo_relacion_sat` (clave SAT, p.ej. `01`/`03`) es opcional y hoy solo se guarda — no
+  viaja todavía al archivo plano del PAC más que como el `TipoRelacion` de "Documentos
+  Relacionados" (ver `/archivo-plano` abajo); el resto del layout sigue sin leerlo.
+  `iva_nota_credito` (ADR-294, petición del usuario: "dejar el campo editable") es
+  **opcional**, misma magnitud positiva que `monto_nota_credito` — si se manda, el
+  servicio lo usa tal cual (negado) en vez de calcular el 16% exacto del monto; si se
+  omite, calcula igual que antes.
+
+  **La factura de origen debe estar `timbrada`, `entregada` o `cobrada`** (ADR-297,
+  petición del usuario: "de Timbrada hacia adelante") — **400** en cualquier otro estado
+  (antes se aceptaba cualquier estado, hasta `cancelada`).
 
   Receptor, `empresa_facturadora_id`, `anunciante_id`/`agencia_id` y
   `facturado_directo` se heredan de la **factura de origen** (no de una orden — una NC no
@@ -1296,6 +1302,13 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   seleccionable") **SÍ se captura del payload** — el frontend la precarga con la de la
   factura de origen como default, pero el usuario la puede cambiar; antes (ADR-293) se
   forzaba siempre a la de origen. `uso_cfdi` default `"G02"` si no se especifica.
+
+  **Al timbrar una NC contra una factura de origen YA `cobrada`** (ADR-297): en vez de
+  aplicarle un `PagoCliente` sintético (que la sobre-acreditaría — bug real corregido
+  con este ADR), se crea una `Requisicion` tipo `devolucion` (ver F3 más abajo) — la
+  `CobranzaFactura` de origen no se toca. Si NO estaba cobrada, sigue igual que antes
+  (pago sintético, puede cascadear a `cobrada`). Al **cancelar** esa NC, la Requisición
+  `devolucion` se cancela en cascada (salvo que ya esté `pagada`).
 
   Al **timbrar** una Nota de crédito (mismo endpoint `/timbrar` de abajo, mismo flujo
   manual), en vez de crear su propia `CobranzaFactura` el sistema aplica un `PagoCliente`
@@ -1606,6 +1619,21 @@ handoff, nunca por un endpoint propio de alta:
 
 ### Requisicion
 
+- **`tipo_requisicion`** gana un 5º valor (**ADR-297**, petición del usuario):
+  **`devolucion`** — pago PENDIENTE de OIR hacia el CLIENTE de una Nota de Crédito
+  aplicada a una factura que ya estaba cobrada en su totalidad. El sistema la crea
+  SOLA al timbrar esa NC (`FacturaClienteService.timbrar`) — nunca se da de alta por
+  `POST /cobranza/requisiciones` (ese endpoint no la valida, sigue aceptando solo los
+  4 tipos de siempre). Columnas propias: `factura_cliente_id` (FK a la NC) y
+  `razon_social_cliente` (heredado de la NC al crearla — misma razón social que ya
+  traía la factura de origen); el resto de las FKs (`afiliado_id`/`agencia_id`/
+  `vendedor_comision_id`/las 3 `factura_*_id` de proveedor) quedan `null`, igual que ya
+  hacía `comision_agencia` con las suyas. `monto_requisicion` = el total de la NC (en
+  positivo); `folio_factura_origen` (ver abajo) resuelve al `numero_factura` de la NC.
+  Transiciones de estatus y cancelación: **el mismo motor genérico** que los otros 4
+  tipos (`pendiente → autorizada → pagada`, rama a `cancelada`) — sin código nuevo ahí,
+  ya tolera "ninguna factura de proveedor relacionada" desde que existe
+  `comision_agencia`.
 - **`GET /cobranza/requisiciones`** (`pagos:leer`) — filtros `tipo_requisicion`,
   `estatus_requisicion`, `afiliado_id`, `agencia_id`, `vendedor_comision_id`. `q` busca en
   número de requisición, número de OC de SAP, el folio de la factura de
@@ -1613,11 +1641,13 @@ handoff, nunca por un endpoint propio de alta:
   `FacturaAgencia.folio_factura_agencia`/`FacturaVendedor.folio_factura_vendedor`, vía
   `EXISTS` correlacionado) y (**ADR-292**) el folio de las órdenes relacionadas
   (`OrdenCliente.folio_orden`/`OrdenEstacion.folio_orden_estacion`, vía las 3 tablas
-  puente más `orden_id` directo para `comision_agencia`). La lectura expone
+  puente más `orden_id` directo para `comision_agencia`) — **`devolucion` no se agregó
+  todavía a esta búsqueda** (fuera de lo pedido en ADR-297). La lectura expone
   **`folio_factura_origen`** (ese mismo folio, resuelto en lote por página en el
-  servicio — `null` para `comision_agencia`, que no tiene factura ligada) y
-  (**ADR-292**) **`ordenes_folios`**: folios de las órdenes relacionadas separados por
-  coma, también resueltos en lote (`null` si no hay ninguna).
+  servicio — `null` para `comision_agencia`, que no tiene factura ligada; para
+  `devolucion` es el `numero_factura` de la NC) y (**ADR-292**) **`ordenes_folios`**:
+  folios de las órdenes relacionadas separados por coma, también resueltos en lote
+  (`null` si no hay ninguna, incluida siempre `devolucion`).
 - **`GET /cobranza/requisiciones/{id}`** (`pagos:leer`).
 - **`POST /cobranza/requisiciones`** (`pagos:crear`) — alta por CxP. **`numero_requisicion`
   NO se acepta en el payload** (**ADR-282**, `extra="forbid"` → **422** si se manda): es

@@ -182,6 +182,9 @@ export function RequisicionesPage({ filtroInicial }: Props) {
     if (r.tipo_requisicion === "pago_agencia" || r.tipo_requisicion === "comision_agencia") {
       return agenciaMap.get(r.agencia_id ?? "")?.nombre_agencia ?? "—";
     }
+    // ADR-297: el beneficiario es el CLIENTE de la factura (anunciante/agencia),
+    // no un afiliado/agencia/vendedor — ya viene heredado de la Nota de Crédito.
+    if (r.tipo_requisicion === "devolucion") return r.razon_social_cliente ?? "—";
     return vendedorMap.get(r.vendedor_comision_id ?? "")?.nombre_vendedor ?? "—";
   };
 
@@ -196,6 +199,10 @@ export function RequisicionesPage({ filtroInicial }: Props) {
           : facturaVendedorMap.get(r.factura_vendedor_id ?? "")?.folio_factura_vendedor;
       return folio ?? "—";
     }
+    // ADR-297: el "origen" es la propia Nota de Crédito — ya resuelto por el backend
+    // en `folio_factura_origen` (mismo dato que la columna "Folio" de la lista), sin
+    // necesitar ningún catálogo extra.
+    if (r.tipo_requisicion === "devolucion") return r.folio_factura_origen ?? "—";
     return ordenMap.get(r.orden_id ?? "")?.folio_orden ?? "—";
   };
 

@@ -12125,6 +12125,97 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   limpio; `mypy` sin errores nuevos. Frontend: 151/151 del módulo `facturacion` verdes
   (144 + 7 nuevas), `tsc --noEmit`/`eslint` limpios.
 
+### ADR-297 — Notas de Crédito "de Timbrada hacia adelante" + Requisición de Devolución al cliente
+
+- **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, 3 capturas de
+  pantalla + texto pegado, al revisar manualmente ADR-294/295/296 en la aplicación).
+- **Disparador:** el usuario pidió, de una vez, 4 cosas relacionadas con Notas de
+  Crédito y Requisiciones: (1) la factura de origen de una NC debe estar "de Timbrada
+  hacia adelante"; (2) qué le pasa a esa factura — "si está pagada no pasa nada, así se
+  queda; si está pendiente de pago se da como pagada"; (3) revisar el mensaje de
+  "Cancelación de Pago" porque ya no debe decir lo que decía; (4) agregar un tipo
+  "Devolución" en Requisiciones, con "todos los demás campos los de la Nota de
+  Crédito". Investigación previa (sin tocar código) confirmó que HOY no existía
+  ningún candado: se podía dar de alta una NC contra una factura de origen en
+  CUALQUIER estado (hasta `cancelada`), y timbrarla contra una `CobranzaFactura` ya
+  `cobrada` la sobre-acreditaba en silencio (`importe_pendiente_cobro` quedaba
+  negativo, sin aviso ni bloqueo) — ese es el bug real detrás de los puntos 1 y 2. El
+  punto 3 se resolvió con `AskUserQuestion` (4 opciones): el usuario eligió agregar una
+  frase aparte al mensaje existente, sin tocar el resto.
+- **Decisión de diseño:**
+  - **Validación de alta:** `_crear_nota_credito()` rechaza (**400**) si
+    `origen.estado_facturacion` no es `timbrada`/`entregada`/`cobrada`.
+  - **Al timbrar:** si `CobranzaFactura.estatus_cobro` de origen YA es `cobrada`, en vez
+    de `PagoClienteService.aplicar_nota_credito()` (el pago sintético de siempre) se
+    llama `RequisicionService.crear_devolucion_desde_nota_credito()` — la
+    `CobranzaFactura` de origen no se toca ("así se queda"). Si NO estaba `cobrada`,
+    sigue exactamente el camino de ADR-293 (puede cascadear a `cobrada` — "se da como
+    pagada").
+  - **Requisición `devolucion` (5º tipo):** NO se modeló como entidad nueva — mismo
+    criterio que las Notas de Crédito mismas (ADR-293: "no se modeló como entidad
+    nueva"). 2 columnas aditivas (`factura_cliente_id`, `razon_social_cliente`); las
+    demás FKs quedan `null`, mismo patrón que YA tenía `comision_agencia` (sin factura
+    de proveedor relacionada) — por lo que la máquina de estados genérica
+    (`transicionar`/`_revertir_factura_relacionada`/`_cerrar_factura_relacionada`) la
+    soporta SIN ningún cambio de código, solo agregando el valor al enum. Nunca se da
+    de alta por el endpoint público (`RequisicionCreate` no la valida): construcción
+    directa, mismo criterio que `aplicar_nota_credito` construye su `PagoCliente`.
+  - **Cancelación simétrica:** al cancelar la NC, se cancela en cascada su Requisición
+    `devolucion` (si `pendiente`/`autorizada`; si `pagada`, no se toca — mismo
+    criterio de "lo ya pagado no se toca" de todo este mecanismo desde ADR-292).
+    Requirió el MISMO refactor que ADR-293 hizo en `PagoClienteService`: `transicionar()`
+    hacía su propio `commit()`, así que se separó en `transicionar()` (público, commit)
+    + `_transicionar_sin_commit()` (toda la lógica, sin commit) para poder componerla
+    dentro de la transacción de `FacturaClienteService.cancelar()`.
+- **Cambios — backend:**
+  - `backend/app/modules/facturacion/factura_cliente.py`: validación de estado en
+    `_crear_nota_credito()`; `timbrar()` rama por `cobranza_origen.estatus_cobro`;
+    `cancelar()` cascada-cancela la Requisición `devolucion` ligada.
+  - `backend/app/modules/cobranza/requisicion.py`: `TipoRequisicion.DEVOLUCION`
+    ("devolucion"); columnas `factura_cliente_id`/`razon_social_cliente`;
+    `RequisicionRead` las expone; `_enriquecer_folios()` resuelve
+    `folio_factura_origen` vía `FacturaCliente.numero_factura` para este tipo;
+    `transicionar()`/`_transicionar_sin_commit()` (refactor); método nuevo
+    `crear_devolucion_desde_nota_credito()`.
+  - Migración `662d28ca5580`: 2 columnas aditivas + FK a `factura_cliente` + CHECK
+    `ck_requisicion_tipo` reescrito (autogenerate no detecta contenido de CHECK,
+    mismo motivo que migraciones anteriores) — batch mode condicional en SQLite.
+- **Cambios — frontend:**
+  - `frontend/src/modules/cobranza/types.ts`: `"devolucion"` en `TIPOS_REQUISICION`/
+    `TIPO_REQUISICION_LABEL` ("Devolución"); `factura_cliente_id`/`razon_social_cliente`
+    en `Requisicion`.
+  - `frontend/src/modules/cobranza/format.ts`: `badgeTipoRequisicion` gana el caso
+    `devolucion` → `b-green` (color libre, no usado por ningún otro tipo).
+  - `frontend/src/modules/cobranza/requisicion/pages/RequisicionesPage.tsx`:
+    `beneficiario()`/`origen()` ganan la rama `devolucion` (`razon_social_cliente`/
+    `folio_factura_origen` — este último YA resuelto por el backend, sin necesitar
+    ningún catálogo nuevo en el cliente). Sin botón de alta ni filtro dedicado (fuera
+    de lo pedido): aparece en "Todas" con sus datos.
+  - "+ Nota de crédito" (`FacturasClientePage.tsx`): **sin cambios** — ya calculaba
+    `timbrada` como `["timbrada","entregada","cobrada"].includes(estado)` desde antes
+    de este ADR (se verificó leyendo el código: el hueco real estaba en el backend,
+    no en este botón).
+  - Diálogo "Cancelación de Pago" (`PagosClientePage.tsx`, Cobranza): frase nueva
+    explicando que un pago de NC a una factura ya cobrada no aplica ahí (se cancela
+    la Requisición de Devolución desde Requisiciones) — texto elegido por el usuario
+    entre 4 opciones. Diálogo "Cancelar factura" (`FacturasClientePage.tsx`): frase
+    análoga, solo para Notas de Crédito (`esNotaCredito`).
+- **Pruebas:** `test_f2_04_notas_credito.py` (+5): rechaza origen no timbrada, acepta
+  origen `entregada`, timbrar sobre origen `cobrada` crea la Requisición (sin
+  `PagoCliente`, `CobranzaFactura` intacta), cancelar la NC cancela la Requisición en
+  cascada, cancelar la NC NO toca una Requisición ya `pagada`. Frontend:
+  `RequisicionesPage.test.tsx` (+1, beneficiario/origen/badge de `devolucion`); 2
+  fixtures de prueba (`CobranzaExplorerPage.test.tsx`/`RequisicionesPage.test.tsx`)
+  actualizados con los 2 campos nuevos del tipo `Requisicion`.
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`), incluida
+  la corrección de un test de ADR-295 que creaba una NC contra una factura `preparada`
+  (ya no pasaba con la validación nueva — se corrigió timbrando esa factura primero,
+  no relajando la regla). `ruff` limpio; `mypy` sin errores nuevos. Migración
+  verificada con `alembic upgrade head` desde una base vacía, viaje redondo
+  `downgrade`/`upgrade`, y aplicada sobre `dev_ordenes.db` (con backup previo).
+  Frontend: 216/216 de `cobranza`+`facturacion` verdes, `tsc --noEmit`/`eslint`
+  limpios.
+
 ### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
 
 - **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de

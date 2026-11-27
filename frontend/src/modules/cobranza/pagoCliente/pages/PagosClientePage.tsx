@@ -696,7 +696,10 @@ export function PagosClientePage() {
               "Se regresará el saldo pendiente a las facturas que cubría — incluso si alguna " +
               "ya está COBRADA en su totalidad. Si alguna orden ya tiene una comisión de " +
               "agencia/vendedor/afiliado AUTORIZADA (no pagada), esa requisición se cancelará " +
-              "también, automáticamente. Las comisiones ya PAGADAS no se tocan."
+              "también, automáticamente. Las comisiones ya PAGADAS no se tocan. " +
+              "Si este pago viene de una Nota de Crédito aplicada a una factura que ya estaba " +
+              "cobrada, no aplica aquí — en su lugar se generó una Requisición de Devolución, " +
+              "que se cancela desde Requisiciones."
             : ""
         }
         confirmLabel="Cancelar pago"

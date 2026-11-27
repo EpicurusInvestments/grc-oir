@@ -37,6 +37,7 @@ from app.modules.catalogos.estacion import Estacion
 from app.modules.catalogos.plaza import Plaza
 from app.modules.catalogos.vendedor import Vendedor
 from app.modules.cobranza.cobranza_factura import CobranzaFactura, EstatusCobro, PagoCliente
+from app.modules.cobranza.requisicion import EstatusRequisicion, Requisicion, TipoRequisicion
 from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.factura_agencia import FacturaAgencia  # noqa: F401 — registra la tabla
 from app.modules.facturacion.factura_cliente import EstadoFacturacion, FacturaCliente
@@ -598,3 +599,176 @@ def test_cancelar_nota_credito_sin_timbrar_no_falla_sin_nada_que_revertir(
     )
     assert r.status_code == 200, r.text
     assert r.json()["estado_facturacion"] == "cancelada"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADR-297 (petición del usuario): "de timbrada hacia adelante" + Devolución al cliente
+# ══════════════════════════════════════════════════════════════════════════════
+def _pagar_total(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID], factura_id: str, monto: str
+) -> None:
+    """Registra un pago por el TOTAL de la factura, para dejar su `CobranzaFactura`
+    en `cobrada` antes de generarle una Nota de Crédito (escenario de ADR-297)."""
+    cobranza = db.query(CobranzaFactura).filter(
+        CobranzaFactura.factura_id == uuid.UUID(factura_id)
+    ).one()
+    r = client.post(
+        f"/api/v1/cobranza/facturas/{cobranza.cobranza_id}/pagos",
+        json={
+            "fecha_pago_cliente": "2026-03-05",
+            "monto_aplicado": monto,
+            "metodo_pago_clave": "PUE",
+            "forma_pago_clave": "99",
+            "cuenta_contable_id": str(cat["cuenta_id"]),
+        },
+        headers=_hdr("cxc"),
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_alta_de_nc_rechaza_factura_de_origen_que_no_esta_timbrada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    orden_id = _orden(db, cat, "OC-NOTIMBRADA")
+    db.commit()
+    r_factura = client.post(
+        "/api/v1/facturacion/clientes",
+        json={
+            "ordenes_ids": [str(orden_id)],
+            "numero_factura": "FMEX-8001",
+            "descripcion_factura": "Servicios de transmisión",
+            "fecha_factura": "2026-03-01",
+            "cuenta_contable_id": str(cat["cuenta_id"]),
+            "metodo_pago_clave": "PUE",
+            "forma_pago_clave": "99",
+            "clave_prod_serv": "82101601",
+            "clave_unidad": "E48",
+            "moneda_sat": "MXN",
+            "tipo_comprobante": "I",
+        },
+        headers=_hdr("facturacion"),
+    )
+    assert r_factura.status_code == 201, r_factura.text
+    factura_id = r_factura.json()["factura_id"]  # se queda en "preparada"
+
+    r = _crear_nc(client, cat, factura_id)
+    assert r.status_code == 400, r.text
+    assert "timbrada" in r.json()["error"]["mensaje"]
+
+
+def test_alta_de_nc_acepta_factura_de_origen_entregada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
+    r_entregar = client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/entregar",
+        json={},
+        headers=_hdr("facturacion"),
+    )
+    assert r_entregar.status_code == 200, r_entregar.text
+    assert r_entregar.json()["estado_facturacion"] == "entregada"
+
+    r = _crear_nc(client, cat, factura_id, monto="2000.00")
+    assert r.status_code == 201, r.text
+
+
+def test_timbrar_nc_sobre_factura_ya_cobrada_crea_requisicion_devolucion(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario (ADR-297): si la factura de origen YA está cobrada en su
+    totalidad, timbrar la NC NO le aplica un pago sintético (la sobre-acreditaría) —
+    en su lugar se crea una Requisición `devolucion` pendiente, beneficiario el
+    cliente, con el monto/folio de la propia NC. La CobranzaFactura de origen "se
+    queda así" (no se toca)."""
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)  # total 11600.00
+    _pagar_total(client, db, cat, factura_id, "11600.00")
+
+    db.expire_all()
+    cobranza_antes = db.query(CobranzaFactura).filter(
+        CobranzaFactura.factura_id == uuid.UUID(factura_id)
+    ).one()
+    assert cobranza_antes.estatus_cobro == EstatusCobro.COBRADA.value
+
+    nc = _crear_nc(client, cat, factura_id, monto="2000.00").json()
+    r = _timbrar_nc(client, nc["factura_id"])
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    # Sin PagoCliente sintético — no se le aplicó nada a la factura de origen.
+    assert (
+        db.query(PagoCliente)
+        .filter(PagoCliente.factura_egreso_id == uuid.UUID(nc["factura_id"]))
+        .one_or_none()
+        is None
+    )
+    cobranza_despues = db.query(CobranzaFactura).filter(
+        CobranzaFactura.factura_id == uuid.UUID(factura_id)
+    ).one()
+    assert cobranza_despues.estatus_cobro == EstatusCobro.COBRADA.value
+
+    devolucion = db.query(Requisicion).filter(
+        Requisicion.factura_cliente_id == uuid.UUID(nc["factura_id"])
+    ).one()
+    assert devolucion.tipo_requisicion == TipoRequisicion.DEVOLUCION.value
+    assert devolucion.estatus_requisicion == EstatusRequisicion.PENDIENTE.value
+    assert devolucion.monto_requisicion == Decimal("2320.00")  # abs(total_factura) de la NC
+    assert devolucion.razon_social_cliente == nc["razon_social_facturacion"]
+    assert devolucion.numero_requisicion.startswith("RQ-")
+
+
+def test_cancelar_nc_que_genero_devolucion_la_cancela_en_cascada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
+    _pagar_total(client, db, cat, factura_id, "11600.00")
+    nc = _crear_nc(client, cat, factura_id, monto="2000.00").json()
+    _timbrar_nc(client, nc["factura_id"])
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar",
+        json={"motivo": "Cancelacion de prueba."},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    devolucion = db.query(Requisicion).filter(
+        Requisicion.factura_cliente_id == uuid.UUID(nc["factura_id"])
+    ).one()
+    assert devolucion.estatus_requisicion == EstatusRequisicion.CANCELADA.value
+    assert devolucion.motivo_cancelacion == f"Nota de crédito {nc['numero_factura']} cancelada."
+
+
+def test_cancelar_nc_no_toca_devolucion_ya_pagada(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
+    _pagar_total(client, db, cat, factura_id, "11600.00")
+    nc = _crear_nc(client, cat, factura_id, monto="2000.00").json()
+    _timbrar_nc(client, nc["factura_id"])
+
+    db.expire_all()
+    devolucion = db.query(Requisicion).filter(
+        Requisicion.factura_cliente_id == uuid.UUID(nc["factura_id"])
+    ).one()
+    devolucion.estatus_requisicion = EstatusRequisicion.AUTORIZADA.value
+    db.commit()
+    r_pagar = client.post(
+        f"/api/v1/cobranza/requisiciones/{devolucion.requisicion_id}/estatus",
+        json={"estatus": "pagada"},
+        headers=_hdr("cxp"),
+    )
+    assert r_pagar.status_code == 200, r_pagar.text
+
+    r = client.post(
+        f"/api/v1/facturacion/clientes/{nc['factura_id']}/cancelar",
+        json={"motivo": "Cancelacion de prueba."},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    devolucion_despues = db.query(Requisicion).filter(
+        Requisicion.requisicion_id == devolucion.requisicion_id
+    ).one()
+    assert devolucion_despues.estatus_requisicion == EstatusRequisicion.PAGADA.value

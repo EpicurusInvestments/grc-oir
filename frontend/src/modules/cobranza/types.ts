@@ -233,6 +233,10 @@ export const TIPOS_REQUISICION = [
   "pago_agencia",
   "comision_vendedor",
   "comision_agencia",
+  // ADR-297 (petición del usuario): devolución al CLIENTE de una Nota de Crédito
+  // aplicada a una factura ya cobrada — el sistema la crea sola al timbrar esa NC,
+  // nunca se da de alta a mano (no aparece en "+ Nueva requisición").
+  "devolucion",
 ] as const;
 export type TipoRequisicion = (typeof TIPOS_REQUISICION)[number];
 
@@ -243,6 +247,7 @@ export const TIPO_REQUISICION_LABEL: Record<TipoRequisicion, string> = {
   // v2, no se renombra) — solo cambia el texto mostrado al usuario.
   comision_vendedor: "Pagos vendedor",
   comision_agencia: "Comisión agencia",
+  devolucion: "Devolución",
 };
 
 export const ESTATUS_REQUISICION = ["pendiente", "autorizada", "pagada", "cancelada"] as const;
@@ -269,9 +274,14 @@ export interface Requisicion {
   afiliado_id: string | null;
   agencia_id: string | null;
   vendedor_comision_id: string | null;
+  /** ADR-297: solo `devolucion` — la Nota de Crédito que origina esta devolución. */
+  factura_cliente_id: string | null;
   /** Derivado del catálogo Afiliado al crear (SÍ es columna persistida, a diferencia de
    *  los importes de `CobranzaFactura`). */
   razon_social_afiliada: string | null;
+  /** ADR-297: solo `devolucion` — heredado de la Nota de Crédito al crearla (misma
+   *  razón social que ya traía la factura de origen). */
+  razon_social_cliente: string | null;
   monto_requisicion: string;
   porcentaje_comision_vendedor: string | null;
   requisicion_comision_vendedor: string | null;

@@ -64,7 +64,7 @@ describe("RegistrarTimbradoForm", () => {
         onCancel={vi.fn()}
       />,
     );
-    const inputs = container.querySelectorAll('input[type="file"]');
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
     elegirArchivo(inputs[0], "cfdi_timbrado.xml"); // primer AdjuntoFacturaInput = XML
 
     await vi.waitFor(() =>
@@ -88,7 +88,7 @@ describe("RegistrarTimbradoForm", () => {
         onCancel={vi.fn()}
       />,
     );
-    const inputs = container.querySelectorAll('input[type="file"]');
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
     elegirArchivo(inputs[0], "cfdi_sin_timbrar.xml");
 
     await vi.waitFor(() => expect(leerCfdiTimbradoMock).toHaveBeenCalled());

@@ -461,6 +461,24 @@ análogo, SIN cambios. `diferencia_afiliada = monto_requisicion -
 FacturaAfiliado.total_factura_afiliado` (monitoreo de márgenes, puede ser negativa — no
 llevar `CHECK >= 0` en ese campo).
 
+**ADR-297 (petición del usuario) — 5º tipo: `devolucion`.** Pago PENDIENTE de OIR hacia
+el CLIENTE de una Nota de Crédito (F2) aplicada a una factura que ya estaba `cobrada` en
+su totalidad al timbrarla — el sistema la crea SOLA (`RequisicionService.
+crear_devolucion_desde_nota_credito`, llamada desde `FacturaClienteService.timbrar`),
+**nunca** se da de alta por `POST /cobranza/requisiciones` (ese endpoint sigue sin
+aceptarla). Columnas propias: `factura_cliente_id` (FK a la NC) y `razon_social_cliente`
+(heredado de la NC al crearla, igual criterio que `razon_social_afiliada`); las demás FKs
+(incluidas las 3 de factura de proveedor) quedan `null`, mismo patrón que ya usaba
+`comision_agencia` con las suyas — por eso la máquina de estados y
+`_revertir_factura_relacionada()`/`_cerrar_factura_relacionada()` NO necesitaron ningún
+cambio: ya toleraban "sin factura de proveedor relacionada". Al cancelar la NC que la
+originó, se cancela en cascada (salvo que ya esté `pagada`) — nuevo método
+`RequisicionService._transicionar_sin_commit()` (mismo refactor que
+`PagoClienteService._cancelar_sin_commit`, ADR-293: permite componerla dentro de la
+transacción de `FacturaClienteService.cancelar()` sin un commit intermedio). Beneficiario
+en la UI (`RequisicionesPage.tsx`): `razon_social_cliente`; "Origen del pago":
+`folio_factura_origen` (el `numero_factura` de la NC, ya resuelto por el backend).
+
 **Máquina de estados real** (con endpoint dedicado, mismo mecanismo de seams que F1/F2):
 `pendiente → autorizada → pagada`, rama a `cancelada` desde `pendiente`/`autorizada`/
 **`pagada`** (ADR-292: ya no es terminal; motivo obligatorio solo desde `pagada`).

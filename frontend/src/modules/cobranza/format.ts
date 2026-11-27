@@ -107,6 +107,8 @@ export function badgeTipoRequisicion(tipo: string): string {
       return "b-blue";
     case "comision_agencia":
       return "b-amber";
+    case "devolucion":
+      return "b-green";
     default:
       return "b-gray";
   }

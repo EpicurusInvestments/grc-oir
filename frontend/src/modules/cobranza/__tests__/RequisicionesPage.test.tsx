@@ -56,7 +56,9 @@ const base: Requisicion = {
   afiliado_id: "af-1",
   agencia_id: null,
   vendedor_comision_id: null,
+  factura_cliente_id: null,
   razon_social_afiliada: "Multimedios Estrellas de Oro SA de CV",
+  razon_social_cliente: null,
   monto_requisicion: "526176.00",
   porcentaje_comision_vendedor: null,
   requisicion_comision_vendedor: null,
@@ -100,6 +102,23 @@ describe("RequisicionesPage", () => {
     expect(screen.getAllByText("Multimedios Estrellas de Oro SA de CV").length).toBeGreaterThan(0);
     // Aparece tanto en el renglón de la lista como en la franja de KPIs ("Por autorizar").
     expect(screen.getAllByText(/\$526,176\.00/).length).toBeGreaterThan(0);
+  });
+
+  it("ADR-297: `devolucion` muestra el cliente como beneficiario y el folio de la Nota de Crédito como origen", async () => {
+    renderCon({
+      ...base,
+      tipo_requisicion: "devolucion",
+      afiliado_id: null,
+      razon_social_afiliada: null,
+      factura_cliente_id: "nc-1",
+      razon_social_cliente: "Galletas GOYO SA de CV",
+      folio_factura_origen: "NC-2026-11-0005",
+    });
+    expect(await screen.findByText("REQ-2026-0001")).toBeInTheDocument();
+    expect(screen.getAllByText("Galletas GOYO SA de CV").length).toBeGreaterThan(0);
+    (await screen.findByText("REQ-2026-0001")).click();
+    expect(await screen.findByText("NC-2026-11-0005")).toBeInTheDocument();
+    expect(screen.getAllByText("Devolución").length).toBeGreaterThan(0);
   });
 
   it("ADR-282: la columna 'Folio' usa `folio_factura_origen` (resuelto por el backend), no el combo de 'disponibles' del alta", async () => {

@@ -788,6 +788,20 @@ en F1) — no el propio CxP que capturó el registro.
   (subida real del archivo, botón Descargar/Ver, checkbox "Facturado en sistema
   externo") no se tocó.
 
+- **ADR-297 (petición del usuario) — Notas de Crédito "de Timbrada hacia adelante" +
+  Devolución al cliente si la factura de origen ya estaba cobrada:** la factura de
+  origen de una NC ahora debe estar `timbrada`, `entregada` o `cobrada` (antes se
+  aceptaba cualquier estado, hasta `cancelada`) — **400** si no. Al timbrar la NC: si
+  la `CobranzaFactura` de origen YA está `cobrada`, ya NO se le aplica el
+  `PagoCliente` sintético de siempre (la sobre-acreditaba — `importe_pendiente_cobro`
+  quedaba negativo, sin aviso: bug real detectado al revisar este ADR) — en su lugar
+  se crea una `Requisicion` tipo `devolucion` (ver la ficha de F3) y la `CobranzaFactura`
+  de origen "se queda así". Si NO estaba cobrada, sigue exactamente igual que antes.
+  Al **cancelar** esa NC, la Requisición `devolucion` se cancela en cascada (salvo que
+  ya esté `pagada` — mismo criterio de siempre: lo ya pagado no se toca). Los diálogos
+  de "Cancelación de Pago" (Cobranza) y "Cancelar factura" ganan una frase explicando
+  este caso. Detalle técnico completo en `docs/arquitectura.md` (ADR-297).
+
 - **Corrección posterior: `regimen_fiscal_emisor`/`regimen_fiscal_receptor` y
   `AGREGADOS.UsoCFDI` ya NO salen de `ConstanteSistema` (ADR-065, bug real).** Al
   completar el catálogo de constantes SAT (ver `f0-05-constantes-sistema.md`), los

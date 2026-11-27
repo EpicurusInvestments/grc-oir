@@ -527,6 +527,20 @@ def test_siguiente_numero_factura_para_nota_de_credito_usa_nc_del_mes_actual(
     assert r.json() == {"numero_factura": f"NC-{hoy.year}-{hoy.month:02d}-1"}
 
     factura_id, _ = _crear_factura(client, db, cat, "FMEX-9500")
+    # ADR-297: la factura de origen debe estar timbrada (o más adelante) para poder
+    # generarle una Nota de Crédito.
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/enviar-a-timbrado",
+        headers=_hdr("facturacion"),
+    )
+    client.post(
+        f"/api/v1/facturacion/clientes/{factura_id}/timbrar",
+        json={
+            "folio_fiscal_sat": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+            "fecha_timbrado": "2026-03-02",
+        },
+        headers=_hdr("facturacion"),
+    )
     r_nc = client.post(
         "/api/v1/facturacion/clientes",
         json={

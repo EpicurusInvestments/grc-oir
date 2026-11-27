@@ -85,6 +85,12 @@ class TipoRequisicion(StrEnum):
     PAGO_AGENCIA = "pago_agencia"
     COMISION_VENDEDOR = "comision_vendedor"
     COMISION_AGENCIA = "comision_agencia"
+    #: ADR-297 (petición del usuario): devolución al CLIENTE de una Nota de Crédito
+    #: aplicada a una factura que YA estaba cobrada en su totalidad — el sistema la crea
+    #: sola al timbrar esa NC (nunca se da de alta a mano, ver
+    #: `RequisicionService.crear_devolucion_desde_nota_credito`). Beneficiario: el
+    #: cliente de la factura (no un afiliado/agencia/vendedor).
+    DEVOLUCION = "devolucion"
 
 
 class EstatusRequisicion(StrEnum):
@@ -194,9 +200,24 @@ class Requisicion(Base):
         ),
         default=None,
     )
+    #: ADR-297: solo `devolucion` — la Nota de Crédito (`FacturaCliente` con
+    #: `tipo_comprobante='E'`) que origina esta devolución al cliente.
+    factura_cliente_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey(
+            "factura_cliente.factura_id",
+            name="fk_requisicion_factura_cliente",
+            ondelete="NO ACTION",
+        ),
+        default=None,
+    )
 
     # Derivado (spec): heredado de Afiliado al crear, columna persistida.
     razon_social_afiliada: Mapped[str | None] = mapped_column(Unicode(200), default=None)
+    #: ADR-297: heredado de `FacturaCliente.razon_social_facturacion` (la propia NC, que
+    #: ya lo hereda de su factura de origen) al crear la devolución — mismo criterio de
+    #: "columna persistida, no recalculada" que `razon_social_afiliada`.
+    razon_social_cliente: Mapped[str | None] = mapped_column(Unicode(200), default=None)
 
     monto_requisicion: Mapped[Decimal] = mapped_column(Numeric(14, 2))
 
@@ -253,6 +274,8 @@ class RequisicionRead(BaseModel):
     razon_social_afiliada: str | None = None
     monto_requisicion: Decimal
     vendedor_comision_id: uuid.UUID | None = None
+    factura_cliente_id: uuid.UUID | None = None
+    razon_social_cliente: str | None = None
     porcentaje_comision_vendedor: Decimal | None = None
     requisicion_comision_vendedor: Decimal | None = None
     porcentaje_comision_agencia_req: Decimal | None = None
@@ -507,12 +530,15 @@ class RequisicionService(
         `factura_afiliado.py`: evita N+1 contra las 3 tablas posibles."""
         from app.modules.facturacion.factura_afiliado import FacturaAfiliado
         from app.modules.facturacion.factura_agencia import FacturaAgencia
+        from app.modules.facturacion.factura_cliente import FacturaCliente
         from app.modules.facturacion.factura_vendedor import FacturaVendedor
 
         db = self._repo.db
         ids_af = {i.factura_afiliado_id for i in items if i.factura_afiliado_id is not None}
         ids_ag = {i.factura_agencia_id for i in items if i.factura_agencia_id is not None}
         ids_vd = {i.factura_vendedor_id for i in items if i.factura_vendedor_id is not None}
+        # ADR-297: la "factura de origen" de una `devolucion` es la Nota de Crédito misma.
+        ids_nc = {i.factura_cliente_id for i in items if i.factura_cliente_id is not None}
 
         folios_af: dict[uuid.UUID, str] = {}
         if ids_af:
@@ -541,6 +567,15 @@ class RequisicionService(
             ).all()
             folios_vd = dict(filas)
 
+        folios_nc: dict[uuid.UUID, str] = {}
+        if ids_nc:
+            filas = db.execute(
+                select(FacturaCliente.factura_id, FacturaCliente.numero_factura).where(
+                    FacturaCliente.factura_id.in_(ids_nc)
+                )
+            ).all()
+            folios_nc = dict(filas)
+
         for item in items:
             if item.factura_afiliado_id is not None:
                 item.folio_factura_origen = folios_af.get(item.factura_afiliado_id)
@@ -548,6 +583,8 @@ class RequisicionService(
                 item.folio_factura_origen = folios_ag.get(item.factura_agencia_id)
             elif item.factura_vendedor_id is not None:
                 item.folio_factura_origen = folios_vd.get(item.factura_vendedor_id)
+            elif item.factura_cliente_id is not None:
+                item.folio_factura_origen = folios_nc.get(item.factura_cliente_id)
 
     def _enriquecer_ordenes(self, items: list[RequisicionRead]) -> None:
         """Folios de las órdenes relacionadas, separados por coma (petición del
@@ -980,11 +1017,33 @@ class RequisicionService(
         *,
         autorizando: bool = False,
     ) -> RequisicionRead:
+        obj = self._transicionar_sin_commit(
+            requisicion_id, destino, input_, usuario, autorizando=autorizando
+        )
+        self._repo.db.commit()
+        self._repo.db.refresh(obj)
+        return self._to_read(obj)
+
+    def _transicionar_sin_commit(
+        self,
+        requisicion_id: uuid.UUID,
+        destino: str,
+        input_: TransicionRequisicionIn,
+        usuario: CurrentUser,
+        *,
+        autorizando: bool = False,
+    ) -> Requisicion:
+        """Toda la lógica de `transicionar()`, SIN el `commit` final — mismo criterio
+        que `PagoClienteService._cancelar_sin_commit` (ADR-293): permite componerla
+        dentro de la transacción de otro servicio (ver
+        `FacturaClienteService.cancelar()`, que cancela en cascada la Requisición
+        `devolucion` de una Nota de Crédito, ADR-297) sin cortar esa transacción a la
+        mitad con un commit intermedio."""
         obj = self._get_or_404(requisicion_id)
         if destino not in {e.value for e in EstatusRequisicion}:
             raise DomainError(f"Estatus desconocido: '{destino}'.")
         if obj.estatus_requisicion == destino:
-            return self._to_read(obj)  # idempotente
+            return obj  # idempotente
         if destino not in TRANSICIONES.get(obj.estatus_requisicion, set()):
             raise StateTransitionError(
                 f"No se puede pasar de '{obj.estatus_requisicion}' a '{destino}'.",
@@ -1021,9 +1080,40 @@ class RequisicionService(
             # `pagada`. Revierte la factura de proveedor relacionada (si tiene) a
             # `recibida` y la vacía de órdenes — ver `_revertir_factura_relacionada`.
             self._revertir_factura_relacionada(obj)
-        self._repo.db.commit()
-        self._repo.db.refresh(obj)
-        return self._to_read(obj)
+        return obj
+
+    def crear_devolucion_desde_nota_credito(
+        self,
+        nc_factura_id: uuid.UUID,
+        razon_social_cliente: str,
+        monto: Decimal,
+        usuario: CurrentUser,
+    ) -> None:
+        """ADR-297 (petición del usuario): al timbrar una Nota de Crédito cuya factura de
+        origen YA estaba `cobrada` en su totalidad, en vez de aplicarle un `PagoCliente`
+        sintético (que la sobre-acreditaría, ver `FacturaClienteService.timbrar`) se crea
+        esta Requisición — un pago PENDIENTE de OIR hacia el CLIENTE de esa factura, con
+        el monto/folio de la propia NC ("todos los demás campos son los de la Nota de
+        Crédito"). Nunca se da de alta por el endpoint público (`POST /requisiciones`
+        sigue sin aceptar `tipo_requisicion: "devolucion"` porque `RequisicionCreate` no
+        lo valida) — construcción directa, mismo criterio que
+        `PagoClienteService.aplicar_nota_credito`. Sin `commit` propio: el llamador
+        (`FacturaClienteService.timbrar`) controla la transacción completa."""
+        from app.modules.usuarios.lookup import resolver_usuario_id
+
+        db = self._repo.db
+        obj = Requisicion(
+            requisicion_id=uuid4(),
+            numero_requisicion=self._siguiente_numero_requisicion(date.today()),
+            tipo_requisicion=TipoRequisicion.DEVOLUCION.value,
+            factura_cliente_id=nc_factura_id,
+            razon_social_cliente=razon_social_cliente,
+            monto_requisicion=monto,
+            estatus_requisicion=EstatusRequisicion.PENDIENTE.value,
+            created_by=resolver_usuario_id(db, usuario.username),
+        )
+        db.add(obj)
+        db.flush()
 
     def _revertir_factura_relacionada(self, obj: Requisicion) -> None:
         """Al cancelar la Requisicion (desde `autorizada` O desde `pagada`): su factura
