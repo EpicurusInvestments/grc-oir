@@ -97,6 +97,17 @@ export const facturaClienteApi = {
     );
     return data.existe;
   },
+  /** Sugerencia (ADR-295, petición del usuario) para precargar «Número de factura» al
+   *  abrir el formulario de alta — el campo se queda editable, esto no reserva nada.
+   *  `tipoComprobante: "E"` propone `NC-AAAA-MM-...`; cualquier otro valor (Ingreso)
+   *  propone `FSOIR-...`. */
+  async siguienteNumeroFactura(tipoComprobante: string): Promise<string> {
+    const { data } = await apiClient.get<{ numero_factura: string }>(
+      `${BASE}/clientes/siguiente-numero-factura`,
+      { params: { tipo_comprobante: tipoComprobante } },
+    );
+    return data.numero_factura;
+  },
   /** Descarga el archivo plano del PAC (layout real V40).
    *
    * Devuelve los campos que el PAC exige y que el sistema todavía no puede llenar, para

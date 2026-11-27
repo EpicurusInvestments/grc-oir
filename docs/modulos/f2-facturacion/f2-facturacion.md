@@ -762,6 +762,18 @@ en F1) — no el propio CxP que capturó el registro.
   fiscal del timbrado (`RegistrarTimbradoForm.tsx` + `TimbrarIn.folio_fiscal_sat`),
   antes solo "no vacío". Detalle completo en `docs/arquitectura.md` (ADR-269).
 
+- **ADR-295 (petición del usuario) — "Número de factura" PROPONE un valor, pero sigue
+  siendo editable:** al abrir "Nueva Factura" se precarga con el siguiente consecutivo
+  `FSOIR-######` disponible (escaneando solo los `FSOIR-...` existentes — los `FMEX-...`
+  se ignoran para este cálculo, "el que manda es FSOIR"); al abrir "Nota de Crédito" se
+  precarga con el siguiente `NC-<año-mes de hoy>-######`. Mismo criterio de correlativo
+  GLOBAL que `OrdenCliente._siguiente_folio()` (ADR-237/254/275): nunca reinicia por
+  mes/año, sin padding. Nuevo endpoint
+  `GET /facturacion/clientes/siguiente-numero-factura?tipo_comprobante=I|E`
+  (`FacturaClienteService.siguiente_numero_factura()`); sin cambios de esquema. Si el
+  usuario quiere usar un `FMEX-...` en vez de la sugerencia, lo escribe a mano — el campo
+  nunca deja de ser editable.
+
 - **Corrección posterior: `regimen_fiscal_emisor`/`regimen_fiscal_receptor` y
   `AGREGADOS.UsoCFDI` ya NO salen de `ConstanteSistema` (ADR-065, bug real).** Al
   completar el catálogo de constantes SAT (ver `f0-05-constantes-sistema.md`), los

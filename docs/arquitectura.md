@@ -12020,6 +12020,52 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   el monto facturado" NO se agregó a `MotivoNotaCredito` — el usuario solo pidió proceder
   con los 4 puntos de forma de pago/monto/IVA/archivo plano.
 
+### ADR-295 — Facturación/Notas de Crédito: "Número de factura" propone el siguiente consecutivo, sigue editable
+
+- **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, tras levantar la
+  app y revisar ADR-294 en el navegador).
+- **Disparador:** 2 capturas de pantalla mostrando el campo "Número de factura" vacío
+  tanto en "Nueva factura" como en "Nota de crédito", con el usuario escribiendo a mano y
+  equivocándose de formato (`"FME"` → error de validación). Pidió que, para **todas** las
+  facturas, notas de crédito y "complementos de pago" (confirmado explícitamente que
+  éste último NO existe todavía como entidad, fuera de alcance), el sistema PROPONGA el
+  siguiente número disponible, pero el campo se quede editable. Para Facturación
+  específicamente: "el que manda es FSOIR" — calcular el último FSOIR registrado y
+  proponer el siguiente; si el usuario prefiere FMEX, lo escribe a mano.
+- **Decisión de diseño: mismo criterio que `OrdenCliente._siguiente_folio()`
+  (ADR-237/254/275), no uno nuevo.** Correlativo GLOBAL (nunca reinicia por mes/año, el
+  `AAAA-MM` de una NC es solo la etiqueta del momento), sin padding, escaneando TODOS los
+  `numero_factura` existentes (cualquier estado, incluidas canceladas — un número usado
+  nunca se reutiliza). Se reutiliza también el patrón de "ruta estática antes que
+  `/{item_id}`" ya establecido por `/existe-numero-factura`.
+- **Cambios — backend** (`backend/app/modules/facturacion/factura_cliente.py`): sin
+  migración, sin cambios de esquema — es pura sugerencia de UI.
+  - `_FSOIR_RE`/`_NC_RE` (regex nuevas, junto a `NUMERO_FACTURA_REGEX`).
+  - `FacturaClienteService.siguiente_numero_factura(tipo_comprobante: str) -> str`:
+    escanea `FacturaCliente.numero_factura`, toma el máximo consecutivo del patrón que
+    corresponda (`FSOIR-` para Ingreso, `NC-AAAA-MM-` para Nota de Crédito, ignorando
+    deliberadamente los `FMEX-...` existentes al calcular el de Ingreso) y propone
+    `+1` (`NC-<año-mes de HOY>-<n+1>` o `FSOIR-<n+1>`).
+  - `GET /facturacion/clientes/siguiente-numero-factura?tipo_comprobante=I|E` (ruta
+    estática, mismo criterio que `/existe-numero-factura`) → `{"numero_factura": str}`.
+- **Cambios — frontend** (`FacturaClienteForm.tsx`, `NotaCreditoForm.tsx`):
+  `useSiguienteNumeroFactura(tipoComprobante)` (hook nuevo en `hooks.ts`, TanStack Query
+  sin `staleTime` — refresca en cada montaje del formulario) + `useEffect` que llama
+  `setValue("numero_factura", sugerencia)` SOLO si el campo seguía vacío
+  (`!getValues("numero_factura")`) — nunca pisa lo que el usuario ya esté tecleando. El
+  `<input>` no cambia de ningún otro modo: sigue siendo 100% editable, validación y
+  formato de siempre.
+- **Pruebas:** `test_f2_02_facturacion_escritura.py` — 3 pruebas nuevas (`FSOIR-1` con la
+  BD vacía y `FSOIR-8` tras crear `FSOIR-7`; un `FMEX-9999` no afecta la sugerencia de
+  FSOIR; `NC-<año-mes de hoy>-1` vacío y `NC-<año-mes de hoy>-42` tras una NC vieja con
+  folio `NC-2026-01-41` — prueba el correlativo GLOBAL, no reinicia por mes). Frontend:
+  `NotaCreditoForm.test.tsx` ajustado (mock de `useSiguienteNumeroFactura`, nueva
+  aserción de que el campo llega precargado y aun así es editable).
+- **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
+  limpio; `mypy` sin errores nuevos (el único en `factura_cliente.py` sigue siendo el
+  mismo preexistente, confirmado antes en ADR-294). Frontend: 144/144 del módulo
+  `facturacion` verdes, `tsc --noEmit`/`eslint` limpios.
+
 ### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
 
 - **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de

@@ -395,6 +395,16 @@ export const useMetodosDePago = () =>
 export const useFormasDePago = () =>
   useQuery({ queryKey: ["facturacion:formas-pago"], queryFn: formasDePago });
 
+/** Sugerencia (ADR-295, petición del usuario) para precargar «Número de factura» al
+ *  abrir el formulario de alta — se recalcula fresca cada vez que el componente monta
+ *  (sin `staleTime`, el default global ya refetchea al montar). El campo del formulario
+ *  se queda editable: esto solo propone un punto de partida, nunca reserva nada. */
+export const useSiguienteNumeroFactura = (tipoComprobante: "I" | "E") =>
+  useQuery({
+    queryKey: ["facturacion:siguiente-numero-factura", tipoComprobante],
+    queryFn: () => facturaClienteApi.siguienteNumeroFactura(tipoComprobante),
+  });
+
 export const useAfiliados = () =>
   useQuery({ queryKey: ["facturacion:afiliados-catalogo"], queryFn: afiliadosActivos });
 

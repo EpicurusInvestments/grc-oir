@@ -233,11 +233,21 @@ def _renglones_detalle(db: Session, ordenes: list[Any]) -> list[RenglonDetalle]:
 # recordar la regla, solo teclearla como le salga.
 #
 # Notas de Crédito (petición del usuario, con captura): folio propio en el mismo campo,
-# formato "NC-AAAA-MM-folio" (p.ej. "NC-2026-11-0071") — el usuario lo captura a mano
-# (no hay consecutivo automático), igual que FMEX/FSOIR. La correspondencia
+# formato "NC-AAAA-MM-folio" (p.ej. "NC-2026-11-0071"). La correspondencia
 # tipo_comprobante↔prefijo se valida aparte, en `FacturaClienteCreate` (necesita ver
 # ambos campos a la vez; una regex sola no puede).
+#
+# ADR-295 (petición del usuario): el campo SIGUE siendo editable a mano (el usuario
+# puede escribir lo que quiera, incluido un FMEX- aunque se le haya sugerido FSOIR-),
+# pero `siguiente_numero_factura()` (abajo) ahora PROPONE un valor de inicio —
+# consecutivo de FSOIR para facturas, de NC para notas de crédito.
 NUMERO_FACTURA_REGEX = re.compile(r"^(?:(?:FMEX|FSOIR)-[0-9]+|NC-[0-9]{4}-[0-9]{2}-[0-9]+)$")
+#: Consecutivo de `FSOIR-######` — igual criterio que `OrdenCliente._siguiente_folio()`
+#: (ADR-237/254/275): GLOBAL, sin padding, nunca reinicia.
+_FSOIR_RE = re.compile(r"^FSOIR-([0-9]+)$")
+#: Consecutivo de `NC-AAAA-MM-######` — el número SÍ es global (mismo criterio que
+#: arriba); `AAAA-MM` es solo la etiqueta de cuándo se generó, no particiona el conteo.
+_NC_RE = re.compile(r"^NC-[0-9]{4}-[0-9]{2}-([0-9]+)$")
 
 
 def _normaliza_numero_factura(valor: str) -> str:
@@ -1528,6 +1538,30 @@ class FacturaClienteService(
         no pasa por el validador de Pydantic de `FacturaClienteCreate`."""
         return self._numero_factura_existe(numero_factura.strip().upper(), excluir_id=excluir_id)
 
+    def siguiente_numero_factura(self, tipo_comprobante: str) -> str:
+        """Sugerencia para precargar «Número de factura» al abrir el formulario de alta
+        (ADR-295, petición del usuario) — el campo SIGUE siendo editable, esto solo
+        propone un punto de partida. Mismo criterio que `OrdenCliente._siguiente_folio()`
+        (ADR-237/254/275): correlativo GLOBAL (nunca reinicia), sin padding, calculado
+        escaneando los `numero_factura` ya existentes (cualquier estado, incluidas las
+        canceladas — un número usado no se reutiliza aunque se cancele).
+
+        `tipo_comprobante == "E"` (Nota de Crédito) propone `NC-<año-mes de HOY>-<n+1>`.
+        Cualquier otro valor (Ingreso) propone `FSOIR-<n+1>` — los `FMEX-...` existentes
+        se ignoran para este cálculo a propósito: esa serie la decide el usuario a mano
+        si no quiere la sugerencia (petición explícita: "el que manda es FSOIR")."""
+        existentes = self._repo.db.scalars(select(FacturaCliente.numero_factura)).all()
+        maximo = 0
+        patron = _NC_RE if tipo_comprobante == "E" else _FSOIR_RE
+        for numero in existentes:
+            m = patron.match(numero)
+            if m:
+                maximo = max(maximo, int(m.group(1)))
+        if tipo_comprobante == "E":
+            hoy = date.today()
+            return f"NC-{hoy.year}-{hoy.month:02d}-{maximo + 1}"
+        return f"FSOIR-{maximo + 1}"
+
     # ── Máquina de estados ────────────────────────────────────────────────────
     def _validar_transicion(self, obj: FacturaCliente, destino: str) -> bool:
         """`True` si hay que aplicarla; `False` si ya estaba ahí (idempotente).
@@ -2115,6 +2149,10 @@ class ExisteNumeroFacturaRead(BaseModel):
     existe: bool
 
 
+class SiguienteNumeroFacturaRead(BaseModel):
+    numero_factura: str
+
+
 # Ruta ESTÁTICA antes que la dinámica `/{item_id}`: si no, FastAPI intentaría parsear
 # "existe-numero-factura" como UUID y respondería 422 en vez de encontrar esta ruta
 # (mismo criterio que `/conteos` en ConstantesSistema, F0-05).
@@ -2132,6 +2170,24 @@ def existe_numero_factura(
     duplicado ANTES de intentar guardar todo el formulario."""
     return ExisteNumeroFacturaRead(
         existe=svc.existe_numero_factura(numero_factura, excluir_id=excluir_id)
+    )
+
+
+# Misma razón que la ruta anterior: estática antes que `/{item_id}`.
+@router_clientes.get(
+    "/siguiente-numero-factura", response_model=SiguienteNumeroFacturaRead
+)
+def siguiente_numero_factura(
+    tipo_comprobante: str = Query(
+        "I", description="'E' para Nota de Crédito (NC-...); cualquier otro valor propone FSOIR-..."
+    ),
+    usuario: CurrentUser = Depends(requiere_permiso("facturacion:leer")),
+    svc: FacturaClienteService = Depends(get_factura_cliente_service),
+) -> SiguienteNumeroFacturaRead:
+    """Sugerencia (ADR-295, petición del usuario) para precargar «Número de factura» al
+    abrir el formulario de alta — el campo se queda editable, esto no reserva nada."""
+    return SiguienteNumeroFacturaRead(
+        numero_factura=svc.siguiente_numero_factura(tipo_comprobante)
     )
 
 

@@ -11,9 +11,14 @@
  * editable. Monto e IVA se precargan con los de `origen` (`subtotal_factura`/
  * `iva_factura`) y son editables (petición del usuario 2026-11-27) — el backend los
  * niega antes de persistir (quedan negativos, "para efecto de reportes").
+ *
+ * Número de factura: PROPUESTO (ADR-295, petición del usuario) con el siguiente
+ * consecutivo `NC-AAAA-MM-...` disponible, pero sigue siendo editable — solo se
+ * precarga si el usuario no había escrito nada todavía.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -21,7 +26,7 @@ import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { DateInput, FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
 import { fmtFolio } from "../../format";
-import { useCuentasContables, useFormasDePago } from "../../hooks";
+import { useCuentasContables, useFormasDePago, useSiguienteNumeroFactura } from "../../hooks";
 import {
   MOTIVOS_NOTA_CREDITO,
   type FacturaCliente,
@@ -82,6 +87,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onCancel }: Props) {
   const cuentas = useCuentasContables();
   const formas = useFormasDePago();
+  const siguienteNumero = useSiguienteNumeroFactura("E");
   const { useList } = useConstantes();
   const clavesProdServ = useList({ grupo: "ClaveProdServ", activo: true, size: 100 });
   const clavesUnidad = useList({ grupo: "ClaveUnidad", activo: true, size: 100 });
@@ -93,6 +99,8 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
     register,
     control,
     handleSubmit,
+    setValue,
+    getValues,
     formState: { errors },
   } = useForm<Valores>({
     resolver: zodResolver(schema),
@@ -109,6 +117,14 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
       iva_nota_credito: origen.iva_factura,
     },
   });
+
+  // Precarga "Número de factura" con la sugerencia (ADR-295) SOLO si el usuario no
+  // había escrito nada todavía — nunca pisa lo que ya esté tecleando.
+  useEffect(() => {
+    if (siguienteNumero.data && !getValues("numero_factura")) {
+      setValue("numero_factura", siguienteNumero.data);
+    }
+  }, [siguienteNumero.data, getValues, setValue]);
 
   return (
     <form

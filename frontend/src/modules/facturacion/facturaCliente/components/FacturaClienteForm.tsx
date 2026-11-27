@@ -13,7 +13,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { type FocusEvent, useState } from "react";
+import { type FocusEvent, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -28,6 +28,7 @@ import {
   useFormasDePago,
   useMetodosDePago,
   useOrdenesFacturables,
+  useSiguienteNumeroFactura,
 } from "../../hooks";
 import { ESTADO_FACTURACION_LABEL, type FacturaClienteCreate, type OrdenPorFacturar } from "../../types";
 
@@ -136,6 +137,7 @@ export function FacturaClienteForm({
   const cuentas = useCuentasContables();
   const metodos = useMetodosDePago();
   const formas = useFormasDePago();
+  const siguienteNumero = useSiguienteNumeroFactura("I");
   const facturasDelAnunciante = useFacturasDelAnunciante(orden?.anunciante_id);
   const { useList } = useConstantes();
   const usosCfdi = useList({ grupo: "UsoCFDI", activo: true, size: 100 });
@@ -151,6 +153,7 @@ export function FacturaClienteForm({
     control,
     handleSubmit,
     setValue,
+    getValues,
     setError,
     trigger,
     watch,
@@ -169,6 +172,15 @@ export function FacturaClienteForm({
       facturas_relacionadas_ids: [],
     },
   });
+
+  // Precarga "Número de factura" con la sugerencia FSOIR (ADR-295, petición del
+  // usuario) SOLO si el usuario no había escrito nada todavía — nunca pisa lo que ya
+  // esté tecleando. Si quiere usar FMEX en vez de la sugerencia, lo escribe a mano.
+  useEffect(() => {
+    if (siguienteNumero.data && !getValues("numero_factura")) {
+      setValue("numero_factura", siguienteNumero.data);
+    }
+  }, [siguienteNumero.data, getValues, setValue]);
 
   const ordenId = watch("orden_id");
   const facturasRelacionadasIds = watch("facturas_relacionadas_ids");

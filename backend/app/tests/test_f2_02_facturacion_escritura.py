@@ -478,6 +478,86 @@ def test_existe_numero_factura_excluye_la_propia_factura_al_editar(
     assert r.json() == {"existe": False}
 
 
+def test_siguiente_numero_factura_propone_fsoir_mas_1(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """ADR-295 (petición del usuario): sugerencia para precargar el campo al abrir el
+    formulario — con la BD vacía de FSOIR, propone FSOIR-1."""
+    r = client.get(
+        "/api/v1/facturacion/clientes/siguiente-numero-factura",
+        params={"tipo_comprobante": "I"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"numero_factura": "FSOIR-1"}
+
+    _crear_factura(client, db, cat, "FSOIR-7")
+    r = client.get(
+        "/api/v1/facturacion/clientes/siguiente-numero-factura",
+        params={"tipo_comprobante": "I"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json() == {"numero_factura": "FSOIR-8"}
+
+
+def test_siguiente_numero_factura_ignora_fmex_para_el_calculo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición explícita del usuario: "el que manda es FSOIR" — un FMEX- con un
+    consecutivo más alto no debe afectar la sugerencia de FSOIR."""
+    _crear_factura(client, db, cat, "FMEX-9999")
+    r = client.get(
+        "/api/v1/facturacion/clientes/siguiente-numero-factura",
+        params={"tipo_comprobante": "I"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.json() == {"numero_factura": "FSOIR-1"}
+
+
+def test_siguiente_numero_factura_para_nota_de_credito_usa_nc_del_mes_actual(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    hoy = date.today()
+    r = client.get(
+        "/api/v1/facturacion/clientes/siguiente-numero-factura",
+        params={"tipo_comprobante": "E"},
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"numero_factura": f"NC-{hoy.year}-{hoy.month:02d}-1"}
+
+    factura_id, _ = _crear_factura(client, db, cat, "FMEX-9500")
+    r_nc = client.post(
+        "/api/v1/facturacion/clientes",
+        json={
+            "ordenes_ids": [],
+            "numero_factura": "NC-2026-01-41",
+            "descripcion_factura": "Nota de crédito de prueba",
+            "fecha_factura": "2026-03-10",
+            "cuenta_contable_id": str(cat["cuenta_id"]),
+            "metodo_pago_clave": "PUE",
+            "forma_pago_clave": "03",
+            "clave_prod_serv": "82101601",
+            "clave_unidad": "E48",
+            "moneda_sat": "MXN",
+            "tipo_comprobante": "E",
+            "facturas_relacionadas_ids": [factura_id],
+            "motivo_nota_credito": "descuento",
+            "monto_nota_credito": "100.00",
+        },
+        headers=_hdr("facturacion"),
+    )
+    assert r_nc.status_code == 201, r_nc.text
+    r = client.get(
+        "/api/v1/facturacion/clientes/siguiente-numero-factura",
+        params={"tipo_comprobante": "E"},
+        headers=_hdr("facturacion"),
+    )
+    # Correlativo GLOBAL (mismo criterio que OrdenCliente._siguiente_folio): el "41" de
+    # un folio viejo de OTRO mes/año sigue siendo la base del +1, con el mes de HOY.
+    assert r.json() == {"numero_factura": f"NC-{hoy.year}-{hoy.month:02d}-42"}
+
+
 def test_editar_numero_factura_rechaza_duplicado_contra_otra_factura(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:

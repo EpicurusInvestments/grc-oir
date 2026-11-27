@@ -30,6 +30,7 @@ vi.mock("@/modules/catalogos/constantesSistema/hooks", () => ({
 vi.mock("../hooks", () => ({
   useCuentasContables: () => ({ data: [{ id: "cc-1", etiqueta: "4100-001 · Ingresos" }] }),
   useFormasDePago: () => ({ data: [{ id: "03", etiqueta: "03 · Transferencia" }] }),
+  useSiguienteNumeroFactura: () => ({ data: "NC-2026-11-0072" }),
 }));
 
 const origen: FacturaCliente = {
@@ -113,6 +114,12 @@ describe("NotaCreditoForm", () => {
     // Método de pago: fijo, informativo, no capturable.
     expect(screen.getByText("Método de pago")).toBeInTheDocument();
     expect(screen.getByText("PUE")).toBeInTheDocument();
+    // Número de factura: PROPUESTO (ADR-295) pero editable — ver el siguiente test,
+    // donde `llenarMinimo` lo sobrescribe sin problema.
+    const numeroFactura = container.querySelector(
+      'input[name="numero_factura"]',
+    ) as HTMLInputElement;
+    expect(numeroFactura.value).toBe("NC-2026-11-0072");
     expect(
       screen.getByDisplayValue("Nota de crédito de la factura FMEX-1246"),
     ).toBeInTheDocument();

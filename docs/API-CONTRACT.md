@@ -1157,6 +1157,15 @@ aceptan `page`, `size` y `q` (búsqueda de texto), más los filtros propios de c
   (la factura propia, al editar). Responde `{"existe": bool}`; validación EN VIVO del
   formulario de alta, al perder el foco del campo «Número de factura», antes de
   intentar guardar todo el formulario.
+- **`GET /facturacion/clientes/siguiente-numero-factura`** (`facturacion:leer`, ADR-295,
+  petición del usuario) — ruta ESTÁTICA, mismo criterio que la anterior. Query param
+  `tipo_comprobante` (`"I"` default, o `"E"` para Nota de Crédito). Responde
+  `{"numero_factura": str}`: para `"I"` escanea los `FSOIR-######` existentes (ignora
+  `FMEX-...` a propósito) y propone el consecutivo GLOBAL siguiente (mismo criterio que
+  `OrdenCliente._siguiente_folio()`, ADR-237/254/275: nunca reinicia, sin padding); para
+  `"E"` escanea los `NC-AAAA-MM-######` y propone `NC-<año-mes de HOY>-<consecutivo
+  global siguiente>`. Es SOLO una sugerencia para precargar el formulario de alta — el
+  campo se queda editable, no reserva ni bloquea el número.
 - **`GET /facturacion/afiliados`** (`costos:leer`) — facturas recibidas de afiliados.
   Filtros: `afiliado_id`, `estatus_factura_afiliado`. `q` busca en el folio de la emisora
   y la razón social.
