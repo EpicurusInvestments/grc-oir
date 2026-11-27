@@ -1263,8 +1263,8 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   presentes como escalares de la **primera** orden (por folio), que es el identificador
   corto que usan la tabla y el encabezado del panel.
 
-  **Notas de crédito (`tipo_comprobante = "E"`, ADR-293, petición del usuario, con
-  captura):** no se modeló como entidad nueva — es una `FacturaCliente` más, con el
+  **Notas de crédito (`tipo_comprobante = "E"`, ADR-293/ADR-294, petición del usuario,
+  con captura):** no se modeló como entidad nueva — es una `FacturaCliente` más, con el
   monto en negativo. Con `tipo_comprobante = "E"` el payload exige: `ordenes_ids` vacía;
   **exactamente 1** id en `facturas_relacionadas_ids` (la factura de origen, reutilizando
   `FacturaClienteRelacionada` — ADR-062); `motivo_nota_credito` (uno de
@@ -1273,13 +1273,20 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   antes de persistir en `subtotal_factura`/`iva_factura`/`total_factura`); y
   `numero_factura` con el formato `NC-AAAA-MM-folio` (p.ej. `NC-2026-11-0071`), **capturado
   a mano por el usuario** (sin folio automático). `tipo_relacion_sat` (clave SAT, p.ej.
-  `01`/`03`) es opcional y hoy solo se guarda — no viaja todavía al archivo plano del PAC.
+  `01`/`03`) es opcional y hoy solo se guarda — no viaja todavía al archivo plano del
+  PAC más que como el `TipoRelacion` de "Documentos Relacionados" (ver `/archivo-plano`
+  abajo); el resto del layout sigue sin leerlo. `iva_nota_credito` (ADR-294, petición del
+  usuario: "dejar el campo editable") es **opcional**, misma magnitud positiva que
+  `monto_nota_credito` — si se manda, el servicio lo usa tal cual (negado) en vez de
+  calcular el 16% exacto del monto; si se omite, calcula igual que antes.
 
   Receptor, `empresa_facturadora_id`, `anunciante_id`/`agencia_id` y
   `facturado_directo` se heredan de la **factura de origen** (no de una orden — una NC no
-  tiene órdenes). `metodo_pago_clave` se fija siempre a `"PUE"` (no editable) y
-  `forma_pago_clave` se copia de la factura de origen (tampoco editable), ignorando lo
-  que mande el payload. `uso_cfdi` default `"G02"` si no se especifica.
+  tiene órdenes). `metodo_pago_clave` se fija siempre a `"PUE"` (no editable, ignorando
+  lo que mande el payload). `forma_pago_clave` (ADR-294, petición del usuario: "sí es
+  seleccionable") **SÍ se captura del payload** — el frontend la precarga con la de la
+  factura de origen como default, pero el usuario la puede cambiar; antes (ADR-293) se
+  forzaba siempre a la de origen. `uso_cfdi` default `"G02"` si no se especifica.
 
   Al **timbrar** una Nota de crédito (mismo endpoint `/timbrar` de abajo, mismo flujo
   manual), en vez de crear su propia `CobranzaFactura` el sistema aplica un `PagoCliente`

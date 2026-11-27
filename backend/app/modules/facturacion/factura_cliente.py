@@ -350,8 +350,18 @@ class FacturaCliente(Base):
         # se escribe la tasa LITERAL 0.16 de la spec porque un CHECK no puede leer
         # configuración: si la tasa cambiara, este CHECK obliga a una migración
         # explícita — que es justo el aviso que se querría tener.
+        # EXCEPCIÓN (petición del usuario, mismo criterio que ADR-290 en Agencia/
+        # Vendedor): en una Nota de Crédito (`tipo_comprobante='E'`) el IVA es editable
+        # y puede no ser exactamente 16% del monto (ajuste proporcional manual) — la
+        # factura de Ingreso normal SIGUE exigiendo el 16% exacto, sin excepción.
+        # `CASE WHEN` y NO `tipo_comprobante = 'E' OR ...`: con `tipo_comprobante` NULL
+        # (facturas viejas, nunca Nota de Crédito) una comparación `= 'E'` da NULL, y
+        # `NULL OR falso` es NULL — que un CHECK trata como "pasa" (bug real que detectó
+        # `test_check_del_iva_rechaza_una_tasa_distinta_del_16`). `CASE` no tiene ese
+        # problema: una condición NULL cae al `ELSE`, igual que los 3 CHECK de arriba.
         CheckConstraint(
-            "ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2)",
+            "CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 "
+            "ELSE ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2) END",
             name="ck_factura_cliente_iva_calculado",
         ),
         CheckConstraint(
@@ -840,6 +850,11 @@ class FacturaClienteCreate(BaseModel):
     #: `total_factura` quedan negativos, pedido explícito del usuario "para efecto de
     #: reportes"). Reemplaza a `ordenes_ids` como fuente del subtotal solo para este tipo.
     monto_nota_credito: Decimal | None = Field(default=None, gt=0)
+    #: IVA a acreditar, mismo criterio de signo que `monto_nota_credito` (magnitud
+    #: positiva, el servicio la niega). OPCIONAL (petición del usuario: editable,
+    #: precargado del IVA de la factura de origen) — si se omite, el servicio calcula
+    #: el 16% del monto, igual que antes de esta captura.
+    iva_nota_credito: Decimal | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _valida_nota_credito(self) -> FacturaClienteCreate:
@@ -1174,13 +1189,17 @@ class FacturaClienteService(
     ) -> FacturaClienteRead:
         """Alta de una Nota de Crédito (petición del usuario, con captura) —
         `FacturaCliente` con `tipo_comprobante='E'`, sin órdenes propias: el receptor,
-        la empresa emisora, el anunciante/agencia y la forma de pago se HEREDAN de la
-        factura de origen (`facturas_relacionadas_ids[0]`, ya validada como exactamente
-        1 por `FacturaClienteCreate._valida_nota_credito`). `metodo_pago_clave` se fija
-        a `PUE` ignorando lo que mande el payload (siempre es de una sola exhibición).
-        Los montos se CAPTURAN como magnitud positiva (`monto_nota_credito`) y se niegan
-        aquí antes de persistir — `subtotal_factura`/`iva_factura`/`total_factura` quedan
-        negativos (pedido explícito del usuario, "para efecto de reportes").
+        la empresa emisora y el anunciante/agencia se HEREDAN de la factura de origen
+        (`facturas_relacionadas_ids[0]`, ya validada como exactamente 1 por
+        `FacturaClienteCreate._valida_nota_credito`). `metodo_pago_clave` se fija a
+        `PUE` ignorando lo que mande el payload (siempre es de una sola exhibición);
+        `forma_pago_clave` SÍ se captura (el frontend la precarga con la de origen como
+        default, pero es editable — petición del usuario).
+        Los montos se CAPTURAN como magnitud positiva (`monto_nota_credito`/
+        `iva_nota_credito`) y se niegan aquí antes de persistir —
+        `subtotal_factura`/`iva_factura`/`total_factura` quedan negativos (pedido
+        explícito del usuario, "para efecto de reportes"). `iva_nota_credito` es
+        OPCIONAL: si no se manda, se calcula igual que antes (16% del monto).
 
         Sin período de transmisión real (no hay orden): `fecha_inicio_transmision`/
         `fecha_fin_transmision` se fijan a `fecha_factura` — valor inerte, nunca se
@@ -1207,7 +1226,11 @@ class FacturaClienteService(
 
         assert data.monto_nota_credito is not None  # ya validado en el schema
         subtotal = (-data.monto_nota_credito).quantize(CENTAVOS)
-        iva = (subtotal * IVA_RATE).quantize(CENTAVOS)
+        iva = (
+            (-data.iva_nota_credito).quantize(CENTAVOS)
+            if data.iva_nota_credito is not None
+            else (subtotal * IVA_RATE).quantize(CENTAVOS)
+        )
         total = (subtotal + iva).quantize(CENTAVOS)
 
         capturado = data.model_dump(
@@ -1219,6 +1242,7 @@ class FacturaClienteService(
                 "facturas_relacionadas_ids",
                 "ordenes_ids",
                 "monto_nota_credito",
+                "iva_nota_credito",
                 "metodo_pago_clave",
                 "forma_pago_clave",
             }
@@ -1235,8 +1259,12 @@ class FacturaClienteService(
             rfc_facturacion=origen.rfc_facturacion,
             direccion_facturacion=origen.direccion_facturacion,
             uso_cfdi=data.uso_cfdi or "G02",
+            # Método de pago SIEMPRE PUE (petición del usuario: no se captura, no se
+            # puede modificar). Forma de pago: YA NO se fuerza a la de origen — el
+            # usuario la puede cambiar en el formulario (precargada con la de origen
+            # como default solo en el frontend); el schema ya la exige no vacía.
             metodo_pago_clave="PUE",
-            forma_pago_clave=origen.forma_pago_clave,
+            forma_pago_clave=data.forma_pago_clave,
             fecha_inicio_transmision=data.fecha_factura,
             fecha_fin_transmision=data.fecha_factura,
             subtotal_factura=subtotal,
@@ -1412,9 +1440,10 @@ class FacturaClienteService(
                 # Ya no son columnas: se persisten como filas de `factura_cliente_orden`.
                 "ordenes_ids",
                 # Notas de Crédito: solo tiene sentido con `tipo_comprobante == "E"`, que
-                # ya se fue por `_crear_nota_credito` — aquí nunca es una columna de
-                # `FacturaCliente` (el monto se deriva de las órdenes, no se captura).
+                # ya se fue por `_crear_nota_credito` — aquí nunca son columnas de
+                # `FacturaCliente` (el monto/IVA se derivan de las órdenes, no se capturan).
                 "monto_nota_credito",
+                "iva_nota_credito",
             }
         )
         nuevo_id = uuid4()
@@ -1676,6 +1705,8 @@ class FacturaClienteService(
             metodo_pago_clave=obj.metodo_pago_clave,
             forma_pago_clave=obj.forma_pago_clave,
             folios_fiscales_relacionados=folios_relacionados,
+            tipo_comprobante=obj.tipo_comprobante,
+            tipo_relacion_sat=obj.tipo_relacion_sat,
             # Serie: del propio número de factura, no de un catálogo (ADR-060 bis).
             serie=_serie_desde_numero(obj.numero_factura),
             # RegimenFiscal: cada entidad captura el suyo (columna propia), ya no un
@@ -1711,11 +1742,13 @@ class FacturaClienteService(
         obj = self._get_or_404(factura_id)
         if obj.estado_facturacion == EstadoFacturacion.CANCELADA.value:
             raise ConflictError("Una factura cancelada no se exporta a timbrado.")
-        if obj.tipo_comprobante is not None and obj.tipo_comprobante != "I":
-            # Notas de Crédito (petición del usuario): el timbrado sigue siendo MANUAL
-            # esta ronda — el archivo plano del PAC solo sabe armar el layout de
-            # Ingreso (`adapter_pac_v40.py` fija "33" a mano, nunca lee
-            # `tipo_comprobante`). Conectar Egreso es una fase aparte.
+        if obj.tipo_comprobante is not None and obj.tipo_comprobante not in ("I", "E"):
+            # Notas de Crédito (`tipo_comprobante == 'E'`, petición del usuario
+            # 2026-11-27) YA genera el archivo plano — ver `adapter_pac_v40.py`
+            # (TipoRelacion real en "Documentos Relacionados"; `IdDoc.Tipo` se queda en
+            # "33" como Ingreso, reportado como supuesto sin confirmar en
+            # `campos_faltantes()`). Cualquier OTRO tipo de comprobante (p.ej. "P",
+            # complemento de pago) sigue fuera de alcance.
             raise ConflictError(
                 "Exportación a archivo plano no disponible todavía para este tipo de "
                 "comprobante — regístralo manualmente con 'Registrar timbrado'.",

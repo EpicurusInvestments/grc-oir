@@ -345,6 +345,16 @@ class TimbradoExportPacV40:
             faltantes.append("ExEmisorDomFiscal.* (domicilio del emisor)")
         if _domicilio_incompleto(datos.receptor_domicilio, datos.receptor_direccion):
             faltantes.append("ExReceptorDomFiscal.* (domicilio del receptor)")
+        # Nota de Crédito (petición del usuario 2026-11-27): se genera el archivo
+        # igual, pero se reportan 2 supuestos sin confirmar contra un ejemplo real de
+        # Egreso del PAC (ADR-048 solo reconstruyó el layout de Ingreso).
+        if datos.tipo_comprobante == "E":
+            if not datos.tipo_relacion_sat:
+                faltantes.append("Documentos Relacionados.TipoRelacion (Nota de Credito)")
+            faltantes.append(
+                "IdDoc.Tipo (se usa '33', igual que Ingreso, sin confirmar con un "
+                "ejemplo real de Egreso/Nota de Credito del PAC)"
+            )
         return faltantes
 
     def nombre_archivo(self, datos: DatosTimbrado) -> str:
@@ -432,8 +442,17 @@ class TimbradoExportPacV40:
     def _relacionados(self, datos: DatosTimbrado) -> list[str]:
         cabecera = "TipoRelacion".ljust(_COL_VALOR) + "UUID".ljust(36)
         filas = [cabecera]
+        # Nota de Crédito (petición del usuario): el TipoRelacion real (01/03) con su
+        # factura de origen, NO el 04 fijo de "facturas relacionadas" (ADR-062) que usa
+        # cualquier otro tipo de comprobante. Si no se capturó, se deja VACÍO (nunca se
+        # inventa) y queda reportado en `campos_faltantes()`.
+        tipo_relacion = (
+            _texto(datos.tipo_relacion_sat)
+            if datos.tipo_comprobante == "E"
+            else _TIPO_RELACION_SUSTITUCION
+        )
         for folio in datos.folios_fiscales_relacionados:
-            filas.append(_TIPO_RELACION_SUSTITUCION.ljust(_COL_VALOR) + _texto(folio))
+            filas.append(tipo_relacion.ljust(_COL_VALOR) + _texto(folio))
         filas.extend(["", _FIN_RELACIONES])
         return filas
 

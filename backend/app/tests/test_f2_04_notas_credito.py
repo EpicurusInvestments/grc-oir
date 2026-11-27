@@ -22,6 +22,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.core.db import Base, get_db
 from app.core.errors import register_error_handlers
 from app.modules.catalogos.afiliado import Afiliado
@@ -237,18 +238,21 @@ def _payload_nc(
     *,
     numero_factura: str = "NC-2026-03-0001",
     monto: str = "2000.00",
+    iva: str | None = None,
     motivo: str = "descuento",
+    forma_pago_clave: str = "99",
+    tipo_relacion_sat: str | None = None,
     ordenes_ids: list[str] | None = None,
     facturas_relacionadas_ids: list[str] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "ordenes_ids": ordenes_ids if ordenes_ids is not None else [],
         "numero_factura": numero_factura,
         "descripcion_factura": "Nota de crédito por descuento comercial",
         "fecha_factura": "2026-03-10",
         "cuenta_contable_id": str(cat["cuenta_id"]),
         "metodo_pago_clave": "PUE",
-        "forma_pago_clave": "99",
+        "forma_pago_clave": forma_pago_clave,
         "clave_prod_serv": "82101601",
         "clave_unidad": "E48",
         "moneda_sat": "MXN",
@@ -259,6 +263,11 @@ def _payload_nc(
         "motivo_nota_credito": motivo,
         "monto_nota_credito": monto,
     }
+    if iva is not None:
+        payload["iva_nota_credito"] = iva
+    if tipo_relacion_sat is not None:
+        payload["tipo_relacion_sat"] = tipo_relacion_sat
+    return payload
 
 
 def _crear_nc(  # type: ignore[no-untyped-def]
@@ -268,7 +277,10 @@ def _crear_nc(  # type: ignore[no-untyped-def]
     *,
     numero_factura: str = "NC-2026-03-0001",
     monto: str = "2000.00",
+    iva: str | None = None,
     motivo: str = "descuento",
+    forma_pago_clave: str = "99",
+    tipo_relacion_sat: str | None = None,
     ordenes_ids: list[str] | None = None,
     facturas_relacionadas_ids: list[str] | None = None,
 ):
@@ -279,7 +291,10 @@ def _crear_nc(  # type: ignore[no-untyped-def]
             origen_id,
             numero_factura=numero_factura,
             monto=monto,
+            iva=iva,
             motivo=motivo,
+            forma_pago_clave=forma_pago_clave,
+            tipo_relacion_sat=tipo_relacion_sat,
             ordenes_ids=ordenes_ids,
             facturas_relacionadas_ids=facturas_relacionadas_ids,
         ),
@@ -377,9 +392,9 @@ def test_alta_rechaza_factura_de_origen_inexistente(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Alta — caso feliz: hereda receptor/empresa, niega los montos
+# Alta — caso feliz: hereda receptor/empresa, captura forma de pago, niega los montos
 # ══════════════════════════════════════════════════════════════════════════════
-def test_alta_hereda_receptor_empresa_y_forma_de_pago_y_niega_los_montos(
+def test_alta_hereda_receptor_empresa_y_niega_los_montos(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
     factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
@@ -395,27 +410,92 @@ def test_alta_hereda_receptor_empresa_y_forma_de_pago_y_niega_los_montos(
     assert nc["motivo_nota_credito"] == "descuento"
     assert nc["facturas_relacionadas_ids"] == [factura_id]
     assert nc["ordenes"] == []
-    # Heredado de la factura de origen, NO lo que mandó el payload (que mandó "99").
     assert nc["razon_social_facturacion"] == origen["razon_social_facturacion"]
     assert nc["empresa_facturadora_id"] == origen["empresa_facturadora_id"]
     assert nc["metodo_pago_clave"] == "PUE"
-    assert nc["forma_pago_clave"] == origen["forma_pago_clave"]
-    # Montos NEGADOS (petición del usuario, "con signo negativo").
+    # Montos NEGADOS (petición del usuario, "con signo negativo"). IVA no se mandó en
+    # el payload → se calcula igual que antes (16% del monto).
     assert Decimal(nc["subtotal_factura"]) == Decimal("-2000.00")
     assert Decimal(nc["iva_factura"]) == Decimal("-320.00")
     assert Decimal(nc["total_factura"]) == Decimal("-2320.00")
 
 
-def test_archivo_plano_de_nota_credito_se_rechaza(
+def test_alta_metodo_pago_siempre_pue_pero_forma_de_pago_se_captura_no_se_hereda(
     client: TestClient, db: Session, cat: dict[str, uuid.UUID]
 ) -> None:
+    """Petición del usuario 2026-11-27: Método de pago fijo PUE (no se captura, no se
+    puede modificar); Forma de pago SÍ se captura y es editable — el frontend la
+    precarga con la de origen, pero el usuario la puede cambiar."""
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)  # origen: forma_pago "99"
+
+    r = _crear_nc(client, cat, factura_id, monto="2000.00", forma_pago_clave="01")
+    assert r.status_code == 201, r.text
+    nc = r.json()
+
+    assert nc["metodo_pago_clave"] == "PUE"
+    # Distinto al de origen ("99") — prueba que se CAPTURA, no se fuerza desde origen.
+    assert nc["forma_pago_clave"] == "01"
+
+
+def test_alta_iva_editable_se_respeta_si_se_manda(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario 2026-11-27: el IVA se precarga del de la factura de origen
+    pero es editable — un ajuste proporcional manual (no exactamente 16% del monto)
+    debe aceptarse."""
     factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
-    nc = _crear_nc(client, cat, factura_id).json()
+
+    r = _crear_nc(client, cat, factura_id, monto="2000.00", iva="250.00")
+    assert r.status_code == 201, r.text
+    nc = r.json()
+
+    assert Decimal(nc["subtotal_factura"]) == Decimal("-2000.00")
+    assert Decimal(nc["iva_factura"]) == Decimal("-250.00")  # NO es 16% de 2000 (320.00)
+    assert Decimal(nc["total_factura"]) == Decimal("-2250.00")
+
+
+def test_archivo_plano_de_nota_credito_se_genera_con_el_tiporelacion_real_y_reporta_supuestos(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    """Petición del usuario 2026-11-27: el archivo plano YA se genera para una Nota de
+    Crédito — "Documentos Relacionados" lleva el folio fiscal de la factura de origen
+    con el TipoRelacion real capturado (no el 04 fijo de ADR-062), y se reporta como
+    supuesto sin confirmar que `IdDoc.Tipo` se queda en "33" (igual que Ingreso)."""
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
+    nc = _crear_nc(client, cat, factura_id, tipo_relacion_sat="01").json()
+    _timbrar_nc(client, nc["factura_id"])  # el folio fiscal de origen ya debe estar timbrado
+
     r = client.get(
         f"/api/v1/facturacion/clientes/{nc['factura_id']}/archivo-plano",
         headers=_hdr("facturacion"),
     )
-    assert r.status_code == 409, r.text
+    assert r.status_code == 200, r.text
+    faltantes = r.headers["X-Campos-Faltantes"]
+    assert "IdDoc.Tipo" in faltantes
+    assert "33" in faltantes
+
+    texto = r.content.decode(settings.timbrado_encoding)
+    assert "================ Documentos Relacionados" in texto
+    # TipoRelacion "01" (el capturado), con el folio fiscal REAL de la factura de
+    # origen — no el "04" fijo que usa ADR-062 para facturas relacionadas normales.
+    seccion = texto.split("================ Documentos Relacionados")[1]
+    fila_datos = seccion.split("\r\n")[2]  # [0]="", [1]=cabecera, [2]=TipoRelacion+UUID
+    assert fila_datos.startswith("01")
+    assert "A1B2C3D4-E5F6-7890-ABCD-EF1234567890" in fila_datos
+
+
+def test_archivo_plano_de_nota_credito_reporta_tiporelacion_faltante_si_no_se_capturo(
+    client: TestClient, db: Session, cat: dict[str, uuid.UUID]
+) -> None:
+    factura_id, _ = _crear_y_timbrar_factura(client, db, cat)
+    nc = _crear_nc(client, cat, factura_id).json()  # sin tipo_relacion_sat
+
+    r = client.get(
+        f"/api/v1/facturacion/clientes/{nc['factura_id']}/archivo-plano",
+        headers=_hdr("facturacion"),
+    )
+    assert r.status_code == 200, r.text
+    assert "TipoRelacion" in r.headers["X-Campos-Faltantes"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

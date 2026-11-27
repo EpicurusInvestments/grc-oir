@@ -1076,24 +1076,45 @@ en F1) — no el propio CxP que capturó el registro.
   confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
   cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
 
-## Notas de Crédito (ADR-293, petición del usuario, con captura)
+## Notas de Crédito (ADR-293/ADR-294, petición del usuario, con captura)
 
 `FacturaCliente` con `tipo_comprobante == "E"` — reutiliza la entidad existente, no se
 creó ninguna tabla nueva (ni para la NC en sí, ni para su efecto en Cobranza). Detalle
-técnico completo en `docs/arquitectura.md` (ADR-293); resumen operativo:
+técnico completo en `docs/arquitectura.md` (ADR-293, ADR-294); resumen operativo:
 
 - **Alta:** botón "+ Nota de crédito" en el detalle de una factura YA TIMBRADA (no
   marcada "Facturado en sistema externo"). Sin órdenes propias — receptor, empresa
-  emisora, anunciante/agencia y forma de pago se heredan de la factura de ORIGEN
+  emisora y anunciante/agencia se heredan de la factura de ORIGEN
   (`facturas_relacionadas_ids[0]`, exactamente 1). Motivo de una lista fija
-  (`MotivoNotaCredito`: devolución total/parcial, descuento, bonificación). Método de
-  pago siempre `PUE`. Folio propio: `NC-AAAA-MM-folio`, capturado a mano (sin
-  consecutivo automático). Monto capturado en POSITIVO; el servicio lo niega antes de
-  persistir (`subtotal_factura`/`iva_factura`/`total_factura` quedan negativos — "para
-  efecto de reportes", petición del usuario).
+  (`MotivoNotaCredito`: devolución total/parcial, descuento, bonificación — **no**
+  incluye "error en el monto facturado", pedido explícitamente fuera por el usuario al
+  revisar ADR-294). Método de pago siempre `PUE` (fijo, se muestra informativo en el
+  formulario para que no se confunda con editable). Folio propio:
+  `NC-AAAA-MM-folio`, capturado a mano (sin consecutivo automático).
+- **Forma de pago, Monto e IVA editables (ADR-294):** `forma_pago_clave` se precarga en
+  el formulario con la de la factura de origen pero es **seleccionable** — ya NO se
+  fuerza del lado del servicio (antes de ADR-294 se ignoraba lo que mandara el payload).
+  "Monto (sin IVA)" e "IVA" se precargan con `subtotal_factura`/`iva_factura` de la
+  factura de origen y son **editables** (petición explícita del usuario: "dejar el
+  campo editable", para acreditaciones parciales/proporcionales donde el IVA no es
+  exactamente 16% del monto). Ambos se capturan en POSITIVO; el servicio los niega antes
+  de persistir (`subtotal_factura`/`iva_factura`/`total_factura` quedan negativos — "para
+  efecto de reportes"). Si no se manda `iva_nota_credito`, se calcula igual que antes
+  (16% exacto del monto). El CHECK `ck_factura_cliente_iva_calculado` solo exige el 16%
+  exacto para `tipo_comprobante != 'E'` — una Nota de Crédito queda exenta.
 - **Timbrado:** sigue siendo 100% MANUAL (mismo `RegistrarTimbradoForm` de cualquier
-  factura) — el archivo plano del PAC no sabe armar el layout de Egreso todavía (fuera
-  de alcance), "Archivo plano" se oculta para cualquier `tipo_comprobante != "I"`.
+  factura) — timbrar NUNCA lo hace el sistema (ADR-002), solo cambia quién prepara el
+  archivo plano (ver el punto siguiente).
+- **Archivo plano (ADR-294):** YA se genera para una Nota de Crédito (antes rechazaba con
+  409, "fuera de alcance"). "Documentos Relacionados" lleva el folio fiscal de la factura
+  de origen con el `TipoRelacion` REAL capturado (`tipo_relacion_sat`, 01/03) en vez del
+  `04` fijo que usa ADR-062 para facturas relacionadas normales — si no se capturó, se
+  reporta como campo faltante (nunca se inventa). `IdDoc.Tipo` se queda en `"33"`, igual
+  que una factura de Ingreso — **sin confirmar contra un ejemplo real de Egreso/Nota de
+  Crédito del PAC** (ADR-048 solo reconstruyó el layout de Ingreso); se reporta siempre
+  como supuesto en `X-Campos-Faltantes`, a petición explícita del usuario
+  ("procesa con 33 pero repórtalo"). Cualquier OTRO `tipo_comprobante` (p.ej. "P") sigue
+  rechazándose con 409.
 - **Efecto en Cobranza:** al timbrarse, se aplica como un `PagoCliente` SINTÉTICO sobre
   la `CobranzaFactura` de la factura de origen (columna `factura_egreso_id`, nunca crea
   su propia `CobranzaFactura`) — reutiliza completa la máquina de `recalcular_tras_pago`
@@ -1105,8 +1126,9 @@ técnico completo en `docs/arquitectura.md` (ADR-293); resumen operativo:
   (la cancela/revierte en cascada si estaba `autorizada`; si ya estaba `pagada`, no la
   toca), y revierte la cascada de cobro que la NC produjo igual.
 - **Catálogos nuevos:** `UsoCFDI,G02` (devoluciones/descuentos/bonificaciones) y el
-  grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) pero, igual que
-  `tipo_comprobante`, todavía no se conectan al archivo plano del timbrador.
+  grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) y, desde ADR-294,
+  SÍ viajan al archivo plano (solo el `TipoRelacion` de "Documentos Relacionados"; el
+  resto del layout sigue sin leer `tipo_comprobante`/`tipo_relacion_sat`).
 
 ## Campos del `Detalle` fijos "en duro" en el layout V40 — de dónde salen y por qué
 

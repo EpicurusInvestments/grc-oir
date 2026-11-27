@@ -2,12 +2,15 @@
  * con `tipo_comprobante: "E"`, SIEMPRE lanzada desde la factura que se va a acreditar
  * ("+ Nota de crédito" en su detalle, `FacturasClientePage.tsx`): a diferencia de
  * `FacturaClienteForm.tsx` (que deriva TODO de una o varias `OrdenCliente`), esta no
- * tiene orden de origen — el monto se CAPTURA directo, como magnitud positiva (el
- * backend lo niega antes de persistir), y el receptor/empresa/forma de pago se HEREDAN
- * de `origen` sin mostrarse editables aquí (ya los fijó el servicio al crear).
+ * tiene orden de origen — el receptor/empresa se HEREDAN de `origen` sin mostrarse
+ * editables aquí (ya los fijó el servicio al crear).
  *
- * Método de pago siempre `PUE` (fijo, no se captura) y forma de pago heredada de
- * `origen.forma_pago_clave` (solo lectura) — pedido explícito del usuario.
+ * Método de pago SIEMPRE `PUE` (fijo, no se captura, se muestra solo informativo —
+ * petición del usuario: "que no se pueda modificar... para que el usuario no se
+ * confunda"). Forma de pago SÍ se captura: precargada con la de `origen` pero
+ * editable. Monto e IVA se precargan con los de `origen` (`subtotal_factura`/
+ * `iva_factura`) y son editables (petición del usuario 2026-11-27) — el backend los
+ * niega antes de persistir (quedan negativos, "para efecto de reportes").
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,8 +20,8 @@ import { z } from "zod";
 import { useConstantes } from "@/modules/catalogos/constantesSistema/hooks";
 import { DateInput, FieldTag, SavingOverlay, SearchableSelect } from "@/shared/ui";
 
-import { fmtFolio, oGuion } from "../../format";
-import { useCuentasContables } from "../../hooks";
+import { fmtFolio } from "../../format";
+import { useCuentasContables, useFormasDePago } from "../../hooks";
 import {
   MOTIVOS_NOTA_CREDITO,
   type FacturaCliente,
@@ -43,10 +46,15 @@ const schema = z.object({
   numero_pedido: z.string().trim().max(50).optional(),
   referencia_adicional: z.string().trim().max(150).optional(),
   motivo_nota_credito: z.string().min(1, "Selecciona el motivo."),
+  forma_pago_clave: z.string().min(1, "Selecciona la forma de pago."),
   monto_nota_credito: z
     .string()
     .min(1, "Captura el monto a acreditar.")
     .refine((v) => Number(v) > 0, "El monto debe ser mayor a 0."),
+  iva_nota_credito: z
+    .string()
+    .min(1, "Captura el IVA a acreditar.")
+    .refine((v) => Number(v) >= 0, "El IVA no puede ser negativo."),
   descripcion_factura: z.string().trim().min(1, "La descripción es obligatoria."),
   observaciones_factura: z.string().trim().optional(),
   fecha_factura: z.string().min(1, "La fecha es obligatoria."),
@@ -73,6 +81,7 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 
 export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onCancel }: Props) {
   const cuentas = useCuentasContables();
+  const formas = useFormasDePago();
   const { useList } = useConstantes();
   const clavesProdServ = useList({ grupo: "ClaveProdServ", activo: true, size: 100 });
   const clavesUnidad = useList({ grupo: "ClaveUnidad", activo: true, size: 100 });
@@ -95,6 +104,9 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
       moneda_sat: origen.moneda_sat ?? "",
       uso_cfdi: "G02",
       cuenta_contable_id: origen.cuenta_contable_id ?? "",
+      forma_pago_clave: origen.forma_pago_clave ?? "",
+      monto_nota_credito: origen.subtotal_factura,
+      iva_nota_credito: origen.iva_factura,
     },
   });
 
@@ -108,10 +120,9 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
           facturas_relacionadas_ids: [origen.factura_id],
           tipo_comprobante: "E",
           motivo_nota_credito: valores.motivo_nota_credito as MotivoNotaCredito,
-          // Fijos (petición del usuario): PUE siempre, forma de pago heredada — el
-          // servicio los vuelve a fijar él mismo, pero se mandan ya correctos.
+          // Método de pago SIEMPRE PUE (petición del usuario, no se captura). Forma de
+          // pago SÍ viene del formulario (precargada con la de origen, editable).
           metodo_pago_clave: "PUE",
-          forma_pago_clave: origen.forma_pago_clave ?? "",
         } as FacturaClienteCreate),
       )}
       style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
@@ -131,8 +142,8 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
             <span className="heredado-val">{origen.razon_social_facturacion}</span>
           </div>
           <div className="heredado-row">
-            <span className="heredado-lbl">Forma de pago</span>
-            <span className="heredado-val mono">{oGuion(origen.forma_pago_clave)}</span>
+            <span className="heredado-lbl">Método de pago</span>
+            <span className="heredado-val mono">PUE</span>
           </div>
         </div>
       </div>
@@ -188,21 +199,40 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
 
       <div className="form-card">
         <div className="form-card-title">Monto a acreditar</div>
-        <div className="fl fl-required">Monto (sin IVA)</div>
-        <input
-          className="fi mono"
-          type="number"
-          step="0.01"
-          min="0.01"
-          placeholder="0.00"
-          {...register("monto_nota_credito")}
-        />
-        {errors.monto_nota_credito && (
-          <div className="fe">{errors.monto_nota_credito.message}</div>
-        )}
+        <div className="r2">
+          <div>
+            <div className="fl fl-required">Monto (sin IVA)</div>
+            <input
+              className="fi mono"
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder="0.00"
+              {...register("monto_nota_credito")}
+            />
+            {errors.monto_nota_credito && (
+              <div className="fe">{errors.monto_nota_credito.message}</div>
+            )}
+          </div>
+          <div>
+            <div className="fl fl-required">IVA</div>
+            <input
+              className="fi mono"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              {...register("iva_nota_credito")}
+            />
+            {errors.iva_nota_credito && (
+              <div className="fe">{errors.iva_nota_credito.message}</div>
+            )}
+          </div>
+        </div>
         <div className="fv muted" style={{ fontSize: 11 }}>
-          Se guarda con signo negativo (para efecto de reportes) — captúralo en positivo,
-          "cuánto se acredita".
+          Ambos se precargan con el Monto e IVA de la factura de origen — se guardan con
+          signo negativo (para efecto de reportes), captúralos en positivo. Ajusta el IVA
+          si la acreditación es parcial o proporcional.
         </div>
       </div>
 
@@ -225,6 +255,21 @@ export function NotaCreditoForm({ origen, submitting, submitError, onSubmit, onC
         {errors.cuenta_contable_id && (
           <div className="fe">{errors.cuenta_contable_id.message}</div>
         )}
+
+        <div className="fl fl-required">
+          Forma de pago <FieldTag origin="catalogo" />
+        </div>
+        {/* Se guarda la CLAVE, no un FK: FormaPago vive en ConstantesSistema. Precargada
+            con la de la factura de origen (defaultValues), pero editable. */}
+        <select className="fsel" {...register("forma_pago_clave")}>
+          <option value="">— Selecciona —</option>
+          {(formas.data ?? []).map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.etiqueta}
+            </option>
+          ))}
+        </select>
+        {errors.forma_pago_clave && <div className="fe">{errors.forma_pago_clave.message}</div>}
 
         <div className="fl fl-required">
           Clave del producto o servicio <FieldTag origin="catalogo" />

@@ -206,6 +206,9 @@ export interface FacturaClienteCreate {
   /** Monto a acreditar, como MAGNITUD POSITIVA (el backend lo niega antes de persistir
    *  — `subtotal_factura`/`iva_factura`/`total_factura` quedan negativos). */
   monto_nota_credito?: string | null;
+  /** IVA a acreditar, como MAGNITUD POSITIVA (petición del usuario: editable, precargado
+   *  del IVA de la factura de origen) — si se omite, el servicio calcula 16% del monto. */
+  iva_nota_credito?: string | null;
 }
 
 export interface TimbrarInput {

@@ -601,11 +601,13 @@ export function FacturasClientePage({ onIrAListasParaFacturar }: Props) {
               </div>
             ))}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {/* Notas de Crédito (y cualquier otro tipo que no sea "I"): el archivo plano
-                del PAC todavía no sabe armar ese layout (fuera de alcance esta ronda) —
-                el backend ya lo rechaza con 409, aquí se oculta de entrada. */}
+            {/* Notas de Crédito (`tipo_comprobante === "E"`) ya generan el archivo
+                plano (petición del usuario 2026-11-27) — cualquier OTRO tipo (p.ej.
+                "P") sigue fuera de alcance, el backend lo rechaza con 409. */}
             {estado !== "cancelada" &&
-              (selected.tipo_comprobante == null || selected.tipo_comprobante === "I") && (
+              (selected.tipo_comprobante == null ||
+                selected.tipo_comprobante === "I" ||
+                selected.tipo_comprobante === "E") && (
               <button
                 type="button"
                 className="btn btn-sm"

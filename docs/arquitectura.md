@@ -11929,6 +11929,97 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (`UsoCFDI/G02`, `TipoRelacion/01,03`) insertados a mano en la BD real de dev para
   poder probar manualmente (el CSV de referencia ya había divergido de los datos reales
   de esa BD en sesiones anteriores).
+
+### ADR-294 — Facturación: Notas de Crédito — forma de pago/monto/IVA editables y archivo plano
+
+- **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, tras revisar
+  manualmente ADR-293 en el navegador).
+- **Disparador:** el usuario pegó un flujo de negocio de 4 pasos para Notas de Crédito
+  (motivo, revisión de la factura de origen, CFDI Egreso con `tipo_relacion_sat`/
+  `uso_cfdi`, "montos del descuento... ajustando proporcionalmente el IVA — Dejar el
+  campo Editable") y preguntó si ya estaba implementado. Verificación punto por punto
+  contra el código encontró 2 huecos reales frente a ADR-293: (1) el IVA se calculaba
+  SIEMPRE como 16% exacto del monto, sin campo para capturarlo distinto; (2) no existía
+  ningún "error en el monto facturado" en `MotivoNotaCredito`. El usuario, además, pidió
+  por escrito 3 cambios de UI concretos: Método de pago visible mostrando `PUE` fijo (no
+  editable, "para que el usuario no se confunda"); Forma de pago visible y
+  **seleccionable** con default la de la factura de origen; IVA visible y **editable**
+  con default el de la factura de origen. Al presentarle el plan con estos 4 puntos más
+  el archivo plano (bloqueado desde ADR-293), confirmó proceder con los 4, aceptando
+  explícitamente dejar `IdDoc.Tipo = "33"` sin confirmar para Egreso ("procesa el mismo
+  archivo plano con el valor 33 pero lo reportas") — NO se agregó el motivo "error en el
+  monto facturado" (fuera del pedido final, el usuario solo confirmó los 4 puntos
+  listados arriba).
+- **Cambios — backend** (`backend/app/modules/facturacion/factura_cliente.py`,
+  `backend/app/integrations/timbrado/port.py`, `backend/app/integrations/timbrado/
+  adapter_pac_v40.py`):
+  - `FacturaClienteCreate.iva_nota_credito: Decimal | None` (magnitud POSITIVA, mismo
+    criterio que `monto_nota_credito`) — opcional: si se manda, `_crear_nota_credito()`
+    lo usa tal cual (negado) en vez de calcular 16% del monto; si se omite, calcula
+    igual que antes de este ADR. Excluido del `model_dump()` de ambas rutas de `create()`
+    (Ingreso Y Nota de Crédito) — se detectó y corrigió un `TypeError` real (faltaba
+    excluirlo en la rama de Ingreso) durante la verificación de pruebas.
+  - `_crear_nota_credito()` deja de forzar `forma_pago_clave=origen.forma_pago_clave` —
+    ahora usa `data.forma_pago_clave` (lo que capture el formulario). `metodo_pago_clave`
+    se queda igual, fijo `"PUE"`.
+  - CHECK `ck_factura_cliente_iva_calculado`: gana una excepción para
+    `tipo_comprobante = 'E'` (mismo criterio que ADR-290 en Agencia/Vendedor). **Bug real
+    detectado por la suite completa, no por mí al escribirlo:** la primera versión usaba
+    `tipo_comprobante = 'E' OR ROUND(...) = ROUND(...)` — con `tipo_comprobante` NULL
+    (facturas viejas, nunca Nota de Crédito) esa comparación da NULL, y `NULL OR falso`
+    es NULL, que un CHECK trata como "pasa" (lógica de 3 valores de SQL). Corregido a
+    `CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 ELSE ROUND(...) = ROUND(...) END` — un
+    `CASE` con condición NULL cae al `ELSE`, sin el problema; mismo patrón que ya usaban
+    los otros 3 CHECK condicionales de esta tabla (`subtotal`/`iva`/`total`, ADR-293).
+    Migración `6ce951ef06bd`, corregida y re-aplicada sobre `dev_ordenes.db` antes de
+    cerrar (se detectó con `pytest app/tests` completo, no con la suite de NC sola).
+  - `DatosTimbrado` (puerto) gana `tipo_comprobante`/`tipo_relacion_sat` — el adaptador
+    los usa SOLO para decidir el `TipoRelacion` de `folios_fiscales_relacionados` (ya
+    existía desde ADR-062/293, reutilizado tal cual: una NC solo tiene 1 folio
+    relacionado, el de su origen) y para avisar en `campos_faltantes()`.
+  - `adapter_pac_v40.py::_relacionados()`: si `tipo_comprobante == "E"`, el `TipoRelacion`
+    de cada fila es `tipo_relacion_sat` (01/03, lo capturado) en vez del `04` fijo
+    (`_TIPO_RELACION_SUSTITUCION`) que sigue usando cualquier otro tipo de comprobante.
+    Si no se capturó, se deja la columna vacía (nunca se inventa) y se reporta en
+    `campos_faltantes()`.
+  - `adapter_pac_v40.py::campos_faltantes()`: para `tipo_comprobante == "E"` siempre
+    agrega un aviso de que `IdDoc.Tipo` se queda en `"33"` sin confirmar contra un
+    ejemplo real de Egreso — decisión explícita del usuario (no bloquear, solo avisar).
+  - `FacturaClienteService.archivo_plano()`: el 409 ya NO aplica a `tipo_comprobante ==
+    "E"` — solo seguro para cualquier OTRO tipo (`"P"`, complemento de pago, fuera de
+    alcance). El mensaje de `X-Campos-Faltantes` usa guiones simples, no em-dash (`—`):
+    es un header HTTP, y Starlette lo codifica en Latin-1 — un em-dash rompía la
+    respuesta completa con `UnicodeEncodeError` (detectado por la prueba de archivo
+    plano, no al escribir el mensaje).
+- **Cambios — frontend** (`NotaCreditoForm.tsx`): tarjeta "Factura de origen" cambia su
+  fila "Forma de pago" (de solo lectura) por "Método de pago: PUE" (fijo, informativo).
+  Nueva fila "Forma de pago" en la tarjeta de configuración contable/fiscal — `<select>`
+  del catálogo `ConstantesSistema` grupo FormaPago (`useFormasDePago()`, mismo hook que ya
+  usa `FacturaClienteForm.tsx`), precargado con `origen.forma_pago_clave`, editable.
+  "Monto a acreditar" gana un segundo campo "IVA" junto al monto existente, ambos
+  precargados con `origen.subtotal_factura`/`origen.iva_factura`, ambos editables.
+  `FacturasClientePage.tsx`: el botón "Archivo plano" deja de ocultarse para
+  `tipo_comprobante === "E"` (se sigue ocultando para cualquier otro tipo distinto de
+  `"I"`/`null`).
+- **Pruebas:** `test_f2_04_notas_credito.py` — 4 pruebas nuevas (forma de pago capturada
+  y distinta de origen; IVA editable que no es 16% exacto; archivo plano generado con el
+  TipoRelacion real y el folio de origen, reporta "IdDoc.Tipo"/"33"; archivo plano
+  reporta TipoRelacion faltante si no se capturó), 1 prueba renombrada/ajustada (ya no
+  afirma forma de pago heredada). Frontend: `NotaCreditoForm.test.tsx` ajustado (mock de
+  `useFormasDePago`, aserciones de Método de pago fijo/Forma de pago-Monto-IVA
+  precargados y editables).
+- **Verificado:** suite completa de backend 100% verde tras corregir el bug del CHECK
+  (`pytest app/tests`). `ruff` limpio en los 4 archivos tocados; `mypy` sin errores
+  nuevos (el único en `factura_cliente.py` es preexistente, confirmado con `git stash`).
+  Migración verificada con `alembic upgrade head` desde una base vacía, viaje redondo
+  `downgrade`/`upgrade`, y aplicada sobre `dev_ordenes.db` (con backup previo). Frontend:
+  144/144 del módulo `facturacion` verdes, `tsc --noEmit`/`eslint` limpios (las 12 fallas
+  de `auth`/`seguridad`/`apiClient` son las mismas preexistentes de ADR-285/286/293, no
+  relacionadas — confirmado de nuevo con `git stash`).
+- **Fuera de alcance (confirmado explícitamente con el usuario):** el motivo "error en
+  el monto facturado" NO se agregó a `MotivoNotaCredito` — el usuario solo pidió proceder
+  con los 4 puntos de forma de pago/monto/IVA/archivo plano.
+
 ### ADR-288 — Fix: "Pendientes de asignar"/"Pendientes de verificar" no cargaban (vocabulario v5 enviado tal cual al backend); se quita el letrero "Filtro activo" de Órdenes de Servicio
 
 - **Estado:** aceptada · **Fecha:** 2026-11-25 (reporte del usuario, con capturas de

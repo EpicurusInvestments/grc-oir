@@ -130,8 +130,20 @@ class DatosTimbrado:
 
     # ── Facturas relacionadas (N:N de FacturaCliente, ADR-062) ─────────────────
     #: Folios fiscales de las facturas relacionadas. Se envían todos como TipoRelacion 04
-    #: — CFDI 4.0 permite varios `CfdiRelacionado` bajo un mismo tipo de relación.
+    #: — CFDI 4.0 permite varios `CfdiRelacionado` bajo un mismo tipo de relación. Para
+    #: una Nota de Crédito (ver `tipo_comprobante`/`tipo_relacion_sat` abajo) esta misma
+    #: tupla trae el folio de SU factura de origen (siempre 1 sola), pero con el
+    #: TipoRelacion real (01/03) en vez del 04 fijo.
     folios_fiscales_relacionados: tuple[str, ...] = ()
+    #: Catálogo SAT c_TipoDeComprobante ('I' Ingreso, 'E' Egreso/Nota de Crédito…) — el
+    #: adaptador la usa SOLO para decidir el TipoRelacion de `folios_fiscales_relacionados`
+    #: y para avisar en `campos_faltantes()` que `IdDoc.Tipo` no está confirmado en Egreso
+    #: (petición del usuario 2026-11-27: "procesa con 33 pero repórtalo").
+    tipo_comprobante: str | None = None
+    #: Clave SAT c_TipoRelacion (01/03…) de UNA Nota de Crédito con su factura de
+    #: origen — distinto del 04 fijo que usa ADR-062 para facturas relacionadas
+    #: normales. `None`/vacío en una NC se reporta en `campos_faltantes()`.
+    tipo_relacion_sat: str | None = None
 
     # ── Constantes fiscales (catálogo `ConstantesSistema`) ─────────────────────
     # El servicio las resuelve solo si el grupo tiene UNA constante activa: con varias, la

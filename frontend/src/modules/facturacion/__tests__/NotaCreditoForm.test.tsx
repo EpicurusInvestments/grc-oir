@@ -1,7 +1,9 @@
 /** Notas de Crédito (petición del usuario, con captura): alta desde `NotaCreditoForm` —
- * sin orden de origen, monto capturado en POSITIVO (el payload lo manda igual, el
- * backend lo niega), `ordenes_ids` vacío, `facturas_relacionadas_ids` con la factura de
- * origen, `tipo_comprobante: "E"`, método de pago fijo `PUE` y forma de pago heredada.
+ * sin orden de origen, monto e IVA capturados en POSITIVO (el payload los manda igual,
+ * el backend los niega), precargados con los de la factura de origen pero editables,
+ * `ordenes_ids` vacío, `facturas_relacionadas_ids` con la factura de origen,
+ * `tipo_comprobante: "E"`, método de pago fijo `PUE` y forma de pago precargada de la
+ * factura de origen pero editable (petición del usuario 2026-11-27).
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -27,6 +29,7 @@ vi.mock("@/modules/catalogos/constantesSistema/hooks", () => ({
 
 vi.mock("../hooks", () => ({
   useCuentasContables: () => ({ data: [{ id: "cc-1", etiqueta: "4100-001 · Ingresos" }] }),
+  useFormasDePago: () => ({ data: [{ id: "03", etiqueta: "03 · Transferencia" }] }),
 }));
 
 const origen: FacturaCliente = {
@@ -87,28 +90,45 @@ function llenarMinimo(container: HTMLElement) {
   });
   const motivo = container.querySelector('select[name="motivo_nota_credito"]') as HTMLSelectElement;
   fireEvent.change(motivo, { target: { value: "descuento" } });
-  fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "500" } });
-  // Los 3 SearchableSelect (cuenta contable, clave prod/serv, clave unidad) y el
-  // <select> de moneda ya traen una sola opción cada uno — basta con el default del
-  // catálogo mockeado, no hace falta elegirlos a mano para que el form sea válido.
+  const monto = container.querySelector(
+    'input[name="monto_nota_credito"]',
+  ) as HTMLInputElement;
+  fireEvent.change(monto, { target: { value: "500" } });
+  // El IVA se deja con su default precargado (el de la factura de origen) — no hace
+  // falta tocarlo para que el form sea válido.
+  // Los 3 SearchableSelect (cuenta contable, clave prod/serv, clave unidad), el
+  // <select> de moneda y el de forma de pago ya traen una sola opción cada uno — basta
+  // con el default del catálogo mockeado, no hace falta elegirlos a mano para que el
+  // form sea válido.
 }
 
 describe("NotaCreditoForm", () => {
-  it("muestra la factura de origen fija (no editable) y precarga la descripción sugerida", () => {
-    render(
+  it("muestra la factura de origen fija (no editable), el método de pago PUE fijo y precarga descripción/monto/IVA/forma de pago", () => {
+    const { container } = render(
       <NotaCreditoForm origen={origen} onSubmit={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.getByText("Factura de origen")).toBeInTheDocument();
     expect(screen.getByText("FMEX-1246")).toBeInTheDocument();
     expect(screen.getByText("Grupo Bimbo SA de CV")).toBeInTheDocument();
-    // Forma de pago heredada, mostrada de solo lectura.
-    expect(screen.getByText("03")).toBeInTheDocument();
+    // Método de pago: fijo, informativo, no capturable.
+    expect(screen.getByText("Método de pago")).toBeInTheDocument();
+    expect(screen.getByText("PUE")).toBeInTheDocument();
     expect(
       screen.getByDisplayValue("Nota de crédito de la factura FMEX-1246"),
     ).toBeInTheDocument();
+    // Monto e IVA precargados con los de la factura de origen.
+    const monto = container.querySelector('input[name="monto_nota_credito"]') as HTMLInputElement;
+    const iva = container.querySelector('input[name="iva_nota_credito"]') as HTMLInputElement;
+    expect(monto.value).toBe("10000.00");
+    expect(iva.value).toBe("1600.00");
+    // Forma de pago: select editable, precargado con la de la factura de origen.
+    const formaPago = container.querySelector(
+      'select[name="forma_pago_clave"]',
+    ) as HTMLSelectElement;
+    expect(formaPago.value).toBe("03");
   });
 
-  it("al guardar, manda el payload con ordenes_ids vacío, la factura de origen, tipo 'E', PUE fijo y la forma de pago heredada", async () => {
+  it("al guardar, manda el payload con ordenes_ids vacío, la factura de origen, tipo 'E', PUE fijo, forma de pago e IVA precargados", async () => {
     const onSubmit = vi.fn();
     const { container } = render(
       <NotaCreditoForm origen={origen} onSubmit={onSubmit} onCancel={vi.fn()} />,
@@ -127,6 +147,7 @@ describe("NotaCreditoForm", () => {
     expect(payload.forma_pago_clave).toBe("03");
     expect(payload.motivo_nota_credito).toBe("descuento");
     expect(payload.monto_nota_credito).toBe("500");
+    expect(payload.iva_nota_credito).toBe("1600.00");
   });
 
   it("'Cancelar' no manda nada y notifica al padre", () => {
