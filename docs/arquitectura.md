@@ -11929,8 +11929,24 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   (`UsoCFDI/G02`, `TipoRelacion/01,03`) insertados a mano en la BD real de dev para
   poder probar manualmente (el CSV de referencia ya había divergido de los datos reales
   de esa BD en sesiones anteriores).
+- **Corrección posterior (2026-11-26, reportado por el usuario al intentar
+  `alembic upgrade head` contra la BD de desarrollo compartida en SQL Server):** el
+  "viaje redondo" de arriba solo se había corrido contra SQLite — los 3 CHECK nuevos de
+  `factura_cliente` (`ck_factura_cliente_subtotal`/`_iva`/`_total`) usaban
+  `CASE WHEN tipo_comprobante = 'E' THEN subtotal_factura <= 0 ELSE ... END`, y SQL
+  Server rechaza un operador de comparación como valor THEN/ELSE de un CASE ("Incorrect
+  syntax near '<'" — un CASE solo regresa un escalar, no un predicado booleano; SQLite
+  sí lo permite, sin tipo booleano real, por eso pasaba en local). Se reescribieron las
+  3 condiciones como OR/AND (`(COALESCE(tipo_comprobante,'I') = 'E' AND ... <= 0) OR
+  (COALESCE(tipo_comprobante,'I') <> 'E' AND ... >= 0)` — el `COALESCE` evita que la
+  columna nullable propague NULL al OR exterior, que un CHECK trataría como "no
+  violado"), tanto en la migración `d44def894ea8` como en el `CheckConstraint` espejo
+  del modelo (`factura_cliente.py`). Mismo riesgo de familia que ADR-039/ADR-014: una
+  migración que solo se corrió contra SQLite puede fallar en SQL Server real. **El
+  mismo ADR-298 de abajo tenía el mismo patrón roto en un CHECK propio
+  (`ck_factura_cliente_iva_calculado`) — corregido ahí al integrar esta rama.**
 
-### ADR-294 — Facturación: Notas de Crédito — forma de pago/monto/IVA editables y archivo plano
+### ADR-298 — Facturación: Notas de Crédito — forma de pago/monto/IVA editables y archivo plano
 
 - **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, tras revisar
   manualmente ADR-293 en el navegador).
@@ -11967,12 +11983,19 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
     detectado por la suite completa, no por mí al escribirlo:** la primera versión usaba
     `tipo_comprobante = 'E' OR ROUND(...) = ROUND(...)` — con `tipo_comprobante` NULL
     (facturas viejas, nunca Nota de Crédito) esa comparación da NULL, y `NULL OR falso`
-    es NULL, que un CHECK trata como "pasa" (lógica de 3 valores de SQL). Corregido a
-    `CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 ELSE ROUND(...) = ROUND(...) END` — un
-    `CASE` con condición NULL cae al `ELSE`, sin el problema; mismo patrón que ya usaban
-    los otros 3 CHECK condicionales de esta tabla (`subtotal`/`iva`/`total`, ADR-293).
-    Migración `6ce951ef06bd`, corregida y re-aplicada sobre `dev_ordenes.db` antes de
-    cerrar (se detectó con `pytest app/tests` completo, no con la suite de NC sola).
+    es NULL, que un CHECK trata como "pasa" (lógica de 3 valores de SQL). Corregido
+    ENTONCES a `CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 ELSE ROUND(...) = ROUND(...)
+    END` — mismo patrón que ya usaban los otros 3 CHECK condicionales de esta tabla
+    (`subtotal`/`iva`/`total`, ADR-293) en ese momento.
+    **Segundo bug real, detectado al integrar `main` (ver la corrección posterior de
+    ADR-293 arriba): ese patrón CASE es justo el que SQL Server rechaza.** Se corrigió
+    OTRA VEZ, ahora a `(COALESCE(tipo_comprobante, 'I') = 'E') OR (ROUND(...) =
+    ROUND(...))` — el mismo `COALESCE`/OR que main ya usaba para los otros 3 CHECK,
+    aplicado aquí porque este CHECK nació DESPUÉS del fix de main y nunca lo heredó.
+    Migración `6ce951ef06bd` corregida en el mismo lugar (nunca se había aplicado a un
+    SQL Server real, solo a SQLite local — mismo criterio que main usó para editar
+    `d44def894ea8` en vez de agregar una migración correctiva nueva), re-aplicada sobre
+    `dev_ordenes.db` antes de cerrar.
   - `DatosTimbrado` (puerto) gana `tipo_comprobante`/`tipo_relacion_sat` — el adaptador
     los usa SOLO para decidir el `TipoRelacion` de `folios_fiscales_relacionados` (ya
     existía desde ADR-062/293, reutilizado tal cual: una NC solo tiene 1 folio
@@ -12023,7 +12046,7 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 ### ADR-295 — Facturación/Notas de Crédito: "Número de factura" propone el siguiente consecutivo, sigue editable
 
 - **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, tras levantar la
-  app y revisar ADR-294 en el navegador).
+  app y revisar ADR-298 en el navegador).
 - **Disparador:** 2 capturas de pantalla mostrando el campo "Número de factura" vacío
   tanto en "Nueva factura" como en "Nota de crédito", con el usuario escribiendo a mano y
   equivocándose de formato (`"FME"` → error de validación). Pidió que, para **todas** las
@@ -12063,7 +12086,7 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
   aserción de que el campo llega precargado y aun así es editable).
 - **Verificado:** suite completa de backend 100% verde (`pytest app/tests`). `ruff`
   limpio; `mypy` sin errores nuevos (el único en `factura_cliente.py` sigue siendo el
-  mismo preexistente, confirmado antes en ADR-294). Frontend: 144/144 del módulo
+  mismo preexistente, confirmado antes en ADR-298). Frontend: 144/144 del módulo
   `facturacion` verdes, `tsc --noEmit`/`eslint` limpios.
 
 ### ADR-296 — "Registrar respuesta del timbrado": despliega la serie, precarga folio/fecha/certificado al cargar el XML ya timbrado
@@ -12128,7 +12151,7 @@ texto (`RegistrarPagoForm.test.tsx`); suite `cobranza` 15/15 sin regresiones.**
 ### ADR-297 — Notas de Crédito "de Timbrada hacia adelante" + Requisición de Devolución al cliente
 
 - **Estado:** aceptada · **Fecha:** 2026-11-27 (petición del usuario, 3 capturas de
-  pantalla + texto pegado, al revisar manualmente ADR-294/295/296 en la aplicación).
+  pantalla + texto pegado, al revisar manualmente ADR-298/295/296 en la aplicación).
 - **Disparador:** el usuario pidió, de una vez, 4 cosas relacionadas con Notas de
   Crédito y Requisiciones: (1) la factura de origen de una NC debe estar "de Timbrada
   hacia adelante"; (2) qué le pasa a esa factura — "si está pagada no pasa nada, así se
@@ -12508,3 +12531,59 @@ requisición al proveedor) — unifica y reemplaza los bloqueos "ciegos" de ADR-
   `arg-type` son preexistentes, confirmados con `git stash` antes de este cambio — no
   son regresión). Frontend `tsc --noEmit`/`eslint` limpios; suites de `cobranza` y
   `facturacion` 100% verdes (197/197).
+
+### ADR-294 — F4 Reportes: `PeriodoResultados` no se persiste; módulo 100% de solo lectura, agregado en SQL
+
+- **Estado:** aceptada · **Fecha:** 2026-11-26 (cierre de F4, al completar la Tanda 3 —
+  Dashboard operativo). Formaliza una decisión tomada desde el inicio de F4 (Tanda 1) y
+  documentada mientras tanto solo en la ficha del módulo
+  (`docs/modulos/f4-reportes/f4-reportes.md`), tal como esa ficha ya anunciaba desde su
+  primera versión ("ADR a escribir").
+- **Contexto:** la especificación BD v2 modela `PeriodoResultados` como una entidad
+  persistida — un registro por mes con los totales ya calculados del Estado de
+  resultados (snapshot). F4 fue aprobada explícitamente **sin** cierre de período ni
+  snapshots (decisión 5 de la ficha, confirmada con el equipo antes de programar): el
+  usuario quería ver el P&L y los 3 dashboards **en vivo**, siempre recalculados sobre
+  F1–F3, nunca una foto congelada que pudiera desincronizarse de los datos reales si
+  una orden/factura/pago se corrige después.
+- **Decisión:** `PeriodoResultados` **no se crea como tabla**. Los 4 endpoints de
+  `GET /api/v1/reportes/*` (`estado-resultados`, `comercial`, `cobranza`, `operativo`)
+  calculan sus cifras en cada request, agregando directamente sobre las tablas de
+  F1–F3 (`OrdenCliente`/`OrdenEstacion`/`OrdenEstacionDia`/`Verificacion`/`Incidencia`,
+  `FacturaCliente`/`FacturaAfiliado`/`FacturaAgencia`/`FacturaVendedor`,
+  `CobranzaFactura`/`PagoCliente`/`Requisicion`/`CostoAdicional`). Consecuencias
+  directas de esta decisión, ya implementadas en las 3 tandas:
+  - **Sin migración en todo F4** (confirmado en cada tanda): el módulo
+    `backend/app/modules/reportes/` no tiene `models.py` — solo `schemas.py`
+    (DTOs de lectura), `repository.py` (consultas `SELECT`/`GROUP BY` puras, nunca
+    `INSERT`/`UPDATE`), `service.py` (fórmulas/ventanas de fecha) y `router.py`.
+  - **Toda aritmética de dinero vive en el service, nunca en SQL** (ADR-039): el
+    repository regresa filas crudas (p.ej. `FilaProrrateable`, `FilaCumplimientoEstacion`)
+    y el service calcula con `Decimal`/`ROUND_HALF_UP`, para que una consulta SQL
+    manual en SSMS pueda reproducir el mismo número exacto al validar.
+  - **"Agregar en SQL, nunca N+1"** (decisión 10 de la ficha): toda cifra por
+    renglón/estación/afiliado es un `GROUP BY` del repository, nunca un bucle en
+    Python por fila de negocio — explícitamente CONTRASTA con
+    `CobranzaFacturaService.adeudo_vencido` (ADR-277), que el Dashboard de cobranza
+    NO reutiliza por ser fila-por-fila.
+  - **4 claves RBAC separadas** (`reportes_financiero`/`_comercial`/`_cobranza`/
+    `_operativo`, ADR-044), las 4 agregadas de una sola vez desde la Tanda 1 aunque
+    sus endpoints llegaran después — Admin nunca se lista (ADR-040, superusuario).
+  - **Exportación transversal** (`app/shared/exportacion.py`, no en el módulo): única
+    utilidad `.xlsx`/`.csv` para las 4 vistas, con neutralización de
+    CSV/formula-injection (ADR-025).
+  - **`PhaseEntry.visibleParaArea`** (nuevo campo opcional en `phaseRegistry.ts`,
+    frontend): F4 es la primera fase que oculta su tarjeta/entrada de menú por
+    completo (no "Próximamente") para un área sin ningún permiso `reportes_*` — ver
+    `docs/modulos/transversal/dashboard-navegacion.md`.
+- **Alternativa descartada:** persistir `PeriodoResultados` con un job de cierre
+  mensual (fiel a la spec v2). Se descartó porque el usuario explícitamente no pidió
+  cierre/reapertura de periodos para esta fase, y un snapshot requeriría un mecanismo
+  de invalidación/recálculo cada vez que F1–F3 corrigen un dato ya cerrado — complejidad
+  no pedida. Si el negocio pide después un cierre formal (auditable, inmutable), se
+  reabre como alcance nuevo, no como ajuste de esta fase.
+- **Verificado:** las 3 tandas de F4 pasaron sin ninguna migración Alembic generada;
+  `pytest app/tests/test_f4_*.py` (41 pruebas) compara cada renglón/KPI contra consultas
+  SQL independientes escritas a mano, no copiadas del repository — ver
+  `f4-Reportes-Plan-completo.md` y la ficha del módulo para el detalle completo de
+  reglas y fórmulas por vista.

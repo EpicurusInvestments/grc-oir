@@ -333,19 +333,31 @@ class FacturaCliente(Base):
         # petición del usuario — "con signo negativo, para efecto de reportes"); para
         # cualquier otro tipo de comprobante, ninguno es legítimamente negativo (mismo
         # criterio que F1).
+        #
+        # Escrito como OR/AND, NO como `CASE WHEN ... THEN <predicado> ELSE <predicado>
+        # END` (bug real encontrado al correr esta migración contra SQL Server real,
+        # 2026-11-26): SQL Server rechaza un operador de comparación como valor
+        # THEN/ELSE de un CASE ("Incorrect syntax near '<'") — un CASE solo puede
+        # regresar un escalar, no un predicado booleano. SQLite sí lo permite (sin tipo
+        # booleano real, trata el predicado como 0/1), por eso pasaba en local y tronaba
+        # hasta que alguien corría la migración contra SQL Server (ver migración
+        # `d44def894ea8`, que tiene la misma corrección). `COALESCE(...,'I')` evita que
+        # la comparación con `tipo_comprobante` (nullable) propague NULL al OR exterior
+        # — con NULL de por medio, `NULL OR FALSE` evalúa NULL y un CHECK trata NULL
+        # como "no violado" (aceptaría una fila que debía rechazarse).
         CheckConstraint(
-            "CASE WHEN tipo_comprobante = 'E' THEN subtotal_factura <= 0 "
-            "ELSE subtotal_factura >= 0 END",
+            "(COALESCE(tipo_comprobante, 'I') = 'E' AND subtotal_factura <= 0) "
+            "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND subtotal_factura >= 0)",
             name="ck_factura_cliente_subtotal",
         ),
         CheckConstraint(
-            "CASE WHEN tipo_comprobante = 'E' THEN iva_factura <= 0 "
-            "ELSE iva_factura >= 0 END",
+            "(COALESCE(tipo_comprobante, 'I') = 'E' AND iva_factura <= 0) "
+            "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND iva_factura >= 0)",
             name="ck_factura_cliente_iva",
         ),
         CheckConstraint(
-            "CASE WHEN tipo_comprobante = 'E' THEN total_factura <= 0 "
-            "ELSE total_factura >= 0 END",
+            "(COALESCE(tipo_comprobante, 'I') = 'E' AND total_factura <= 0) "
+            "OR (COALESCE(tipo_comprobante, 'I') <> 'E' AND total_factura >= 0)",
             name="ck_factura_cliente_total",
         ),
         # ── Invariantes de suma exacta (ADR-039, aplicado desde el día 1 en F2) ──
@@ -366,14 +378,18 @@ class FacturaCliente(Base):
         # Vendedor): en una Nota de Crédito (`tipo_comprobante='E'`) el IVA es editable
         # y puede no ser exactamente 16% del monto (ajuste proporcional manual) — la
         # factura de Ingreso normal SIGUE exigiendo el 16% exacto, sin excepción.
-        # `CASE WHEN` y NO `tipo_comprobante = 'E' OR ...`: con `tipo_comprobante` NULL
-        # (facturas viejas, nunca Nota de Crédito) una comparación `= 'E'` da NULL, y
-        # `NULL OR falso` es NULL — que un CHECK trata como "pasa" (bug real que detectó
-        # `test_check_del_iva_rechaza_una_tasa_distinta_del_16`). `CASE` no tiene ese
-        # problema: una condición NULL cae al `ELSE`, igual que los 3 CHECK de arriba.
+        # Escrito como OR, NO como `CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 ELSE
+        # <predicado> END` (bug real, detectado al integrar el fix de ADR-298 de abajo
+        # contra SQL Server: ese motor rechaza un operador de comparación como valor
+        # THEN/ELSE de un CASE — "Incorrect syntax near '<'"; un CASE solo regresa un
+        # escalar, no un predicado booleano. SQLite sí lo permite, por eso pasaba en
+        # local). `COALESCE(tipo_comprobante, 'I')` evita que la columna nullable
+        # (facturas viejas, nunca Nota de Crédito) propague NULL al OR exterior — con
+        # NULL de por medio, `NULL OR falso` evalúa NULL y un CHECK lo trata como "pasa"
+        # (bug real que detectó `test_check_del_iva_rechaza_una_tasa_distinta_del_16`).
         CheckConstraint(
-            "CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 "
-            "ELSE ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2) END",
+            "(COALESCE(tipo_comprobante, 'I') = 'E') "
+            "OR (ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2))",
             name="ck_factura_cliente_iva_calculado",
         ),
         CheckConstraint(

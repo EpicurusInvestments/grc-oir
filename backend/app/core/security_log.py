@@ -29,6 +29,7 @@ class EventoSeguridad(StrEnum):
     """Catálogo de eventos. Crece conforme F5 añada acciones que valga la pena rastrear."""
 
     PASSWORD_ESTABLECIDA = "password_establecida"
+    EXPORTACION_REPORTE = "exportacion_reporte"
 
 
 def registrar_evento_seguridad(

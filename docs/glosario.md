@@ -115,9 +115,35 @@
 - **NOI** — Formato de nómina cuyo archivo mensual alimenta CostoAdicional (tipo nomina).
 - **Overhead** — Costos indirectos capturados como CostoAdicional (tipo overhead).
 - **PeriodoResultados** — Consolidado mensual de ingresos y costos (Estado de Resultados
-  del área): utilidad bruta y neta calculadas por fórmula.
-- **Antigüedad de saldos** — Clasificación de cuentas por cobrar por días vencidos
-  (corriente, 1-30, 31-60, 61-90, 90+).
+  del área): utilidad bruta y neta calculadas por fórmula. **F4 (ADR-294):** no se
+  persiste como tabla — se calcula en vivo en cada consulta, desviación consciente de
+  la spec (sin cierre ni snapshots).
+- **Estado de resultados (P&L)** (F4) — Vista mensual, **sin IVA**, base caja: Facturado
+  y Cobrado (ingresos); Facturado y Pagado por afiliados/agencias/comisiones (costos
+  directos); Nóminas/Overhead (costos indirectos); utilidad bruta = Cobrado − Pagado;
+  utilidad neta = utilidad bruta − indirectos. Un monto con IVA (pago de cliente,
+  requisición pagada) se prorratea a su parte sin-IVA con la razón
+  `subtotal/total` de la factura que lo originó, redondeada fila por fila antes de
+  sumar (no al final).
+- **Antigüedad de saldos (aging)** (F4) — Clasificación del saldo por cobrar de cada
+  `CobranzaFactura` no `cobrada` por días vencidos (hoy − `fecha_estimada_cobro`):
+  corriente (no vencida), 1-30, 31-60, 61-90, 90+. En el Dashboard de cobranza se
+  calcula con UNA sola consulta agregada (JOIN + GROUP BY), nunca fila por fila como
+  `CobranzaFacturaService.adeudo_vencido` (ADR-277, pensado para un solo anunciante).
+- **DSO (Days Sales Outstanding)** (F4) — Días promedio que tarda en cobrarse una
+  venta: `saldo por cobrar ÷ ventas facturadas en una ventana (default 90 días) ×
+  días de la ventana`. Global y por anunciante, en el Dashboard de cobranza.
+- **Cumplimiento de transmisión** (F4) — % de spots realmente transmitidos contra los
+  ordenados (`SUM(spots_verificados) / SUM(spots_asignados) × 100`) por estación y
+  global, en el Dashboard operativo. Solo cuenta un día de `OrdenEstacion` si ya tiene
+  una `Verificacion` registrada (no penaliza días futuros aún no verificados) y no
+  está `cancelada` (ADR-104). No se restan por ahora los spots bonificables
+  (`cantidad_spots_bonificables`): quedan para una versión futura que los separe a
+  nivel de día.
+- **Tasa de incidencias** (F4) — % de `Incidencia` por afiliado contra sus órdenes de
+  estación con actividad verificada en la ventana (`incidencias ÷ OE totales del
+  afiliado × 100`, vía `Estación → Afiliado`), en el Dashboard operativo. Por encima de
+  10% se marca para revisión.
 - **ConstantesSistema** — Catálogos SAT/timbrador que el sistema usa al PREPARAR la factura
   para el timbrador externo (F2). Entidad de configuración homogénea (`grupo`/`clave`/
   `descripcion`/`valor`) con 9 grupos: TipoComprobante, Serie, RegimenFiscal, ClaveProdServ,

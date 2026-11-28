@@ -130,7 +130,7 @@ código. Correspondencia inicial (ajustable con el equipo):
 | **F1 Órdenes** | `ordenes` | OrdenCliente, OrdenEstacion, Verificacion, Incidencia |
 | **F2 Facturación** | `facturacion`, `costos` | FacturaCliente, FacturaAfiliado, FacturaAfiliadoOrden, FacturaAgencia, CostoAdicional |
 | **F3 Cobranza y Pagos** | `cobranza`, `pagos` | CobranzaFactura, PagoCliente, Requisicion, MovimientoBancario |
-| **F4 Reportes** | `reportes` | PeriodoResultados |
+| **F4 Reportes** | `reportes_financiero`, `reportes_comercial`, `reportes_cobranza`, `reportes_operativo` | PeriodoResultados (no se persiste — ver ficha del módulo) |
 | **F5 Seguridad** | `seguridad` (mucho vive en `core/`) | LogCambioParametro, PermisoCampo |
 
 ## 5. Plan de entregas y flujo de trabajo

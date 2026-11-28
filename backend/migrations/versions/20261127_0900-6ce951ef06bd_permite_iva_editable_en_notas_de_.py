@@ -19,13 +19,19 @@ depends_on: str | Sequence[str] | None = None
 # Revisado a mano: el autogenerate de Alembic NO detecta cambios de contenido en un
 # CHECK ya existente (mismo motivo que `d44def894ea8`).
 #
-# `CASE WHEN` y NO `tipo_comprobante = 'E' OR ...`: con `tipo_comprobante` NULL
-# (facturas viejas) una comparación `= 'E'` da NULL, y `NULL OR falso` es NULL — que un
-# CHECK trata como "pasa" (bug real, detectado por
+# Corregido (2026-11-27, al integrar el fix de `d44def894ea8` contra SQL Server a esta
+# rama): la versión original escribía esto como
+# `CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 ELSE <predicado> END` — SQL Server
+# rechaza un operador de comparación como valor THEN/ELSE de un CASE ("Incorrect syntax
+# near '<'"; un CASE solo regresa un escalar, no un predicado booleano). SQLite sí lo
+# permite, por eso pasaba en local. Reescrito como OR: `COALESCE(tipo_comprobante, 'I')`
+# evita que la columna nullable (facturas viejas, nunca Nota de Crédito) propague NULL
+# al OR exterior — con NULL de por medio, `NULL OR falso` evalúa NULL y un CHECK lo
+# trata como "pasa" (bug real que detectó
 # `test_check_del_iva_rechaza_una_tasa_distinta_del_16` al correr la suite completa).
 _IVA_CALCULADO_CON_EXCEPCION_NC = (
-    "CASE WHEN tipo_comprobante = 'E' THEN 1 = 1 "
-    "ELSE ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2) END"
+    "(COALESCE(tipo_comprobante, 'I') = 'E') "
+    "OR (ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2))"
 )
 _IVA_CALCULADO_SIN_EXCEPCION = "ROUND(iva_factura, 2) = ROUND(subtotal_factura * 0.16, 2)"
 

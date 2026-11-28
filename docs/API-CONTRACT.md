@@ -1272,7 +1272,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   presentes como escalares de la **primera** orden (por folio), que es el identificador
   corto que usan la tabla y el encabezado del panel.
 
-  **Notas de crédito (`tipo_comprobante = "E"`, ADR-293/ADR-294, petición del usuario,
+  **Notas de crédito (`tipo_comprobante = "E"`, ADR-293/ADR-298, petición del usuario,
   con captura):** no se modeló como entidad nueva — es una `FacturaCliente` más, con el
   monto en negativo. Con `tipo_comprobante = "E"` el payload exige: `ordenes_ids` vacía;
   **exactamente 1** id en `facturas_relacionadas_ids` (la factura de origen, reutilizando
@@ -1286,7 +1286,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   `tipo_relacion_sat` (clave SAT, p.ej. `01`/`03`) es opcional y hoy solo se guarda — no
   viaja todavía al archivo plano del PAC más que como el `TipoRelacion` de "Documentos
   Relacionados" (ver `/archivo-plano` abajo); el resto del layout sigue sin leerlo.
-  `iva_nota_credito` (ADR-294, petición del usuario: "dejar el campo editable") es
+  `iva_nota_credito` (ADR-298, petición del usuario: "dejar el campo editable") es
   **opcional**, misma magnitud positiva que `monto_nota_credito` — si se manda, el
   servicio lo usa tal cual (negado) en vez de calcular el 16% exacto del monto; si se
   omite, calcula igual que antes.
@@ -1298,7 +1298,7 @@ autorización sensible al autorizar una factura de proveedor), 404 (no encontrad
   Receptor, `empresa_facturadora_id`, `anunciante_id`/`agencia_id` y
   `facturado_directo` se heredan de la **factura de origen** (no de una orden — una NC no
   tiene órdenes). `metodo_pago_clave` se fija siempre a `"PUE"` (no editable, ignorando
-  lo que mande el payload). `forma_pago_clave` (ADR-294, petición del usuario: "sí es
+  lo que mande el payload). `forma_pago_clave` (ADR-298, petición del usuario: "sí es
   seleccionable") **SÍ se captura del payload** — el frontend la precarga con la de la
   factura de origen como default, pero el usuario la puede cambiar; antes (ADR-293) se
   forzaba siempre a la de origen. `uso_cfdi` default `"G02"` si no se especifica.
@@ -1740,3 +1740,164 @@ encontrado), 409 (`transicion_invalida` / `conflicto` — incluido el guardarra�
 "no des-cobrar" y el duplicado de `MovimientoBancario`), 422 (validación de
 payload/filtros), 400 (`error_dominio` — FKs faltantes según `tipo_requisicion`,
 cancelación de una factura ya cobrada, edición de una requisición no-`pendiente`).
+
+## Reportes (F4)
+
+Prefijo `/reportes`. Módulo **100% de solo lectura**: ningún endpoint escribe, no hay
+`Create`/`Update`. 4 claves RBAC separadas (`reportes_financiero`/`_comercial`/
+`_cobranza`/`_operativo`, ADR-044), todas de solo lectura — Admin no se lista (ADR-040).
+Detalle completo de reglas y fórmulas en `docs/modulos/f4-reportes/f4-reportes.md`.
+
+### Estado de resultados (Tanda 1 — `reportes_financiero`, Dirección)
+
+P&L mensual **sin IVA**, base caja. `PeriodoResultados` de la spec v2 **no se persiste**
+(desviación consciente — todo se calcula en vivo; ADR a formalizar al cerrar F4).
+
+- **`GET /reportes/estado-resultados?periodo=YYYY-MM`** (`reportes_financiero:leer`) —
+  `periodo` opcional (default: mes en curso, resuelto en hora de **México**,
+  `America/Mexico_City`, no UTC — ADR-261). Formato validado con patrón estricto
+  (`^\d{4}-(0[1-9]|1[0-2])$`); inválido → **422**. Responde el periodo pedido (todos los
+  renglones), el periodo anterior (para la tendencia), la tendencia ya calculada, y el
+  histórico de 6 meses terminando en el periodo pedido (orden cronológico).
+  - *Facturado en el periodo* = `SUM(FacturaCliente.subtotal_factura)` con
+    `estado_facturacion IN (timbrada, entregada, cobrada)` — excluye borradores
+    (`preparada`/`enviada_a_timbrado`) y `cancelada`. Las Notas de Crédito
+    (`tipo_comprobante='E'`, ADR-293) se netean solas: su `subtotal_factura` ya vive
+    negativo.
+  - *Cobrado en el periodo* = pagos de cliente `pagado`, no huérfanos y que **no** sean
+    el pago sintético de una Nota de Crédito (`factura_egreso_id IS NULL`), prorrateados
+    a sin-IVA (`monto_aplicado × subtotal_factura / total_factura`, redondeado fila por
+    fila antes de sumar).
+  - Costos directos (afiliados/agencias/comisiones vendedores/comisiones agencias): cada
+    uno con *Facturado* (informativo) y *Pagado* (`Requisicion` en `pagada`, prorrateado
+    a sin-IVA contra la factura de proveedor ligada — o contra la `OrdenCliente` para
+    `comision_agencia`, que no tiene factura). `Requisicion.monto_requisicion`
+    **confirmado que SÍ incluye IVA** (confirmado con el equipo, 2026-11-26).
+  - Costos indirectos (Nóminas/Overhead): `SUM(CostoAdicional.monto_costo)` por
+    `tipo_costo` y `periodo_contable` — **sin IVA, sin prorrateo** (confirmado).
+  - `utilidad_bruta` = Cobrado − suma de los 4 "Pagado"; `utilidad_neta` = `utilidad_bruta`
+    − Nóminas − Overhead. Márgenes/porcentajes `null` (nunca división por cero) cuando su
+    denominador es 0.
+- **`GET /reportes/estado-resultados/exportar?periodo=YYYY-MM&formato=xlsx|csv`** —
+  mismo permiso. Exporta la tabla de 3 secciones + totales del periodo pedido. Responde
+  bytes con `Content-Disposition: attachment`. Registra la exportación en el log de
+  seguridad (`EventoSeguridad.EXPORTACION_REPORTE`, `app/core/security_log.py`) —
+  usuario, periodo, formato; nunca el contenido.
+
+### Dashboard comercial (Tanda 2 — `reportes_comercial`, Dirección/Ventas)
+
+- **`GET /reportes/comercial?ventana=ytd|mes|trimestre&periodo=YYYY-MM`** — `ventana`
+  default `mes`; `periodo` opcional (default: mes en curso, hora de México). `ventana`
+  resuelve la ventana de fechas así: `mes` = el mes de `periodo`; `trimestre` = el
+  trimestre calendario que contiene a `periodo` (ene-mar/abr-jun/jul-sep/oct-dic);
+  `ytd` = 1 de enero del año de `periodo` hasta el fin de ese mes.
+  - *Ventas* = `SUM(OrdenCliente.total)` con `estatus_orden <> 'cancelada'`,
+    `fecha_venta` en la ventana. *Ticket promedio* = ventas / órdenes (`null` si 0
+    órdenes). *Comisiones vendedores* = suma de la comisión de TODAS las órdenes en
+    ambos roles (ver abajo).
+  - **Top vendedores:** "Ventas" cuenta SOLO las órdenes donde el vendedor es
+    PRINCIPAL (nunca se duplica una orden por tener 2 vendedores); "Comisión total"
+    suma la comisión como principal (`total × porcentaje_comision_vendedor_principal_snap
+    / 100`) **y** como secundario (`total ×
+    porcentaje_comision_vendedor_secundario_snap / 100`) de TODAS sus órdenes en
+    cualquiera de los 2 roles — el mismo `Vendedor` es una sola fila, nunca dos.
+  - **Top anunciantes / Top categorías (Giro Empresarial):** `GROUP BY`
+    `anunciante_id`/`categoria_id`; `categoria_id IS NULL` se agrupa como
+    "Sin categoría".
+  - **Top agencias:** incluye "Trato directo" (`agencia_id IS NULL`, comisión siempre
+    0). El % de comisión mostrado es el promedio PONDERADO real (comisión total /
+    ventas totales de esa agencia), no un promedio simple de los `%_snap` de cada
+    orden.
+  - **Evolución mensual:** 6 meses terminando en el mes de `periodo` (no en la
+    ventana elegida).
+  - Los 4 cortes "Top" regresan máximo 10 filas, ordenadas por su monto descendente.
+- **`GET /reportes/comercial/exportar?ventana=...&periodo=...&formato=xlsx|csv`** —
+  mismo permiso. `.xlsx` con una hoja por sección (Resumen, Top vendedores/anunciantes/
+  categorías/agencias, Evolución mensual); `.csv` con las mismas secciones
+  concatenadas en un solo archivo (separadas por fila en blanco, con su propio título).
+
+### Dashboard de cobranza (Tanda 2 — `reportes_cobranza`, Dirección/Facturación/Tesorería/CxC/CxP)
+
+"Al corte" de **hoy** — no es un periodo seleccionable como el P&L. **Montos CON IVA**
+(a diferencia del Estado de resultados): es dinero real a recibir.
+
+- **`GET /reportes/cobranza?mes=YYYY-MM&ventana_dso_dias=90`** — `mes` solo afecta el
+  KPI "Cobrado del mes" (default: mes en curso); `ventana_dso_dias` (default 90, 1-3650)
+  es la ventana del DSO.
+  - **Aging:** UNA consulta agregada (`CobranzaFactura` JOIN `FacturaCliente` LEFT JOIN
+    `PagoCliente`, `GROUP BY` por factura, `estatus_cobro <> 'cobrada'`) trae el saldo
+    (`total_factura − SUM(pagos pagado)`) y `fecha_estimada_cobro` de cada factura
+    abierta; las 5 cubetas (corriente/1-30/31-60/61-90/90+, por `hoy −
+    fecha_estimada_cobro`) se clasifican en Python sobre ese resultado YA agregado —
+    nunca una consulta por factura (a diferencia de
+    `CobranzaFacturaService.adeudo_vencido`, ADR-277, que esta vista explícitamente
+    NO reutiliza).
+  - **DSO** = saldo por cobrar ÷ ventas facturadas (`total_factura`, con IVA) en los
+    últimos `ventana_dso_dias` días terminando hoy, × `ventana_dso_dias`. `null` si no
+    hubo ventas en la ventana (no división por cero). Global y por anunciante.
+  - **Cobrado del mes:** `SUM(PagoCliente.monto_aplicado)` `pagado` en el mes de `mes`
+    — excluye `cancelado` y el pago sintético de una Nota de Crédito (ADR-293), pero a
+    propósito **SÍ incluye pagos huérfanos** (`cobranza_id IS NULL`, ADR-229): a
+    diferencia del "Cobrado" del P&L (que los excluye porque necesita una factura de
+    la que derivar el sin-IVA), un pago sin asignar todavía sigue siendo dinero real
+    ya recibido.
+  - **Cobranza por anunciante:** todas las filas con saldo > 0 (sin tope Top-N),
+    ordenadas por saldo descendente.
+- **`GET /reportes/cobranza/exportar?mes=...&ventana_dso_dias=...&formato=xlsx|csv`** —
+  mismo permiso. Secciones: Resumen, Aging, Cobranza por anunciante, Evolución mensual.
+
+### Dashboard operativo (Tanda 3 — `reportes_operativo`, TODAS las áreas)
+
+Única vista de F4 sin restricción real de área (es la única que ve Nóminas). Mismo
+patrón de ventana que el Dashboard comercial (`ytd`/`mes`/`trimestre`, reutiliza la
+misma resolución de fechas).
+
+- **`GET /reportes/operativo?ventana=ytd|mes|trimestre&periodo=YYYY-MM`** — `ventana`
+  default `mes`; `periodo` opcional (default: mes en curso, hora de México).
+  - **Día "ya medido":** un `OrdenEstacionDia` cuenta para cumplimiento/incidencias
+    solo si YA tiene una fila `Verificacion` (INNER JOIN por `orden_estacion_dia_id`) y
+    NO está `cancelada` — `Verificacion.reconciliada` NO se usa como filtro (es un
+    campo muerto en el código actual, siempre `True`; ver `verificacion.py`). Un día
+    futuro sin verificar no penaliza el %; un día cancelado (ADR-104) tampoco cuenta
+    como incumplimiento, pero SÍ genera su propia incidencia `spot_no_emitido`
+    automáticamente.
+  - **Cumplimiento por estación:** `GROUP BY Estacion`, `ordenado = SUM(spots_asignados)`,
+    `ejecutado = SUM(spots_verificados)` de esos días ya medidos. `cantidad_spots_bonificables`
+    (a nivel `OrdenEstacion`) **NO se resta** (decisión 9 de la ficha, "por ahora" — el
+    modelo no separa esos spots a nivel de día). `pct_cumplimiento` = `null` y la
+    estación se excluye del listado si `ordenado = 0` (nunca división por cero);
+    `cumplimiento_general_pct` es GLOBAL (`SUM(ejecutado)` / `SUM(ordenado)` de todas
+    las estaciones), no un promedio de los porcentajes por estación.
+  - **Incidencias por afiliado:** `Incidencia` JOIN `OrdenEstacion` → `Estacion` →
+    `Afiliado`, `GROUP BY` afiliado y `tipo_incidencia` (los 5 valores exactos:
+    `faltante`/`excedente`/`cambio_horario`/`cambio_fecha`/`spot_no_emitido`), filtrado
+    por `fecha_incidencia` en la ventana. "OE totales del afiliado" (denominador de la
+    tasa) = `COUNT(DISTINCT OrdenEstacion)` con al menos un día ya medido en la
+    ventana — el MISMO conjunto que cumplimiento, para que numerador y denominador
+    midan lo mismo. `tasa_pct = total / oe_totales × 100`; `alerta = true` si
+    `tasa_pct > 10`.
+  - **Afiliados activos** (KPI) = `COUNT(DISTINCT Afiliado)` con al menos un día ya
+    medido en la ventana (mismo conjunto de arriba) — NO es el total de afiliados del
+    catálogo.
+  - **Composición de incidencias:** los 5 tipos agregados globalmente (no por
+    afiliado) sobre el mismo filtro de `fecha_incidencia`; `pct` = % del total de
+    incidencias de la ventana (`null` si no hubo ninguna).
+- **`GET /reportes/operativo/exportar?ventana=...&periodo=...&formato=xlsx|csv`** —
+  mismo permiso. Secciones: Resumen, Cumplimiento por estación, Incidencias por
+  afiliado, Composición de incidencias.
+
+### Exportación a Excel/CSV (transversal, `app/shared/exportacion.py`)
+
+Utilidad reutilizable por las 4 vistas de F4 (y cualquier exportación futura, no solo
+este módulo). Neutraliza CSV/formula-injection (ADR-025): un texto que empiece con
+`= + - @` o tab/retorno de carro se antepone con un apóstrofe en `.csv` (fuerza texto al
+abrir en Excel/Sheets); en `.xlsx` la celda se fija con tipo de dato string explícito
+(sin apóstrofe visible — no hace falta). Celdas numéricas son número real en `.xlsx`
+(`number_format` de 2 decimales), nunca texto — incluidos los conteos enteros (spots,
+órdenes, OE): se ven con ".00" a propósito, mismo formato uniforme para toda celda
+numérica de las 4 vistas.
+
+**Errores posibles (los 4 endpoints de F4):** 401 (sin auth), 403 (área sin la clave
+`reportes_*` correspondiente), 422 (`periodo`/`mes` con formato inválido, `formato`
+fuera de `xlsx|csv`, `ventana` fuera de `ytd|mes|trimestre`, `ventana_dso_dias` fuera
+de 1-3650 — todo validado por Pydantic en el router, antes de llegar al service).

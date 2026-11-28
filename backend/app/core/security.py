@@ -172,6 +172,19 @@ RBAC: dict[str, dict[Area, Acceso]] = {
     # el resto de "catalogos" sigue siendo solo-lectura para todos salvo Admin. Revisable
     # cuando se afinen roles más adelante (nota del usuario).
     "motivos_cambio": {Area.VENTAS: Acceso.WRITE, Area.DIRECCION: Acceso.WRITE},
+    # F4 — Reportes y Consulta: 4 claves, una por vista (ficha del módulo), TODAS de
+    # solo lectura (nunca se usará `crear`/`editar` en este módulo). Admin no se lista
+    # (ADR-040, `_nivel()` ya lo cubre).
+    "reportes_financiero": {Area.DIRECCION: Acceso.READ},
+    "reportes_comercial": {Area.DIRECCION: Acceso.READ, Area.VENTAS: Acceso.READ},
+    "reportes_cobranza": {
+        Area.DIRECCION: Acceso.READ,
+        Area.FACTURACION: Acceso.READ,
+        Area.TESORERIA: Acceso.READ,
+        Area.CXC: Acceso.READ,
+        Area.CXP: Acceso.READ,
+    },
+    "reportes_operativo": {a: Acceso.READ for a in Area if a is not Area.ADMIN},
 }
 
 

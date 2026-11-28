@@ -21,6 +21,7 @@ from app.modules.catalogos.router import router as catalogos_router
 from app.modules.cobranza.router import router as cobranza_router
 from app.modules.facturacion.router import router as facturacion_router
 from app.modules.ordenes.router import router as ordenes_router
+from app.modules.reportes.router import router as reportes_router
 from app.modules.usuarios.router import router as usuarios_router
 
 app = FastAPI(
@@ -85,4 +86,5 @@ api_v1.include_router(catalogos_router)
 api_v1.include_router(ordenes_router)
 api_v1.include_router(facturacion_router)
 api_v1.include_router(cobranza_router)
+api_v1.include_router(reportes_router)
 app.include_router(api_v1)

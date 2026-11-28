@@ -1116,11 +1116,11 @@ en F1) — no el propio CxP que capturó el registro.
   confirmado con el usuario: solo presentación, ningún cálculo de IVA/comisión/total
   cambia. Detalle completo en `docs/arquitectura.md` (ADR-090).
 
-## Notas de Crédito (ADR-293/ADR-294, petición del usuario, con captura)
+## Notas de Crédito (ADR-293/ADR-298, petición del usuario, con captura)
 
 `FacturaCliente` con `tipo_comprobante == "E"` — reutiliza la entidad existente, no se
 creó ninguna tabla nueva (ni para la NC en sí, ni para su efecto en Cobranza). Detalle
-técnico completo en `docs/arquitectura.md` (ADR-293, ADR-294); resumen operativo:
+técnico completo en `docs/arquitectura.md` (ADR-293, ADR-298); resumen operativo:
 
 - **Alta:** botón "+ Nota de crédito" en el detalle de una factura YA TIMBRADA (no
   marcada "Facturado en sistema externo"). Sin órdenes propias — receptor, empresa
@@ -1128,12 +1128,12 @@ técnico completo en `docs/arquitectura.md` (ADR-293, ADR-294); resumen operativ
   (`facturas_relacionadas_ids[0]`, exactamente 1). Motivo de una lista fija
   (`MotivoNotaCredito`: devolución total/parcial, descuento, bonificación — **no**
   incluye "error en el monto facturado", pedido explícitamente fuera por el usuario al
-  revisar ADR-294). Método de pago siempre `PUE` (fijo, se muestra informativo en el
+  revisar ADR-298). Método de pago siempre `PUE` (fijo, se muestra informativo en el
   formulario para que no se confunda con editable). Folio propio:
   `NC-AAAA-MM-folio`, capturado a mano (sin consecutivo automático).
-- **Forma de pago, Monto e IVA editables (ADR-294):** `forma_pago_clave` se precarga en
+- **Forma de pago, Monto e IVA editables (ADR-298):** `forma_pago_clave` se precarga en
   el formulario con la de la factura de origen pero es **seleccionable** — ya NO se
-  fuerza del lado del servicio (antes de ADR-294 se ignoraba lo que mandara el payload).
+  fuerza del lado del servicio (antes de ADR-298 se ignoraba lo que mandara el payload).
   "Monto (sin IVA)" e "IVA" se precargan con `subtotal_factura`/`iva_factura` de la
   factura de origen y son **editables** (petición explícita del usuario: "dejar el
   campo editable", para acreditaciones parciales/proporcionales donde el IVA no es
@@ -1145,7 +1145,7 @@ técnico completo en `docs/arquitectura.md` (ADR-293, ADR-294); resumen operativ
 - **Timbrado:** sigue siendo 100% MANUAL (mismo `RegistrarTimbradoForm` de cualquier
   factura) — timbrar NUNCA lo hace el sistema (ADR-002), solo cambia quién prepara el
   archivo plano (ver el punto siguiente).
-- **Archivo plano (ADR-294):** YA se genera para una Nota de Crédito (antes rechazaba con
+- **Archivo plano (ADR-298):** YA se genera para una Nota de Crédito (antes rechazaba con
   409, "fuera de alcance"). "Documentos Relacionados" lleva el folio fiscal de la factura
   de origen con el `TipoRelacion` REAL capturado (`tipo_relacion_sat`, 01/03) en vez del
   `04` fijo que usa ADR-062 para facturas relacionadas normales — si no se capturó, se
@@ -1166,7 +1166,7 @@ técnico completo en `docs/arquitectura.md` (ADR-293, ADR-294); resumen operativ
   (la cancela/revierte en cascada si estaba `autorizada`; si ya estaba `pagada`, no la
   toca), y revierte la cascada de cobro que la NC produjo igual.
 - **Catálogos nuevos:** `UsoCFDI,G02` (devoluciones/descuentos/bonificaciones) y el
-  grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) y, desde ADR-294,
+  grupo `TipoRelacion` (`01`/`03`) — se capturan (`tipo_relacion_sat`) y, desde ADR-298,
   SÍ viajan al archivo plano (solo el `TipoRelacion` de "Documentos Relacionados"; el
   resto del layout sigue sin leer `tipo_comprobante`/`tipo_relacion_sat`).
 

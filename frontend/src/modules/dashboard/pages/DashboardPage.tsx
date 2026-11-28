@@ -1,8 +1,9 @@
 /** Dashboard (Home real del sistema GRC-OIR).
  *
- * Malla de 6 tarjetas (una por fase, desde `phaseRegistry`). Reutiliza `AppHeader` (con su
- * hamburguesa + drawer global) para verse parte del mismo producto que Catálogos. Hoy solo
- * F0 (Catálogos) está activa; el resto se muestran "Próximamente".
+ * Malla de hasta 6 tarjetas (una por fase, desde `phaseRegistry`). Reutiliza `AppHeader`
+ * (con su hamburguesa + drawer global) para verse parte del mismo producto que
+ * Catálogos. Las fases con `visibleParaArea` (hoy solo F4) se ocultan por completo —no
+ * "Próximamente", directamente no aparecen— para áreas sin ningún permiso adentro.
  */
 
 import { PhaseCard } from "@/modules/dashboard/components/PhaseCard";
@@ -23,9 +24,11 @@ export function DashboardPage() {
             </p>
           </header>
           <div className="phase-grid">
-            {phaseRegistry.map((phase, i) => (
-              <PhaseCard key={phase.key} phase={phase} index={i} />
-            ))}
+            {phaseRegistry
+              .filter((phase) => !phase.visibleParaArea || phase.visibleParaArea(currentUser.area))
+              .map((phase, i) => (
+                <PhaseCard key={phase.key} phase={phase} index={i} />
+              ))}
           </div>
         </div>
       </main>
