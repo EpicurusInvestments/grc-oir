@@ -438,7 +438,7 @@ class ReportesRepository:
         `cancelada` — mismo filtro `cancelada == False` que usa el resto del sistema
         al sumar spots (`orden_estacion.py`)."""
         return (
-            OrdenEstacionDia.cancelada.is_(False),
+            OrdenEstacionDia.cancelada == False,  # noqa: E712
             OrdenEstacionDia.fecha_transmision >= inicio,
             OrdenEstacionDia.fecha_transmision < fin,
         )
